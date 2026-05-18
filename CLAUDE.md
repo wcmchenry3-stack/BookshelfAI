@@ -51,3 +51,13 @@ cd backend && pytest tests/ --cov=app
 cd frontend && npx expo start
 cd frontend && npx jest
 ```
+
+## Available Agents
+
+These project subagents live in `.claude/agents/` and are invoked via the `Agent` tool (not Skill). Always prefer them over a general-purpose agent for their domain.
+
+| Agent | `subagent_type` | When to use |
+|---|---|---|
+| lint-review | `lint-review` | Auto-fix lint issues after a lint-gate hook failure |
+| plan-issues | `plan-issues` | Break a feature/bug/initiative into scoped GitHub issues — investigates code first, drafts for confirmation, then calls `gh issue create` |
+| policy-compliance | `policy-compliance` | Check and fix policy violations after a policy-gate hook failure |

@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           # Use default GITHUB_TOKEN — contents:write is enough for a direct push
