@@ -30,9 +30,7 @@
         "NSPrivacyAccessedAPITypes": [
           {
             "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
-            "NSPrivacyAccessedAPITypeReasons": [
-              "CA92.1"
-            ]
+            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
           }
         ],
         "NSPrivacyCollectedDataTypes": [],
@@ -47,9 +45,7 @@
       },
       "package": "com.buffingchi.bookshelf",
       "versionCode": 1,
-      "permissions": [
-        "CAMERA"
-      ]
+      "permissions": ["CAMERA"]
     },
     "web": {
       "favicon": "./assets/logo.png",
