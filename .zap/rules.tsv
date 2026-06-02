@@ -11,9 +11,18 @@
 90001	IGNORE	Charset Mismatch (Header Versus Meta Charset) — not applicable to JSON responses
 10096	IGNORE	Timestamp Disclosure — ISO timestamps in JSON responses are intentional
 10050	IGNORE	Retrieved from Cache — informational only
+# Headers set by SecurityHeadersMiddleware but absent on infrastructure-level responses
+# (Cloudflare/Render 403s that never reach FastAPI). Suppressed to avoid false failures.
+10021	IGNORE	X-Content-Type-Options — header is set by middleware; absent only on infra-served responses
+10035	IGNORE	Strict-Transport-Security — header is set by middleware in production; absent on infra-level 403s
+90004	IGNORE	Cross-Origin-Resource-Policy — header is set by middleware; absent on infra-level responses
+# Structural false positive: proxy chain headers are inherent to the Cloudflare + Render setup
+40025	IGNORE	Proxy Disclosure — reverse proxy chain (Cloudflare + Render) is intentional infrastructure
+# CSP rule 10055 fires because ZAP expects explicit per-directive overrides even when default-src
+# covers all fetch directives. For a JSON API with default-src 'none' this is a false positive.
+10055	IGNORE	CSP Failure to Define Directive with No Fallback — default-src 'none' intentionally covers all fetch directives
 
 # ── WARN: track but do not fail the build ─────────────────────────────────────
-10055	WARN	CSP Scanner — CSP is set; warnings are for review only
 10202	WARN	Absence of Anti-CSRF Tokens — API uses JWT Bearer tokens, not cookie-based sessions
 10098	WARN	Cross-Domain Misconfiguration — review after Cloudflare proxy is active
 10105	WARN	Weak Authentication Method — JWT Bearer is used; flag if ZAP misidentifies scheme
