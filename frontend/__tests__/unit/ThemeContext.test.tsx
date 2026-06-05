@@ -40,6 +40,7 @@ describe('ThemeProvider', () => {
     let capturedTheme: typeof lightTheme | typeof darkTheme | null = null;
     function ThemeCapture() {
       const { theme } = useContext(ThemeContext);
+      // eslint-disable-next-line react-hooks/globals
       capturedTheme = theme;
       return null;
     }

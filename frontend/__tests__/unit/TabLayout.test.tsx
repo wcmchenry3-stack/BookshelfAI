@@ -22,23 +22,32 @@ jest.mock('../../hooks/useTheme', () => ({
   }),
 }));
 
+const g = global as any;
+
 jest.mock('expo-router', () => {
   const React = require('react');
   const { View, Text } = require('react-native');
+  const g = global as any;
 
-  function MockTabs({ children, screenOptions }) {
+  function MockTabs({
+    children,
+    screenOptions,
+  }: {
+    children: React.ReactNode;
+    screenOptions: any;
+  }) {
     // screenOptions is a function in the new layout — call it to get the resolved object
     const resolved =
       typeof screenOptions === 'function'
         ? screenOptions({ route: { name: 'scan' } })
         : screenOptions;
     // Store on global so test assertions can access it (factories cannot close over outer vars)
-    global.__mockTabScreenOptions = resolved;
+    g.__mockTabScreenOptions = resolved;
     return React.createElement(View, { testID: 'tabs-container' }, children);
   }
 
-  function MockScreen(props) {
-    global.__mockScreenProps = (global.__mockScreenProps || []).concat([
+  function MockScreen(props: any) {
+    g.__mockScreenProps = (g.__mockScreenProps || []).concat([
       { name: props.name, options: props.options },
     ]);
     const icon =
@@ -60,7 +69,8 @@ jest.mock('expo-router', () => {
 jest.mock('@expo/vector-icons', () => {
   const React = require('react');
   const { Text } = require('react-native');
-  const MockIcon = ({ name }) => React.createElement(Text, { testID: `icon-${name}` }, name);
+  const MockIcon = ({ name }: { name: string }) =>
+    React.createElement(Text, { testID: `icon-${name}` }, name);
   return {
     Ionicons: MockIcon,
     MaterialIcons: MockIcon,
@@ -69,8 +79,8 @@ jest.mock('@expo/vector-icons', () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  global.__mockScreenProps = [];
-  global.__mockTabScreenOptions = {};
+  g.__mockScreenProps = [];
+  g.__mockTabScreenOptions = {};
 });
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -78,26 +88,24 @@ beforeEach(() => {
 describe('TabLayout', () => {
   it('renders 4 tab screens', () => {
     render(<TabLayout />);
-    expect(global.__mockScreenProps).toHaveLength(4);
+    expect(g.__mockScreenProps).toHaveLength(4);
   });
 
   it('includes scan, wishlist, my-books, and settings tabs', () => {
     render(<TabLayout />);
-    const names = global.__mockScreenProps.map((s: { name: string }) => s.name);
+    const names = g.__mockScreenProps.map((s: { name: string }) => s.name);
     expect(names).toEqual(['scan', 'wishlist', 'my-books', 'settings']);
   });
 
   it('tab titles use i18n keys', () => {
     render(<TabLayout />);
-    const titles = global.__mockScreenProps.map(
-      (s: { options: { title: string } }) => s.options.title
-    );
+    const titles = g.__mockScreenProps.map((s: { options: { title: string } }) => s.options.title);
     expect(titles).toEqual(['Scan', 'Wishlist', 'My Books', 'Settings']);
   });
 
   it('applies brand theme colors to tab bar via screenOptions', () => {
     render(<TabLayout />);
-    const opts = global.__mockTabScreenOptions;
+    const opts = g.__mockTabScreenOptions;
     expect(opts.tabBarActiveTintColor).toBe('#ffffff');
     expect(opts.tabBarInactiveTintColor).toBe('#47645d');
     expect(opts.tabBarStyle?.backgroundColor).toBe('#f5f3ef');

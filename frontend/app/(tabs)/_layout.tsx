@@ -1,4 +1,4 @@
-import { Platform, StyleSheet } from 'react-native';
+import { ColorValue, Platform, StyleSheet } from 'react-native';
 import { Tabs } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
@@ -10,12 +10,12 @@ type MaterialIconName = React.ComponentProps<typeof MaterialIcons>['name'];
 interface TabIconProps {
   name: MaterialIconName;
   focused: boolean;
-  color: string;
+  color: ColorValue;
   size: number;
 }
 
 function TabIcon({ name, focused, color, size }: TabIconProps) {
-  return <MaterialIcons name={name} size={size} color={color} />;
+  return <MaterialIcons name={name} size={size} color={color as string} />;
 }
 
 export default function TabLayout() {
