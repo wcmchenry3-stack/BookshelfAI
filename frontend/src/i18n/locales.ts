@@ -19,6 +19,4 @@ export const LOCALES = [
 export type LocaleCode = (typeof LOCALES)[number]['code'];
 
 const isRtl = (dir: string) => dir === 'rtl';
-export const RTL_LOCALES = new Set<string>(
-  LOCALES.filter((l) => isRtl(l.dir)).map((l) => l.code)
-);
+export const RTL_LOCALES = new Set<string>(LOCALES.filter((l) => isRtl(l.dir)).map((l) => l.code));

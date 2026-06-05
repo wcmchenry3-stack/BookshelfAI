@@ -29,7 +29,13 @@ jest.mock('expo-router', () => {
   const { View, Text } = require('react-native');
   const g = global as any;
 
-  function MockTabs({ children, screenOptions }: { children: React.ReactNode; screenOptions: any }) {
+  function MockTabs({
+    children,
+    screenOptions,
+  }: {
+    children: React.ReactNode;
+    screenOptions: any;
+  }) {
     // screenOptions is a function in the new layout — call it to get the resolved object
     const resolved =
       typeof screenOptions === 'function'
@@ -63,7 +69,8 @@ jest.mock('expo-router', () => {
 jest.mock('@expo/vector-icons', () => {
   const React = require('react');
   const { Text } = require('react-native');
-  const MockIcon = ({ name }: { name: string }) => React.createElement(Text, { testID: `icon-${name}` }, name);
+  const MockIcon = ({ name }: { name: string }) =>
+    React.createElement(Text, { testID: `icon-${name}` }, name);
   return {
     Ionicons: MockIcon,
     MaterialIcons: MockIcon,
@@ -92,9 +99,7 @@ describe('TabLayout', () => {
 
   it('tab titles use i18n keys', () => {
     render(<TabLayout />);
-    const titles = g.__mockScreenProps.map(
-      (s: { options: { title: string } }) => s.options.title
-    );
+    const titles = g.__mockScreenProps.map((s: { options: { title: string } }) => s.options.title);
     expect(titles).toEqual(['Scan', 'Wishlist', 'My Books', 'Settings']);
   });
 
