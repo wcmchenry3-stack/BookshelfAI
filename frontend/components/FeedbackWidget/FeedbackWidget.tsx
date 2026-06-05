@@ -196,7 +196,6 @@ export function FeedbackWidget({ visible, onClose }: Props) {
                   maxLength={TITLE_MAX}
                   returnKeyType="next"
                   accessibilityLabelledBy="feedback-title-label"
-                  accessibilityRequired
                 />
                 {titleError ? (
                   <Text
@@ -236,7 +235,6 @@ export function FeedbackWidget({ visible, onClose }: Props) {
                   maxLength={DESCRIPTION_MAX}
                   textAlignVertical="top"
                   accessibilityLabelledBy="feedback-desc-label"
-                  accessibilityRequired
                 />
                 {descError ? (
                   <Text
