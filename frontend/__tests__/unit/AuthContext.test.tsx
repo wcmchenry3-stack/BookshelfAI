@@ -79,6 +79,7 @@ describe('AuthProvider', () => {
     let capturedLogin: (token: string) => Promise<void> = async () => {};
     function LoginCapture() {
       const { login } = useContext(AuthContext);
+      // eslint-disable-next-line react-hooks/globals
       capturedLogin = login;
       return null;
     }
@@ -107,6 +108,7 @@ describe('AuthProvider', () => {
     let capturedLogout: () => Promise<void> = async () => {};
     function LogoutCapture() {
       const { logout } = useContext(AuthContext);
+      // eslint-disable-next-line react-hooks/globals
       capturedLogout = logout;
       return null;
     }

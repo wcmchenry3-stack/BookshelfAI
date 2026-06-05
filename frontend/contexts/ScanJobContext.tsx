@@ -66,127 +66,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // Listen for connectivity changes and drain queued jobs.
-  useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener((state) => {
-      if (state.isConnected && !drainingRef.current) {
-        drainQueue();
-      }
-    });
-    return unsubscribe;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
-
   function updateJob(jobId: string, updates: Partial<ScanJob>) {
     setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, ...updates } : j)));
   }
 
-  // Keep executeScan in a ref so useCallbacks always call the latest version.
-  executeScanRef.current = async function executeScan(job: ScanJob) {
-    updateJob(job.id, { status: 'searching' });
-
-    try {
-      let results: EnrichedBook[];
-
-      if (job.type === 'text') {
-        const response = await api.get<EnrichedBook[]>('/books/search', {
-          params: { q: job.query },
-        });
-        results = response.data ?? [];
-      } else {
-        const formData = new FormData();
-        if (Platform.OS === 'web') {
-          // On web, imageUri is a blob URL or the File was already lost.
-          // For web, we store the File object reference separately — but since
-          // web doesn't persist the queue, this path only runs for live scans.
-          formData.append('file', job.imageUri as unknown as Blob, 'scan.jpg');
-        } else {
-          formData.append('file', {
-            uri: job.imageUri,
-            name: 'scan.jpg',
-            type: 'image/jpeg',
-          } as unknown as Blob);
-        }
-        const response = await api.post<EnrichedBook[]>('/scan', formData, {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          transformRequest: [
-            (data: FormData, headers: any) => {
-              if (Platform.OS === 'web') {
-                headers.delete('Content-Type');
-              } else {
-                headers.set('Content-Type', 'multipart/form-data');
-              }
-              return data;
-            },
-          ],
-        });
-        results = response.data ?? [];
-      }
-
-      if (results.length === 0) {
-        updateJob(job.id, { status: 'failed', error: 'no_results' });
-        showBanner({
-          message: t('noBooksFoundTitle'),
-          type: 'info',
-          duration: 4000,
-        });
-        return;
-      }
-
-      updateJob(job.id, { status: 'complete', results });
-      showBanner({
-        message: t('bookFound', { title: results[0].title }),
-        type: 'success',
-        actions: [
-          {
-            label: t('viewResults'),
-            onPress: () => setReviewingJobId(job.id),
-          },
-        ],
-      });
-    } catch (err) {
-      // A status-0 / no-response error almost always means the OS suspended
-      // the upload mid-flight (app backgrounded). Auto-queue so it drains
-      // on return instead of asking the user to manually retry. (#213)
-      const isNetworkSuspend =
-        err != null &&
-        typeof err === 'object' &&
-        'response' in err &&
-        (err as { response: unknown }).response == null;
-
-      if (isNetworkSuspend) {
-        Sentry.addBreadcrumb({
-          category: 'scan',
-          message: 'Scan upload interrupted by backgrounding — auto-queued',
-          level: 'warning',
-          data: { jobId: job.id },
-        });
-        updateJob(job.id, { status: 'queued' });
-        showBanner({
-          message: t('savedOffline'),
-          type: 'info',
-          duration: 4000,
-        });
-        return;
-      }
-
-      Sentry.captureException(err, {
-        tags: { feature: 'scan', action: 'execute_scan', jobType: job.type },
-      });
-      updateJob(job.id, { status: 'failed', error: 'network_or_server' });
-      showBanner({
-        message: t('scanFailedTitle'),
-        type: 'error',
-        actions: [
-          { label: t('retryNow'), onPress: () => retryScan(job.id) },
-          { label: t('saveForLater'), onPress: () => queueForLater(job.id) },
-        ],
-        duration: 8000,
-      });
-    }
-  };
-
-  async function drainQueue() {
+  // Drain queued/pending jobs when connectivity is restored. Declared before
+  // the connectivity effect to satisfy no-use-before-define. Only uses stable
+  // refs and setJobs so deps are empty.
+  const drainQueue = useCallback(async () => {
     drainingRef.current = true;
     try {
       // Read the latest jobs from state via a callback to avoid stale closures.
@@ -208,7 +95,18 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     } finally {
       drainingRef.current = false;
     }
-  }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for connectivity changes and drain queued jobs.
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected && !drainingRef.current) {
+        drainQueue();
+      }
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   const startScan = useCallback(
     async (type: ScanJobType, imageUri?: string, query?: string) => {
@@ -217,6 +115,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           id: Crypto.randomUUID(),
           type,
           status: 'pending',
+          // eslint-disable-next-line react-hooks/purity
           createdAt: Date.now(),
           query,
           imageUri,
@@ -259,7 +158,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
   // Keep jobs in a ref so retryScan can read the latest state synchronously.
   const jobsRef = useRef(jobs);
-  jobsRef.current = jobs;
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
 
   const retryScan = useCallback(
     async (jobId: string) => {
@@ -359,6 +260,112 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     },
     [reviewingJobId, dismissJob, showBanner, t]
   );
+
+  // Keep executeScan in a ref so useCallbacks always call the latest version
+  // without creating circular deps. Updated after every render so closures
+  // always capture the current retryScan / queueForLater callbacks.
+  useEffect(() => {
+    executeScanRef.current = async function executeScan(job: ScanJob) {
+      updateJob(job.id, { status: 'searching' });
+
+      try {
+        let results: EnrichedBook[];
+
+        if (job.type === 'text') {
+          const response = await api.get<EnrichedBook[]>('/books/search', {
+            params: { q: job.query },
+          });
+          results = response.data ?? [];
+        } else {
+          const formData = new FormData();
+          if (Platform.OS === 'web') {
+            formData.append('file', job.imageUri as unknown as Blob, 'scan.jpg');
+          } else {
+            formData.append('file', {
+              uri: job.imageUri,
+              name: 'scan.jpg',
+              type: 'image/jpeg',
+            } as unknown as Blob);
+          }
+          const response = await api.post<EnrichedBook[]>('/scan', formData, {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            transformRequest: [
+              (data: FormData, headers: any) => {
+                if (Platform.OS === 'web') {
+                  headers.delete('Content-Type');
+                } else {
+                  headers.set('Content-Type', 'multipart/form-data');
+                }
+                return data;
+              },
+            ],
+          });
+          results = response.data ?? [];
+        }
+
+        if (results.length === 0) {
+          updateJob(job.id, { status: 'failed', error: 'no_results' });
+          showBanner({
+            message: t('noBooksFoundTitle'),
+            type: 'info',
+            duration: 4000,
+          });
+          return;
+        }
+
+        updateJob(job.id, { status: 'complete', results });
+        showBanner({
+          message: t('bookFound', { title: results[0].title }),
+          type: 'success',
+          actions: [
+            {
+              label: t('viewResults'),
+              onPress: () => setReviewingJobId(job.id),
+            },
+          ],
+        });
+      } catch (err) {
+        // A status-0 / no-response error almost always means the OS suspended
+        // the upload mid-flight (app backgrounded). Auto-queue so it drains
+        // on return instead of asking the user to manually retry. (#213)
+        const isNetworkSuspend =
+          err != null &&
+          typeof err === 'object' &&
+          'response' in err &&
+          (err as { response: unknown }).response == null;
+
+        if (isNetworkSuspend) {
+          Sentry.addBreadcrumb({
+            category: 'scan',
+            message: 'Scan upload interrupted by backgrounding — auto-queued',
+            level: 'warning',
+            data: { jobId: job.id },
+          });
+          updateJob(job.id, { status: 'queued' });
+          showBanner({
+            message: t('savedOffline'),
+            type: 'info',
+            duration: 4000,
+          });
+          return;
+        }
+
+        Sentry.captureException(err, {
+          tags: { feature: 'scan', action: 'execute_scan', jobType: job.type },
+        });
+        updateJob(job.id, { status: 'failed', error: 'network_or_server' });
+        showBanner({
+          message: t('scanFailedTitle'),
+          type: 'error',
+          actions: [
+            { label: t('retryNow'), onPress: () => retryScan(job.id) },
+            { label: t('saveForLater'), onPress: () => queueForLater(job.id) },
+          ],
+          duration: 8000,
+        });
+      }
+    };
+  }, [showBanner, t, retryScan, queueForLater]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reviewingJob = useMemo(
     () => (reviewingJobId ? (jobs.find((j) => j.id === reviewingJobId) ?? null) : null),
