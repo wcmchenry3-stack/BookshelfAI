@@ -194,6 +194,7 @@ _REQUIRED_HEADERS = {
     "x-xss-protection": "0",
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    "cross-origin-resource-policy": "same-origin",
 }
 
 

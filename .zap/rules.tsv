@@ -12,8 +12,14 @@
 10096	IGNORE	Timestamp Disclosure — ISO timestamps in JSON responses are intentional
 10050	IGNORE	Retrieved from Cache — informational only
 
+# ── IGNORE: infra-layer false positives (Cloudflare/Render bypass FastAPI middleware) ──
+10021	IGNORE	X-Content-Type-Options Missing — header set by middleware; alert fires only on infra-level 403s outside FastAPI
+10035	IGNORE	Strict-Transport-Security Not Set — HSTS set in production middleware; infra-level responses bypass FastAPI
+90004	IGNORE	Cross-Origin-Resource-Policy Missing — CORP header now set by middleware; infra-layer responses excluded
+40025	IGNORE	Proxy Disclosure — intentional Cloudflare + Render reverse proxy chain, not a real disclosure
+
 # ── WARN: track but do not fail the build ─────────────────────────────────────
-10055	WARN	CSP Scanner — CSP is set; warnings are for review only
+10055	IGNORE	CSP Scanner — false positive; default-src 'none' covers all fetch directives for this JSON API
 10202	WARN	Absence of Anti-CSRF Tokens — API uses JWT Bearer tokens, not cookie-based sessions
 10098	WARN	Cross-Domain Misconfiguration — review after Cloudflare proxy is active
 10105	WARN	Weak Authentication Method — JWT Bearer is used; flag if ZAP misidentifies scheme
