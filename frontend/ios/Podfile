@@ -66,7 +66,14 @@ target 'BookShelfAI' do
     # Apple Clang advertises __cpp_consteval but cannot evaluate consteval
     # expressions in format-inl.h. Patch the header to force consteval off.
     # Supports both fmt 11.x (base.h / FMT_USE_CONSTEVAL) and 9.x (core.h).
-    fmt_dir = File.join(installer.sandbox.root, 'fmt', 'include', 'fmt')
+    # RN 0.85+: fmt is bundled inside ReactNativeDependencies, not a standalone pod.
+    # Check both locations so the patch works across RN versions.
+    fmt_search_dirs = [
+      File.join(installer.sandbox.root, 'ReactNativeDependencies', 'Headers', 'fmt'),
+      File.join(installer.sandbox.root, 'fmt', 'include', 'fmt'),
+    ]
+    fmt_dir = fmt_search_dirs.find { |d| File.exist?(File.join(d, 'base.h')) || File.exist?(File.join(d, 'core.h')) }
+    fmt_dir ||= fmt_search_dirs.first  # fallback keeps the rest of the code from crashing
     fmt_base = File.join(fmt_dir, 'base.h')
     fmt_core = File.join(fmt_dir, 'core.h')
     if File.exist?(fmt_base)
