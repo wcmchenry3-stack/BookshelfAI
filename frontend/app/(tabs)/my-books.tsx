@@ -4,6 +4,7 @@ import {
   FlatList,
   Image,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -14,8 +15,8 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { useTheme } from '../../hooks/useTheme';
@@ -59,8 +60,10 @@ const SCREEN_PADDING = 16;
 export default function MyBooksScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation('my-books');
-  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
   // Transparent header only in dark mode — push content below the floating header.
+  // Standard nav bar height: 44px (iOS) / 56px (Android) + safe-area top inset.
+  const headerHeight = Platform.OS === 'android' ? 56 : insets.top + 44;
   const topPad = theme.isDark ? headerHeight : 0;
   // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
   const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
