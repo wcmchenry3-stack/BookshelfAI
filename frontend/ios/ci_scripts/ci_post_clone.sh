@@ -54,7 +54,7 @@ retry 3 10 npm ci
 
 # Install CocoaPods dependencies
 cd ios
-# NOTE: Podfile.lock is committed and up-to-date (regenerated in a54d09b for RN 0.83).
+# NOTE: Podfile.lock is committed and up-to-date (regenerated for RN 0.85.3 / SDK 56).
 # Do NOT delete it — using the committed lock ensures reproducible pod versions across
 # CI builds and prevents Hermes/React-Native runtime drift that can cause
 # handleBundleLoadingError crashes at launch.

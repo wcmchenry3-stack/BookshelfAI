@@ -71,6 +71,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = (
             "default-src 'none'; frame-ancestors 'none'"
         )
+        # Prevents cross-origin sites from embedding this API's responses as a
+        # resource (e.g. via <img>, <script>). Safe for a JSON-only API.
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         # HSTS must only be sent over HTTPS. Sending it over HTTP in development
         # causes browsers to cache an HSTS policy for localhost, breaking local dev.
         if settings.environment == "production":

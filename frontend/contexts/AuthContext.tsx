@@ -34,22 +34,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // Register logout as the auth-failure callback so api.ts can signal session expiry
-  useEffect(() => {
-    setAuthFailureCallback(logout);
-  }, [logout]);
-
-  // Redirect based on auth state
-  useEffect(() => {
-    if (isLoading) return;
-    const inAuthGroup = segments[0] === '(auth)';
-    if (!isAuthenticated && !inAuthGroup) {
-      router.replace('/(auth)/login');
-    } else if (isAuthenticated && inAuthGroup) {
-      router.replace('/(tabs)/my-books');
-    }
-  }, [isAuthenticated, isLoading, segments, router]);
-
   const login = useCallback(async (idToken: string) => {
     const { data } = await api.post('/auth/google', { id_token: idToken });
     await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
@@ -68,6 +52,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await storage.deleteItem(REFRESH_TOKEN_KEY);
     setIsAuthenticated(false);
   }, []);
+
+  // Register logout as the auth-failure callback so api.ts can signal session expiry
+  useEffect(() => {
+    setAuthFailureCallback(logout);
+  }, [logout]);
+
+  // Redirect based on auth state
+  useEffect(() => {
+    if (isLoading) return;
+    const inAuthGroup = segments[0] === '(auth)';
+    if (!isAuthenticated && !inAuthGroup) {
+      router.replace('/(auth)/login');
+    } else if (isAuthenticated && inAuthGroup) {
+      router.replace('/(tabs)/my-books');
+    }
+  }, [isAuthenticated, isLoading, segments, router]);
 
   return (
     <AuthContext.Provider value={{ isAuthenticated, isLoading, login, testLogin, logout }}>

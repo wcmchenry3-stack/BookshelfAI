@@ -3,6 +3,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -10,8 +11,8 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { useTheme } from '../../hooks/useTheme';
@@ -34,8 +35,10 @@ interface UserBook {
 export default function WishlistScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation('wishlist');
-  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
   // Transparent header only in dark mode — push list content below it.
+  // Standard nav bar height: 44px (iOS) / 56px (Android) + safe-area top inset.
+  const headerHeight = Platform.OS === 'android' ? 56 : insets.top + 44;
   const topPad = theme.isDark ? headerHeight : 0;
   // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
   const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
