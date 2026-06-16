@@ -34,7 +34,7 @@
     "i18next": "^26.0.2",
     "i18next-resources-to-backend": "^1.2.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "react-dom": "19.2.7",
     "react-i18next": "^17.0.8",
     "react-native": "0.85.3",
     "react-native-safe-area-context": "~5.7.0",
