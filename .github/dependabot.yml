@@ -71,6 +71,13 @@ updates:
           - "version-update:semver-minor"
       - dependency-name: "react"
         update-types: ["version-update:semver-major"]
+      # Expo SDK 56 compatibility matrix requires ~7.11.0 — block all bumps until
+      # Expo explicitly supports a newer major.
+      - dependency-name: "@sentry/react-native"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     labels:
       - "dependencies"
       - "frontend"
