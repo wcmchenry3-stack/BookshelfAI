@@ -60,6 +60,9 @@
   },
   "jest": {
     "preset": "jest-expo",
+    "modulePaths": [
+      "<rootDir>/node_modules/expo/node_modules"
+    ],
     "setupFilesAfterEnv": [
       "./jest.setup.ts"
     ],
