@@ -16,23 +16,23 @@ jest.mock('../../theme/ThemeContext', () => ({
 }));
 
 describe('useAuth', () => {
-  it('returns the AuthContext value', () => {
+  it('returns the AuthContext value', async () => {
     const { AuthContext } = require('../../contexts/AuthContext');
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <AuthContext.Provider value={mockAuthValue}>{children}</AuthContext.Provider>
     );
-    const { result } = renderHook(() => useAuth(), { wrapper });
+    const { result } = await renderHook(() => useAuth(), { wrapper });
     expect(result.current).toBe(mockAuthValue);
   });
 });
 
 describe('useTheme', () => {
-  it('returns the ThemeContext value', () => {
+  it('returns the ThemeContext value', async () => {
     const { ThemeContext } = require('../../theme/ThemeContext');
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <ThemeContext.Provider value={mockThemeValue}>{children}</ThemeContext.Provider>
     );
-    const { result } = renderHook(() => useTheme(), { wrapper });
+    const { result } = await renderHook(() => useTheme(), { wrapper });
     expect(result.current).toBe(mockThemeValue);
   });
 });

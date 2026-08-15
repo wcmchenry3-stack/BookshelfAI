@@ -24,22 +24,22 @@ beforeEach(() => {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('Index (root redirect)', () => {
-  it('shows loading indicator while auth state resolves', () => {
+  it('shows loading indicator while auth state resolves', async () => {
     mockUseAuth.mockReturnValue({ isAuthenticated: false, isLoading: true });
-    const { queryByTestId, UNSAFE_queryByType } = render(<Index />);
+    const { queryByTestId, UNSAFE_queryByType } = await render(<Index />);
     // Should NOT redirect while loading
     expect(queryByTestId('redirect')).toBeNull();
   });
 
   it('redirects to my-books when authenticated', async () => {
     mockUseAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
-    const { getByTestId } = render(<Index />);
+    const { getByTestId } = await render(<Index />);
     expect(getByTestId('redirect').props.children).toBe('/(tabs)/my-books');
   });
 
   it('redirects to login when not authenticated', async () => {
     mockUseAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
-    const { getByTestId } = render(<Index />);
+    const { getByTestId } = await render(<Index />);
     expect(getByTestId('redirect').props.children).toBe('/(auth)/login');
   });
 });

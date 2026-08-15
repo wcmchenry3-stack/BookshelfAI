@@ -27,7 +27,7 @@ describe('ThemeProvider', () => {
   });
 
   it('provides light mode by default (no system pref, no stored pref)', async () => {
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <ThemeProvider>
         <ModeDisplay />
       </ThemeProvider>
@@ -44,7 +44,7 @@ describe('ThemeProvider', () => {
       capturedTheme = theme;
       return null;
     }
-    render(
+    await render(
       <ThemeProvider>
         <ThemeCapture />
       </ThemeProvider>
@@ -54,32 +54,32 @@ describe('ThemeProvider', () => {
   });
 
   it('toggleTheme switches from light to dark', async () => {
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <ThemeProvider>
         <ModeDisplay />
       </ThemeProvider>
     );
     await act(async () => {});
-    fireEvent.press(getByTestId('mode'));
+    await fireEvent.press(getByTestId('mode'));
     expect(getByTestId('mode').props.children.join('')).toBe('dark:dark');
   });
 
   it('toggleTheme persists preference to SecureStore', async () => {
     const SecureStore = require('expo-secure-store');
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <ThemeProvider>
         <ModeDisplay />
       </ThemeProvider>
     );
     await act(async () => {});
-    fireEvent.press(getByTestId('mode'));
+    await fireEvent.press(getByTestId('mode'));
     expect(SecureStore.setItemAsync).toHaveBeenCalledWith('bookshelf_theme_preference', 'dark');
   });
 
   it('loads persisted dark preference from SecureStore on mount', async () => {
     const SecureStore = require('expo-secure-store');
     SecureStore.getItemAsync.mockResolvedValueOnce('dark');
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <ThemeProvider>
         <ModeDisplay />
       </ThemeProvider>
@@ -91,7 +91,7 @@ describe('ThemeProvider', () => {
   it('ignores invalid stored preference values', async () => {
     const SecureStore = require('expo-secure-store');
     SecureStore.getItemAsync.mockResolvedValueOnce('invalid-value');
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <ThemeProvider>
         <ModeDisplay />
       </ThemeProvider>

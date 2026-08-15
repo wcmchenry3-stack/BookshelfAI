@@ -13,19 +13,18 @@ jest.mock('../../hooks/useTheme', () => ({
 }));
 
 describe('LoadingSpinner', () => {
-  it('renders the activity indicator', () => {
-    const { UNSAFE_getByType } = render(<LoadingSpinner />);
-    const { ActivityIndicator } = require('react-native');
-    expect(UNSAFE_getByType(ActivityIndicator)).toBeTruthy();
+  it('renders the activity indicator', async () => {
+    const { getByTestId } = await render(<LoadingSpinner />);
+    expect(getByTestId('loading-spinner')).toBeTruthy();
   });
 
-  it('shows message text when provided', () => {
-    const { getByText } = render(<LoadingSpinner message="Loading books…" />);
+  it('shows message text when provided', async () => {
+    const { getByText } = await render(<LoadingSpinner message="Loading books…" />);
     expect(getByText('Loading books…')).toBeTruthy();
   });
 
-  it('does not render message text when omitted', () => {
-    const { queryByText } = render(<LoadingSpinner />);
+  it('does not render message text when omitted', async () => {
+    const { queryByText } = await render(<LoadingSpinner />);
     expect(queryByText(/./)).toBeNull();
   });
 });

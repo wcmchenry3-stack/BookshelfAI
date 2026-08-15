@@ -14,17 +14,17 @@ jest.mock('../../contexts/BannerContext', () => ({
 }));
 
 describe('useBanner', () => {
-  it('returns the BannerContext value when wrapped in provider', () => {
+  it('returns the BannerContext value when wrapped in provider', async () => {
     const { BannerContext } = require('../../contexts/BannerContext');
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <BannerContext.Provider value={mockContextValue}>{children}</BannerContext.Provider>
     );
-    const { result } = renderHook(() => useBanner(), { wrapper });
+    const { result } = await renderHook(() => useBanner(), { wrapper });
     expect(result.current).toBe(mockContextValue);
   });
 
-  it('returns null when no provider is present', () => {
-    const { result } = renderHook(() => useBanner());
+  it('returns null when no provider is present', async () => {
+    const { result } = await renderHook(() => useBanner());
     expect(result.current).toBeNull();
   });
 });

@@ -67,39 +67,39 @@ beforeEach(() => {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('LoginScreen', () => {
-  it('renders the app title', () => {
-    const { getByText } = render(<LoginScreen />);
+  it('renders the app title', async () => {
+    const { getByText } = await render(<LoginScreen />);
     expect(getByText('BookshelfAI')).toBeTruthy();
   });
 
-  it('renders Sign in button when request is ready', () => {
-    const { getByLabelText } = render(<LoginScreen />);
+  it('renders Sign in button when request is ready', async () => {
+    const { getByLabelText } = await render(<LoginScreen />);
     expect(getByLabelText('Sign in with Google')).toBeTruthy();
   });
 
-  it('shows Sign in text when request is truthy', () => {
-    const { getByText } = render(<LoginScreen />);
+  it('shows Sign in text when request is truthy', async () => {
+    const { getByText } = await render(<LoginScreen />);
     expect(getByText('Sign in with Google')).toBeTruthy();
   });
 
-  it('shows ActivityIndicator when request is not yet ready', () => {
+  it('shows ActivityIndicator when request is not yet ready', async () => {
     setupGoogleAuth({ request: null });
-    const { queryByText, getByLabelText } = render(<LoginScreen />);
+    const { queryByText, getByLabelText } = await render(<LoginScreen />);
     // Button label is still present (for accessibility) but text content is a spinner
     expect(queryByText('Sign in with Google')).toBeNull();
     expect(getByLabelText('Sign in with Google')).toBeTruthy();
   });
 
-  it('button is disabled when request is null', () => {
+  it('button is disabled when request is null', async () => {
     setupGoogleAuth({ request: null });
-    const { getByLabelText } = render(<LoginScreen />);
+    const { getByLabelText } = await render(<LoginScreen />);
     const btn = getByLabelText('Sign in with Google');
     expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeTruthy();
   });
 
-  it('calls promptAsync when button pressed', () => {
-    const { getByLabelText } = render(<LoginScreen />);
-    fireEvent.press(getByLabelText('Sign in with Google'));
+  it('calls promptAsync when button pressed', async () => {
+    const { getByLabelText } = await render(<LoginScreen />);
+    await fireEvent.press(getByLabelText('Sign in with Google'));
     expect(mockPromptAsync).toHaveBeenCalled();
   });
 
@@ -108,19 +108,19 @@ describe('LoginScreen', () => {
       response: { type: 'success', params: { id_token: 'google-id-token-abc' } },
     });
     mockLogin.mockResolvedValue(undefined);
-    render(<LoginScreen />);
+    await render(<LoginScreen />);
     await waitFor(() => expect(mockLogin).toHaveBeenCalledWith('google-id-token-abc'));
   });
 
   it('does not call login when response type is not success', async () => {
     setupGoogleAuth({ response: { type: 'dismiss' } });
-    render(<LoginScreen />);
+    await render(<LoginScreen />);
     await waitFor(() => expect(mockLogin).not.toHaveBeenCalled());
   });
 
   it('does not call login when response is null', async () => {
     setupGoogleAuth({ response: null });
-    render(<LoginScreen />);
+    await render(<LoginScreen />);
     await waitFor(() => expect(mockLogin).not.toHaveBeenCalled());
   });
 
@@ -130,7 +130,7 @@ describe('LoginScreen', () => {
       response: { type: 'success', params: { id_token: 'bad-token' } },
     });
     mockLogin.mockRejectedValue(new Error('401 Unauthorized'));
-    render(<LoginScreen />);
+    await render(<LoginScreen />);
     await waitFor(() =>
       expect(alertSpy).toHaveBeenCalledWith('Error', 'Sign-in failed. Please try again.')
     );

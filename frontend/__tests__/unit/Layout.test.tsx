@@ -149,8 +149,8 @@ describe('RootLayout (_layout.tsx)', () => {
   });
 
   describe('rendering', () => {
-    it('renders without crashing', () => {
-      const { getByTestId } = render(<RootLayoutDefault />);
+    it('renders without crashing', async () => {
+      const { getByTestId } = await render(<RootLayoutDefault />);
       expect(getByTestId('stack')).toBeTruthy();
     });
   });

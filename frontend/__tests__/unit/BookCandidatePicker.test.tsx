@@ -49,8 +49,8 @@ describe('BookCandidatePicker', () => {
     jest.clearAllMocks();
   });
 
-  it('renders nothing meaningful when not visible', () => {
-    const { queryByText } = render(
+  it('renders nothing meaningful when not visible', async () => {
+    const { queryByText } = await render(
       <BookCandidatePicker
         visible={false}
         candidates={BOOKS}
@@ -61,8 +61,8 @@ describe('BookCandidatePicker', () => {
     expect(queryByText('Dune')).toBeNull();
   });
 
-  it('renders candidate titles when visible', () => {
-    const { getByText } = render(
+  it('renders candidate titles when visible', async () => {
+    const { getByText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -74,8 +74,8 @@ describe('BookCandidatePicker', () => {
     expect(getByText('Foundation')).toBeTruthy();
   });
 
-  it('renders author names', () => {
-    const { getByText } = render(
+  it('renders author names', async () => {
+    const { getByText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -87,8 +87,8 @@ describe('BookCandidatePicker', () => {
     expect(getByText('Isaac Asimov')).toBeTruthy();
   });
 
-  it('shows publish year when available', () => {
-    const { getByText } = render(
+  it('shows publish year when available', async () => {
+    const { getByText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -99,8 +99,8 @@ describe('BookCandidatePicker', () => {
     expect(getByText('1965')).toBeTruthy();
   });
 
-  it('shows Already owned badge for books in library', () => {
-    const { getByText } = render(
+  it('shows Already owned badge for books in library', async () => {
+    const { getByText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -111,8 +111,8 @@ describe('BookCandidatePicker', () => {
     expect(getByText('Already owned')).toBeTruthy();
   });
 
-  it('calls onSelect with the correct book when tapped', () => {
-    const { getByLabelText } = render(
+  it('calls onSelect with the correct book when tapped', async () => {
+    const { getByLabelText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -120,12 +120,12 @@ describe('BookCandidatePicker', () => {
         onDismiss={onDismiss}
       />
     );
-    fireEvent.press(getByLabelText('Select Dune by Frank Herbert'));
+    await fireEvent.press(getByLabelText('Select Dune by Frank Herbert'));
     expect(onSelect).toHaveBeenCalledWith(BOOKS[0]);
   });
 
-  it('calls onDismiss when Cancel is pressed', () => {
-    const { getByLabelText } = render(
+  it('calls onDismiss when Cancel is pressed', async () => {
+    const { getByLabelText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -133,12 +133,12 @@ describe('BookCandidatePicker', () => {
         onDismiss={onDismiss}
       />
     );
-    fireEvent.press(getByLabelText('Close picker'));
+    await fireEvent.press(getByLabelText('Close picker'));
     expect(onDismiss).toHaveBeenCalled();
   });
 
-  it('calls onDismiss when None of these is pressed', () => {
-    const { getByLabelText } = render(
+  it('calls onDismiss when None of these is pressed', async () => {
+    const { getByLabelText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -146,12 +146,12 @@ describe('BookCandidatePicker', () => {
         onDismiss={onDismiss}
       />
     );
-    fireEvent.press(getByLabelText('None of these books match'));
+    await fireEvent.press(getByLabelText('None of these books match'));
     expect(onDismiss).toHaveBeenCalled();
   });
 
-  it('renders cover placeholder when cover_url is absent', () => {
-    const { getAllByLabelText } = render(
+  it('renders cover placeholder when cover_url is absent', async () => {
+    const { getAllByLabelText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -163,9 +163,9 @@ describe('BookCandidatePicker', () => {
     expect(getAllByLabelText('No cover available').length).toBe(2);
   });
 
-  it('renders cover image when cover_url is present', () => {
+  it('renders cover image when cover_url is present', async () => {
     const withCover: EnrichedBook[] = [{ ...BOOKS[0], cover_url: 'https://example.com/cover.jpg' }];
-    const { getByLabelText } = render(
+    const { getByLabelText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={withCover}
