@@ -30,19 +30,20 @@ class TestCleanupExpiredTokens:
     async def test_deletes_expired_tokens_and_logs(self, caplog) -> None:
         """A single cleanup run must execute a DELETE and commit."""
 
-        mock_factory, mock_session, mock_result = _make_db_mock(rowcount=5)
+        mock_factory, mock_session, _mock_result = _make_db_mock(rowcount=5)
 
-        with patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory), patch(
-            "app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0
-        ), patch("app.services.token_cleanup._INTERVAL_SECONDS", 0):
-
+        with (
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 0),
+            pytest.raises(asyncio.CancelledError),
+        ):
             # Run two ticks then cancel
-            with pytest.raises(asyncio.CancelledError):
-                task = asyncio.create_task(cleanup_expired_tokens())
-                await asyncio.sleep(0)  # let it start
-                await asyncio.sleep(0)  # let it run the first iteration
-                task.cancel()
-                await task
+            task = asyncio.create_task(cleanup_expired_tokens())
+            await asyncio.sleep(0)  # let it start
+            await asyncio.sleep(0)  # let it run the first iteration
+            task.cancel()
+            await task
 
         mock_session.execute.assert_called()
         mock_session.commit.assert_called()
@@ -53,16 +54,17 @@ class TestCleanupExpiredTokens:
 
         mock_factory, mock_session, _ = _make_db_mock()
 
-        with patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory), patch(
-            "app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0
-        ), patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999):
-
-            with pytest.raises(asyncio.CancelledError):
-                task = asyncio.create_task(cleanup_expired_tokens())
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
-                task.cancel()
-                await task
+        with (
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            task = asyncio.create_task(cleanup_expired_tokens())
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            task.cancel()
+            await task
 
         # Confirm execute was called with a DELETE statement
         assert mock_session.execute.called
@@ -81,7 +83,7 @@ class TestCleanupExpiredTokens:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise Exception("connection lost")
+                raise ConnectionError("connection lost")
             result = MagicMock()
             result.rowcount = 0
             return result
@@ -89,19 +91,19 @@ class TestCleanupExpiredTokens:
         mock_factory, mock_session, _ = _make_db_mock()
         mock_session.execute = flaky_execute
 
-        with patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory), patch(
-            "app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0
-        ), patch("app.services.token_cleanup._INTERVAL_SECONDS", 0), caplog.at_level(
-            logging.ERROR, logger="app.services.token_cleanup"
+        with (
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 0),
+            caplog.at_level(logging.ERROR, logger="app.services.token_cleanup"),
+            pytest.raises(asyncio.CancelledError),
         ):
-
-            with pytest.raises(asyncio.CancelledError):
-                task = asyncio.create_task(cleanup_expired_tokens())
-                # Let it run through the error and at least one successful pass
-                for _ in range(4):
-                    await asyncio.sleep(0)
-                task.cancel()
-                await task
+            task = asyncio.create_task(cleanup_expired_tokens())
+            # Let it run through the error and at least one successful pass
+            for _ in range(4):
+                await asyncio.sleep(0)
+            task.cancel()
+            await task
 
         assert "error during cleanup run" in caplog.text
         # Verify it kept running past the error
@@ -110,7 +112,7 @@ class TestCleanupExpiredTokens:
     @pytest.mark.asyncio
     async def test_cancelled_error_propagates_cleanly(self) -> None:
         """asyncio.CancelledError must propagate so the lifespan can await the task."""
-        mock_factory, mock_session, _ = _make_db_mock()
+        mock_factory, _mock_session, _ = _make_db_mock()
 
         with patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory), patch(
             "app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0

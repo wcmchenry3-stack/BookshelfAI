@@ -16,9 +16,8 @@ Expand GOLDEN_DATASET as you scan more books.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 import httpx
+import pytest
 
 from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate

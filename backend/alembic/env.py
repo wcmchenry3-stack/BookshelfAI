@@ -1,13 +1,13 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.core.config import settings
-from app.core.database import Base  # noqa: F401
 import app.models  # noqa: F401 — registers all models with Base.metadata
+from alembic import context
+from app.core.config import settings
+from app.core.database import Base
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.async_database_url)
@@ -24,9 +24,7 @@ def include_object(object, name, type_, reflected, compare_to):
     # and unnamed unique constraints, causing false positives in `alembic check`.
     # Excluding these object types prevents spurious diffs while still detecting
     # table, column, and check constraint changes.
-    if type_ in ("index", "unique_constraint"):
-        return False
-    return True
+    return type_ not in ("index", "unique_constraint")
 
 
 def run_migrations_offline() -> None:

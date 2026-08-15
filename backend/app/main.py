@@ -6,14 +6,13 @@ from datetime import datetime, timedelta, timezone
 
 import sentry_sdk
 from fastapi import FastAPI, Request
-from sqlalchemy import select
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from slowapi import _rate_limit_exceeded_handler as _slowapi_429
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import text
+from sqlalchemy import select, text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
@@ -205,7 +204,8 @@ async def health(request: Request) -> JSONResponse:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
         db_status = "ok"
-    except Exception:
+    # Any DB failure means the health check reports "error".
+    except Exception:  # noqa: BLE001
         db_status = "error"
 
     healthy = db_status == "ok"
@@ -220,7 +220,7 @@ if settings.environment != "production":
     @app.get("/debug/sentry-test")
     @limiter.limit("5/minute")
     async def sentry_test(request: Request) -> JSONResponse:
-        1 / 0  # intentional — triggers Sentry capture
+        1 / 0  # noqa: B018 — intentional, triggers Sentry capture
 
     @app.post("/auth/test-login")
     @limiter.limit("2/minute")
