@@ -28,7 +28,7 @@ jobs:
       # Keep in sync with backend/requirements-dev.txt — unpinned installs let
       # upstream rule changes silently break lint on unrelated PRs.
       black-version: '26.5.1'
-      ruff-version: '0.15.20'
+      ruff-version: '0.16.2'
     secrets: inherit
 
   lint-frontend:

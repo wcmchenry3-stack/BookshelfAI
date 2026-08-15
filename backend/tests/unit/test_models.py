@@ -7,11 +7,9 @@ SQLAlchemy only connects when an actual async session operation runs.
 import uuid
 
 from app.models.book import Book
-from app.models.edition import Edition
-from app.models.edition import VALID_FORMATS
+from app.models.edition import VALID_FORMATS, Edition
 from app.models.user import User
-from app.models.user_book import UserBook
-from app.models.user_book import VALID_STATUSES
+from app.models.user_book import VALID_STATUSES, UserBook
 
 
 class TestUser:

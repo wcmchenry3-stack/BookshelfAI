@@ -4,6 +4,7 @@ Requires a real PostgreSQL database — skipped when DATABASE_URL is dummy.
 """
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.models.book import Book
 from app.models.user import User
@@ -54,7 +55,7 @@ class TestUserBookStatusTransitions:
 
         ub = UserBook(user_id=user.id, book_id=book.id, status="invalid_status")
         db_session.add(ub)
-        with pytest.raises(Exception):  # IntegrityError from check constraint
+        with pytest.raises(IntegrityError):  # from check constraint
             await db_session.flush()
 
     async def test_rating_constraint_enforced(self, db_session):
@@ -66,7 +67,7 @@ class TestUserBookStatusTransitions:
 
         ub = UserBook(user_id=user.id, book_id=book.id, status="read", rating=6)
         db_session.add(ub)
-        with pytest.raises(Exception):  # IntegrityError from check constraint
+        with pytest.raises(IntegrityError):  # from check constraint
             await db_session.flush()
 
     async def test_two_users_same_book(self, db_session):
