@@ -25,6 +25,10 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-lint-python.yml@main
     with:
       working-directory: backend
+      # Keep in sync with backend/requirements-dev.txt — unpinned installs let
+      # upstream rule changes silently break lint on unrelated PRs.
+      black-version: '26.5.1'
+      ruff-version: '0.16.2'
     secrets: inherit
 
   lint-frontend:
@@ -125,7 +129,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install bandit
@@ -175,7 +179,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install dependencies
@@ -230,7 +234,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -272,7 +276,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

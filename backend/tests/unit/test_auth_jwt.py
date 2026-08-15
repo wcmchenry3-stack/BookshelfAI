@@ -51,7 +51,7 @@ class TestCreateAccessToken:
         assert payload["type"] == "access"
 
     def test_uses_rs256_algorithm(self, rsa_key_pair):
-        _, public_pem = rsa_key_pair
+        _, _public_pem = rsa_key_pair
         token = create_access_token("user-abc", "user@example.com")
         header = jwt.get_unverified_header(token)
         assert header["alg"] == "RS256"
@@ -142,7 +142,7 @@ class TestAlgorithmSecurity:
 
     def test_rejects_alg_none(self, rsa_key_pair):
         """'alg: none' unsigned tokens must never be accepted."""
-        private_pem, _ = rsa_key_pair
+        _private_pem, _ = rsa_key_pair
         payload = {
             "sub": "attacker",
             "type": "access",

@@ -22,7 +22,7 @@ class WishlistRequest(BaseModel):
     description: str | None = Field(None, max_length=5000)
     cover_url: str | None = Field(None, max_length=2048)
     subjects: list[str] = []
-    editions: list["EditionPreview"] = []  # noqa: F821
+    editions: list[EditionPreview] = []
 
     @field_validator("cover_url", mode="before")
     @classmethod

@@ -6,13 +6,14 @@ independently:  pytest -m security -v
 """
 
 import io
+from typing import ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.main import app  # noqa: F401 — side-effect: registers routers and middleware
 from app.core.url_validator import validate_safe_url
+from app.main import app
 from app.schemas.user_book import UserBookUpdate, WishlistRequest
 
 # ---------------------------------------------------------------------------
@@ -93,9 +94,10 @@ class TestRatingBoundaryEnforcement:
 
 def _authed_client() -> TestClient:
     """Return a TestClient with get_current_user dependency overridden."""
+    import uuid
+
     from app.auth.dependencies import get_current_user
     from app.models.user import User
-    import uuid
 
     fake_user = User()
     fake_user.id = uuid.uuid4()
@@ -298,9 +300,10 @@ class TestRateLimitEnforcement:
 
     def test_scan_endpoint_returns_429_after_limit(self) -> None:
         """POST /scan is limited to 10/minute per user; 11th request must be 429."""
+        import uuid
+
         from app.auth.dependencies import get_current_user
         from app.models.user import User
-        import uuid
 
         fake_user = User()
         fake_user.id = uuid.uuid4()
@@ -331,7 +334,7 @@ class TestRateLimitEnforcement:
 class TestAuthBypassAttempts:
     """All protected endpoints must reject unauthenticated and malformed requests."""
 
-    _PROTECTED_ENDPOINTS = [
+    _PROTECTED_ENDPOINTS: ClassVar = [
         ("GET", "/auth/me"),
         ("GET", "/user-books"),
         ("POST", "/wishlist"),

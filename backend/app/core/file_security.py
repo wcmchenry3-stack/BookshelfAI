@@ -52,7 +52,8 @@ def scan_for_malware(raw_bytes: bytes) -> None:
             timeout=10,
         )
         result = cd.instream(io.BytesIO(raw_bytes))
-    except Exception as exc:
+    # Any clamd failure (connection, protocol, timeout) means scanning is unavailable.
+    except Exception as exc:  # noqa: BLE001
         logger.error("ClamAV daemon unreachable: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
