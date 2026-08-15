@@ -25,6 +25,10 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-lint-python.yml@main
     with:
       working-directory: backend
+      # Keep in sync with backend/requirements-dev.txt — unpinned installs let
+      # upstream rule changes silently break lint on unrelated PRs.
+      black-version: '26.5.1'
+      ruff-version: '0.15.20'
     secrets: inherit
 
   lint-frontend:
