@@ -93,7 +93,9 @@
     "fast-xml-parser": ">=5.5.6",
     "tar": ">=7.5.10",
     "node-forge": ">=1.4.0",
-    "picomatch": ">=4.0.4"
+    "picomatch": ">=4.0.4",
+    "react-dom": "$react",
+    "react-test-renderer": "$react"
   },
   "prettier": {
     "semi": true,
