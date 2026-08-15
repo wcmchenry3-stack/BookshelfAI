@@ -40,9 +40,9 @@ beforeEach(() => {
 });
 
 describe('AuthProvider', () => {
-  it('starts in loading state', () => {
+  it('starts in loading state', async () => {
     mockGetItem.mockReturnValue(new Promise(() => {}));
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <AuthDisplay />
       </AuthProvider>
@@ -52,7 +52,7 @@ describe('AuthProvider', () => {
 
   it('resolves to guest when no stored token', async () => {
     mockGetItem.mockResolvedValue(null);
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <AuthDisplay />
       </AuthProvider>
@@ -62,7 +62,7 @@ describe('AuthProvider', () => {
 
   it('resolves to authed when token found in SecureStore', async () => {
     mockGetItem.mockResolvedValue('some-token');
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <AuthDisplay />
       </AuthProvider>
@@ -84,7 +84,7 @@ describe('AuthProvider', () => {
       return null;
     }
 
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <AuthDisplay />
         <LoginCapture />
@@ -113,7 +113,7 @@ describe('AuthProvider', () => {
       return null;
     }
 
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <AuthDisplay />
         <LogoutCapture />

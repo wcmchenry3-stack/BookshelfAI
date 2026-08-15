@@ -5,6 +5,7 @@ skipped when DATABASE_URL is not configured or points to the dummy URL.
 """
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.models.book import Book
 from app.models.edition import Edition
@@ -71,7 +72,7 @@ class TestWishlistDb:
             open_library_work_id="OL45804W",
         )
         db_session.add(book2)
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             await db_session.flush()
 
     async def test_user_book_unique_constraint(self, db_session):
@@ -90,7 +91,7 @@ class TestWishlistDb:
 
         ub2 = UserBook(user_id=user.id, book_id=book.id, status="purchased")
         db_session.add(ub2)
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             await db_session.flush()
 
     async def test_cascade_delete_book_removes_editions_and_user_books(

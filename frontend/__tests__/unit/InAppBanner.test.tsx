@@ -44,12 +44,12 @@ function BannerTrigger({
   );
 }
 
-function renderWithBanner(triggerProps: {
+async function renderWithBanner(triggerProps: {
   message: string;
   type: 'success' | 'error' | 'info';
   actions?: { label: string; onPress: () => void }[];
 }) {
-  return render(
+  return await render(
     <BannerProvider>
       <InAppBanner />
       <BannerTrigger {...triggerProps} />
@@ -66,8 +66,8 @@ afterEach(() => {
 });
 
 describe('InAppBanner', () => {
-  it('renders nothing when no banner is shown', () => {
-    const { queryByRole } = render(
+  it('renders nothing when no banner is shown', async () => {
+    const { queryByRole } = await render(
       <BannerProvider>
         <InAppBanner />
       </BannerProvider>
@@ -75,67 +75,67 @@ describe('InAppBanner', () => {
     expect(queryByRole('alert')).toBeNull();
   });
 
-  it('renders message text when banner is triggered', () => {
-    const { getByTestId, getByText } = renderWithBanner({
+  it('renders message text when banner is triggered', async () => {
+    const { getByTestId, getByText } = await renderWithBanner({
       message: 'Book found!',
       type: 'success',
     });
-    fireEvent.press(getByTestId('trigger'));
+    await fireEvent.press(getByTestId('trigger'));
     expect(getByText('Book found!')).toBeTruthy();
   });
 
-  it('renders action buttons when provided', () => {
+  it('renders action buttons when provided', async () => {
     const onPress = jest.fn();
-    const { getByTestId, getByLabelText } = renderWithBanner({
+    const { getByTestId, getByLabelText } = await renderWithBanner({
       message: 'Scan failed',
       type: 'error',
       actions: [{ label: 'Retry', onPress }],
     });
-    fireEvent.press(getByTestId('trigger'));
+    await fireEvent.press(getByTestId('trigger'));
     const retryBtn = getByLabelText('Retry');
     expect(retryBtn).toBeTruthy();
   });
 
-  it('calls action onPress when action button is tapped', () => {
+  it('calls action onPress when action button is tapped', async () => {
     const onPress = jest.fn();
-    const { getByTestId, getByLabelText } = renderWithBanner({
+    const { getByTestId, getByLabelText } = await renderWithBanner({
       message: 'Scan failed',
       type: 'error',
       actions: [{ label: 'Retry', onPress }],
     });
-    fireEvent.press(getByTestId('trigger'));
-    fireEvent.press(getByLabelText('Retry'));
+    await fireEvent.press(getByTestId('trigger'));
+    await fireEvent.press(getByLabelText('Retry'));
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
-  it('auto-dismisses after duration', () => {
-    const { getByTestId, getByText, queryByText } = renderWithBanner({
+  it('auto-dismisses after duration', async () => {
+    const { getByTestId, getByText, queryByText } = await renderWithBanner({
       message: 'Done!',
       type: 'success',
     });
-    fireEvent.press(getByTestId('trigger'));
+    await fireEvent.press(getByTestId('trigger'));
     expect(getByText('Done!')).toBeTruthy();
 
     // Advance past default + slide-out animation
-    act(() => {
+    await act(async () => {
       jest.advanceTimersByTime(10000 + 500);
     });
     expect(queryByText('Done!')).toBeNull();
   });
 
-  it('dismisses on tap', () => {
-    const { getByTestId, getByText, queryByText } = renderWithBanner({
+  it('dismisses on tap', async () => {
+    const { getByTestId, getByText, queryByText } = await renderWithBanner({
       message: 'Tap to dismiss',
       type: 'info',
     });
-    fireEvent.press(getByTestId('trigger'));
+    await fireEvent.press(getByTestId('trigger'));
     expect(getByText('Tap to dismiss')).toBeTruthy();
 
     // Tap the banner content to dismiss
-    fireEvent.press(getByText('Tap to dismiss'));
+    await fireEvent.press(getByText('Tap to dismiss'));
 
     // After slide-out animation
-    act(() => {
+    await act(async () => {
       jest.advanceTimersByTime(500);
     });
     expect(queryByText('Tap to dismiss')).toBeNull();

@@ -98,8 +98,8 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-function renderWithBanner() {
-  return render(
+async function renderWithBanner() {
+  return await render(
     <BannerProvider>
       <ScanScreen />
       <InAppBanner />
@@ -116,8 +116,8 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
     });
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
-    const utils = renderWithBanner();
-    await act(async () => fireEvent.press(utils.getByLabelText('Capture book cover')));
+    const utils = await renderWithBanner();
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
 
     // The real BannerProvider + InAppBanner must now show the error text.
     await waitFor(() => {
@@ -133,8 +133,8 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
     });
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
-    const utils = renderWithBanner();
-    await act(async () => fireEvent.press(utils.getByLabelText('Capture book cover')));
+    const utils = await renderWithBanner();
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
 
     await waitFor(() => {
       expect(utils.getByText('Something went wrong. Please try again.')).toBeTruthy();
@@ -149,11 +149,11 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
     });
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
-    const utils = renderWithBanner();
-    await act(async () => fireEvent.press(utils.getByLabelText('Capture book cover')));
+    const utils = await renderWithBanner();
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
 
     const retryButton = await waitFor(() => utils.getByLabelText('Retry'));
-    await act(async () => fireEvent.press(retryButton));
+    await act(async () => await fireEvent.press(retryButton));
 
     // After retry, the happy path runs and startScan fires.
     await waitFor(() => expect(mockStartScan).toHaveBeenCalled());
@@ -162,8 +162,8 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
   it('happy path: no banner shown, scan started with a valid URI', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
-    const utils = renderWithBanner();
-    await act(async () => fireEvent.press(utils.getByLabelText('Capture book cover')));
+    const utils = await renderWithBanner();
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
 
     await waitFor(() => expect(mockStartScan).toHaveBeenCalled());
     expect(mockStartScan).toHaveBeenCalledWith(

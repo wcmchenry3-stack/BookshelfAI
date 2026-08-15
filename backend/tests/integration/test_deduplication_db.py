@@ -5,6 +5,7 @@ Requires a real PostgreSQL database — skipped when DATABASE_URL is dummy.
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.models.book import Book
 from app.models.edition import Edition
@@ -24,7 +25,7 @@ class TestDeduplicationDb:
 
         ed2 = Edition(book_id=book.id, isbn_13="9780441013593", format="hardcover")
         db_session.add(ed2)
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             await db_session.flush()
 
     async def test_different_editions_same_book(self, db_session):
@@ -78,5 +79,5 @@ class TestDeduplicationDb:
 
         ed = Edition(book_id=book.id, format="invalid_format")
         db_session.add(ed)
-        with pytest.raises(Exception):  # IntegrityError from check constraint
+        with pytest.raises(IntegrityError):  # from check constraint
             await db_session.flush()

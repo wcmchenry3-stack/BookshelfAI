@@ -76,7 +76,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 async function renderScanJobs() {
-  const hook = renderHook(() => useScanJobs(), { wrapper });
+  const hook = await renderHook(() => useScanJobs(), { wrapper });
   // Wait for mount effect (loadJobs) to complete and state to settle.
   await waitFor(() => {
     expect(mockSaveJobs).toHaveBeenCalled();
@@ -224,7 +224,7 @@ describe('ScanJobContext — queueForLater', () => {
     });
     expect(result.current.jobs[0]?.status).toBe('failed');
 
-    act(() => {
+    await act(() => {
       result.current.queueForLater(result.current.jobs[0].id);
     });
 
@@ -284,7 +284,7 @@ describe('ScanJobContext — dismissJob', () => {
     expect(result.current.jobs).toHaveLength(1);
     const jobId = result.current.jobs[0].id;
 
-    act(() => {
+    await act(() => {
       result.current.dismissJob(jobId);
     });
 
@@ -302,7 +302,7 @@ describe('ScanJobContext — reviewJob', () => {
     });
     expect(result.current.jobs[0]?.status).toBe('complete');
 
-    act(() => {
+    await act(() => {
       result.current.reviewJob(result.current.jobs[0].id);
     });
 
@@ -318,12 +318,12 @@ describe('ScanJobContext — reviewJob', () => {
       await result.current.startScan('text', undefined, 'Dune');
     });
 
-    act(() => {
+    await act(() => {
       result.current.reviewJob(result.current.jobs[0].id);
     });
     expect(result.current.reviewingJob).toBeTruthy();
 
-    act(() => {
+    await act(() => {
       result.current.dismissReview();
     });
     expect(result.current.reviewingJob).toBeNull();
@@ -341,7 +341,7 @@ describe('ScanJobContext — handleSelectBook', () => {
     });
     expect(result.current.jobs[0]?.status).toBe('complete');
 
-    act(() => {
+    await act(() => {
       result.current.reviewJob(result.current.jobs[0].id);
     });
 

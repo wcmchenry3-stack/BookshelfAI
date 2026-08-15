@@ -1,4 +1,5 @@
 import React from 'react';
+import { View } from 'react-native';
 import { render } from '@testing-library/react-native';
 
 import SettingsScreen from '../../app/(tabs)/settings';
@@ -12,24 +13,24 @@ jest.mock('../../hooks/useTheme', () => ({
   }),
 }));
 
-const MockThemeToggleButton = () => <></>;
+const MockThemeToggleButton = ({ testID }: { testID?: string }) => <View testID={testID} />;
 jest.mock('../../components/ThemeToggleButton', () => ({
-  ThemeToggleButton: () => <MockThemeToggleButton />,
+  ThemeToggleButton: () => <MockThemeToggleButton testID="theme-toggle-button" />,
 }));
 
 describe('SettingsScreen', () => {
-  it('renders the settings heading', () => {
-    const { getByText } = render(<SettingsScreen />);
+  it('renders the settings heading', async () => {
+    const { getByText } = await render(<SettingsScreen />);
     expect(getByText('Settings')).toBeTruthy();
   });
 
-  it('renders the ThemeToggleButton', () => {
-    const { UNSAFE_getByType } = render(<SettingsScreen />);
-    expect(UNSAFE_getByType(MockThemeToggleButton)).toBeTruthy();
+  it('renders the ThemeToggleButton', async () => {
+    const { getByTestId } = await render(<SettingsScreen />);
+    expect(getByTestId('theme-toggle-button')).toBeTruthy();
   });
 
-  it('applies theme background color', () => {
-    const { toJSON } = render(<SettingsScreen />);
+  it('applies theme background color', async () => {
+    const { toJSON } = await render(<SettingsScreen />);
     const tree = toJSON();
     // Root View should have the mocked background color
     expect(tree).toBeTruthy();
