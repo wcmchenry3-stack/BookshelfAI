@@ -4,6 +4,6 @@ pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-benchmark==5.2.3
 black==26.5.1
-ruff==0.15.18
+ruff==0.15.20
 pip-audit==2.10.1
 bandit[toml]==1.9.4
