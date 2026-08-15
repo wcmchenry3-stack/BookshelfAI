@@ -58,6 +58,16 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      # Catch-all so the rest of the frontend tree batches into one weekly PR
+      # instead of opening individually. Mirrors the pip block above. Majors
+      # are excluded and still arrive on their own.
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # Expo SDK and React Native upgrades require native module compatibility
       # testing and coordinated migration — handled manually on a dedicated branch.
@@ -91,7 +101,12 @@ updates:
       time: "09:00"
       timezone: "America/Los_Angeles"
     groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
       github-actions:
+        applies-to: version-updates
         patterns:
           - "*"
     labels:
