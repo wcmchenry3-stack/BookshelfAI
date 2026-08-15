@@ -86,25 +86,25 @@ beforeEach(() => {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('TabLayout', () => {
-  it('renders 4 tab screens', () => {
-    render(<TabLayout />);
+  it('renders 4 tab screens', async () => {
+    await render(<TabLayout />);
     expect(g.__mockScreenProps).toHaveLength(4);
   });
 
-  it('includes scan, wishlist, my-books, and settings tabs', () => {
-    render(<TabLayout />);
+  it('includes scan, wishlist, my-books, and settings tabs', async () => {
+    await render(<TabLayout />);
     const names = g.__mockScreenProps.map((s: { name: string }) => s.name);
     expect(names).toEqual(['scan', 'wishlist', 'my-books', 'settings']);
   });
 
-  it('tab titles use i18n keys', () => {
-    render(<TabLayout />);
+  it('tab titles use i18n keys', async () => {
+    await render(<TabLayout />);
     const titles = g.__mockScreenProps.map((s: { options: { title: string } }) => s.options.title);
     expect(titles).toEqual(['Scan', 'Wishlist', 'My Books', 'Settings']);
   });
 
-  it('applies brand theme colors to tab bar via screenOptions', () => {
-    render(<TabLayout />);
+  it('applies brand theme colors to tab bar via screenOptions', async () => {
+    await render(<TabLayout />);
     const opts = g.__mockTabScreenOptions;
     expect(opts.tabBarActiveTintColor).toBe('#ffffff');
     expect(opts.tabBarInactiveTintColor).toBe('#47645d');

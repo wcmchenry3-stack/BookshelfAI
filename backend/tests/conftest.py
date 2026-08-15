@@ -72,9 +72,8 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with AsyncSession(engine, expire_on_commit=False) as session:
-        async with session.begin():
-            yield session
-            await session.rollback()
+    async with AsyncSession(engine, expire_on_commit=False) as session, session.begin():
+        yield session
+        await session.rollback()
 
     await engine.dispose()

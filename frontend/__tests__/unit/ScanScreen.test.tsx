@@ -139,42 +139,42 @@ afterEach(() => {
 // Search mode
 // ---------------------------------------------------------------------------
 describe('ScanScreen — search mode', () => {
-  function renderInSearchMode() {
-    const utils = render(<ScanScreen />);
-    fireEvent.press(utils.getByLabelText('Text search mode'));
+  async function renderInSearchMode() {
+    const utils = await render(<ScanScreen />);
+    await fireEvent.press(utils.getByLabelText('Text search mode'));
     return utils;
   }
 
-  it('renders search input and button after switching to search mode', () => {
-    const { getByLabelText } = renderInSearchMode();
+  it('renders search input and button after switching to search mode', async () => {
+    const { getByLabelText } = await renderInSearchMode();
     expect(getByLabelText('Book title or author search')).toBeTruthy();
     expect(getByLabelText('Search for book')).toBeTruthy();
   });
 
-  it('calls startScan with text type when search is pressed', () => {
-    const { getByLabelText } = renderInSearchMode();
-    fireEvent.changeText(getByLabelText('Book title or author search'), 'Dune');
-    fireEvent.press(getByLabelText('Search for book'));
+  it('calls startScan with text type when search is pressed', async () => {
+    const { getByLabelText } = await renderInSearchMode();
+    await fireEvent.changeText(getByLabelText('Book title or author search'), 'Dune');
+    await fireEvent.press(getByLabelText('Search for book'));
     expect(mockStartScan).toHaveBeenCalledWith('text', undefined, 'Dune');
   });
 
-  it('clears query after search', () => {
-    const { getByLabelText } = renderInSearchMode();
-    fireEvent.changeText(getByLabelText('Book title or author search'), 'Dune');
-    fireEvent.press(getByLabelText('Search for book'));
+  it('clears query after search', async () => {
+    const { getByLabelText } = await renderInSearchMode();
+    await fireEvent.changeText(getByLabelText('Book title or author search'), 'Dune');
+    await fireEvent.press(getByLabelText('Search for book'));
     expect(getByLabelText('Book title or author search').props.value).toBe('');
   });
 
-  it('does nothing if search query is empty', () => {
-    const { getByLabelText } = renderInSearchMode();
-    fireEvent.press(getByLabelText('Search for book'));
+  it('does nothing if search query is empty', async () => {
+    const { getByLabelText } = await renderInSearchMode();
+    await fireEvent.press(getByLabelText('Search for book'));
     expect(mockStartScan).not.toHaveBeenCalled();
   });
 
-  it('does not show a loading spinner (search runs in background)', () => {
-    const { getByLabelText, queryByTestId } = renderInSearchMode();
-    fireEvent.changeText(getByLabelText('Book title or author search'), 'Dune');
-    fireEvent.press(getByLabelText('Search for book'));
+  it('does not show a loading spinner (search runs in background)', async () => {
+    const { getByLabelText, queryByTestId } = await renderInSearchMode();
+    await fireEvent.changeText(getByLabelText('Book title or author search'), 'Dune');
+    await fireEvent.press(getByLabelText('Search for book'));
     expect(queryByTestId('loading-spinner')).toBeNull();
   });
 });
@@ -183,28 +183,28 @@ describe('ScanScreen — search mode', () => {
 // Native camera mode — permissions
 // ---------------------------------------------------------------------------
 describe('ScanScreen — native camera permissions', () => {
-  it('renders capture button and flip button when permission is granted', () => {
-    const { getByLabelText } = render(<ScanScreen />);
+  it('renders capture button and flip button when permission is granted', async () => {
+    const { getByLabelText } = await render(<ScanScreen />);
     expect(getByLabelText('Capture book cover')).toBeTruthy();
     expect(getByLabelText('Flip camera')).toBeTruthy();
   });
 
-  it('shows permission prompt when camera permission is not granted', () => {
+  it('shows permission prompt when camera permission is not granted', async () => {
     useCameraPermissions.mockReturnValue([{ granted: false }, mockRequestPermission]);
-    const { getByLabelText } = render(<ScanScreen />);
+    const { getByLabelText } = await render(<ScanScreen />);
     expect(getByLabelText('Grant camera permission')).toBeTruthy();
   });
 
-  it('requests permission when allow button is pressed', () => {
+  it('requests permission when allow button is pressed', async () => {
     useCameraPermissions.mockReturnValue([{ granted: false }, mockRequestPermission]);
-    const { getByLabelText } = render(<ScanScreen />);
-    fireEvent.press(getByLabelText('Grant camera permission'));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await fireEvent.press(getByLabelText('Grant camera permission'));
     expect(mockRequestPermission).toHaveBeenCalled();
   });
 
-  it('renders mode toggle when permission is loading (null)', () => {
+  it('renders mode toggle when permission is loading (null)', async () => {
     useCameraPermissions.mockReturnValue([null, mockRequestPermission]);
-    const { getByLabelText } = render(<ScanScreen />);
+    const { getByLabelText } = await render(<ScanScreen />);
     expect(getByLabelText('Camera scan mode')).toBeTruthy();
   });
 });
@@ -213,11 +213,11 @@ describe('ScanScreen — native camera permissions', () => {
 // Native camera mode — facing toggle
 // ---------------------------------------------------------------------------
 describe('ScanScreen — native camera facing toggle', () => {
-  it('toggles facing state when flip button is pressed', () => {
-    const { getByLabelText } = render(<ScanScreen />);
+  it('toggles facing state when flip button is pressed', async () => {
+    const { getByLabelText } = await render(<ScanScreen />);
     const flipBtn = getByLabelText('Flip camera');
-    fireEvent.press(flipBtn);
-    fireEvent.press(flipBtn);
+    await fireEvent.press(flipBtn);
+    await fireEvent.press(flipBtn);
     expect(getByLabelText('Flip camera')).toBeTruthy();
   });
 });
@@ -228,8 +228,8 @@ describe('ScanScreen — native camera facing toggle', () => {
 describe('ScanScreen — native capture flow', () => {
   it('calls startScan with image type after photo capture', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockStartScan).toHaveBeenCalledWith(
       'image',
       expect.stringMatching(/^file:\/\/\/docs\/scan-queue\/\d+-\d+\.jpg$/)
@@ -238,29 +238,29 @@ describe('ScanScreen — native capture flow', () => {
 
   it('copies photo to document directory before starting scan', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockFileCopy).toHaveBeenCalled();
   });
 
   it('does not show loading spinner (search runs in background)', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText, queryByTestId } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText, queryByTestId } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(queryByTestId('loading-spinner')).toBeNull();
   });
 
   it('exits early without starting scan when takePictureAsync returns no uri', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: null });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockStartScan).not.toHaveBeenCalled();
   });
 
   it('camera controls remain visible after capture (no loading overlay)', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(getByLabelText('Capture book cover')).toBeTruthy();
     expect(getByLabelText('Flip camera')).toBeTruthy();
   });
@@ -272,20 +272,21 @@ describe('ScanScreen — native capture flow', () => {
 describe('ScanScreen — web camera mode', () => {
   setPlatform('web');
 
-  it('renders Scan Book Cover button instead of CameraView controls', () => {
-    const { getByLabelText, queryByLabelText } = render(<ScanScreen />);
+  it('renders Scan Book Cover button instead of CameraView controls', async () => {
+    const { getByLabelText, queryByLabelText } = await render(<ScanScreen />);
     expect(getByLabelText('Capture book cover')).toBeTruthy();
     expect(queryByLabelText('Flip camera')).toBeNull();
   });
 
-  function getWebInput(utils: ReturnType<typeof render>) {
-    const [input] = utils.UNSAFE_getAllByType('input' as unknown as React.ComponentType);
-    return input;
+  async function getWebInput(utils: ReturnType<typeof render>) {
+    // The input is style={{ display: 'none' }}, and v14 excludes hidden
+    // elements from queries by default.
+    return utils.findByTestId('web-file-input', { includeHiddenElements: true });
   }
 
-  it('renders hidden file input with correct attributes', () => {
-    const utils = render(<ScanScreen />);
-    const input = getWebInput(utils);
+  it('renders hidden file input with correct attributes', async () => {
+    const utils = await render(<ScanScreen />);
+    const input = await getWebInput(utils);
     expect(input.props.type).toBe('file');
     expect(input.props.accept).toBe('image/*');
     expect(input.props.capture).toBe('environment');
@@ -293,16 +294,16 @@ describe('ScanScreen — web camera mode', () => {
 
   it('calls startScan with image type after file selection', async () => {
     const mockFile = new File(['img'], 'scan.jpg', { type: 'image/jpeg' });
-    const utils = render(<ScanScreen />);
-    const input = getWebInput(utils);
-    await act(async () => fireEvent(input, 'change', { target: { files: [mockFile] } }));
+    const utils = await render(<ScanScreen />);
+    const input = await getWebInput(utils);
+    await act(async () => await fireEvent(input, 'change', { target: { files: [mockFile] } }));
     expect(mockStartScan).toHaveBeenCalledWith('image', expect.any(String));
   });
 
   it('does nothing when change fires with no file selected', async () => {
-    const utils = render(<ScanScreen />);
-    const input = getWebInput(utils);
-    await act(async () => fireEvent(input, 'change', { target: { files: [] } }));
+    const utils = await render(<ScanScreen />);
+    const input = await getWebInput(utils);
+    await act(async () => await fireEvent(input, 'change', { target: { files: [] } }));
     expect(mockStartScan).not.toHaveBeenCalled();
   });
 });
@@ -311,18 +312,18 @@ describe('ScanScreen — web camera mode', () => {
 // Mode switch
 // ---------------------------------------------------------------------------
 describe('ScanScreen — mode switch hides camera controls (native)', () => {
-  it('hides capture and flip buttons after switching to search mode', () => {
-    const { getByLabelText, queryByLabelText } = render(<ScanScreen />);
+  it('hides capture and flip buttons after switching to search mode', async () => {
+    const { getByLabelText, queryByLabelText } = await render(<ScanScreen />);
     expect(getByLabelText('Capture book cover')).toBeTruthy();
-    fireEvent.press(getByLabelText('Text search mode'));
+    await fireEvent.press(getByLabelText('Text search mode'));
     expect(queryByLabelText('Capture book cover')).toBeNull();
     expect(queryByLabelText('Flip camera')).toBeNull();
   });
 
-  it('shows capture and flip buttons after switching back to camera mode', () => {
-    const { getByLabelText } = render(<ScanScreen />);
-    fireEvent.press(getByLabelText('Text search mode'));
-    fireEvent.press(getByLabelText('Camera scan mode'));
+  it('shows capture and flip buttons after switching back to camera mode', async () => {
+    const { getByLabelText } = await render(<ScanScreen />);
+    await fireEvent.press(getByLabelText('Text search mode'));
+    await fireEvent.press(getByLabelText('Camera scan mode'));
     expect(getByLabelText('Capture book cover')).toBeTruthy();
     expect(getByLabelText('Flip camera')).toBeTruthy();
   });
@@ -331,17 +332,17 @@ describe('ScanScreen — mode switch hides camera controls (native)', () => {
 describe('ScanScreen — mode switch hides camera controls (web)', () => {
   setPlatform('web');
 
-  it('hides capture button after switching to search mode', () => {
-    const utils = render(<ScanScreen />);
+  it('hides capture button after switching to search mode', async () => {
+    const utils = await render(<ScanScreen />);
     expect(utils.getByLabelText('Capture book cover')).toBeTruthy();
-    fireEvent.press(utils.getByLabelText('Text search mode'));
+    await fireEvent.press(utils.getByLabelText('Text search mode'));
     expect(utils.queryByLabelText('Capture book cover')).toBeNull();
   });
 
-  it('shows capture button after switching back to camera mode', () => {
-    const utils = render(<ScanScreen />);
-    fireEvent.press(utils.getByLabelText('Text search mode'));
-    fireEvent.press(utils.getByLabelText('Camera scan mode'));
+  it('shows capture button after switching back to camera mode', async () => {
+    const utils = await render(<ScanScreen />);
+    await fireEvent.press(utils.getByLabelText('Text search mode'));
+    await fireEvent.press(utils.getByLabelText('Camera scan mode'));
     expect(utils.getByLabelText('Capture book cover')).toBeTruthy();
   });
 });
@@ -352,8 +353,8 @@ describe('ScanScreen — mode switch hides camera controls (web)', () => {
 describe('ScanScreen — Sentry logging', () => {
   it('adds breadcrumb when capture starts', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockAddBreadcrumb).toHaveBeenCalledWith(
       expect.objectContaining({ category: 'scan', message: 'Camera capture started' })
     );
@@ -361,8 +362,8 @@ describe('ScanScreen — Sentry logging', () => {
 
   it('adds breadcrumb when photo is saved successfully', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockAddBreadcrumb).toHaveBeenCalledWith(
       expect.objectContaining({ category: 'scan', message: 'Photo saved, starting scan' })
     );
@@ -370,8 +371,8 @@ describe('ScanScreen — Sentry logging', () => {
 
   it('adds warning breadcrumb when takePictureAsync returns no URI', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: null });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockAddBreadcrumb).toHaveBeenCalledWith(
       expect.objectContaining({
         category: 'scan',
@@ -387,8 +388,8 @@ describe('ScanScreen — Sentry logging', () => {
     mockFileCopy.mockImplementationOnce(() => {
       throw copyError;
     });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockCaptureException).toHaveBeenCalledWith(
       copyError,
       expect.objectContaining({
@@ -402,15 +403,15 @@ describe('ScanScreen — Sentry logging', () => {
     mockFileCopy.mockImplementationOnce(() => {
       throw new Error('disk full');
     });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockStartScan).not.toHaveBeenCalled();
   });
 
   it('re-enables capture button after an error', async () => {
     mockTakePictureAsync.mockRejectedValueOnce(new Error('camera error'));
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(getByLabelText('Capture book cover').props.accessibilityState).not.toEqual(
       expect.objectContaining({ disabled: true })
     );
@@ -423,8 +424,8 @@ describe('ScanScreen — Sentry logging', () => {
 describe('ScanScreen — scan-queue directory handling', () => {
   it('always calls Directory.create with idempotent + intermediates', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockDirCreate).toHaveBeenCalledWith({ intermediates: true, idempotent: true });
   });
 
@@ -446,8 +447,8 @@ describe('ScanScreen — scan-queue directory handling', () => {
     });
 
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     // Healing: stale file deleted, directory created, scan proceeds.
     expect(mockFileDelete).toHaveBeenCalled();
     expect(mockDirCreate).toHaveBeenCalled();
@@ -458,8 +459,8 @@ describe('ScanScreen — scan-queue directory handling', () => {
   it('skips delete when no stale File exists at scan-queue path', async () => {
     // Default File mock returns exists: false → no delete should fire.
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockFileDelete).not.toHaveBeenCalled();
     expect(mockDirCreate).toHaveBeenCalled();
   });
@@ -482,8 +483,8 @@ describe('ScanScreen — scan-queue directory handling', () => {
     });
 
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     // Cleanup failed, but create() is idempotent so it still runs. If it succeeds,
     // the scan proceeds.
     expect(mockDirCreate).toHaveBeenCalled();
@@ -503,8 +504,8 @@ describe('ScanScreen — capture failure paths surface banners', () => {
       throw new Error('EEXIST: file with same path exists');
     });
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
 
     expect(mockStartScan).not.toHaveBeenCalled();
     expect(mockShowBanner).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
@@ -521,8 +522,8 @@ describe('ScanScreen — capture failure paths surface banners', () => {
       throw new Error('ENOSPC: no space left on device');
     });
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
 
     expect(mockStartScan).not.toHaveBeenCalled();
     expect(mockShowBanner).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
@@ -536,8 +537,8 @@ describe('ScanScreen — capture failure paths surface banners', () => {
 
   it('takePictureAsync rejects → banner shown, stage=take_picture, no scan', async () => {
     mockTakePictureAsync.mockRejectedValueOnce(new Error('camera hardware error'));
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
 
     expect(mockStartScan).not.toHaveBeenCalled();
     expect(mockShowBanner).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
@@ -554,14 +555,14 @@ describe('ScanScreen — capture failure paths surface banners', () => {
       throw new Error('EEXIST');
     });
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
 
     const bannerCall = mockShowBanner.mock.calls[0][0];
     expect(bannerCall.actions).toBeDefined();
     expect(bannerCall.actions.length).toBeGreaterThan(0);
     // Invoking the retry action should trigger capture again.
-    await act(async () => bannerCall.actions[0].onPress());
+    await act(async () => await bannerCall.actions[0].onPress());
     expect(mockTakePictureAsync).toHaveBeenCalledTimes(2);
   });
 
@@ -570,18 +571,18 @@ describe('ScanScreen — capture failure paths surface banners', () => {
       throw new Error('EEXIST');
     });
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     // Second press must actually invoke takePictureAsync (not be blocked by
     // capturing=true lingering after the throw).
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockTakePictureAsync).toHaveBeenCalledTimes(2);
   });
 
   it('happy path does NOT show an error banner', async () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
     expect(mockShowBanner).not.toHaveBeenCalled();
   });
 });
@@ -595,9 +596,9 @@ describe('ScanScreen — double-tap filename collisions', () => {
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
 
-    const { getByLabelText } = render(<ScanScreen />);
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
-    await act(async () => fireEvent.press(getByLabelText('Capture book cover')));
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
 
     const uris = mockStartScan.mock.calls.map((c) => c[1]);
     expect(uris).toHaveLength(2);

@@ -1,0 +1,8 @@
+[tool.ruff.lint]
+ignore = [
+  # FastAPI's dependency-injection system relies on calling Depends(...) as an
+  # argument default (e.g. `db: AsyncSession = Depends(get_db)`); it's the
+  # documented, idiomatic pattern, not the mutable-default-argument bug B008
+  # is designed to catch.
+  "B008",
+]

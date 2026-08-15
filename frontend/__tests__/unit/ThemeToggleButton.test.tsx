@@ -21,14 +21,14 @@ jest.mock('@expo/vector-icons', () => ({
 describe('ThemeToggleButton', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('renders with light-mode accessibility label', () => {
-    const { getByRole } = render(<ThemeToggleButton />);
+  it('renders with light-mode accessibility label', async () => {
+    const { getByRole } = await render(<ThemeToggleButton />);
     expect(getByRole('button', { name: 'Switch to dark mode' })).toBeTruthy();
   });
 
-  it('calls toggleTheme when pressed', () => {
-    const { getByRole } = render(<ThemeToggleButton />);
-    fireEvent.press(getByRole('button'));
+  it('calls toggleTheme when pressed', async () => {
+    const { getByRole } = await render(<ThemeToggleButton />);
+    await fireEvent.press(getByRole('button'));
     expect(mockToggleTheme).toHaveBeenCalledTimes(1);
   });
 });

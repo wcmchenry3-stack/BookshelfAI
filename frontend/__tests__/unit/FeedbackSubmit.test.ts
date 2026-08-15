@@ -31,8 +31,8 @@ const basePayload = {
 
 describe('useFeedbackSubmit', () => {
   describe('initial state', () => {
-    it('starts idle with no result or error', () => {
-      const { result } = renderHook(() => useFeedbackSubmit());
+    it('starts idle with no result or error', async () => {
+      const { result } = await renderHook(() => useFeedbackSubmit());
       expect(result.current.status).toBe('idle');
       expect(result.current.result).toBeNull();
       expect(result.current.error).toBeNull();
@@ -47,7 +47,7 @@ describe('useFeedbackSubmit', () => {
         headers: { get: () => null },
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
 
       await act(async () => {
         await result.current.submit(basePayload);
@@ -68,7 +68,7 @@ describe('useFeedbackSubmit', () => {
         headers: { get: () => null },
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -88,7 +88,7 @@ describe('useFeedbackSubmit', () => {
         headers: { get: () => null },
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -105,7 +105,7 @@ describe('useFeedbackSubmit', () => {
         headers: { get: () => null },
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -124,7 +124,7 @@ describe('useFeedbackSubmit', () => {
         json: async () => ({}),
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -140,7 +140,7 @@ describe('useFeedbackSubmit', () => {
         json: async () => ({}),
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -157,7 +157,7 @@ describe('useFeedbackSubmit', () => {
         json: async () => ({}),
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -171,7 +171,7 @@ describe('useFeedbackSubmit', () => {
     it('sets error kind: network when fetch throws', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Network request failed'));
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -189,7 +189,7 @@ describe('useFeedbackSubmit', () => {
         json: async () => ({}),
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -203,7 +203,7 @@ describe('useFeedbackSubmit', () => {
     it('returns without calling fetch', async () => {
       delete process.env.EXPO_PUBLIC_FEEDBACK_WORKER_URL;
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
@@ -222,13 +222,13 @@ describe('useFeedbackSubmit', () => {
         headers: { get: () => null },
       } as unknown as Response);
 
-      const { result } = renderHook(() => useFeedbackSubmit());
+      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
       expect(result.current.status).toBe('success');
 
-      act(() => {
+      await act(() => {
         result.current.reset();
       });
 

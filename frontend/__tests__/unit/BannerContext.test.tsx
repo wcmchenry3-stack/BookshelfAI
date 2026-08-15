@@ -12,42 +12,42 @@ function useBannerContext() {
 }
 
 describe('BannerContext', () => {
-  it('has null banner by default', () => {
-    const { result } = renderHook(() => useBannerContext(), { wrapper });
+  it('has null banner by default', async () => {
+    const { result } = await renderHook(() => useBannerContext(), { wrapper });
     expect(result.current.banner).toBeNull();
   });
 
-  it('showBanner sets banner state', () => {
-    const { result } = renderHook(() => useBannerContext(), { wrapper });
+  it('showBanner sets banner state', async () => {
+    const { result } = await renderHook(() => useBannerContext(), { wrapper });
 
     const config: BannerConfig = {
       message: 'Book added!',
       type: 'success',
     };
 
-    act(() => {
+    await act(() => {
       result.current.showBanner(config);
     });
 
     expect(result.current.banner).toEqual(config);
   });
 
-  it('hideBanner clears banner state', () => {
-    const { result } = renderHook(() => useBannerContext(), { wrapper });
+  it('hideBanner clears banner state', async () => {
+    const { result } = await renderHook(() => useBannerContext(), { wrapper });
 
-    act(() => {
+    await act(() => {
       result.current.showBanner({ message: 'Test', type: 'info' });
     });
     expect(result.current.banner).not.toBeNull();
 
-    act(() => {
+    await act(() => {
       result.current.hideBanner();
     });
     expect(result.current.banner).toBeNull();
   });
 
-  it('showBanner with actions preserves action config', () => {
-    const { result } = renderHook(() => useBannerContext(), { wrapper });
+  it('showBanner with actions preserves action config', async () => {
+    const { result } = await renderHook(() => useBannerContext(), { wrapper });
 
     const onPress = jest.fn();
     const config: BannerConfig = {
@@ -57,7 +57,7 @@ describe('BannerContext', () => {
       duration: 5000,
     };
 
-    act(() => {
+    await act(() => {
       result.current.showBanner(config);
     });
 
@@ -66,15 +66,15 @@ describe('BannerContext', () => {
     expect(result.current.banner?.duration).toBe(5000);
   });
 
-  it('default context provides no-op functions', () => {
+  it('default context provides no-op functions', async () => {
     // Render without provider — uses default context value
-    const { result } = renderHook(() => useBannerContext());
+    const { result } = await renderHook(() => useBannerContext());
     expect(result.current.banner).toBeNull();
     // Should not throw
-    act(() => {
+    await act(() => {
       result.current.showBanner({ message: 'test', type: 'info' });
     });
-    act(() => {
+    await act(() => {
       result.current.hideBanner();
     });
   });

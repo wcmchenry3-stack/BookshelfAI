@@ -19,17 +19,17 @@ jest.mock('../../contexts/ScanJobContext', () => ({
 }));
 
 describe('useScanJobs', () => {
-  it('returns the ScanJobContext value when wrapped in provider', () => {
+  it('returns the ScanJobContext value when wrapped in provider', async () => {
     const { ScanJobContext } = require('../../contexts/ScanJobContext');
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <ScanJobContext.Provider value={mockContextValue}>{children}</ScanJobContext.Provider>
     );
-    const { result } = renderHook(() => useScanJobs(), { wrapper });
+    const { result } = await renderHook(() => useScanJobs(), { wrapper });
     expect(result.current).toBe(mockContextValue);
   });
 
-  it('returns null when no provider is present', () => {
-    const { result } = renderHook(() => useScanJobs());
+  it('returns null when no provider is present', async () => {
+    const { result } = await renderHook(() => useScanJobs());
     expect(result.current).toBeNull();
   });
 });

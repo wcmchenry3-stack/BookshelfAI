@@ -27,8 +27,8 @@ describe('ErrorBoundary', () => {
     consoleError.mockRestore();
   });
 
-  it('renders children when no error', () => {
-    const { getByText } = render(
+  it('renders children when no error', async () => {
+    const { getByText } = await render(
       <ErrorBoundary>
         <Bomb shouldThrow={false} />
       </ErrorBoundary>
@@ -36,8 +36,8 @@ describe('ErrorBoundary', () => {
     expect(() => getByText('Something went wrong')).toThrow();
   });
 
-  it('shows fallback UI when a child throws', () => {
-    const { getByText } = render(
+  it('shows fallback UI when a child throws', async () => {
+    const { getByText } = await render(
       <ErrorBoundary>
         <Bomb shouldThrow={true} />
       </ErrorBoundary>
@@ -47,8 +47,8 @@ describe('ErrorBoundary', () => {
     expect(getByText('Try again')).toBeTruthy();
   });
 
-  it('logs the error via componentDidCatch', () => {
-    render(
+  it('logs the error via componentDidCatch', async () => {
+    await render(
       <ErrorBoundary>
         <Bomb shouldThrow={true} />
       </ErrorBoundary>
@@ -60,8 +60,8 @@ describe('ErrorBoundary', () => {
     );
   });
 
-  it('reports error to Sentry via captureException', () => {
-    render(
+  it('reports error to Sentry via captureException', async () => {
+    await render(
       <ErrorBoundary>
         <Bomb shouldThrow={true} />
       </ErrorBoundary>
@@ -71,21 +71,21 @@ describe('ErrorBoundary', () => {
     });
   });
 
-  it('resets error state when Try again is pressed', () => {
-    const { getByText, rerender } = render(
+  it('resets error state when Try again is pressed', async () => {
+    const { getByText, rerender } = await render(
       <ErrorBoundary>
         <Bomb shouldThrow={true} />
       </ErrorBoundary>
     );
 
     // Swap to non-throwing child first so the reset re-render succeeds
-    rerender(
+    await rerender(
       <ErrorBoundary>
         <Bomb shouldThrow={false} />
       </ErrorBoundary>
     );
 
-    fireEvent.press(getByText('Try again'));
+    await fireEvent.press(getByText('Try again'));
 
     expect(() => getByText('Something went wrong')).toThrow();
   });
