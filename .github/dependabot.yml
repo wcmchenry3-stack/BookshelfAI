@@ -71,7 +71,16 @@ updates:
     ignore:
       # Expo SDK and React Native upgrades require native module compatibility
       # testing and coordinated migration — handled manually on a dedicated branch.
-      - dependency-name: "expo"
+      #
+      # The wildcard matters: this previously read "expo", which covers only the
+      # `expo` package itself. expo-status-bar, expo-secure-store,
+      # expo-web-browser and babel-preset-expo were all still opening individual
+      # major PRs, fragmenting an SDK upgrade that has to be done in one pass.
+      - dependency-name: "expo*"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "@expo/*"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
