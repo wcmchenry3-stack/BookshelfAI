@@ -100,6 +100,19 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # SDK-managed peer packages: `npx expo install --check` pins these to a
+      # specific minor range per SDK release. Neither name matches expo*, so
+      # the minor-patch catch-all group kept bumping them past what the
+      # installed SDK expects, breaking the expo-compat CI check (twice now —
+      # see the fix that reverted PR #423's bump of these two).
+      - dependency-name: "react-native-safe-area-context"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "react-native-screens"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
       - dependency-name: "react"
         update-types: ["version-update:semver-major"]
       # Expo SDK 56 compatibility matrix requires ~7.11.0 — block all bumps until
