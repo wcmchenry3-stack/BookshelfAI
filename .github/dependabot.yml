@@ -58,14 +58,58 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      # Catch-all so the rest of the frontend tree batches into one weekly PR
+      # instead of opening individually. Mirrors the pip block above. Majors
+      # are excluded and still arrive on their own.
+      minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # Expo SDK and React Native upgrades require native module compatibility
       # testing and coordinated migration — handled manually on a dedicated branch.
-      - dependency-name: "expo"
+      #
+      # The wildcard matters: this previously read "expo", which covers only the
+      # `expo` package itself. expo-status-bar, expo-secure-store,
+      # expo-web-browser and babel-preset-expo were all still opening individual
+      # major PRs, fragmenting an SDK upgrade that has to be done in one pass.
+      - dependency-name: "expo*"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "@expo/*"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "babel-preset-expo"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "jest-expo"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "eslint-config-expo"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
       - dependency-name: "react-native"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # SDK-managed peer packages: `npx expo install --check` pins these to a
+      # specific minor range per SDK release. Neither name matches expo*, so
+      # the minor-patch catch-all group kept bumping them past what the
+      # installed SDK expects, breaking the expo-compat CI check (twice now —
+      # see the fix that reverted PR #423's bump of these two).
+      - dependency-name: "react-native-safe-area-context"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "react-native-screens"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
@@ -91,7 +135,12 @@ updates:
       time: "09:00"
       timezone: "America/Los_Angeles"
     groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
       github-actions:
+        applies-to: version-updates
         patterns:
           - "*"
     labels:

@@ -1,9 +1,9 @@
 PODS:
   - EXApplication (56.0.3):
     - ExpoModulesCore
-  - EXConstants (56.0.23):
+  - EXConstants (56.0.25):
     - ExpoModulesCore
-  - Expo (56.0.19):
+  - Expo (56.0.21):
     - ExpoModulesCore
     - ExpoModulesJSI
     - hermes-engine
@@ -29,7 +29,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - ExpoAsset (56.0.22):
+  - ExpoAsset (56.0.24):
     - ExpoModulesCore
   - ExpoCamera (56.0.8):
     - ExpoModulesCore
@@ -37,11 +37,11 @@ PODS:
     - ExpoCamera
     - ZXingObjC/OneD
     - ZXingObjC/PDF417
-  - ExpoCrypto (56.0.4):
+  - ExpoCrypto (56.0.5):
     - ExpoModulesCore
   - ExpoDomWebView (56.0.6):
     - ExpoModulesCore
-  - ExpoFileSystem (56.0.9):
+  - ExpoFileSystem (56.0.11):
     - ExpoModulesCore
   - ExpoFont (56.0.7):
     - ExpoModulesCore
@@ -49,11 +49,11 @@ PODS:
     - ExpoModulesCore
   - ExpoKeepAwake (56.0.3):
     - ExpoModulesCore
-  - ExpoLinking (56.0.16):
+  - ExpoLinking (56.0.17):
     - ExpoModulesCore
   - ExpoLogBox (56.0.14):
     - React-Core
-  - ExpoModulesCore (56.0.23):
+  - ExpoModulesCore (56.0.25):
     - ExpoModulesJSI
     - hermes-engine
     - RCTRequired
@@ -77,25 +77,25 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - ExpoModulesJSI (56.0.12):
+  - ExpoModulesJSI (56.0.13):
     - React-Core
     - ReactCommon
-  - ExpoModulesWorklets (56.0.23):
+  - ExpoModulesWorklets (56.0.25):
     - ExpoModulesCore
     - ExpoModulesJSI
-  - ExpoModulesWorkletsAdapter (56.0.23):
+  - ExpoModulesWorkletsAdapter (56.0.25):
     - ExpoModulesCore
     - ExpoModulesJSI
     - ExpoModulesWorklets
     - RNWorklets
-  - ExpoRouter (56.2.18):
+  - ExpoRouter (56.2.20):
     - ExpoModulesCore
     - RNScreens
   - ExpoSecureStore (56.0.4):
     - ExpoModulesCore
   - ExpoSymbols (56.0.7):
     - ExpoModulesCore
-  - ExpoUI (56.0.25):
+  - ExpoUI (56.0.26):
     - ExpoModulesCore
     - ExpoModulesWorklets
     - React-RCTFabric
@@ -2601,27 +2601,27 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   EXApplication: e6040c92edc5522accd62852342e6b14742d42c0
-  EXConstants: 6bcea1db4d1215969dc3409dfe33d94a5bfe50ca
-  Expo: b06a9178293f86989516ee226c240605fb307d12
-  ExpoAsset: 87b14d63c50edc7a07f6e99128c0832c03ef2bad
+  EXConstants: a6fea3d870546e8aba088aa2ed05f3c23c1b9030
+  Expo: 4f10997f47fd21fa56685c47ecd13582e728b860
+  ExpoAsset: 3f825e3c30de2d3e8a280b97602a8a607ce864fe
   ExpoCamera: 68008452cc12ad5ad5d46cc7c835073228c008da
   ExpoCameraBarcodeScanning: 2acb6385fe6aa7563da5241c775092aac40195ce
-  ExpoCrypto: b54a97c4357d46d7f8de079e69fa89029572244b
+  ExpoCrypto: cfd62630036e9bb983bcde73d564be3dbe47ceb2
   ExpoDomWebView: 4e53b05879dc73ba374f76bff93dd64c8a0d91b3
-  ExpoFileSystem: fcd66cde377289cd8eeade5b307f742bd1d6bdfa
+  ExpoFileSystem: 9d47583cbcc53ab2411901c601cd0a7ca18b3c11
   ExpoFont: 274487aa78f8c65d6551e2558eca3ec6ce3432ce
   ExpoGlassEffect: 7d4233dc0727ee2b28dd757eda70e1b6abf662fd
   ExpoKeepAwake: 359c47a1d9ccc3a3c519bca6e39562cce230c5bb
-  ExpoLinking: 58d1cc05b96ead9e921353464ad03651eeb71ab9
+  ExpoLinking: 2e7b346a5a60e1f5de25fc207a8105832bf12214
   ExpoLogBox: cdad5c9402a186574fb5924ea91df1f08ba9a98a
-  ExpoModulesCore: 06410c6ac2f13edaae5f5444689b9cacc6a9c6d7
-  ExpoModulesJSI: e62656cfaffb5aeb3fdc1dd2bc49f77e87ed2261
-  ExpoModulesWorklets: 40fe3862230a3d967899ff29211480efc5daf4e2
-  ExpoModulesWorkletsAdapter: 036c0be70f07d6fff89023f33da6e28556a85838
-  ExpoRouter: fc7a05eee579d54869806f9f95c799020c7800fc
+  ExpoModulesCore: a7ecc4165567ac3e607ccc32a4f4f166d9760c9f
+  ExpoModulesJSI: abe8cd3e19c89b38c63426be235af5ef5ac9c1d1
+  ExpoModulesWorklets: 19afe32682aa1d17fd0f73b3db85ae0850ed6431
+  ExpoModulesWorkletsAdapter: 154150748ee90cc9521fdf39fb2d37ba8b93b703
+  ExpoRouter: 58319874f097ad589b691813db905812b1b7d59b
   ExpoSecureStore: f1bd083c1b7b8d4142013ffcc0082d377d9f49f4
   ExpoSymbols: 37e96a38eed3fb50af4b7c86b8a80ed3054a0a01
-  ExpoUI: 664174621222257d368cfd3c5e68b9ed1d4cb165
+  ExpoUI: 15c5293922df464aefcfb528396c4db211795322
   ExpoWebBrowser: 71e66c4f796a591708b4353d3aef2d1bd8cad49a
   FBLazyVector: 24e62c765683b8d89006a88a2c8f5cf019f0074d
   hermes-engine: 38101ab4c1fe500249391e5e1982b7f094fbc236
