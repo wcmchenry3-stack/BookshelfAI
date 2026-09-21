@@ -70,14 +70,35 @@ paste values by hand in the dashboard UI instead). This applies to the
 Supabase pooler URL, JWT keypair, Google OAuth credentials, the OpenAI key,
 Turnstile, and Sentry DSNs.
 
+## Environment values
+
+`ENVIRONMENT` drives `Settings.is_hardened` (#448): everything except
+`development`/`test` is hardened (TrustedHost enforcement, CF-Connecting-IP
+trust, `/docs` disabled, HSTS, `/auth/test-login` unregistered).
+
+| Value         | Hardened? | Used by                                      |
+| ------------- | --------- | --------------------------------------------- |
+| `development` | no        | local dev only — never set on a Render service |
+| `test`        | no        | CI/pytest only                                 |
+| `staging`     | yes       | `bookshelf-api-dev` — exercises the prod path  |
+| `production`  | yes       | `bookshelf-api`                                |
+
 ## Health checks
 
-- `GET /health` — no DB touch. This is `healthCheckPath` in `render.yaml`; a
-  DB outage must not restart-loop the service.
-- `GET /health/db` — DB-touching health check. **Not implemented yet** — it
-  lands in a separate PR. Once it exists, point an external uptime monitor at
-  it every 5 minutes; on Supabase's free plan this is also what stops the
-  project from pausing due to inactivity.
+**Depends on PR #448 (health-check split).** This section describes the
+post-#448 behavior; until #448 is merged and deployed, `/health` still
+touches the DB itself (no separate `/health/db` exists yet).
+
+- `GET /health` — liveness only, no DB touch. This is `healthCheckPath` in
+  `render.yaml` and is TrustedHost-exempt so Render's own prober can hit the
+  origin directly; a DB outage must not restart-loop the service.
+- `GET /health/db` — `SELECT 1` against the database, bounded at a 5 second
+  timeout so a stalled pooler yields a prompt response; returns `200` (ok) or
+  `503` (unavailable/unconfigured); rate limited. It is **not**
+  TrustedHost-exempt, so probe it only via the public hostname
+  (`https://bookshelfapi.buffingchi.com/health/db`), never the Render origin.
+  Point an external uptime monitor at it every 5 minutes; on Supabase's free
+  plan this is also what stops the project from pausing due to inactivity.
 
 ## Deploys
 
@@ -90,10 +111,20 @@ Turnstile, and Sentry DSNs.
   they now point at `bookshelf-api`/`bookshelf-web`). An unset variable skips
   its deploy job and `preflight` posts a warning — a green run with that
   warning means nothing deployed.
-- Merge promotions one at a time: Render deploys the *current* HEAD of `main`,
-  not a pinned commit, so a second push mid-deploy can ship ahead of its CI.
+- Each deploy job passes `commit-id: ${{ github.sha }}` to the shared
+  `called-deploy-render.yml`, pinning the Render deploy to the exact commit
+  this run's CI validated — a second push landing mid-run cannot cause an
+  unvalidated commit to ship.
+- `deploy-web` needs both `ci` and `deploy-api`: the API's `preDeployCommand`
+  runs `alembic upgrade head`, so web must never ship against a failed API
+  deploy. Its `if:` still runs when `deploy-api` was merely *skipped* (blank
+  service-ID var) — only an actual API deploy failure blocks it.
 
 ## First production deploy — cutover checklist
+
+**Requires #448 (health split) merged and deployed before cutover** — until
+then `/health` touches the DB itself, so a paused/unreachable Supabase project
+would fail `/health` and restart-loop the API instead of degrading gracefully.
 
 1. Create a Supabase project and harden it per "Connecting to Supabase" above.
 2. **Stand up dev first, verify it, before touching prod:** create
@@ -106,15 +137,18 @@ Turnstile, and Sentry DSNs.
    plus the matching Render custom domains; add the new dev web origin to the
    Google OAuth client's authorised origins; verify the dev pair end to end
    (login, scan, health) before step 3.
-3. **Only then switch the existing services to prod:** `bookshelf-api` /
+3. Once `bookshelf-api-dev` exists, repoint `backend-url` in
+   `.github/workflows/ci.yml`'s `backend-health` job at its Render origin
+   (`*.onrender.com`) — CI should probe dev, not the future-prod origin.
+4. **Only then switch the existing services to prod:** `bookshelf-api` /
    `bookshelf-web` — branch → `main`, `autoDeploy: false`; on `bookshelf-api`,
    `DATABASE_URL` → the Supabase session-pooler URL (remove the Render
    `bookshelf-db` link), `ENVIRONMENT=production`, `healthCheckPath: /health`;
    generate a **fresh production JWT keypair** — never reuse dev's — and set
    `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`. Prod DNS and hostnames do not change.
-4. Record each service's `srv-…` ID as `RENDER_PROD_API_SERVICE_ID` /
+5. Record each service's `srv-…` ID as `RENDER_PROD_API_SERVICE_ID` /
    `RENDER_PROD_WEB_SERVICE_ID`, merge a `dev` → `main` promotion PR, and
    watch `.github/workflows/deploy.yml` go green.
-5. Verify `curl https://bookshelfapi.buffingchi.com/health` and, once it
-   exists, `/health/db`; point an uptime monitor at `/health/db` (every 5
-   min). Upgrade Supabase to Pro (daily backups) before store submission.
+6. Verify `curl https://bookshelfapi.buffingchi.com/health` and `/health/db`;
+   point an uptime monitor at `/health/db` (every 5 min, public hostname
+   only). Upgrade Supabase to Pro (daily backups) before store submission.

@@ -100,7 +100,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi.buffingchi.com; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi.buffingchi.com https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -133,8 +133,12 @@ services:
         fromDatabase:
           name: bookshelf-db
           property: connectionString
+      # staging, not development: Settings.is_hardened (PR #448) treats every
+      # environment except development/test as hardened (TrustedHost,
+      # CF-Connecting-IP trust, /docs disabled, HSTS, /auth/test-login
+      # unregistered). Dev must exercise the hardened path like prod does.
       - key: ENVIRONMENT
-        value: development
+        value: staging
       - key: CORS_ORIGINS
         sync: false # dashboard-authoritative — dev hostnames are not fixed here
       - key: TRUSTED_HOSTS
@@ -189,7 +193,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -203,8 +207,10 @@ services:
         sync: false
       - key: EXPO_PUBLIC_SENTRY_DSN
         sync: false
+      # staging, not development — see the ENVIRONMENT comment on
+      # bookshelf-api-dev above; dev should exercise the hardened path.
       - key: EXPO_PUBLIC_ENVIRONMENT
-        value: development
+        value: staging
 
 databases:
   # Dev only. Production uses Supabase — see the header comment above and

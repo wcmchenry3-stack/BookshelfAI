@@ -4,11 +4,10 @@ name: Deploy
 # The prod services have autoDeploy off (render.yaml) — this workflow is the
 # only thing that deploys them, and only after CI passes.
 #
-# Known limit: the shared called-deploy-render.yml tells Render to deploy the
-# *current* HEAD of `main` (no commit is pinned). Runs are serialised below, but
-# a second push that lands while an earlier run is still going can still ship
-# before its own CI has finished. `main` only moves by promotion PR, so: do not
-# merge a second promotion until the first Deploy run is green.
+# Each deploy job passes commit-id: ${{ github.sha }} to called-deploy-render.yml,
+# which pins the Render deploy to the exact commit this workflow run validated
+# (instead of "current HEAD of main"), so a second push landing mid-run cannot
+# cause this run to ship a commit CI didn't check.
 #
 # Service IDs are repository *variables*, not secrets: they are not sensitive,
 # and the `secrets` context is not available in a reusable-workflow call's
@@ -59,15 +58,22 @@ jobs:
     with:
       service-name: "bookshelf-api"
       service-id: ${{ vars.RENDER_PROD_API_SERVICE_ID }}
+      commit-id: ${{ github.sha }}
       zap-target-url: "https://bookshelfapi.buffingchi.com"
     secrets: inherit
 
+  # needs both ci and deploy-api (not just ci): the API's preDeployCommand runs
+  # `alembic upgrade head`, so the web frontend must never ship against a
+  # failed/incomplete API deploy. But deploy-api is legitimately skipped when
+  # RENDER_PROD_API_SERVICE_ID is blank (see preflight) — that skip must not
+  # also skip this job, only an actual API deploy *failure* should.
   deploy-web:
-    needs: ci
-    if: ${{ vars.RENDER_PROD_WEB_SERVICE_ID != '' }}
+    needs: [ci, deploy-api]
+    if: ${{ !cancelled() && needs.ci.result == 'success' && needs.deploy-api.result != 'failure' && vars.RENDER_PROD_WEB_SERVICE_ID != '' }}
     uses: wcmchenry3-stack/.github/.github/workflows/called-deploy-render.yml@main
     with:
       service-name: "bookshelf-web"
       service-id: ${{ vars.RENDER_PROD_WEB_SERVICE_ID }}
+      commit-id: ${{ github.sha }}
       zap-target-url: "https://bookshelfai.buffingchi.com"
     secrets: inherit

@@ -42,6 +42,12 @@ jobs:
   # === Tier 1: Substantive fast checks (need lint + secret-scan) ===========
 
   backend-health:
+    # Skip when called from the Deploy workflow (github.workflow is the
+    # caller's name inside a workflow_call): this job probes the live
+    # bookshelf-api Render origin, which becomes PROD after cutover, so a
+    # prod outage would fail this job and block the very deploy meant to fix
+    # it. On pull_request/push to dev/main it still runs as a normal CI gate.
+    if: github.workflow != 'Deploy'
     needs: [lint-python, lint-frontend, secret-scan]
     uses: wcmchenry3-stack/.github/.github/workflows/called-backend-health.yml@main
     with:

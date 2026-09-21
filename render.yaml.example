@@ -98,7 +98,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-prod-api-domain>; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-prod-api-domain> https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -131,8 +131,12 @@ services:
         fromDatabase:
           name: <your-db-name>
           property: connectionString
+      # staging, not development: the backend gates hardening (TrustedHost,
+      # CF-Connecting-IP trust, /docs disabled, HSTS, /auth/test-login
+      # unregistered) on everything except development/test. Dev should
+      # exercise the hardened path like prod does.
       - key: ENVIRONMENT
-        value: development
+        value: staging
       - key: CORS_ORIGINS
         sync: false # dashboard-authoritative — dev hostnames are not fixed here
       - key: TRUSTED_HOSTS
@@ -187,7 +191,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-dev-api-domain>; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-dev-api-domain> https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -201,8 +205,10 @@ services:
         sync: false
       - key: EXPO_PUBLIC_SENTRY_DSN
         sync: false
+      # staging, not development — see the ENVIRONMENT comment on the dev API
+      # service above.
       - key: EXPO_PUBLIC_ENVIRONMENT
-        value: development
+        value: staging
 
 databases:
   # Dev only. Production uses Supabase.
