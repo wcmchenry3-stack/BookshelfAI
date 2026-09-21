@@ -1,0 +1,5 @@
+# Verified false positives from the first full-history scan with default rules (2026-09-20).
+# docs/api.md: truncated example JWT header ("eyJhbGciOiJSUzI1NiIs..."); backend/.env.example: empty placeholder.
+296f4d699199ee9ca3644ade5cfd84bd0923cf66:docs/api.md:generic-api-key:78
+296f4d699199ee9ca3644ade5cfd84bd0923cf66:docs/api.md:generic-api-key:79
+0b05f156dddba45eaa7c041c1fe95e58d55a86ac:backend/.env.example:generic-api-key:6
