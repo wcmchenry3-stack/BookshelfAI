@@ -1,19 +1,73 @@
 name: Deploy
 
+# Production deploys: CI first, then a Render deploy + ZAP scan per service.
+# The prod services have autoDeploy off (render.yaml) — this workflow is the
+# only thing that deploys them, and only after CI passes.
+#
+# Known limit: the shared called-deploy-render.yml tells Render to deploy the
+# *current* HEAD of `main` (no commit is pinned). Runs are serialised below, but
+# a second push that lands while an earlier run is still going can still ship
+# before its own CI has finished. `main` only moves by promotion PR, so: do not
+# merge a second promotion until the first Deploy run is green.
+#
+# Service IDs are repository *variables*, not secrets: they are not sensitive,
+# and the `secrets` context is not available in a reusable-workflow call's
+# `with:` (using it there is what made this file invalid). Set them once the
+# prod services exist (Settings → Secrets and variables → Actions → Variables):
+#   RENDER_PROD_API_SERVICE_ID  srv-… of bookshelf-api-prod
+#   RENDER_PROD_WEB_SERVICE_ID  srv-… of bookshelf-web-prod
+# Until a variable is set its deploy job is skipped, so promoting `dev` → `main`
+# before the prod services exist does not produce a failed run. The preflight
+# job turns that skip into a visible warning, so a blank or mistyped variable
+# cannot pass for a successful deploy.
+
 on:
   push:
     branches: [main]
 
+# One deploy at a time. A newer run waits behind the one in flight (and replaces
+# any older waiting run — Render deploys HEAD anyway, so only the newest matters).
+# In-flight runs are never cancelled: that could kill a deploy half-way.
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Flag prod deploy targets that are not configured
+        env:
+          API_SERVICE_ID: ${{ vars.RENDER_PROD_API_SERVICE_ID }}
+          WEB_SERVICE_ID: ${{ vars.RENDER_PROD_WEB_SERVICE_ID }}
+        run: |
+          if [ -z "$API_SERVICE_ID" ]; then
+            echo "::warning title=Prod API will not deploy::RENDER_PROD_API_SERVICE_ID is unset or blank, so the deploy-api job is skipped. Prod autoDeploy is off - nothing else will deploy it."
+          fi
+          if [ -z "$WEB_SERVICE_ID" ]; then
+            echo "::warning title=Prod web will not deploy::RENDER_PROD_WEB_SERVICE_ID is unset or blank, so the deploy-web job is skipped. Prod autoDeploy is off - nothing else will deploy it."
+          fi
+
   ci:
-    uses: wcmchenry3-stack/book_app/.github/workflows/ci.yml@a973bcce934fef46e22d40123430ad2594d5bada
+    uses: ./.github/workflows/ci.yml
     secrets: inherit
 
-  deploy:
+  deploy-api:
     needs: ci
-    uses: wcmchenry3-stack/.github/.github/workflows/called-deploy-render.yml@a973bcce934fef46e22d40123430ad2594d5bada
+    if: ${{ vars.RENDER_PROD_API_SERVICE_ID != '' }}
+    uses: wcmchenry3-stack/.github/.github/workflows/called-deploy-render.yml@main
     with:
-      service-name: 'bookshelf-api'
-      service-id: ${{ secrets.RENDER_SERVICE_ID }}
-      zap-target-url: 'https://bookshelfapi.buffingchi.com'
+      service-name: "bookshelf-api-prod"
+      service-id: ${{ vars.RENDER_PROD_API_SERVICE_ID }}
+      zap-target-url: "https://bookshelfapi.buffingchi.com"
+    secrets: inherit
+
+  deploy-web:
+    needs: ci
+    if: ${{ vars.RENDER_PROD_WEB_SERVICE_ID != '' }}
+    uses: wcmchenry3-stack/.github/.github/workflows/called-deploy-render.yml@main
+    with:
+      service-name: "bookshelf-web-prod"
+      service-id: ${{ vars.RENDER_PROD_WEB_SERVICE_ID }}
+      zap-target-url: "https://bookshelfai.buffingchi.com"
     secrets: inherit
