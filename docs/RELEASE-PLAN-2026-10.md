@@ -14,8 +14,10 @@ paywall, notes + tags UI) are a **second plan** that starts once workstreams 1�
 1. **Production database = Supabase; dev database stays on Render; local + CI stay on SQLite.** Supabase is
    Postgres only — no Supabase Auth, Storage, Data API, RLS, CLI or branching. Google sign-in + RS256 JWTs are
    unchanged. **Alembic is the only schema path.** Prod is a **fresh database**, not a migration.
-2. **Two environments on Render.** The existing API + web services are the **dev** stack (`dev` branch). New
-   `-prod` services track `main`, have auto-deploy off, and deploy only through `deploy.yml` after CI is green.
+2. **Two environments on Render.** The existing API + web services already own the production hostnames, so
+   they **become prod**: they move to `main`, auto-deploy off, deploying only through `deploy.yml` after CI is
+   green. A new `-dev` pair tracks the `dev` branch and takes over the Render Postgres database. (Amended
+   2026-09-20 — the first draft had the existing services staying dev.)
 3. **Submission is sequenced after the sibling app's October submission** — late October.
 4. **Server-authoritative.** The server owns all library state. The _only_ offline feature is capturing scan
    images and queueing them for upload. No optimistic writes, no client-side source of truth, no persisted
@@ -36,7 +38,7 @@ minimum rather than the Podfile platform, so the archive failed. Fix: normalise 
 | Piece | Where |
 |---|---|
 | `/health` is DB-free (Render liveness); new `/health/db` for uptime monitoring; bounded pre-ping pool | PR #448 |
-| `render.yaml` → dev + prod services, prod `DATABASE_URL` is a dashboard secret, guard tests | `feature/render-prod-topology` |
+| `render.yaml` → prod (existing names) + new `-dev` services, prod `DATABASE_URL` is a dashboard secret, guard tests | `feature/render-prod-topology` |
 | `deploy.yml` repaired (it referenced the repo's pre-rename name and never ran) | same branch |
 | Topology, connection rules, first-deploy checklist | `docs/RENDER.md` (same branch) |
 
@@ -44,8 +46,9 @@ Connection rules: **session pooler, port 5432** (Render has no outbound IPv6, so
 unreachable; the transaction pooler on 6543 breaks asyncpg). SSL enforced on the Supabase side; Data API off.
 **Secrets live only in the Render dashboard** — never in this repo, in chat, or in tool arguments.
 
-Owner-only steps: create the Supabase project and harden it in the dashboard → create the two prod Render
-services by hand (not Blueprint sync) → paste secrets → set repo variables `RENDER_PROD_API_SERVICE_ID` /
+Owner-only steps: create the Supabase project and harden it in the dashboard → create the new `-dev` Render
+services by hand (not Blueprint sync), attach the Render database and `-dev` DNS, and prove dev works → only then
+switch the existing services to `main` + the Supabase URL + a fresh prod JWT keypair → set repo variables `RENDER_PROD_API_SERVICE_ID` /
 `RENDER_PROD_WEB_SERVICE_ID` → merge `dev` → `main` → verify `/health` + `/health/db` → 5-minute uptime monitor
 on `/health/db` (keeps a free-plan project from pausing) → upgrade Supabase to Pro before submission.
 
