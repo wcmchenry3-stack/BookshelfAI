@@ -1,10 +1,20 @@
+# Without [extend] useDefault, a custom config REPLACES gitleaks' built-in rules.
+# This file previously held only an allowlist, which left the secret scan with
+# zero rules — it could not flag anything.
+[extend]
+  useDefault = true
+
 [allowlist]
   description = "Allowlist for test fixtures and CI placeholders"
+  # The dummy DSN that backend/tests/conftest.py defaults DATABASE_URL to.
+  # Allowlisted by VALUE, not by file: conftest.py is exactly where a real
+  # connection string is most likely to be pasted while debugging, so the file
+  # itself must stay scanned.
   regexes = [
-    # Fake DB URL used in conftest.py for unit tests (no real credentials)
     '''postgresql\+asyncpg://test:test@localhost/test''',
   ]
+  # CocoaPods spec checksums (40-hex SHA-1s next to pod names) read as
+  # generic-api-key hits; the lockfile never holds credentials.
   paths = [
-    # Test configuration files
-    '''backend/tests/conftest\.py''',
+    '''frontend/ios/Podfile\.lock$''',
   ]
