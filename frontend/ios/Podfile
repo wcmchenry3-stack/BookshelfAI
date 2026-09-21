@@ -18,8 +18,7 @@ ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] ||= podfile_properties['EX_DEV_CLIENT_NET
 ENV['RCT_USE_RN_DEP'] ||= '1' if podfile_properties['ios.buildReactNativeFromSource'] != 'true'
 ENV['RCT_USE_PREBUILT_RNCORE'] ||= '1' if podfile_properties['ios.buildReactNativeFromSource'] != 'true'
 ENV['RCT_HERMES_V1_ENABLED'] ||= '1' if podfile_properties['expo.useHermesV1'] == 'true'
-ios_deployment_target = podfile_properties['ios.deploymentTarget'] || '15.1'
-platform :ios, ios_deployment_target
+platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
 
 prepare_react_native_project!
 
@@ -63,23 +62,28 @@ target 'BookShelfAI' do
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
 
-    # Xcode 27 hard-errors on IPHONEOS_DEPLOYMENT_TARGET < 15.0 (was a warning).
-    # react_native_post_install already raises pod library targets, but not
-    # CocoaPods resource-bundle targets (Sentry-Sentry,
-    # RNCAsyncStorage-RNCAsyncStorage_resources), which inherit the podspec
-    # minimum (11.0 / 13.4). Raise those to the app's deployment target.
-    # Never lowers a higher target; skips unset or non-version values ("$(inherited)").
-    installer.target_installation_results.pod_target_installation_results.each_value do |result|
-      result.resource_bundle_targets.each do |bundle_target|
-        bundle_target.build_configurations.each do |bc|
-          current = bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-          next if current.nil? || !Gem::Version.correct?(current)
-          if Gem::Version.new(current) < Gem::Version.new(ios_deployment_target)
-            bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = ios_deployment_target
+    # @generated begin bookshelf-pod-deployment-target (plugins/withPodDeploymentTargetFix.js - DO NOT MODIFY)
+    # Raise CocoaPods resource-bundle targets to the app's deployment target
+    # (`platform :ios`). Never lowers a higher target; skips unset or non-version
+    # values such as "$(inherited)".
+    min_target = installer.aggregate_targets
+      .map { |t| t.platform.deployment_target&.to_s }
+      .compact
+      .max_by { |v| Gem::Version.new(v) }
+    if min_target
+      installer.target_installation_results.pod_target_installation_results.each_value do |result|
+        result.resource_bundle_targets.each do |bundle_target|
+          bundle_target.build_configurations.each do |bc|
+            current = bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+            next if current.nil? || !Gem::Version.correct?(current)
+            if Gem::Version.new(current) < Gem::Version.new(min_target)
+              bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = min_target
+            end
           end
         end
       end
     end
+    # @generated end bookshelf-pod-deployment-target
 
     # Fix fmt consteval compilation error with Xcode 26 Apple Clang.
     # Apple Clang advertises __cpp_consteval but cannot evaluate consteval

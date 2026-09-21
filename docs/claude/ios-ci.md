@@ -95,15 +95,26 @@ CocoaPods resource-bundle targets (`Sentry-Sentry`,
 `RNCAsyncStorage-RNCAsyncStorage_resources`) inherit the podspec's minimum, not
 the Podfile's `platform :ios`. `react_native_post_install` already raises pod
 library targets but skips resource bundles, so the `post_install` block in
-`frontend/ios/Podfile` raises only the resource-bundle targets to
-`ios.deploymentTarget`. That value comes from `Podfile.properties.json`
-(currently 16.4; the Podfile falls back to 15.1 if it is unset). It never lowers
-a higher target. Do not remove it. When this error appears,
+`frontend/ios/Podfile` raises only the resource-bundle targets to the app's
+`platform :ios` target. That is set from `ios.deploymentTarget` in
+`Podfile.properties.json` (currently 16.4; the Podfile falls back to 15.1 if it
+is unset). It never lowers a higher target. Do not remove it. When this error appears,
 `ci_post_xcodebuild.sh` also logs "Could not locate .app in archive" — that is a
 symptom, not the cause.
 
-`frontend/ios/Podfile` is Expo prebuild output, so `expo prebuild --clean` will
-drop this block — re-apply it afterwards.
+`frontend/ios/Podfile` is Expo prebuild output, so the block is owned by the
+config plugin `frontend/plugins/withPodDeploymentTargetFix.js` (registered in
+`app.json`), not edited by hand. `expo prebuild` (including `--clean`) re-inserts
+it between the `# @generated begin/end bookshelf-pod-deployment-target` markers.
+To change it, edit the plugin and re-run prebuild. The plugin throws if the Expo
+template no longer has a `react_native_post_install(...)` call, and a jest test
+(`withPodDeploymentTargetFix.test.js`) fails if the committed Podfile lacks the
+block.
+
+Note: `expo prebuild` also rewrites `Podfile.properties.json`'s
+`ios.deploymentTarget` from `app.json` (`ios.deploymentTarget`, currently
+`16.0` vs `16.4` committed). Do not commit that unrelated churn. The plugin uses
+whatever `platform :ios` resolves to.
 
 To verify locally after `pod install`, no target in `Pods/Pods.xcodeproj` should
 have `IPHONEOS_DEPLOYMENT_TARGET` below 15.0. `ios-build-check` cannot prove

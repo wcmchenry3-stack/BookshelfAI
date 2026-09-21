@@ -62,7 +62,8 @@
       ],
       "@sentry/react-native/expo",
       "expo-web-browser",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "./plugins/withPodDeploymentTargetFix"
     ],
     "scheme": "bookshelf"
   }
