@@ -56,6 +56,24 @@ class TestGoogleClientIds:
         assert s.google_client_ids == []
 
 
+class TestAsyncDatabaseUrl:
+    def test_normalizes_postgres_scheme(self):
+        s = Settings(database_url="postgres://u:p@localhost/db")
+        assert s.async_database_url == "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_normalizes_postgresql_scheme(self):
+        s = Settings(database_url="postgresql://u:p@localhost/db")
+        assert s.async_database_url == "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_leaves_postgresql_asyncpg_scheme_unchanged(self):
+        s = Settings(database_url="postgresql+asyncpg://u:p@localhost/db")
+        assert s.async_database_url == "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_leaves_sqlite_url_untouched(self):
+        s = Settings(database_url="sqlite+aiosqlite:///./test.db")
+        assert s.async_database_url == "sqlite+aiosqlite:///./test.db"
+
+
 class TestCorsOriginsValidator:
     def test_accepts_valid_origins(self):
         s = Settings(

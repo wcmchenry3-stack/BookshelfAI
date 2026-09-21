@@ -3,6 +3,7 @@ import hmac
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from typing import ClassVar
 
 import sentry_sdk
 from fastapi import FastAPI, Request
@@ -181,8 +182,10 @@ app.add_middleware(RequestSizeLimitMiddleware)
 # probes (CI, uptime monitors, load balancers) legitimately hit the origin
 # directly without going through the public hostname.
 class _HealthExemptTrustedHost(TrustedHostMiddleware):
+    _EXEMPT_PATHS: ClassVar[set[str]] = {"/health", "/health/db"}
+
     async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http" and scope.get("path") == "/health":
+        if scope.get("type") == "http" and scope.get("path") in self._EXEMPT_PATHS:
             await self.app(scope, receive, send)
             return
         await super().__call__(scope, receive, send)
@@ -200,6 +203,20 @@ app.include_router(user_books_router)
 @app.get("/health")
 @limiter.limit(settings.rate_limit_health)
 async def health(request: Request) -> JSONResponse:
+    """Liveness probe. Never touches the DB.
+
+    Render restarts a service when its health check fails, so this endpoint
+    must stay up (and return 200) even if the database is briefly unreachable
+    — otherwise a transient DB blip triggers an unnecessary restart. Use
+    ``/health/db`` to check DB connectivity specifically.
+    """
+    return JSONResponse(status_code=200, content={"status": "ok"})
+
+
+@app.get("/health/db")
+@limiter.limit(settings.rate_limit_health)
+async def health_db(request: Request) -> JSONResponse:
+    """DB connectivity check, separate from the liveness probe above."""
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
@@ -211,7 +228,7 @@ async def health(request: Request) -> JSONResponse:
     healthy = db_status == "ok"
     return JSONResponse(
         status_code=200 if healthy else 503,
-        content={"status": "ok" if healthy else "degraded", "db": db_status},
+        content={"status": "ok" if healthy else "error", "db": db_status},
     )
 
 

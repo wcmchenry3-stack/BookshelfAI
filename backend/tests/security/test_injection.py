@@ -324,6 +324,28 @@ class TestRateLimitEnforcement:
         app.dependency_overrides.clear()
         assert response.status_code == 429
 
+    def test_health_db_endpoint_returns_429_after_limit(self) -> None:
+        """GET /health/db is limited to rate_limit_health (60/minute by default);
+        the (limit + 1)th request must be 429."""
+        from unittest.mock import AsyncMock, patch
+
+        from app.core.config import settings
+
+        limit = int(settings.rate_limit_health.split("/")[0])
+        client = TestClient(app, raise_server_exceptions=False)
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock()
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.main.AsyncSessionLocal", return_value=mock_cm):
+            for _ in range(limit):
+                client.get("/health/db")
+            response = client.get("/health/db")
+        assert response.status_code == 429
+
 
 # ---------------------------------------------------------------------------
 # A01/A07 — Authentication bypass attempts
