@@ -37,7 +37,9 @@ async def test_health_does_not_touch_db_when_unreachable(monkeypatch):
     mock_cm = AsyncMock()
     mock_cm.__aenter__ = AsyncMock(side_effect=Exception("connection refused"))
 
-    with patch("app.main.AsyncSessionLocal", return_value=mock_cm):
+    with patch(
+        "app.main.AsyncSessionLocal", return_value=mock_cm
+    ) as mock_session_local:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -46,3 +48,5 @@ async def test_health_does_not_touch_db_when_unreachable(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
+    # /health must never touch the DB at all — not just tolerate a failure.
+    mock_session_local.assert_not_called()

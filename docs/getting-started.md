@@ -165,6 +165,8 @@ uvicorn app.main:app --reload
 Verify it's up:
 ```bash
 curl http://localhost:8000/health
+# {"status":"ok"}
+curl http://localhost:8000/health/db
 # {"status":"ok","db":"ok"}
 ```
 
@@ -205,7 +207,7 @@ First-time Android build also needs a debug keystore — see [android-ci.md](cla
 |---|---|---|
 | `psql: FATAL: database "bookshelf" does not exist` | skipped `createdb bookshelf` | Run step 2 |
 | `alembic.util.exc.CommandError: Can't locate revision` | wrong alembic version | `alembic upgrade head` from `backend/` with venv active |
-| Backend starts but `/health` returns `db: error` | `DATABASE_URL` wrong or Postgres down | Check `brew services list`, verify username + DB name |
+| Backend starts but `/health/db` returns `db: error` | `DATABASE_URL` wrong or Postgres down | Check `brew services list`, verify username + DB name |
 | Sign-in fails with 401 | email not in `ALLOWED_EMAILS` | add to `.env`, restart uvicorn |
 | Sign-in fails with `Invalid audience` | frontend client ID doesn't match backend's list | ensure all three `GOOGLE_*_CLIENT_ID` vars match between `.env` files |
 | `/scan` returns 500 | `OPENAI_API_KEY` missing or invalid | Check OpenAI dashboard; key needs Vision access |

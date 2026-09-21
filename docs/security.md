@@ -13,15 +13,15 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Refresh token theft | Single-use rotation — every `/auth/refresh` revokes the old `jti` and issues a new one |
 | Single-user lock | `ALLOWED_EMAILS` env var checked post-Google-auth |
 | Rate limiting | `slowapi` — per-client-IP; 10 req/min on `/scan`, 5/min auth, 120/min reads, etc. |
-| Real client IP | `CloudflareRealIPMiddleware` reads `CF-Connecting-IP` in production |
-| Host header spoofing | `TrustedHostMiddleware` (prod only) rejects requests with Host header outside `TRUSTED_HOSTS`; `/health` exempted via `_HealthExemptTrustedHost` so origin-direct probes still work |
+| Real client IP | `CloudflareRealIPMiddleware` reads `CF-Connecting-IP` when hardened (`settings.is_hardened` — staging + production) |
+| Host header spoofing | `TrustedHostMiddleware` (hardened only — staging + production) rejects requests with Host header outside `TRUSTED_HOSTS`; only `/health` (not `/health/db`) is exempted via `_HealthExemptTrustedHost` so origin-direct liveness probes still work |
 | Request size limit | `RequestSizeLimitMiddleware` drops bodies > 10 MB with 413 before reading the stream |
 | DDoS / Bot protection | Cloudflare free tier (Bot Fight Mode, HTTP DDoS protection) |
 | Bot protection on /scan | Cloudflare Turnstile — opt-in via `TURNSTILE_SECRET_KEY` env var. Request must carry `cf-turnstile-response`; verified against Cloudflare siteverify with 5s timeout |
 | CORS | Explicit method/header allowlist; wildcard origins rejected at config validation |
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
 | SQL injection | SQLAlchemy ORM throughout; no raw SQL |
-| HTTPS | Render TLS termination; HSTS header (production); Cloudflare Full-strict TLS |
+| HTTPS | Render TLS termination; HSTS header (hardened — staging + production); Cloudflare Full-strict TLS |
 | Secret scanning | `gitleaks` pre-commit hook + GitHub Secret Scanning |
 | Dependency CVEs | Dependabot + `pip-audit` + `npm audit` + Trivy (OSV+NVD) in CI |
 | SAST | Bandit (Python) — HIGH/MEDIUM findings block CI |

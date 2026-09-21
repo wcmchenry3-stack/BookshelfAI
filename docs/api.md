@@ -403,8 +403,9 @@ Never touches the database — always `200`. Render restarts a service on a fail
 
 ### `GET /health/db` — DB connectivity check
 
-**Auth:** none — same `TrustedHostMiddleware` exemption as `/health`
+**Auth:** none, but — unlike `/health` — NOT exempt from `TrustedHostMiddleware`. At the raw origin an attacker could otherwise rotate a spoofed `CF-Connecting-IP` per request to dodge the rate limit and exhaust the DB pool; the DB-connectivity uptime monitor uses the public hostname anyway.
 **Rate limit:** `rate_limit_health`
+**Timeout:** the DB probe is bounded to 5s (`_HEALTH_DB_TIMEOUT_SECONDS`); a hang counts as failure
 **Source:** `backend/app/main.py:health_db`
 
 **Response `200`:**
@@ -412,7 +413,7 @@ Never touches the database — always `200`. Render restarts a service on a fail
 { "status": "ok", "db": "ok" }
 ```
 
-**Response `503`:** `{ "status": "error", "db": "error" }` when DB is unreachable.
+**Response `503`:** `{ "status": "error", "db": "error" }` when DB is unreachable or the probe times out.
 
 ---
 

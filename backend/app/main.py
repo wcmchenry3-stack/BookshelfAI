@@ -3,7 +3,6 @@ import hmac
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import ClassVar
 
 import sentry_sdk
 from fastapi import FastAPI, Request
@@ -39,7 +38,7 @@ if settings.sentry_dsn:
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),
         ],
-        traces_sample_rate=0.2 if settings.environment == "production" else 1.0,
+        traces_sample_rate=0.2 if settings.is_hardened else 1.0,
         send_default_pii=False,
     )
 
@@ -75,8 +74,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # resource (e.g. via <img>, <script>). Safe for a JSON-only API.
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         # HSTS must only be sent over HTTPS. Sending it over HTTP in development
-        # causes browsers to cache an HSTS policy for localhost, breaking local dev.
-        if settings.environment == "production":
+        # causes browsers to cache an HSTS policy for localhost, breaking local
+        # dev. Sent whenever hardened (staging + production), both of which are
+        # public HTTPS deployments.
+        if settings.is_hardened:
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains"
             )
@@ -88,13 +89,14 @@ class CloudflareRealIPMiddleware(BaseHTTPMiddleware):
 
     Without this, slowapi keys unauthenticated rate limits by Cloudflare's edge IP
     rather than the real client IP, effectively disabling per-IP rate limiting.
-    The production guard prevents a locally supplied CF-Connecting-IP header from
-    being trusted in dev/staging environments.
+    The hardened guard prevents a locally supplied CF-Connecting-IP header from
+    being trusted outside staging/production, where Cloudflare is guaranteed to
+    be the one setting it.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
         cf_ip = request.headers.get("CF-Connecting-IP")
-        if cf_ip and settings.environment == "production":
+        if cf_ip and settings.is_hardened:
             request.scope["client"] = (cf_ip, 0)
         return await call_next(request)
 
@@ -146,7 +148,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Bookshelf API",
     version="0.1.0",
-    docs_url="/docs" if settings.environment != "production" else None,
+    docs_url="/docs" if not settings.is_hardened else None,
     redoc_url=None,
     lifespan=lifespan,
 )
@@ -177,21 +179,25 @@ app.add_middleware(
 app.add_middleware(RequestSizeLimitMiddleware)
 
 
-# TrustedHostMiddleware is outermost in production — drops requests with spoofed
-# Host headers before any other processing. /health is exempt because health
-# probes (CI, uptime monitors, load balancers) legitimately hit the origin
-# directly without going through the public hostname.
+# TrustedHostMiddleware is outermost when hardened (staging + production) —
+# drops requests with spoofed Host headers before any other processing. Only
+# /health is exempt, because that liveness probe (CI, uptime monitors, load
+# balancers) legitimately hits the origin directly without going through the
+# public hostname, and it does nothing an attacker could abuse.
+#
+# /health/db is deliberately NOT exempt: at the raw Render origin, an attacker
+# can rotate a spoofed CF-Connecting-IP header per request to dodge its rate
+# limit and exhaust the DB connection pool. The DB-connectivity uptime monitor
+# uses the public hostname, so it doesn't need the exemption anyway.
 class _HealthExemptTrustedHost(TrustedHostMiddleware):
-    _EXEMPT_PATHS: ClassVar[set[str]] = {"/health", "/health/db"}
-
     async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http" and scope.get("path") in self._EXEMPT_PATHS:
+        if scope.get("type") == "http" and scope.get("path") == "/health":
             await self.app(scope, receive, send)
             return
         await super().__call__(scope, receive, send)
 
 
-if settings.environment == "production":
+if settings.is_hardened:
     app.add_middleware(_HealthExemptTrustedHost, allowed_hosts=settings.trusted_hosts)
 
 app.include_router(auth_router)
@@ -213,15 +219,23 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse(status_code=200, content={"status": "ok"})
 
 
+# Bounded so a hung/slow DB connection can't tie up this endpoint's own worker
+# (and its share of the pool) indefinitely.
+_HEALTH_DB_TIMEOUT_SECONDS = 5
+
+
 @app.get("/health/db")
 @limiter.limit(settings.rate_limit_health)
 async def health_db(request: Request) -> JSONResponse:
     """DB connectivity check, separate from the liveness probe above."""
     try:
         async with AsyncSessionLocal() as session:
-            await session.execute(text("SELECT 1"))
+            await asyncio.wait_for(
+                session.execute(text("SELECT 1")),
+                timeout=_HEALTH_DB_TIMEOUT_SECONDS,
+            )
         db_status = "ok"
-    # Any DB failure means the health check reports "error".
+    # Any DB failure (including a timeout) means the health check reports "error".
     except Exception:  # noqa: BLE001
         db_status = "error"
 
@@ -232,7 +246,7 @@ async def health_db(request: Request) -> JSONResponse:
     )
 
 
-if settings.environment != "production":
+if not settings.is_hardened:
 
     @app.get("/debug/sentry-test")
     @limiter.limit("5/minute")
@@ -244,8 +258,8 @@ if settings.environment != "production":
     async def test_login(request: Request) -> JSONResponse:
         """Dev-only login for E2E tests. Requires TEST_AUTH_SECRET.
 
-        This endpoint is NOT registered in production (guarded by the
-        ``if settings.environment != "production"`` block).  Even in dev
+        This endpoint is NOT registered when hardened — staging or production
+        (guarded by the ``if not settings.is_hardened`` block). Even in dev
         it requires a shared secret and only issues tokens for emails
         already in the ALLOWED_EMAILS allowlist.
         """
