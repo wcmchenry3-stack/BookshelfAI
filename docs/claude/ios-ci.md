@@ -93,10 +93,22 @@ range of supported deployment target versions is 15.0 to 27.0.x. (in target 'Sen
 
 CocoaPods resource-bundle targets (`Sentry-Sentry`,
 `RNCAsyncStorage-RNCAsyncStorage_resources`) inherit the podspec's minimum, not
-the Podfile's `platform :ios`. The `post_install` block in `frontend/ios/Podfile`
-raises every pod target to `ios.deploymentTarget` (default 15.1). Do not remove
-it. When this error appears, `ci_post_xcodebuild.sh` also logs "Could not locate
-.app in archive" — that is a symptom, not the cause.
+the Podfile's `platform :ios`. `react_native_post_install` already raises pod
+library targets but skips resource bundles, so the `post_install` block in
+`frontend/ios/Podfile` raises only the resource-bundle targets to
+`ios.deploymentTarget`. That value comes from `Podfile.properties.json`
+(currently 16.4; the Podfile falls back to 15.1 if it is unset). It never lowers
+a higher target. Do not remove it. When this error appears,
+`ci_post_xcodebuild.sh` also logs "Could not locate .app in archive" — that is a
+symptom, not the cause.
+
+`frontend/ios/Podfile` is Expo prebuild output, so `expo prebuild --clean` will
+drop this block — re-apply it afterwards.
+
+To verify locally after `pod install`, no target in `Pods/Pods.xcodeproj` should
+have `IPHONEOS_DEPLOYMENT_TARGET` below 15.0. `ios-build-check` cannot prove
+this: it runs on the runner's default Xcode (where the check is only a warning)
+and deletes `Podfile.lock` first.
 
 ## Key paths on the Xcode Cloud worker
 
