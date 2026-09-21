@@ -24,5 +24,7 @@
   "addedTitle": "Ajouté à la liste",
   "addedMessage": "\"{{title}}\" a été ajouté à votre liste.",
   "couldNotSaveTitle": "Sauvegarde échouée",
-  "couldNotSaveMessage": "Impossible d'ajouter le livre. Réessayez."
+  "couldNotSaveMessage": "Impossible d'ajouter le livre. Réessayez.",
+  "queueFull": "File d'attente pleine. Attendez que les numérisations en attente soient téléversées avant d'en ajouter d'autres.",
+  "pendingUploads": "Téléversements en attente : {{count}}"
 }

@@ -18,7 +18,7 @@ export default function ScanScreen() {
   // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
   const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
   const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
-  const { startScan } = useScanJobs();
+  const { startScan, isQueueFull, pendingCount } = useScanJobs();
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
   const [inputMode, setInputMode] = useState<InputMode>('camera');
@@ -36,6 +36,10 @@ export default function ScanScreen() {
     const file: File | undefined = e?.target?.files?.[0];
     if (!file) return;
     if (webInputRef.current) webInputRef.current.value = '';
+    if (isQueueFull) {
+      showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+      return;
+    }
 
     // On web, pass the File object URL. The ScanJobContext handles FormData.
     let uri: string;
@@ -50,6 +54,11 @@ export default function ScanScreen() {
   // Native: camera shutter — take photo, persist to document dir, start background scan.
   async function handleCapture() {
     if (!cameraRef.current || capturing) return;
+    // Check before copying to scan-queue/ so a rejected capture leaves no file behind.
+    if (isQueueFull) {
+      showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+      return;
+    }
     setCapturing(true);
     Sentry.addBreadcrumb({
       category: 'scan',
@@ -142,6 +151,10 @@ export default function ScanScreen() {
   function handleSearch() {
     const q = query.trim();
     if (!q) return;
+    if (isQueueFull) {
+      showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+      return;
+    }
     startScan('text', undefined, q);
     setQuery('');
   }
@@ -183,11 +196,25 @@ export default function ScanScreen() {
     </View>
   );
 
+  const pendingBadge =
+    pendingCount > 0 ? (
+      <View
+        style={[styles.pendingBadge, { backgroundColor: theme.colors.surfaceContainerHighest }]}
+        accessibilityRole="text"
+        accessibilityLiveRegion="polite"
+      >
+        <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
+          {t('pendingUploads', { count: pendingCount })}
+        </Text>
+      </View>
+    ) : null;
+
   // ── Search mode ──────────────────────────────────────────────────────────
   if (inputMode === 'search') {
     return (
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         {modeToggle}
+        {pendingBadge}
         <View style={styles.searchContainer}>
           <TextInput
             style={[
@@ -236,6 +263,7 @@ export default function ScanScreen() {
         })}
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
           {modeToggle}
+          {pendingBadge}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
             onPress={() => webInputRef.current?.click()}
@@ -300,7 +328,11 @@ export default function ScanScreen() {
           children still receive them. Without this, iOS was swallowing the
           shutter press on top of the CameraView. */}
       <View style={styles.overlay} pointerEvents="box-none">
-        {modeToggle}
+        {/* Grouped so the badge appearing doesn't shift the space-between layout. */}
+        <View style={styles.topGroup}>
+          {modeToggle}
+          {pendingBadge}
+        </View>
 
         {/* Viewfinder: corner-bracket markers + scanning line */}
         <View style={styles.frameWrapper} pointerEvents="none">
@@ -375,6 +407,17 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     minHeight: 44,
     justifyContent: 'center',
+  },
+  topGroup: { alignItems: 'center' },
+  pendingBadge: {
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  pendingBadgeText: {
+    fontWeight: '600',
+    fontSize: 12,
   },
   modeTabText: {
     fontWeight: '600',

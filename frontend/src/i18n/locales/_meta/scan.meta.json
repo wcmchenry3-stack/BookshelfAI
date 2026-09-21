@@ -144,5 +144,15 @@
     "description": "Label on the web camera button that opens the device camera to scan a book cover",
     "tone": "action",
     "characterLimit": 25
+  },
+  "queueFull": {
+    "description": "Error banner shown when the offline scan queue has reached its 50-scan limit and a new capture is rejected",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "pendingUploads": {
+    "description": "Badge on the scan screen showing how many scans are waiting to upload; {{count}} is a number",
+    "tone": "neutral",
+    "characterLimit": 30
   }
 }

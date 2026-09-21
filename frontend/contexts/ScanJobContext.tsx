@@ -8,14 +8,18 @@ import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { Sentry } from '../lib/sentry';
-import type { ScanJob, ScanJobType } from '../lib/scanJob';
-import { loadJobs, saveJobs } from '../lib/scanJobStorage';
+import { isPendingUpload, MAX_QUEUE_SIZE, type ScanJob, type ScanJobType } from '../lib/scanJob';
+import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../lib/scanJobStorage';
 
 const MAX_RETRIES = 3;
 const QUEUE_DRAIN_DELAY = 2000;
 
 export interface ScanJobContextValue {
   jobs: ScanJob[];
+  /** Scans waiting to upload (queued offline or pending). */
+  pendingCount: number;
+  /** True when the queue is at MAX_QUEUE_SIZE and no more captures can be accepted. */
+  isQueueFull: boolean;
   reviewingJob: ScanJob | null;
   startScan: (type: ScanJobType, imageUri?: string, query?: string) => void;
   retryScan: (jobId: string) => void;
@@ -28,6 +32,8 @@ export interface ScanJobContextValue {
 
 export const ScanJobContext = createContext<ScanJobContextValue>({
   jobs: [],
+  pendingCount: 0,
+  isQueueFull: false,
   reviewingJob: null,
   startScan: () => {},
   retryScan: () => {},
@@ -54,15 +60,18 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     }
   }, [jobs, loaded]);
 
-  // Load persisted jobs on mount. Reset interrupted searches to pending.
+  // Load persisted jobs on mount. Reset interrupted searches to pending, then
+  // remove scan-queue files that no persisted job refers to (crashed captures).
   useEffect(() => {
     (async () => {
+      const launchedAt = Date.now();
       const persisted = await loadJobs();
       const restored = persisted.map((j) =>
         j.status === 'searching' ? { ...j, status: 'pending' as const } : j
       );
       setJobs(restored);
       setLoaded(true);
+      await sweepOrphanedScanFiles(restored, launchedAt);
     })();
   }, []);
 
@@ -108,9 +117,26 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
+  // Keep jobs in a ref so callbacks can read the latest state synchronously.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  const pendingCount = useMemo(() => jobs.filter(isPendingUpload).length, [jobs]);
+  const isQueueFull = pendingCount >= MAX_QUEUE_SIZE;
+
   const startScan = useCallback(
     async (type: ScanJobType, imageUri?: string, query?: string) => {
       try {
+        // Backstop for the cap — the scan screen checks isQueueFull before
+        // persisting a capture, but a stale render could still get here.
+        if (jobsRef.current.filter(isPendingUpload).length >= MAX_QUEUE_SIZE) {
+          if (imageUri) deleteScanImage(imageUri);
+          showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+          return;
+        }
+
         const job: ScanJob = {
           id: Crypto.randomUUID(),
           type,
@@ -155,12 +181,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [showBanner, t]
   );
-
-  // Keep jobs in a ref so retryScan can read the latest state synchronously.
-  const jobsRef = useRef(jobs);
-  useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
 
   const retryScan = useCallback(
     async (jobId: string) => {
@@ -215,14 +235,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       if (reviewingJobId === jobId) setReviewingJobId(null);
 
       // Clean up persisted image if it exists.
-      if (Platform.OS !== 'web') {
-        const job = jobs.find((j) => j.id === jobId);
-        if (job?.imageUri) {
-          import('expo-file-system').then((fs) => {
-            fs.deleteAsync(job.imageUri!, { idempotent: true }).catch(() => {});
-          });
-        }
-      }
+      const job = jobs.find((j) => j.id === jobId);
+      if (job?.imageUri) deleteScanImage(job.imageUri);
     },
     [jobs, reviewingJobId]
   );
@@ -375,6 +389,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       jobs,
+      pendingCount,
+      isQueueFull,
       reviewingJob,
       startScan,
       retryScan,
@@ -386,6 +402,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       jobs,
+      pendingCount,
+      isQueueFull,
       reviewingJob,
       startScan,
       retryScan,

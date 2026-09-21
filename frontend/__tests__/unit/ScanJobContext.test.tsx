@@ -20,11 +20,15 @@ jest.mock('../../lib/api', () => ({
 const mockLoadJobs = jest.fn().mockResolvedValue([]);
 const mockSaveJobs = jest.fn();
 const mockClearJobs = jest.fn();
+const mockSweep = jest.fn();
+const mockDeleteScanImage = jest.fn();
 
 jest.mock('../../lib/scanJobStorage', () => ({
   loadJobs: (...args: unknown[]) => mockLoadJobs(...args),
   saveJobs: (...args: unknown[]) => mockSaveJobs(...args),
   clearJobs: (...args: unknown[]) => mockClearJobs(...args),
+  sweepOrphanedScanFiles: (...args: unknown[]) => mockSweep(...args),
+  deleteScanImage: (...args: unknown[]) => mockDeleteScanImage(...args),
 }));
 
 const mockNetInfoFetch = jest.fn().mockResolvedValue({ isConnected: true });
@@ -41,10 +45,6 @@ jest.mock('@react-native-community/netinfo', () => ({
 let mockUuidCounter = 0;
 jest.mock('expo-crypto', () => ({
   randomUUID: () => `test-uuid-${++mockUuidCounter}`,
-}));
-
-jest.mock('expo-file-system', () => ({
-  deleteAsync: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('../../hooks/useTheme', () => ({
@@ -93,7 +93,20 @@ beforeEach(() => {
   mockNetInfoFetch.mockResolvedValue({ isConnected: true });
   mockNetInfoAddEventListener.mockReturnValue(() => {});
   mockSaveJobs.mockResolvedValue(undefined);
+  mockSweep.mockResolvedValue(0);
+  mockDeleteScanImage.mockResolvedValue(undefined);
 });
+
+function queuedJob(i: number) {
+  return {
+    id: `queued-${i}`,
+    type: 'image' as const,
+    status: 'queued' as const,
+    createdAt: 1000 + i,
+    imageUri: `file:///docs/scan-queue/${1000 + i}-0.jpg`,
+    retryCount: 0,
+  };
+}
 
 describe('ScanJobContext — startScan', () => {
   it('creates a job and fires text search API call', async () => {
@@ -232,6 +245,62 @@ describe('ScanJobContext — queueForLater', () => {
   });
 });
 
+describe('ScanJobContext — queue cap and pending count', () => {
+  it('reports pendingCount for queued and pending jobs only', async () => {
+    mockLoadJobs.mockResolvedValue([
+      queuedJob(1),
+      { ...queuedJob(2), status: 'pending' },
+      { ...queuedJob(3), status: 'complete' },
+      { ...queuedJob(4), status: 'failed' },
+    ]);
+    const { result } = await renderScanJobs();
+    expect(result.current.pendingCount).toBe(2);
+    expect(result.current.isQueueFull).toBe(false);
+  });
+
+  it('flags the queue as full at 50 pending jobs', async () => {
+    mockLoadJobs.mockResolvedValue(Array.from({ length: 50 }, (_, i) => queuedJob(i)));
+    const { result } = await renderScanJobs();
+    expect(result.current.pendingCount).toBe(50);
+    expect(result.current.isQueueFull).toBe(true);
+  });
+
+  it('does not count completed jobs toward the cap', async () => {
+    mockLoadJobs.mockResolvedValue(
+      Array.from({ length: 50 }, (_, i) => ({ ...queuedJob(i), status: 'complete' }))
+    );
+    const { result } = await renderScanJobs();
+    expect(result.current.isQueueFull).toBe(false);
+  });
+
+  it('rejects startScan when full, deletes the copied image and does not add a job', async () => {
+    mockLoadJobs.mockResolvedValue(Array.from({ length: 50 }, (_, i) => queuedJob(i)));
+    const { result } = await renderScanJobs();
+
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/new.jpg');
+    });
+
+    expect(result.current.jobs).toHaveLength(50);
+    expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/new.jpg');
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('accepts a scan when one slot is free', async () => {
+    mockLoadJobs.mockResolvedValue(Array.from({ length: 49 }, (_, i) => queuedJob(i)));
+    mockNetInfoFetch.mockResolvedValue({ isConnected: false });
+    const { result } = await renderScanJobs();
+
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/new.jpg');
+    });
+
+    expect(result.current.jobs).toHaveLength(50);
+    expect(result.current.isQueueFull).toBe(true);
+    expect(mockDeleteScanImage).not.toHaveBeenCalled();
+  });
+});
+
 describe('ScanJobContext — persistence', () => {
   it('persists jobs to storage on change', async () => {
     await renderScanJobs();
@@ -255,6 +324,16 @@ describe('ScanJobContext — persistence', () => {
     const { result } = await renderScanJobs();
     expect(result.current.jobs).toHaveLength(1);
     expect(result.current.jobs[0].id).toBe('persisted-job');
+  });
+
+  it('sweeps orphaned scan files against the restored jobs on mount', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1)]);
+    await renderScanJobs();
+    await waitFor(() => expect(mockSweep).toHaveBeenCalledTimes(1));
+    const [jobs, cutoff] = mockSweep.mock.calls[0];
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].id).toBe('queued-1');
+    expect(typeof cutoff).toBe('number');
   });
 
   it('resets interrupted searching jobs to pending on mount', async () => {
@@ -289,6 +368,17 @@ describe('ScanJobContext — dismissJob', () => {
     });
 
     expect(result.current.jobs).toHaveLength(0);
+  });
+
+  it('deletes the persisted image when a job is dismissed', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1)]);
+    const { result } = await renderScanJobs();
+
+    await act(() => {
+      result.current.dismissJob('queued-1');
+    });
+
+    expect(mockDeleteScanImage).toHaveBeenCalledWith(queuedJob(1).imageUri);
   });
 });
 

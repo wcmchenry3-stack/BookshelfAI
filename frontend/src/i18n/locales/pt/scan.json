@@ -24,5 +24,7 @@
   "addedTitle": "Adicionado à lista",
   "addedMessage": "\"{{title}}\" foi adicionado à sua lista.",
   "couldNotSaveTitle": "Não foi possível salvar",
-  "couldNotSaveMessage": "Erro ao adicionar livro à lista. Tente novamente."
+  "couldNotSaveMessage": "Erro ao adicionar livro à lista. Tente novamente.",
+  "queueFull": "Fila cheia. Aguarde o envio dos scans pendentes antes de adicionar mais.",
+  "pendingUploads": "Envios pendentes: {{count}}"
 }
