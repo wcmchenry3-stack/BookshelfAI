@@ -30,6 +30,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Web token storage | In-memory `Map` (never `localStorage`); native uses `SecureStore` |
 | Security headers | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Permissions-Policy |
 | Error disclosure | Exception messages stripped from HTTP error responses; logged server-side only |
+| Error-report PII | Three layers in `app/core/sentry_context.py` (`sentry_privacy_options()`): (1) `include_local_variables=False` — frame locals are never sent, because auth frames hold ID/refresh tokens inside model reprs that no key-name list can see; (2) `before_send` / `before_send_transaction` / `before_breadcrumb` strip URL query strings (the Google Books key travels as `?key=`); (3) a recursive `EventScrubber` for request bodies, headers and extras — request token names plus every secret-looking `Settings` field, derived from `Settings.model_fields` so it cannot drift. `send_default_pii=False`. Deployed events carry `release=bookshelf-api@<RENDER_GIT_COMMIT>` and the `environment` tag |
 
 ## Pre-commit Hook (gitleaks)
 
