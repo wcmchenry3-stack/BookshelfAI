@@ -21,7 +21,7 @@ book_app/
 │   └── claude/      Claude-specific instructions for working inside this repo
 ├── .github/         CI workflows, PR template, rulesets
 ├── CLAUDE.md        Load-bearing rules for Claude Code sessions (read before contributing)
-├── render.yaml      Render service + DB definition (backend auto-deploys from dev)
+├── render.yaml      Render service + DB definition (dev branch auto-deploys the -dev services; prod deploys from main only via .github/workflows/deploy.yml after CI)
 └── .tool-versions   asdf/mise version pins (JDK 17 for Android)
 ```
 
@@ -48,7 +48,7 @@ npx expo start            # press i for iOS sim, a for Android, w for web
 
 - Branch from `dev` → `feature/<name>` or `bug/<name>` → open PR targeting `dev` → CI green → merge
 - **Never** push directly to `dev` or `main`
-- `dev` auto-deploys the backend to Render production (per `render.yaml`)
+- `dev` auto-deploys `bookshelf-api-dev`/`bookshelf-web-dev`; production (`bookshelf-api`/`bookshelf-web`, branch `main`) only deploys via `.github/workflows/deploy.yml` after CI passes — see [`docs/RENDER.md`](docs/RENDER.md)
 - Full rule list: [`CLAUDE.md`](CLAUDE.md)
 
 ## Documentation
