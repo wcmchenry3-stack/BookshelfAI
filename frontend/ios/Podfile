@@ -62,23 +62,28 @@ target 'BookShelfAI' do
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
 
-    # Raise every pod target to the app's minimum deployment target.
-    # Xcode 27 hard-errors on IPHONEOS_DEPLOYMENT_TARGET < 15.0 (was a warning).
-    # Resource-bundle targets (Sentry-Sentry, RNCAsyncStorage-RNCAsyncStorage_resources)
-    # inherit the podspec minimum (11.0 / 13.4) rather than `platform :ios` above,
-    # so they must be normalised here. Never lowers a target that is already higher.
-    min_target = podfile_properties['ios.deploymentTarget'] || '15.1'
-    installer.generated_projects.each do |project|
-      project.targets.each do |target|
-        target.build_configurations.each do |bc|
-          current = bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-          next if current && !Gem::Version.correct?(current)  # e.g. "$(inherited)"
-          if current.nil? || Gem::Version.new(current) < Gem::Version.new(min_target)
-            bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = min_target
+    # @generated begin bookshelf-pod-deployment-target (plugins/withPodDeploymentTargetFix.js - DO NOT MODIFY)
+    # Raise CocoaPods resource-bundle targets to the app's deployment target
+    # (`platform :ios`). Never lowers a higher target; skips unset or non-version
+    # values such as "$(inherited)".
+    min_target = installer.aggregate_targets
+      .map { |t| t.platform.deployment_target&.to_s }
+      .compact
+      .max_by { |v| Gem::Version.new(v) }
+    if min_target
+      installer.target_installation_results.pod_target_installation_results.each_value do |result|
+        result.resource_bundle_targets.each do |bundle_target|
+          bundle_target.build_configurations.each do |bc|
+            current = bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+            next if current.nil? || !Gem::Version.correct?(current)
+            if Gem::Version.new(current) < Gem::Version.new(min_target)
+              bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = min_target
+            end
           end
         end
       end
     end
+    # @generated end bookshelf-pod-deployment-target
 
     # Fix fmt consteval compilation error with Xcode 26 Apple Clang.
     # Apple Clang advertises __cpp_consteval but cannot evaluate consteval
