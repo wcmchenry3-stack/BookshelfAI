@@ -64,7 +64,8 @@ class Settings(BaseSettings):
     # Observability
     sentry_dsn: str = ""
     # Set automatically by Render on every deploy (RENDER_GIT_COMMIT). Empty
-    # locally and in CI, where events carry no release.
+    # locally and in CI — there sentry-sdk falls back to its own detection (a
+    # bare git SHA), under a non-production `environment`.
     render_git_commit: str = ""
 
     # App
@@ -113,7 +114,12 @@ class Settings(BaseSettings):
 
     @property
     def sentry_release(self) -> str | None:
-        """Sentry release id, so an issue can be tied to the deploy that caused it."""
+        """Sentry release id, so an issue can be tied to the deploy that caused it.
+
+        ``None`` does not mean "no release": the SDK then uses its default
+        detection. On Render the commit is always set, so every deployed event
+        carries exactly one format, ``bookshelf-api@<sha>``.
+        """
         sha = self.render_git_commit.strip()
         return f"bookshelf-api@{sha}" if sha else None
 
