@@ -1,14 +1,15 @@
 # Render topology (example / placeholder values — see render.yaml for the
 # real BookshelfAI configuration and docs/RENDER.md for the full writeup).
 #
-# Dev  (branch `dev`):  <your-api-service-name>      + <your-web-service-name>
-#                       — DATABASE_URL is a Render Postgres database (see
-#                       `databases:` below).
-# Prod (branch `main`): <your-api-service-name>-prod + <your-web-service-name>-prod
-#                       — DATABASE_URL is a Supabase Postgres session pooler
-#                       URL (port 5432 — never the 6543 transaction pooler;
-#                       Render has no outbound IPv6, so Supabase's direct host
-#                       is unreachable from it).
+# Prod (branch `main`): <your-api-service-name>     + <your-web-service-name>
+#                       — the pre-existing services keep their names and
+#                       hostnames. DATABASE_URL is a Supabase Postgres session
+#                       pooler URL (port 5432 — never the 6543 transaction
+#                       pooler; Render has no outbound IPv6, so Supabase's
+#                       direct host is unreachable from it).
+# Dev  (branch `dev`):  <your-api-service-name>-dev + <your-web-service-name>-dev
+#                       — new services. DATABASE_URL is a Render Postgres
+#                       database (see `databases:` below).
 #
 # The prod DATABASE_URL lives ONLY in the Render dashboard (`sync: false`
 # below) — never in this file, a PR, or a chat/tool argument. Prod deploys
@@ -17,100 +18,11 @@
 # services below).
 
 services:
-  - type: web
-    name: <your-api-service-name>
-    env: python
-    region: <your-region>
-    plan: starter
-    branch: dev
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    preDeployCommand: alembic upgrade head
-    healthCheckPath: /health
-    rootDir: backend
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: <your-db-name>
-          property: connectionString
-      - key: ENVIRONMENT
-        value: development
-      - key: CORS_ORIGINS
-        sync: false # dashboard-authoritative — dev hostnames are not fixed here
-      - key: TRUSTED_HOSTS
-        sync: false # dashboard-authoritative — dev hostnames are not fixed here
-      - key: TURNSTILE_SECRET_KEY
-        sync: false
-      - key: SENTRY_DSN
-        sync: false
-      - key: GOOGLE_CLIENT_ID
-        sync: false # required for Google OAuth login; empty breaks auth
-      - key: GOOGLE_IOS_CLIENT_ID
-        sync: false # required for iOS Google Sign-In token verification
-      - key: GOOGLE_ANDROID_CLIENT_ID
-        sync: false # required for Android Google Sign-In token verification
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false # required for the Google OAuth code exchange
-      - key: JWT_PRIVATE_KEY
-        sync: false # required to sign session JWTs; never reuse prod's keypair
-      - key: JWT_PUBLIC_KEY
-        sync: false # required to verify session JWTs; never reuse prod's keypair
-      - key: OPENAI_API_KEY
-        sync: false # required for the ChatGPT Vision book-scan feature
-
-  - type: web
-    name: <your-web-service-name>
-    env: static
-    region: <your-region>
-    branch: dev
-    buildCommand: npm ci && printf "EXPO_PUBLIC_API_URL=%s\nEXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=%s\nEXPO_PUBLIC_SENTRY_DSN=%s\nEXPO_PUBLIC_ENVIRONMENT=%s\n" "$EXPO_PUBLIC_API_URL" "$EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID" "$EXPO_PUBLIC_SENTRY_DSN" "$EXPO_PUBLIC_ENVIRONMENT" > .env && npx expo export --platform web --clear
-    staticPublishPath: dist
-    rootDir: frontend
-    pullRequestPreviewsEnabled: false
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    headers:
-      - path: /*
-        name: Cross-Origin-Opener-Policy
-        value: same-origin-allow-popups
-      - path: /*
-        name: X-Frame-Options
-        value: DENY
-      - path: /*
-        name: X-Content-Type-Options
-        value: nosniff
-      - path: /*
-        name: Referrer-Policy
-        value: strict-origin-when-cross-origin
-      - path: /*
-        name: Strict-Transport-Security
-        value: 'max-age=31536000; includeSubDomains'
-      - path: /*
-        name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-dev-api-domain>; style-src 'self' 'unsafe-inline'; script-src 'self'"
-      - path: /*
-        name: Cache-Control
-        value: no-cache
-      - path: /assets/*
-        name: Cache-Control
-        value: 'public, max-age=31536000, immutable'
-    envVars:
-      - key: EXPO_PUBLIC_API_URL
-        value: https://<your-dev-api-domain>
-      - key: EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
-        sync: false
-      - key: EXPO_PUBLIC_SENTRY_DSN
-        sync: false
-      - key: EXPO_PUBLIC_ENVIRONMENT
-        value: development
-
   # --- Production API (branch main). autoDeploy is off — Render's own
   # auto-deploy would ship a commit before CI finishes and skip the ZAP scan.
   # .github/workflows/deploy.yml is the only thing that deploys this service.
   - type: web
-    name: <your-api-service-name>-prod
+    name: <your-api-service-name>
     env: python
     region: <your-region>
     plan: starter
@@ -153,9 +65,9 @@ services:
         sync: false # required for the ChatGPT Vision book-scan feature
 
   # --- Production static web (branch main). autoDeploy is off — see the note
-  # on <your-api-service-name>-prod above; same workflow deploys both.
+  # on <your-api-service-name> above; same workflow deploys both.
   - type: web
-    name: <your-web-service-name>-prod
+    name: <your-web-service-name>
     env: static
     region: <your-region>
     branch: main
@@ -202,6 +114,95 @@ services:
         sync: false
       - key: EXPO_PUBLIC_ENVIRONMENT
         value: production
+
+  - type: web
+    name: <your-api-service-name>-dev
+    env: python
+    region: <your-region>
+    plan: starter
+    branch: dev
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: alembic upgrade head
+    healthCheckPath: /health
+    rootDir: backend
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: <your-db-name>
+          property: connectionString
+      - key: ENVIRONMENT
+        value: development
+      - key: CORS_ORIGINS
+        sync: false # dashboard-authoritative — dev hostnames are not fixed here
+      - key: TRUSTED_HOSTS
+        sync: false # dashboard-authoritative — dev hostnames are not fixed here
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false # required for Google OAuth login; empty breaks auth
+      - key: GOOGLE_IOS_CLIENT_ID
+        sync: false # required for iOS Google Sign-In token verification
+      - key: GOOGLE_ANDROID_CLIENT_ID
+        sync: false # required for Android Google Sign-In token verification
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false # required for the Google OAuth code exchange
+      - key: JWT_PRIVATE_KEY
+        sync: false # required to sign session JWTs; never reuse prod's keypair
+      - key: JWT_PUBLIC_KEY
+        sync: false # required to verify session JWTs; never reuse prod's keypair
+      - key: OPENAI_API_KEY
+        sync: false # required for the ChatGPT Vision book-scan feature
+
+  - type: web
+    name: <your-web-service-name>-dev
+    env: static
+    region: <your-region>
+    branch: dev
+    buildCommand: npm ci && printf "EXPO_PUBLIC_API_URL=%s\nEXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=%s\nEXPO_PUBLIC_SENTRY_DSN=%s\nEXPO_PUBLIC_ENVIRONMENT=%s\n" "$EXPO_PUBLIC_API_URL" "$EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID" "$EXPO_PUBLIC_SENTRY_DSN" "$EXPO_PUBLIC_ENVIRONMENT" > .env && npx expo export --platform web --clear
+    staticPublishPath: dist
+    rootDir: frontend
+    pullRequestPreviewsEnabled: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin-allow-popups
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Strict-Transport-Security
+        value: 'max-age=31536000; includeSubDomains'
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-dev-api-domain>; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+      - path: /assets/*
+        name: Cache-Control
+        value: 'public, max-age=31536000, immutable'
+    envVars:
+      - key: EXPO_PUBLIC_API_URL
+        value: https://<your-dev-api-domain>
+      - key: EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+        sync: false
+      - key: EXPO_PUBLIC_SENTRY_DSN
+        sync: false
+      - key: EXPO_PUBLIC_ENVIRONMENT
+        value: development
 
 databases:
   # Dev only. Production uses Supabase.

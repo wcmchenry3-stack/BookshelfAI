@@ -1,9 +1,9 @@
 """Guard tests for render.yaml — dev/prod topology and secret hygiene.
 
-Prod (`bookshelf-api-prod`, `bookshelf-web-prod`) must never reference a
-Render-managed database — production data lives in Supabase, configured only
-through dashboard secrets (`sync: false`). Dev (`bookshelf-api`,
-`bookshelf-web`) keeps using the Render Postgres `bookshelf-db`. See
+Prod (`bookshelf-api`, `bookshelf-web`) must never reference a Render-managed
+database — production data lives in Supabase, configured only through
+dashboard secrets (`sync: false`). Dev (`bookshelf-api-dev`,
+`bookshelf-web-dev`) keeps using the Render Postgres `bookshelf-db`. See
 docs/RENDER.md for the full topology.
 """
 
@@ -39,22 +39,22 @@ def _header_value(service: dict, name: str) -> str:
     raise AssertionError(f"header {name!r} not found on service {service['name']!r}")
 
 
-# --- Prod API (bookshelf-api-prod) -----------------------------------------
+# --- Prod API (bookshelf-api) -----------------------------------------------
 
 
 def test_prod_api_has_no_from_database_anywhere():
     config = _load_render_yaml()
-    prod_api = _service(config, "bookshelf-api-prod")
+    prod_api = _service(config, "bookshelf-api")
     for env_var in prod_api.get("envVars", []):
         assert "fromDatabase" not in env_var, (
-            f"bookshelf-api-prod envVar {env_var.get('key')!r} uses fromDatabase "
+            f"bookshelf-api envVar {env_var.get('key')!r} uses fromDatabase "
             "— prod must use Supabase, never a Render database"
         )
 
 
 def test_prod_api_database_url_is_dashboard_secret():
     config = _load_render_yaml()
-    prod_api = _service(config, "bookshelf-api-prod")
+    prod_api = _service(config, "bookshelf-api")
     database_url = _env_var(prod_api, "DATABASE_URL")
     assert database_url.get("sync") is False
     assert "fromDatabase" not in database_url
@@ -63,58 +63,58 @@ def test_prod_api_database_url_is_dashboard_secret():
 
 def test_prod_api_environment_is_production():
     config = _load_render_yaml()
-    prod_api = _service(config, "bookshelf-api-prod")
+    prod_api = _service(config, "bookshelf-api")
     assert _env_var(prod_api, "ENVIRONMENT")["value"] == "production"
 
 
 def test_prod_api_deploys_from_main_without_autodeploy():
     config = _load_render_yaml()
-    prod_api = _service(config, "bookshelf-api-prod")
+    prod_api = _service(config, "bookshelf-api")
     assert prod_api["branch"] == "main"
     assert prod_api["autoDeploy"] is False
 
 
 def test_prod_api_health_check_path():
     config = _load_render_yaml()
-    prod_api = _service(config, "bookshelf-api-prod")
+    prod_api = _service(config, "bookshelf-api")
     assert prod_api["healthCheckPath"] == "/health"
 
 
-# --- Dev API (bookshelf-api) -------------------------------------------------
+# --- Dev API (bookshelf-api-dev) --------------------------------------------
 
 
 def test_dev_api_environment_is_not_production():
     config = _load_render_yaml()
-    dev_api = _service(config, "bookshelf-api")
+    dev_api = _service(config, "bookshelf-api-dev")
     assert _env_var(dev_api, "ENVIRONMENT")["value"] != "production"
 
 
 def test_dev_api_database_url_comes_from_render_database():
     config = _load_render_yaml()
-    dev_api = _service(config, "bookshelf-api")
+    dev_api = _service(config, "bookshelf-api-dev")
     database_url = _env_var(dev_api, "DATABASE_URL")
     assert database_url["fromDatabase"]["name"] == "bookshelf-db"
 
 
 def test_dev_api_deploys_from_dev_branch():
     config = _load_render_yaml()
-    dev_api = _service(config, "bookshelf-api")
+    dev_api = _service(config, "bookshelf-api-dev")
     assert dev_api["branch"] == "dev"
 
 
-# --- Prod web (bookshelf-web-prod) ------------------------------------------
+# --- Prod web (bookshelf-web) ------------------------------------------------
 
 
 def test_prod_web_deploys_from_main_without_autodeploy():
     config = _load_render_yaml()
-    prod_web = _service(config, "bookshelf-web-prod")
+    prod_web = _service(config, "bookshelf-web")
     assert prod_web["branch"] == "main"
     assert prod_web["autoDeploy"] is False
 
 
 def test_prod_web_points_at_prod_api():
     config = _load_render_yaml()
-    prod_web = _service(config, "bookshelf-web-prod")
+    prod_web = _service(config, "bookshelf-web")
     assert (
         _env_var(prod_web, "EXPO_PUBLIC_API_URL")["value"]
         == "https://bookshelfapi.buffingchi.com"
@@ -123,18 +123,18 @@ def test_prod_web_points_at_prod_api():
 
 def test_prod_web_csp_references_prod_api_and_not_dev():
     config = _load_render_yaml()
-    prod_web = _service(config, "bookshelf-web-prod")
+    prod_web = _service(config, "bookshelf-web")
     csp = _header_value(prod_web, "Content-Security-Policy")
     assert "https://bookshelfapi.buffingchi.com" in csp
     assert "-dev" not in csp
 
 
-# --- Dev web (bookshelf-web) -------------------------------------------------
+# --- Dev web (bookshelf-web-dev) ---------------------------------------------
 
 
 def test_dev_web_csp_does_not_reference_prod_api():
     config = _load_render_yaml()
-    dev_web = _service(config, "bookshelf-web")
+    dev_web = _service(config, "bookshelf-web-dev")
     csp = _header_value(dev_web, "Content-Security-Policy")
     assert "https://bookshelfapi.buffingchi.com" not in csp
 
