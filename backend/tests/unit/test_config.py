@@ -56,6 +56,76 @@ class TestGoogleClientIds:
         assert s.google_client_ids == []
 
 
+class TestAsyncDatabaseUrl:
+    def test_normalizes_postgres_scheme(self):
+        s = Settings(database_url="postgres://u:p@localhost/db")
+        assert s.async_database_url == "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_normalizes_postgresql_scheme(self):
+        s = Settings(database_url="postgresql://u:p@localhost/db")
+        assert s.async_database_url == "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_leaves_postgresql_asyncpg_scheme_unchanged(self):
+        s = Settings(database_url="postgresql+asyncpg://u:p@localhost/db")
+        assert s.async_database_url == "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_leaves_sqlite_url_untouched(self):
+        s = Settings(database_url="sqlite+aiosqlite:///./test.db")
+        assert s.async_database_url == "sqlite+aiosqlite:///./test.db"
+
+
+class TestTransactionPoolerPortValidator:
+    def test_rejects_transaction_pooler_port_6543(self):
+        with pytest.raises(ValidationError, match="6543"):
+            Settings(database_url="postgresql://u:p@db.supabase.co:6543/postgres")
+
+    def test_rejects_transaction_pooler_port_with_postgres_scheme(self):
+        with pytest.raises(ValidationError, match="session pooler"):
+            Settings(database_url="postgres://u:p@db.supabase.co:6543/postgres")
+
+    def test_accepts_session_pooler_port_5432(self):
+        s = Settings(database_url="postgresql://u:p@db.supabase.co:5432/postgres")
+        assert s.database_url == "postgresql://u:p@db.supabase.co:5432/postgres"
+
+    def test_accepts_url_with_no_port(self):
+        s = Settings(database_url="postgresql://u:p@localhost/db")
+        assert s.database_url == "postgresql://u:p@localhost/db"
+
+    def test_accepts_sqlite_url(self):
+        s = Settings(database_url="sqlite+aiosqlite:///./test.db")
+        assert s.database_url == "sqlite+aiosqlite:///./test.db"
+
+
+class TestIsHardened:
+    def test_development_is_not_hardened(self):
+        s = Settings(
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            environment="development",
+        )
+        assert s.is_hardened is False
+
+    def test_test_environment_is_not_hardened(self):
+        s = Settings(
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            environment="test",
+        )
+        assert s.is_hardened is False
+
+    def test_staging_is_hardened(self):
+        s = Settings(
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            environment="staging",
+        )
+        assert s.is_hardened is True
+
+    def test_production_is_hardened(self):
+        s = Settings(
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            environment="production",
+        )
+        assert s.is_hardened is True
+
+
 class TestCorsOriginsValidator:
     def test_accepts_valid_origins(self):
         s = Settings(

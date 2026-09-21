@@ -73,16 +73,18 @@ Middleware is configured in `backend/app/main.py`. FastAPI's `add_middleware` wr
 
 | Order (outermost first) | Middleware | Role | Active in |
 |---|---|---|---|
-| 1 | `_HealthExemptTrustedHost` | Drops spoofed Host headers; exempts `/health` so CI probes bypassing Cloudflare can still hit the origin | prod only |
+| 1 | `_HealthExemptTrustedHost` | Drops spoofed Host headers; exempts `/health` (not `/health/db`) so CI probes bypassing Cloudflare can still hit the origin | hardened only (staging + production) |
 | 2 | `RequestSizeLimitMiddleware` | Rejects Content-Length > 10 MB with 413 before reading the body | all envs |
 | 3 | `CORSMiddleware` | Allowlisted origins only (validator blocks `*`); credentials allowed; limited methods + headers | all envs |
-| 4 | `CloudflareRealIPMiddleware` | Sets `request.scope["client"]` from `CF-Connecting-IP` so slowapi rate-limits per real client, not per Cloudflare edge IP | prod only |
+| 4 | `CloudflareRealIPMiddleware` | Sets `request.scope["client"]` from `CF-Connecting-IP` so slowapi rate-limits per real client, not per Cloudflare edge IP | hardened only (staging + production) |
 | 5 | `RequestIdMiddleware` | Generates a request ID, stores it in a contextvar for log correlation, returns it as `X-Request-ID` | all envs |
 | 6 | `SentryContextMiddleware` | Attaches request context to Sentry events | all envs |
-| 7 | `SecurityHeadersMiddleware` | Sets `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `CSP`, `Permissions-Policy`, and (prod only) `HSTS` on every response | all envs |
+| 7 | `SecurityHeadersMiddleware` | Sets `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `CSP`, `Permissions-Policy`, and (hardened only) `HSTS` on every response | all envs |
+
+"Hardened" means `settings.is_hardened` — any `ENVIRONMENT` other than `development`/`test` (see [deployment.md](deployment.md) for the full value list). A public `staging` deployment gets identical hardening to `production`.
 
 **Why this ordering:**
-- `_HealthExemptTrustedHost` is outermost so spoofed Host headers are rejected **before any middleware runs** — minimizes attack surface. `/health` is exempt because health probes (CI, Render's own, uptime monitors) hit the origin by its infrastructure hostname, not the public domain.
+- `_HealthExemptTrustedHost` is outermost so spoofed Host headers are rejected **before any middleware runs** — minimizes attack surface. Only `/health` is exempt, because that liveness probe (CI, Render's own, uptime monitors) hits the origin by its infrastructure hostname, not the public domain, and does nothing an attacker could abuse. `/health/db` is NOT exempt — it does a real DB probe, so it stays behind Host + rate-limit enforcement like everything else.
 - `RequestSizeLimit` runs before CORS so oversized bodies are dropped without allocating request memory.
 - `CloudflareRealIP` must run **before** slowapi inspects the client IP — otherwise rate limits key on Cloudflare's edge IP and every unauthenticated user shares the same bucket.
 - `RequestId` runs before `SentryContext` so the request ID is available to attach to Sentry events.
@@ -116,7 +118,7 @@ Backed by `slowapi` + in-memory storage (single Render instance). Every endpoint
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
 | `rate_limit_writes` | 60/min | POST/PATCH/DELETE on `/user-books/*` |
 | `rate_limit_reads` | 120/min | GET on `/user-books/*`, `/auth/me` |
-| `rate_limit_health` | 60/min | `/health` |
+| `rate_limit_health` | 60/min | `/health`, `/health/db` |
 
 **Keying:** by client IP, restored from `CF-Connecting-IP` in production (see `CloudflareRealIPMiddleware` above). Without this restoration every client would share Cloudflare's edge IP and the limits would be useless.
 

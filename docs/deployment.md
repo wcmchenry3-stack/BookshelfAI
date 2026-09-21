@@ -23,7 +23,7 @@ For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](clau
 **Build:** `pip install -r requirements.txt`
 **Start:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 **Pre-deploy:** `alembic upgrade head` (migrations run before the new version takes traffic — a failing migration blocks the deploy)
-**Health check:** `/health`
+**Health check:** `/health` (liveness only, never touches the DB — a Render restart must not be triggered by a transient DB blip; use `/health/db` to check DB connectivity)
 
 **Branch:** set in the Render dashboard (not in `render.yaml`). Check with `render services get bookshelf-api` or by looking at the service settings in the dashboard.
 
@@ -37,6 +37,8 @@ DATABASE_URL              (auto, from bookshelf-db)
 TURNSTILE_SECRET_KEY      (sync:false — set in dashboard)
 SENTRY_DSN                (sync:false — set in dashboard)
 ```
+
+**`ENVIRONMENT` values:** `development` | `test` | `staging` | `production`. Only `development` and `test` are treated as trusted/local (`settings.is_hardened == False`). Any other value — including `staging` — gets full production-grade hardening: `/docs` disabled, `TrustedHostMiddleware` enforced, HSTS sent, `CF-Connecting-IP` trusted, and the `/debug/sentry-test` + `/auth/test-login` routes not even registered. `staging` still reports as `staging` (not `production`) to Sentry so events are distinguishable. A public staging deploy must always use `ENVIRONMENT=staging`, never `development`.
 
 ### Env vars that live only in the Render dashboard
 
@@ -64,6 +66,8 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 Verify the new version is live:
 ```bash
 curl https://bookshelfapi.buffingchi.com/health
+# {"status":"ok"}
+curl https://bookshelfapi.buffingchi.com/health/db
 # {"status":"ok","db":"ok"}
 ```
 
@@ -180,7 +184,7 @@ See [`getting-started.md`](getting-started.md) for the full local-env setup.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Render deploy fails at `alembic upgrade head` | migration error | fix the migration, re-push; the old version keeps serving traffic |
-| `/health` returns 503 after deploy | DB unreachable | check `bookshelf-db` status in Render dashboard |
+| `/health/db` returns 503 after deploy | DB unreachable | check `bookshelf-db` status in Render dashboard |
 | Web site serving old JS | browser cached `/*` | `Cache-Control: no-cache` is set on HTML but browsers sometimes cache aggressively — hard-reload |
 | iOS build fails at `ci_post_clone.sh` | Node version mismatch (rule #12) | see `claude/ios-ci.md` |
 | Android `bundleRelease` fails with CMake error | JDK 24+ on path | `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` (rule #22, preflight in `settings.gradle`) |

@@ -9,7 +9,7 @@ The full REST surface. For architectural context (middleware, auth model) see [`
 
 ### Authentication
 
-Every endpoint except `/auth/google`, `/auth/refresh`, and `/health` requires a valid access token:
+Every endpoint except `/auth/google`, `/auth/refresh`, `/health`, and `/health/db` requires a valid access token:
 
 ```
 Authorization: Bearer <access_token>
@@ -36,7 +36,7 @@ Common status codes:
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload |
 | 429 | Too Many Requests | rate limit hit |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
-| 503 | Service Unavailable | DB down (/health), scan service unavailable |
+| 503 | Service Unavailable | DB down (/health/db), scan service unavailable |
 
 ### Rate limits
 
@@ -49,7 +49,7 @@ Per-client-IP (Cloudflare `CF-Connecting-IP` in prod). Limits are set via env (s
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
 | `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /purchased`, `PATCH` / `DELETE /user-books/*` |
 | `rate_limit_reads` | 120/min | `GET /user-books`, `GET /auth/me` |
-| `rate_limit_health` | 60/min | `GET /health` |
+| `rate_limit_health` | 60/min | `GET /health`, `GET /health/db` |
 
 429 responses are logged at WARN level.
 
@@ -388,18 +388,32 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 
 ## Health
 
-### `GET /health` — liveness + DB check
+### `GET /health` — liveness only
 
 **Auth:** none — explicitly exempt from `TrustedHostMiddleware` so CI + uptime probes can hit the origin directly (see [architecture.md](architecture.md#adr-ci-health-checks-bypass-cloudflare))
 **Rate limit:** `rate_limit_health`
 **Source:** `backend/app/main.py:health`
+
+Never touches the database — always `200`. Render restarts a service on a failed health check, so liveness must not depend on DB availability.
+
+**Response `200`:**
+```json
+{ "status": "ok" }
+```
+
+### `GET /health/db` — DB connectivity check
+
+**Auth:** none, but — unlike `/health` — NOT exempt from `TrustedHostMiddleware`. At the raw origin an attacker could otherwise rotate a spoofed `CF-Connecting-IP` per request to dodge the rate limit and exhaust the DB pool; the DB-connectivity uptime monitor uses the public hostname anyway.
+**Rate limit:** `rate_limit_health`
+**Timeout:** the DB probe is bounded to 5s (`_HEALTH_DB_TIMEOUT_SECONDS`); a hang counts as failure
+**Source:** `backend/app/main.py:health_db`
 
 **Response `200`:**
 ```json
 { "status": "ok", "db": "ok" }
 ```
 
-**Response `503`:** same shape with `status: "degraded"`, `db: "error"` when DB is unreachable.
+**Response `503`:** `{ "status": "error", "db": "error" }` when DB is unreachable or the probe times out.
 
 ---
 

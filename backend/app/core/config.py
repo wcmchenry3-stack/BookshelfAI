@@ -1,5 +1,13 @@
+from urllib.parse import urlsplit
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Supabase's transaction pooler (pgbouncer in transaction mode) doesn't support
+# asyncpg's server-side prepared statements, which asyncpg uses by default —
+# using it silently corrupts query results under concurrency. The session
+# pooler on port 5432 must be used instead.
+_SUPABASE_TRANSACTION_POOLER_PORT = 6543
 
 
 class Settings(BaseSettings):
@@ -7,6 +15,13 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
+    # Bounded async pool per instance. Render zero-downtime deploys run 2
+    # instances concurrently during a deploy, plus a one-off `alembic upgrade
+    # head` connection: 2 * (db_pool_size + db_max_overflow) + 1 must stay
+    # under the small Supabase session pooler's 15-client cap.
+    # 2 * (3 + 2) + 1 = 11 <= 15.
+    db_pool_size: int = 3
+    db_max_overflow: int = 2
 
     # Auth
     google_client_id: str = ""
@@ -40,7 +55,9 @@ class Settings(BaseSettings):
     clamav_host: str = "localhost"
     clamav_port: int = 3310
 
-    # Testing (dev/staging only — never set in production)
+    # Testing (development/test only — the /auth/test-login route that consumes
+    # this is not even registered when settings.is_hardened is True, i.e. in
+    # staging or production)
     test_auth_secret: str = ""
 
     # Observability
@@ -55,8 +72,8 @@ class Settings(BaseSettings):
     rate_limit_writes: str = "60/minute"
     rate_limit_reads: str = "120/minute"
     rate_limit_health: str = "60/minute"
-    # Allowlist of Host header values accepted in production.
-    # Override via TRUSTED_HOSTS env var: '["api.example.com"]'
+    # Allowlist of Host header values accepted when settings.is_hardened is True
+    # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]
 
     @field_validator("cors_origins")
@@ -65,6 +82,30 @@ class Settings(BaseSettings):
         if "*" in v:
             raise ValueError("Wildcard '*' is not permitted in CORS_ORIGINS")
         return v
+
+    @field_validator("database_url")
+    @classmethod
+    def reject_transaction_pooler_port(cls, v: str) -> str:
+        port = urlsplit(v).port
+        if port == _SUPABASE_TRANSACTION_POOLER_PORT:
+            raise ValueError(
+                f"DATABASE_URL uses port {_SUPABASE_TRANSACTION_POOLER_PORT} "
+                "(Supabase's transaction pooler), which breaks asyncpg's "
+                "server-side prepared statements. Use the session pooler on "
+                "port 5432 instead."
+            )
+        return v
+
+    @property
+    def is_hardened(self) -> bool:
+        """True for any environment that must be treated as security-sensitive.
+
+        A public `staging` deployment is just as reachable by attackers as
+        `production`, so it must get the same hardening (TrustedHost
+        enforcement, no /docs, no debug/test-only routes, HSTS, trusting
+        CF-Connecting-IP) even though it's tagged separately in Sentry.
+        """
+        return self.environment not in {"development", "test"}
 
     @property
     def async_database_url(self) -> str:
