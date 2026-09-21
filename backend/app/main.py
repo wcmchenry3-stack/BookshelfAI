@@ -25,7 +25,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
-from app.core.sentry_context import SentryContextMiddleware
+from app.core.sentry_context import SentryContextMiddleware, build_event_scrubber
 from app.services.token_cleanup import cleanup_expired_tokens
 
 configure_logging()
@@ -34,12 +34,14 @@ if settings.sentry_dsn:
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
         environment=settings.environment,
+        release=settings.sentry_release,
         integrations=[
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),
         ],
         traces_sample_rate=0.2 if settings.is_hardened else 1.0,
         send_default_pii=False,
+        event_scrubber=build_event_scrubber(),
     )
 
 logger = logging.getLogger(__name__)

@@ -30,6 +30,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Web token storage | In-memory `Map` (never `localStorage`); native uses `SecureStore` |
 | Security headers | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Permissions-Policy |
 | Error disclosure | Exception messages stripped from HTTP error responses; logged server-side only |
+| Error-report PII | Sentry `send_default_pii=False` plus a recursive `EventScrubber` (`app/core/sentry_context.py`): the SDK's default denylist only matches exact key names (`token`, `secret`…), so `id_token`, `access_token`, `refresh_token`, Turnstile tokens and config secrets are named explicitly. Events carry `release=bookshelf-api@<RENDER_GIT_COMMIT>` and the `environment` tag |
 
 ## Pre-commit Hook (gitleaks)
 

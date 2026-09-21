@@ -3,10 +3,11 @@ from urllib.parse import urlsplit
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Supabase's transaction pooler (pgbouncer in transaction mode) doesn't support
-# asyncpg's server-side prepared statements, which asyncpg uses by default —
-# using it silently corrupts query results under concurrency. The session
-# pooler on port 5432 must be used instead.
+# Supabase's transaction pooler (transaction-mode pooling) doesn't support
+# asyncpg's server-side prepared statements, which asyncpg uses by default. It
+# passes a single probe, then fails intermittently under concurrency with
+# "prepared statement ... does not exist" / DuplicatePreparedStatementError.
+# The session pooler on port 5432 must be used instead.
 _SUPABASE_TRANSACTION_POOLER_PORT = 6543
 
 
@@ -62,6 +63,9 @@ class Settings(BaseSettings):
 
     # Observability
     sentry_dsn: str = ""
+    # Set automatically by Render on every deploy (RENDER_GIT_COMMIT). Empty
+    # locally and in CI, where events carry no release.
+    render_git_commit: str = ""
 
     # App
     environment: str = "development"
@@ -106,6 +110,12 @@ class Settings(BaseSettings):
         CF-Connecting-IP) even though it's tagged separately in Sentry.
         """
         return self.environment not in {"development", "test"}
+
+    @property
+    def sentry_release(self) -> str | None:
+        """Sentry release id, so an issue can be tied to the deploy that caused it."""
+        sha = self.render_git_commit.strip()
+        return f"bookshelf-api@{sha}" if sha else None
 
     @property
     def async_database_url(self) -> str:
