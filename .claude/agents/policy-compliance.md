@@ -1,3 +1,9 @@
+---
+name: policy-compliance
+description: Check and fix policy violations (LLM/API usage policies, design tokens) after a policy-gate hook failure.
+model: haiku
+---
+
 # policy-compliance
 
 Single agent for all API policy compliance checks. Reviews changed files

@@ -1,3 +1,9 @@
+---
+name: lint-review
+description: Auto-fix lint issues (black, ruff, eslint, prettier) after a lint-gate hook failure. Use when the lint gate blocks a commit or `gh pr create`.
+model: haiku
+---
+
 # lint-review
 
 Auto-fix linting issues across Python and frontend projects.
