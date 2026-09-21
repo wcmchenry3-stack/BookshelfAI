@@ -77,6 +77,27 @@ A fallback in the build phase detects this and runs `react-native-xcode.sh`
 directly. The `ci_post_xcodebuild.sh` script also validates the bundle exists
 in the archive as a final safety net.
 
+## Xcode version rollovers
+
+Xcode Cloud workflows set to "Latest Release" silently move to each new Xcode
+major. Pin the workflow to an explicit Xcode version in App Store Connect and
+bump it deliberately.
+
+Known rollover breakage — **Xcode 27** (build 154, Sept 2026): deployment
+targets below 15.0 became a hard error instead of a warning:
+
+```
+error: The iOS deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 11.0, but the
+range of supported deployment target versions is 15.0 to 27.0.x. (in target 'Sentry-Sentry')
+```
+
+CocoaPods resource-bundle targets (`Sentry-Sentry`,
+`RNCAsyncStorage-RNCAsyncStorage_resources`) inherit the podspec's minimum, not
+the Podfile's `platform :ios`. The `post_install` block in `frontend/ios/Podfile`
+raises every pod target to `ios.deploymentTarget` (default 15.1). Do not remove
+it. When this error appears, `ci_post_xcodebuild.sh` also logs "Could not locate
+.app in archive" — that is a symptom, not the cause.
+
 ## Key paths on the Xcode Cloud worker
 
 | Path | What it is |
