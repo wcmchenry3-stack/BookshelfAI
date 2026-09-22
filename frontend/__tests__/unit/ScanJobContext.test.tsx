@@ -449,4 +449,33 @@ describe('ScanJobContext — handleSelectBook', () => {
     expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
     expect(result.current.reviewingJob).toBeNull();
   });
+
+  it('does not post to the wishlist while offline and keeps the job under review', async () => {
+    const { result } = await renderScanJobs();
+    mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
+
+    await act(async () => {
+      await result.current.startScan('text', undefined, 'Dune');
+    });
+    await act(() => {
+      result.current.reviewJob(result.current.jobs[0].id);
+    });
+
+    // Connection drops after results arrive, before the user picks a book.
+    mockNetInfoFetch.mockResolvedValue({ isConnected: false });
+    await act(async () => {
+      await result.current.handleSelectBook({
+        title: 'Dune',
+        author: 'Herbert',
+        subjects: [],
+        confidence: 0.9,
+        already_in_library: false,
+        editions: [],
+      });
+    });
+
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(result.current.reviewingJob).not.toBeNull();
+    expect(result.current.jobs).toHaveLength(1);
+  });
 });

@@ -3,5 +3,8 @@
   "close": "बंद करें",
   "remove": "हटाएं",
   "noCoverAvailable": "कवर उपलब्ध नहीं",
-  "coverAlt": "{{title}} का कवर"
+  "coverAlt": "{{title}} का कवर",
+  "offlineTitle": "आप ऑफ़लाइन हैं",
+  "requiresConnection": "इस कार्रवाई के लिए इंटरनेट कनेक्शन आवश्यक है।",
+  "offlineEditNotice": "आप ऑफ़लाइन हैं। अपनी लाइब्रेरी संपादित करने के लिए ऑनलाइन हों।"
 }

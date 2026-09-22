@@ -8,6 +8,13 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
+// NetInfo has no native module under Jest. The official mock reports a connected
+// device by default; tests needing offline behaviour override it with their own
+// jest.mock('@react-native-community/netinfo', ...).
+jest.mock('@react-native-community/netinfo', () =>
+  jest.requireActual('@react-native-community/netinfo/jest/netinfo-mock.js')
+);
+
 // Initialize i18n with English resources before every test.
 // en translations are bundled as static imports and available synchronously;
 // components calling useTranslation() will get the correct English strings.

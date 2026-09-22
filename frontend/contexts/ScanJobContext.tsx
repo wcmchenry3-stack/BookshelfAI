@@ -250,6 +250,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         data: { title: book.title, author: book.author },
       });
 
+      // Adding to the wishlist is a server-authoritative write — never attempt it offline.
+      const netState = await NetInfo.fetch();
+      if (!netState.isConnected) {
+        showBanner({
+          message: t('requiresConnection', { ns: 'common' }),
+          type: 'error',
+          duration: 4000,
+        });
+        return;
+      }
+
       try {
         await api.post('/wishlist', book);
         if (reviewingJobId) {

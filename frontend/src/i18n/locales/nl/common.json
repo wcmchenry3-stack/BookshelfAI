@@ -3,5 +3,8 @@
   "close": "Sluiten",
   "remove": "Verwijderen",
   "noCoverAvailable": "Geen omslag beschikbaar",
-  "coverAlt": "Omslag van {{title}}"
+  "coverAlt": "Omslag van {{title}}",
+  "offlineTitle": "Je bent offline",
+  "requiresConnection": "Voor deze actie is een internetverbinding nodig.",
+  "offlineEditNotice": "Je bent offline. Ga online om je bibliotheek te bewerken."
 }

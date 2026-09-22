@@ -24,5 +24,20 @@
     "tone": "neutral",
     "placeholders": ["{{title}}"],
     "characterLimit": 40
+  },
+  "offlineTitle": {
+    "description": "Alert title shown when a library action is attempted while the device is offline",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "requiresConnection": {
+    "description": "Alert/banner body explaining that the attempted action needs an internet connection (library edits are online-only)",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "offlineEditNotice": {
+    "description": "Persistent notice on the wishlist and my-books screens while offline, explaining that the library can't be edited until back online",
+    "tone": "neutral",
+    "characterLimit": 80
   }
 }

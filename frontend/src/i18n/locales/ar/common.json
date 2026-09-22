@@ -3,5 +3,8 @@
   "close": "إغلاق",
   "remove": "إزالة",
   "noCoverAvailable": "لا توجد صورة غلاف",
-  "coverAlt": "غلاف {{title}}"
+  "coverAlt": "غلاف {{title}}",
+  "offlineTitle": "أنت غير متصل",
+  "requiresConnection": "يتطلب هذا الإجراء اتصالاً بالإنترنت.",
+  "offlineEditNotice": "أنت غير متصل بالإنترنت. اتصل بالإنترنت لتعديل مكتبتك."
 }
