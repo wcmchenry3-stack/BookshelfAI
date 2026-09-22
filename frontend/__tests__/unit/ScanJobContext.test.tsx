@@ -137,6 +137,28 @@ describe('ScanJobContext — startScan', () => {
     expect(mockPost).toHaveBeenCalledWith('/scan', expect.any(FormData), expect.any(Object));
   });
 
+  it('deletes the image once a scan completes — it has been uploaded and nothing else needs it', async () => {
+    mockPost.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
+    const { result } = await renderScanJobs();
+
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+
+    expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/photo.jpg');
+  });
+
+  it('does not delete the image when the scan fails (kept for retry)', async () => {
+    mockGet.mockRejectedValueOnce(new Error('network'));
+    const { result } = await renderScanJobs();
+
+    await act(async () => {
+      await result.current.startScan('text', undefined, 'Dune');
+    });
+
+    expect(mockDeleteScanImage).not.toHaveBeenCalled();
+  });
+
   it('sets job status to failed on API error', async () => {
     mockGet.mockRejectedValueOnce(new Error('network'));
     const { result } = await renderScanJobs();
@@ -336,6 +358,38 @@ describe('ScanJobContext — persistence', () => {
     expect(typeof cutoff).toBe('number');
   });
 
+  it('does not sweep or immediately re-save when the initial load fails', async () => {
+    // loadJobs() returns null (not []) when the persisted queue couldn't be
+    // read — treating that as "known empty" would let the sweep delete
+    // images for jobs we simply failed to read back.
+    mockLoadJobs.mockResolvedValue(null);
+    const { result } = await renderHook(() => useScanJobs(), { wrapper });
+
+    await waitFor(() => expect(mockLoadJobs).toHaveBeenCalled());
+    // Give the mount effect's microtasks a tick to settle.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.jobs).toEqual([]);
+    expect(mockSweep).not.toHaveBeenCalled();
+    expect(mockSaveJobs).not.toHaveBeenCalled();
+  });
+
+  it('resumes normal persistence once jobs change after a failed load', async () => {
+    mockLoadJobs.mockResolvedValue(null);
+    mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
+    const { result } = await renderHook(() => useScanJobs(), { wrapper });
+    await waitFor(() => expect(mockLoadJobs).toHaveBeenCalled());
+
+    await act(async () => {
+      await result.current.startScan('text', undefined, 'Dune');
+    });
+
+    // A real state change after the failed load persists normally.
+    await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
+  });
+
   it('resets interrupted searching jobs to pending on mount', async () => {
     mockLoadJobs.mockResolvedValue([
       {
@@ -477,5 +531,32 @@ describe('ScanJobContext — handleSelectBook', () => {
     expect(mockPost).not.toHaveBeenCalled();
     expect(result.current.reviewingJob).not.toBeNull();
     expect(result.current.jobs).toHaveLength(1);
+  });
+
+  it('treats an unknown connection state (isConnected: null) as online, not offline', async () => {
+    const { result } = await renderScanJobs();
+    mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
+
+    await act(async () => {
+      await result.current.startScan('text', undefined, 'Dune');
+    });
+    await act(() => {
+      result.current.reviewJob(result.current.jobs[0].id);
+    });
+
+    mockNetInfoFetch.mockResolvedValue({ isConnected: null });
+    mockPost.mockResolvedValueOnce({});
+    await act(async () => {
+      await result.current.handleSelectBook({
+        title: 'Dune',
+        author: 'Herbert',
+        subjects: [],
+        confidence: 0.9,
+        already_in_library: false,
+        editions: [],
+      });
+    });
+
+    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
   });
 });

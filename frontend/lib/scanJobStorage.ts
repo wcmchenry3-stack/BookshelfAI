@@ -34,16 +34,23 @@ export async function saveJobs(jobs: ScanJob[]): Promise<void> {
   storage.setItem(STORAGE_KEY, JSON.stringify(stripped));
 }
 
-export async function loadJobs(): Promise<ScanJob[]> {
+/**
+ * Load persisted jobs. Returns `[]` when there is genuinely nothing stored,
+ * or `null` when the read/parse failed (storage error, corrupt JSON) — the
+ * caller must NOT treat `null` as "no jobs", since scan-queue/ may still hold
+ * images for jobs we just failed to read back. `null` means "unknown"; only
+ * `[]` means "known empty".
+ */
+export async function loadJobs(): Promise<ScanJob[] | null> {
   try {
     const storage = await getStorage();
     const raw = await storage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) return null;
     return parsed;
   } catch {
-    return [];
+    return null;
   }
 }
 

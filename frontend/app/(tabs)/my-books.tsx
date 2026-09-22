@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -78,17 +78,34 @@ export default function MyBooksScreen() {
   const [query, setQuery] = useState('');
   // Rows with a request in flight. The server is the source of truth, so the
   // list only changes once a request succeeds; this just blocks double-taps.
+  // `mutatingRef` is the actual guard — it's checked-and-set synchronously, so
+  // two presses handled before a re-render can't both slip through the way
+  // they could reading `mutatingIds` state directly. `mutatingIds` just drives
+  // the disabled/opacity styling.
+  const mutatingRef = useRef<Set<string>>(new Set());
   const [mutatingIds, setMutatingIds] = useState<ReadonlySet<string>>(new Set());
   const { isConnected, requireOnline } = useOnlineOnly();
 
-  function setMutating(id: string, on: boolean) {
-    setMutatingIds((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+  /** Atomically claims `id` for a mutation. Returns false if one is already in flight. */
+  function beginMutating(id: string): boolean {
+    if (mutatingRef.current.has(id)) return false;
+    mutatingRef.current.add(id);
+    setMutatingIds(new Set(mutatingRef.current));
+    return true;
   }
+
+  function endMutating(id: string) {
+    mutatingRef.current.delete(id);
+    setMutatingIds(new Set(mutatingRef.current));
+  }
+
+  // Read inside the async mutation handlers below, so a tab switch while a
+  // request is in flight is picked up instead of applying a stale tab's rule
+  // to whatever list is on screen by the time the server responds.
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
   async function fetchBooks(tab: Status = activeTab) {
     try {
@@ -119,27 +136,29 @@ export default function MyBooksScreen() {
 
   async function handleAdvanceStatus(item: UserBook) {
     const next = NEXT_STATUS[item.status];
-    if (!next || mutatingIds.has(item.id) || !requireOnline()) return;
-    setMutating(item.id, true);
+    if (!next || !requireOnline() || !beginMutating(item.id)) return;
     try {
       const { data } = await api.patch<UserBook>(`/user-books/${item.id}`, { status: next });
-      // Only after the server confirms. Prefer the server's copy of the row.
-      setBooks((prev) =>
-        activeTab === 'all'
+      // Only after the server confirms, and against whatever tab is current —
+      // not the tab that was active when the button was pressed, which the
+      // user may have since left (fetchBooks would have already replaced
+      // `books` with that tab's data).
+      setBooks((prev) => {
+        if (!prev.some((b) => b.id === item.id)) return prev;
+        return activeTabRef.current === 'all'
           ? prev.map((b) => (b.id === item.id ? { ...b, ...data } : b))
-          : prev.filter((b) => b.id !== item.id)
-      );
+          : prev.filter((b) => b.id !== item.id);
+      });
       setSelected(null);
     } catch {
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorUpdateStatus'));
     } finally {
-      setMutating(item.id, false);
+      endMutating(item.id);
     }
   }
 
   async function handleRemove(item: UserBook) {
-    if (mutatingIds.has(item.id) || !requireOnline()) return;
-    setMutating(item.id, true);
+    if (!requireOnline() || !beginMutating(item.id)) return;
     try {
       await api.delete(`/user-books/${item.id}`);
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
@@ -147,7 +166,7 @@ export default function MyBooksScreen() {
     } catch {
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorRemoveBook'));
     } finally {
-      setMutating(item.id, false);
+      endMutating(item.id);
     }
   }
 

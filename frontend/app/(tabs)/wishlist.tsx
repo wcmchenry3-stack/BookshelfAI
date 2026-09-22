@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -50,16 +50,25 @@ export default function WishlistScreen() {
   const [refreshing, setRefreshing] = useState(false);
   // Rows with a request in flight. The server is the source of truth, so the
   // list only changes once a request succeeds; this just blocks double-taps.
+  // `mutatingRef` is the actual guard — it's checked-and-set synchronously, so
+  // two presses handled before a re-render can't both slip through the way
+  // they could reading `mutatingIds` state directly. `mutatingIds` just drives
+  // the disabled/opacity styling.
+  const mutatingRef = useRef<Set<string>>(new Set());
   const [mutatingIds, setMutatingIds] = useState<ReadonlySet<string>>(new Set());
   const { isConnected, requireOnline } = useOnlineOnly();
 
-  function setMutating(id: string, on: boolean) {
-    setMutatingIds((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+  /** Atomically claims `id` for a mutation. Returns false if one is already in flight. */
+  function beginMutating(id: string): boolean {
+    if (mutatingRef.current.has(id)) return false;
+    mutatingRef.current.add(id);
+    setMutatingIds(new Set(mutatingRef.current));
+    return true;
+  }
+
+  function endMutating(id: string) {
+    mutatingRef.current.delete(id);
+    setMutatingIds(new Set(mutatingRef.current));
   }
 
   async function fetchWishlist() {
@@ -84,8 +93,7 @@ export default function WishlistScreen() {
   );
 
   async function handleMarkPurchased(item: UserBook) {
-    if (mutatingIds.has(item.id) || !requireOnline()) return;
-    setMutating(item.id, true);
+    if (!requireOnline() || !beginMutating(item.id)) return;
     try {
       await api.patch(`/user-books/${item.id}`, { status: 'purchased' });
       // Only after the server confirms: the book is no longer wishlisted.
@@ -93,20 +101,19 @@ export default function WishlistScreen() {
     } catch {
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorUpdateStatus'));
     } finally {
-      setMutating(item.id, false);
+      endMutating(item.id);
     }
   }
 
   async function handleRemove(item: UserBook) {
-    if (mutatingIds.has(item.id) || !requireOnline()) return;
-    setMutating(item.id, true);
+    if (!requireOnline() || !beginMutating(item.id)) return;
     try {
       await api.delete(`/user-books/${item.id}`);
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
     } catch {
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorRemoveBook'));
     } finally {
-      setMutating(item.id, false);
+      endMutating(item.id);
     }
   }
 

@@ -1,7 +1,9 @@
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 
-// Maximum scans waiting to upload (queued offline or pending). Bounds the disk
-// space used by `scan-queue/` and the size of the persisted job list.
+// Maximum scans waiting to upload (queued offline or pending). This bounds
+// the upload backlog, not total disk use of `scan-queue/`: a completed job's
+// image is deleted once its results arrive (see executeScan), but a failed
+// job keeps its image until it's retried or dismissed, since retrying needs it.
 export const MAX_QUEUE_SIZE = 50;
 
 export type ScanJobType = 'image' | 'text';

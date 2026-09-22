@@ -50,14 +50,21 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   const drainingRef = useRef(false);
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
+  // Set when the initial load fails, so the persist effect below doesn't
+  // immediately overwrite storage with the empty `jobs` state it starts
+  // with — we don't know what was actually stored. Consumed on first fire.
+  const skipNextPersistRef = useRef(false);
   const { showBanner } = useBanner();
   const { t } = useTranslation('scan');
 
   // Persist jobs whenever they change (after initial load).
   useEffect(() => {
-    if (loaded) {
-      saveJobs(jobs);
+    if (!loaded) return;
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
     }
+    saveJobs(jobs);
   }, [jobs, loaded]);
 
   // Load persisted jobs on mount. Reset interrupted searches to pending, then
@@ -66,6 +73,20 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       const launchedAt = Date.now();
       const persisted = await loadJobs();
+      if (persisted === null) {
+        // Storage read/parse failed — we can't tell which images in
+        // scan-queue/ are still owned by a job, so don't guess: skip the
+        // sweep entirely rather than risk deleting un-uploaded photos.
+        Sentry.addBreadcrumb({
+          category: 'scan',
+          message: 'Failed to load persisted scan jobs — skipping orphan sweep',
+          level: 'warning',
+        });
+        skipNextPersistRef.current = true;
+        setLoaded(true);
+        return;
+      }
+
       const restored = persisted.map((j) =>
         j.status === 'searching' ? { ...j, status: 'pending' as const } : j
       );
@@ -250,18 +271,21 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         data: { title: book.title, author: book.author },
       });
 
-      // Adding to the wishlist is a server-authoritative write — never attempt it offline.
-      const netState = await NetInfo.fetch();
-      if (!netState.isConnected) {
-        showBanner({
-          message: t('requiresConnection', { ns: 'common' }),
-          type: 'error',
-          duration: 4000,
-        });
-        return;
-      }
-
       try {
+        // Adding to the wishlist is a server-authoritative write — never
+        // attempt it offline. isConnected === false means "known offline";
+        // null/undefined ("unknown", e.g. an unusual connection type) is
+        // treated as connected, matching useNetworkStatus elsewhere.
+        const netState = await NetInfo.fetch();
+        if (netState.isConnected === false) {
+          showBanner({
+            message: t('requiresConnection', { ns: 'common' }),
+            type: 'error',
+            duration: 4000,
+          });
+          return;
+        }
+
         await api.post('/wishlist', book);
         if (reviewingJobId) {
           dismissJob(reviewingJobId);
@@ -339,6 +363,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         }
 
         updateJob(job.id, { status: 'complete', results });
+        // The image has been uploaded and identified — nothing left to retry,
+        // so free the disk space immediately rather than waiting for dismiss.
+        if (job.imageUri) deleteScanImage(job.imageUri);
         showBanner({
           message: t('bookFound', { title: results[0].title }),
           type: 'success',

@@ -74,6 +74,7 @@ describe('scanJobStorage', () => {
   it('round-trips save and load', async () => {
     await saveJobs([sampleJob]);
     const loaded = await loadJobs();
+    if (!loaded) throw new Error('expected loadJobs to succeed');
     expect(loaded).toHaveLength(1);
     expect(loaded[0].id).toBe('test-1');
     expect(loaded[0].query).toBe('Dune');
@@ -101,6 +102,7 @@ describe('scanJobStorage', () => {
     };
     await saveJobs([jobWithResults]);
     const loaded = await loadJobs();
+    if (!loaded) throw new Error('expected loadJobs to succeed');
     expect(loaded[0].results).toBeUndefined();
   });
 
@@ -116,6 +118,22 @@ describe('scanJobStorage', () => {
     await saveJobs(jobs);
     const loaded = await loadJobs();
     expect(loaded).toHaveLength(2);
+  });
+
+  it('returns null (not []) when the stored JSON is corrupt', async () => {
+    await saveJobs([sampleJob]);
+    jest.spyOn(JSON, 'parse').mockImplementationOnce(() => {
+      throw new SyntaxError('Unexpected token');
+    });
+    expect(await loadJobs()).toBeNull();
+    jest.restoreAllMocks();
+  });
+
+  it('returns null (not []) when the stored value is not an array', async () => {
+    await saveJobs([sampleJob]);
+    jest.spyOn(JSON, 'parse').mockReturnValueOnce({ not: 'an array' });
+    expect(await loadJobs()).toBeNull();
+    jest.restoreAllMocks();
   });
 });
 
@@ -205,6 +223,7 @@ describe('sweepOrphanedScanFiles', () => {
     await saveJobs([jobWithImage('100-0.jpg')]);
     const loaded = await loadJobs();
     Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+    if (!loaded) throw new Error('expected loadJobs to succeed');
     expect(await sweepOrphanedScanFiles(loaded, 10_000)).toBe(1);
     expect(mockDeleted).toEqual([`${dir}/200-0.jpg`]);
   });
