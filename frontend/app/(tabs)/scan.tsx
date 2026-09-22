@@ -361,12 +361,14 @@ export default function ScanScreen() {
 
         <View style={styles.cameraControls}>
           <Pressable
-            style={styles.flipButton}
+            style={[styles.flipButton, { backgroundColor: theme.colors.surfaceContainerHighest }]}
             onPress={() => setFacing((f) => (f === 'back' ? 'front' : 'back'))}
             accessibilityRole="button"
             accessibilityLabel={t('flipCameraA11y')}
           >
-            <Text style={styles.flipButtonText}>{t('flipCamera')}</Text>
+            <Text style={[styles.flipButtonText, { color: theme.colors.onSurface }]}>
+              {t('flipCamera')}
+            </Text>
           </Pressable>
           {/* Shutter: outer ring in activeColor, inner disc in onSurface */}
           <Pressable
@@ -479,10 +481,8 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   flipButtonText: {
-    color: '#fff',
     fontWeight: '600',
     fontSize: 12,
   },
