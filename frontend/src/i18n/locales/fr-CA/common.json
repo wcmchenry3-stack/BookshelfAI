@@ -3,5 +3,8 @@
   "close": "Fermer",
   "remove": "Supprimer",
   "noCoverAvailable": "Pas de couverture",
-  "coverAlt": "Couverture de {{title}}"
+  "coverAlt": "Couverture de {{title}}",
+  "offlineTitle": "Vous êtes hors ligne",
+  "requiresConnection": "Cette action nécessite une connexion Internet.",
+  "offlineEditNotice": "Vous êtes hors ligne. Reconnectez-vous pour modifier votre bibliothèque."
 }

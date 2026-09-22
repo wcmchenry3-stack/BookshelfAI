@@ -3,5 +3,8 @@
   "close": "닫기",
   "remove": "제거",
   "noCoverAvailable": "표지 없음",
-  "coverAlt": "{{title}}의 표지"
+  "coverAlt": "{{title}}의 표지",
+  "offlineTitle": "오프라인 상태입니다",
+  "requiresConnection": "이 작업에는 인터넷 연결이 필요합니다.",
+  "offlineEditNotice": "오프라인 상태입니다. 서재를 수정하려면 온라인으로 연결하세요."
 }

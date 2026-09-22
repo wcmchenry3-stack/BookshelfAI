@@ -7,10 +7,12 @@ import ScanScreen from '../../app/(tabs)/scan';
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockStartScan = jest.fn();
+let mockQueueState = { pendingCount: 0, isQueueFull: false };
 
 jest.mock('../../hooks/useScanJobs', () => ({
   useScanJobs: () => ({
     jobs: [],
+    ...mockQueueState,
     reviewingJob: null,
     startScan: mockStartScan,
     retryScan: jest.fn(),
@@ -128,6 +130,7 @@ function setPlatform(os: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockQueueState = { pendingCount: 0, isQueueFull: false };
   useCameraPermissions.mockReturnValue([{ granted: true }, mockRequestPermission]);
 });
 
@@ -604,5 +607,73 @@ describe('ScanScreen — double-tap filename collisions', () => {
     expect(uris).toHaveLength(2);
     expect(uris[0]).not.toEqual(uris[1]);
     nowSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Offline queue — cap and pending count
+// ---------------------------------------------------------------------------
+describe('ScanScreen — offline queue cap and pending count', () => {
+  it('shows no pending badge when nothing is waiting', async () => {
+    const { queryByText } = await render(<ScanScreen />);
+    expect(queryByText(/Pending uploads/)).toBeNull();
+  });
+
+  it('shows the pending count when scans are waiting to upload', async () => {
+    mockQueueState = { pendingCount: 3, isQueueFull: false };
+    const { getByText } = await render(<ScanScreen />);
+    expect(getByText('Pending uploads: 3')).toBeTruthy();
+  });
+
+  it('shows the pending count in search mode too', async () => {
+    mockQueueState = { pendingCount: 2, isQueueFull: false };
+    const { getByLabelText, getByText } = await render(<ScanScreen />);
+    await fireEvent.press(getByLabelText('Text search mode'));
+    expect(getByText('Pending uploads: 2')).toBeTruthy();
+  });
+
+  it('rejects a camera capture when the queue is full, before touching scan-queue/', async () => {
+    mockQueueState = { pendingCount: 50, isQueueFull: true };
+    mockTakePictureAsync.mockResolvedValue({ uri: 'file://test.jpg' });
+    const { getByLabelText } = await render(<ScanScreen />);
+    await act(async () => await fireEvent.press(getByLabelText('Capture book cover')));
+
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: expect.stringContaining('Queue full') })
+    );
+    expect(mockTakePictureAsync).not.toHaveBeenCalled();
+    expect(mockFileCopy).not.toHaveBeenCalled();
+    expect(mockStartScan).not.toHaveBeenCalled();
+  });
+
+  it('rejects a text search when the queue is full and keeps the query', async () => {
+    mockQueueState = { pendingCount: 50, isQueueFull: true };
+    const { getByLabelText } = await render(<ScanScreen />);
+    await fireEvent.press(getByLabelText('Text search mode'));
+    await fireEvent.changeText(getByLabelText('Book title or author search'), 'Dune');
+    await fireEvent.press(getByLabelText('Search for book'));
+
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('Queue full') })
+    );
+    expect(mockStartScan).not.toHaveBeenCalled();
+    expect(getByLabelText('Book title or author search').props.value).toBe('Dune');
+  });
+});
+
+describe('ScanScreen — offline queue cap (web)', () => {
+  setPlatform('web');
+
+  it('rejects a selected file when the queue is full', async () => {
+    mockQueueState = { pendingCount: 50, isQueueFull: true };
+    const mockFile = new File(['img'], 'scan.jpg', { type: 'image/jpeg' });
+    const utils = await render(<ScanScreen />);
+    const input = await utils.findByTestId('web-file-input', { includeHiddenElements: true });
+    await act(async () => await fireEvent(input, 'change', { target: { files: [mockFile] } }));
+
+    expect(mockStartScan).not.toHaveBeenCalled();
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('Queue full') })
+    );
   });
 });

@@ -24,5 +24,7 @@
   "addedTitle": "已添加到愿望单",
   "addedMessage": "已将“{{title}}”添加到愿望单。",
   "couldNotSaveTitle": "无法保存",
-  "couldNotSaveMessage": "添加书籍失败，请重试。"
+  "couldNotSaveMessage": "添加书籍失败，请重试。",
+  "queueFull": "队列已满。请等待待处理的扫描上传完成后再添加。",
+  "pendingUploads": "待上传：{{count}}"
 }

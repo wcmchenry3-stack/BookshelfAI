@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -15,6 +15,8 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
+import { OfflineNotice } from '../../components/OfflineNotice';
+import { useOnlineOnly } from '../../hooks/useOnlineOnly';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
 
@@ -46,6 +48,28 @@ export default function WishlistScreen() {
   const [books, setBooks] = useState<UserBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Rows with a request in flight. The server is the source of truth, so the
+  // list only changes once a request succeeds; this just blocks double-taps.
+  // `mutatingRef` is the actual guard — it's checked-and-set synchronously, so
+  // two presses handled before a re-render can't both slip through the way
+  // they could reading `mutatingIds` state directly. `mutatingIds` just drives
+  // the disabled/opacity styling.
+  const mutatingRef = useRef<Set<string>>(new Set());
+  const [mutatingIds, setMutatingIds] = useState<ReadonlySet<string>>(new Set());
+  const { isConnected, requireOnline } = useOnlineOnly();
+
+  /** Atomically claims `id` for a mutation. Returns false if one is already in flight. */
+  function beginMutating(id: string): boolean {
+    if (mutatingRef.current.has(id)) return false;
+    mutatingRef.current.add(id);
+    setMutatingIds(new Set(mutatingRef.current));
+    return true;
+  }
+
+  function endMutating(id: string) {
+    mutatingRef.current.delete(id);
+    setMutatingIds(new Set(mutatingRef.current));
+  }
 
   async function fetchWishlist() {
     try {
@@ -69,22 +93,27 @@ export default function WishlistScreen() {
   );
 
   async function handleMarkPurchased(item: UserBook) {
-    setBooks((prev) => prev.filter((b) => b.id !== item.id));
+    if (!requireOnline() || !beginMutating(item.id)) return;
     try {
       await api.patch(`/user-books/${item.id}`, { status: 'purchased' });
+      // Only after the server confirms: the book is no longer wishlisted.
+      setBooks((prev) => prev.filter((b) => b.id !== item.id));
     } catch {
-      setBooks((prev) => [...prev, item]);
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorUpdateStatus'));
+    } finally {
+      endMutating(item.id);
     }
   }
 
   async function handleRemove(item: UserBook) {
-    setBooks((prev) => prev.filter((b) => b.id !== item.id));
+    if (!requireOnline() || !beginMutating(item.id)) return;
     try {
       await api.delete(`/user-books/${item.id}`);
+      setBooks((prev) => prev.filter((b) => b.id !== item.id));
     } catch {
-      setBooks((prev) => [...prev, item]);
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorRemoveBook'));
+    } finally {
+      endMutating(item.id);
     }
   }
 
@@ -119,6 +148,7 @@ export default function WishlistScreen() {
 
   const listHeader = (
     <View style={styles.listHeader}>
+      {!isConnected && <OfflineNotice />}
       {/* Hero */}
       <Text
         style={[
@@ -174,119 +204,131 @@ export default function WishlistScreen() {
             tintColor={activeColor}
           />
         }
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.card,
-              {
-                backgroundColor: theme.colors.surfaceContainerLow,
-                borderLeftColor: activeColor,
-              },
-            ]}
-          >
-            {/* Cover */}
-            {item.book.cover_url ? (
-              <Image
-                source={{ uri: item.book.cover_url }}
-                style={styles.cover}
-                resizeMode="cover"
-                accessibilityLabel={t('coverAlt', { ns: 'common', title: item.book.title })}
-              />
-            ) : (
-              <View
-                style={[
-                  styles.cover,
-                  styles.coverPlaceholder,
-                  { backgroundColor: theme.colors.border },
-                ]}
-                accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
-              />
-            )}
+        renderItem={({ item }) => {
+          const actionsDisabled = !isConnected || mutatingIds.has(item.id);
+          return (
+            <View
+              style={[
+                styles.card,
+                {
+                  backgroundColor: theme.colors.surfaceContainerLow,
+                  borderLeftColor: activeColor,
+                },
+              ]}
+            >
+              {/* Cover */}
+              {item.book.cover_url ? (
+                <Image
+                  source={{ uri: item.book.cover_url }}
+                  style={styles.cover}
+                  resizeMode="cover"
+                  accessibilityLabel={t('coverAlt', { ns: 'common', title: item.book.title })}
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.cover,
+                    styles.coverPlaceholder,
+                    { backgroundColor: theme.colors.border },
+                  ]}
+                  accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
+                />
+              )}
 
-            {/* Content */}
-            <View style={styles.content}>
-              {/* Category label */}
-              <Text
-                style={[
-                  styles.categoryLabel,
-                  { color: activeColor, fontSize: theme.typography.fontSizeXS },
-                ]}
-              >
-                {t('categoryLabel')}
-              </Text>
-
-              <Text
-                style={[
-                  styles.bookTitle,
-                  { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
-                ]}
-                numberOfLines={2}
-              >
-                {item.book.title}
-              </Text>
-
-              <Text
-                style={[
-                  styles.bookAuthor,
-                  { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                ]}
-                numberOfLines={1}
-              >
-                {item.book.author}
-              </Text>
-
-              {item.edition?.publish_year ? (
+              {/* Content */}
+              <View style={styles.content}>
+                {/* Category label */}
                 <Text
                   style={[
-                    styles.bookYear,
-                    { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeXS },
+                    styles.categoryLabel,
+                    { color: activeColor, fontSize: theme.typography.fontSizeXS },
                   ]}
                 >
-                  {item.edition.publish_year}
+                  {t('categoryLabel')}
                 </Text>
-              ) : null}
 
-              <View style={styles.actions}>
-                <Pressable
-                  style={[styles.actionButton, { backgroundColor: activeColor }]}
-                  onPress={() => handleMarkPurchased(item)}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('markPurchasedA11y', { title: item.book.title })}
-                >
-                  <Text
-                    style={[
-                      styles.actionText,
-                      { fontSize: theme.typography.fontSizeXS, color: onActiveColor },
-                    ]}
-                  >
-                    {t('markPurchased')}
-                  </Text>
-                </Pressable>
-                <Pressable
+                <Text
                   style={[
-                    styles.actionButton,
-                    { backgroundColor: theme.colors.secondaryContainer },
+                    styles.bookTitle,
+                    { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
                   ]}
-                  onPress={() => handleRemove(item)}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('removeA11y', { title: item.book.title })}
+                  numberOfLines={2}
                 >
+                  {item.book.title}
+                </Text>
+
+                <Text
+                  style={[
+                    styles.bookAuthor,
+                    { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.book.author}
+                </Text>
+
+                {item.edition?.publish_year ? (
                   <Text
                     style={[
-                      styles.actionText,
-                      {
-                        color: theme.colors.onSecondaryContainer,
-                        fontSize: theme.typography.fontSizeXS,
-                      },
+                      styles.bookYear,
+                      { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeXS },
                     ]}
                   >
-                    {t('remove')}
+                    {item.edition.publish_year}
                   </Text>
-                </Pressable>
+                ) : null}
+
+                <View style={styles.actions}>
+                  <Pressable
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: activeColor },
+                      actionsDisabled && styles.actionDisabled,
+                    ]}
+                    onPress={() => handleMarkPurchased(item)}
+                    disabled={actionsDisabled}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('markPurchasedA11y', { title: item.book.title })}
+                    accessibilityState={{ disabled: actionsDisabled }}
+                  >
+                    <Text
+                      style={[
+                        styles.actionText,
+                        { fontSize: theme.typography.fontSizeXS, color: onActiveColor },
+                      ]}
+                    >
+                      {t('markPurchased')}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.actionButton,
+                      { backgroundColor: theme.colors.secondaryContainer },
+                      actionsDisabled && styles.actionDisabled,
+                    ]}
+                    onPress={() => handleRemove(item)}
+                    disabled={actionsDisabled}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('removeA11y', { title: item.book.title })}
+                    accessibilityState={{ disabled: actionsDisabled }}
+                  >
+                    <Text
+                      style={[
+                        styles.actionText,
+                        {
+                          color: theme.colors.onSecondaryContainer,
+                          fontSize: theme.typography.fontSizeXS,
+                        },
+                      ]}
+                    >
+                      {t('remove')}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
             </View>
-          </View>
-        )}
+          );
+        }}
       />
     </View>
   );
@@ -348,5 +390,6 @@ const styles = StyleSheet.create({
     minHeight: 32,
     justifyContent: 'center',
   },
+  actionDisabled: { opacity: 0.5 },
   actionText: { fontWeight: '600' },
 });

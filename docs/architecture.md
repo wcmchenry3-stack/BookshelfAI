@@ -138,6 +138,24 @@ Lives in `backend/app/services/` and is orchestrated from the `POST /scan` endpo
 - Open Library's `work_id` identifies the conceptual book independent of edition, which matches how users actually think about their collection.
 - When the work_id is unavailable, we fall back to Google Books volume ID (which is also work-level, not edition-level).
 
+## Server-authoritative architecture
+
+The server owns all library state. The client never holds a competing copy of it.
+
+**The rule:** every change to the library — mark purchased, advance status, remove, add to the wishlist from scan results — is a request to the API that only takes effect once the server confirms it. There are no optimistic writes and no offline edits.
+
+**How the client behaves:**
+- **Reads:** the wishlist and My Books screens fetch from `GET /user-books` when focused, on pull-to-refresh, and when the filter tab changes. The result lives in component state only. Nothing authoritative is persisted between sessions (no persisted query cache, no library data in `AsyncStorage`).
+- **Writes:** a handler sends the request, waits, and only then changes the list — for a status change it applies the row the server returned (`PATCH /user-books/{id}` responds with the full `UserBookRead`, including server-set timestamps); for a remove it drops the row after the `DELETE` succeeds. On failure the list is left untouched and an alert explains what went wrong.
+- **In flight:** the row's buttons are locked (`mutatingIds`) so a double-tap can't send a second request. The UI shows the old state until the server answers.
+- **Offline:** `useOnlineOnly()` (built on `useNetworkStatus`) reports connectivity. While offline, the mutation buttons are disabled and an `OfflineNotice` ("Go online to edit your library") is shown on both screens. If a press still gets through (for example the connection drops mid-tap), `requireOnline()` shows "This action requires an internet connection" and the request is never sent. Adding a scanned book to the wishlist (`ScanJobContext.handleSelectBook`) is guarded the same way.
+
+**The one exception — scan capture.** Capturing a cover photo works offline because the photo can't be retaken later:
+- The image is copied into `scan-queue/` under the document directory and a job is recorded (`scan_job_queue` in `AsyncStorage`, via `lib/scanJobStorage.ts`). Job metadata holds no library data.
+- The queue is capped at 50 waiting scans (`MAX_QUEUE_SIZE`). At the cap the scan screen refuses new captures with a "Queue full" message *before* copying anything, and shows a "Pending uploads: N" count while scans wait.
+- When connectivity returns, `ScanJobContext` drains the queue. Dismissing a job deletes its image; on launch, any file in `scan-queue/` that no job refers to (for example after a crash) is removed.
+- Identifying the book is still a server call. Only *capturing* is offline; the result, and adding it to the wishlist, need a connection.
+
 ## Architectural decision records
 
 ### ADR: JWT RS256 over HS256
@@ -159,3 +177,7 @@ Lives in `backend/app/services/` and is orchestrated from the `POST /scan` endpo
 ### ADR: In-memory rate limiting (single instance)
 **Decision:** `slowapi` with in-memory storage, no Redis.
 **Reasoning:** Render runs a single instance (starter plan) so there's no distributed coordination problem. When we scale to multiple instances we'll need Redis-backed storage — but today it would be over-engineering. Documented here so the cost of scaling is known.
+
+### ADR: Server-authoritative library, offline scan capture only
+**Decision:** the server owns all library state; the only offline feature is capturing scan images into a bounded queue. No optimistic writes, no client-side source of truth, no persisted cache of library data.
+**Reasoning:** a second, client-held copy of the library can disagree with the server (rejected update, edit from another device, expired session) and the app would have to reconcile it. Optimistic UI hid failures until the rollback flashed by. Since a scan photo is the one thing that can't be recreated later, that is the only thing worth queuing. Trade-off: library edits need a connection and feel slightly slower (the row waits for the server); the UI says so and locks the buttons instead of pretending.

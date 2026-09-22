@@ -24,5 +24,7 @@
   "addedTitle": "Toegevoegd aan wishlist",
   "addedMessage": "\"{{title}}\" is toegevoegd aan je wishlist.",
   "couldNotSaveTitle": "Opslaan mislukt",
-  "couldNotSaveMessage": "Boek toevoegen mislukt. Probeer het opnieuw."
+  "couldNotSaveMessage": "Boek toevoegen mislukt. Probeer het opnieuw.",
+  "queueFull": "Wachtrij vol. Wacht tot de openstaande scans zijn geüpload voordat je meer toevoegt.",
+  "pendingUploads": "Openstaande uploads: {{count}}"
 }

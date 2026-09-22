@@ -3,5 +3,8 @@
   "close": "閉じる",
   "remove": "削除",
   "noCoverAvailable": "カバーがありません",
-  "coverAlt": "{{title}}のカバー"
+  "coverAlt": "{{title}}のカバー",
+  "offlineTitle": "オフラインです",
+  "requiresConnection": "この操作にはインターネット接続が必要です。",
+  "offlineEditNotice": "オフラインです。ライブラリを編集するにはオンラインにしてください。"
 }

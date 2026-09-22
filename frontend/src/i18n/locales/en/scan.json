@@ -38,5 +38,7 @@
   "savedOffline": "Saved for when you're back online",
   "processingQueue": "Processing saved scan…",
   "maxRetries": "Maximum retries reached. Saved for later.",
-  "noBooksFound": "No books found"
+  "noBooksFound": "No books found",
+  "queueFull": "Queue full. Wait for pending scans to upload before adding more.",
+  "pendingUploads": "Pending uploads: {{count}}"
 }

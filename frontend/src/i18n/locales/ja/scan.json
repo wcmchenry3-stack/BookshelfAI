@@ -24,5 +24,7 @@
   "addedTitle": "ウィッシュリストに追加",
   "addedMessage": "\"{{title}}\"をウィッシュリストに追加しました。",
   "couldNotSaveTitle": "保存できません",
-  "couldNotSaveMessage": "本をウィッシュリストに追加できませんでした。再試行してください。"
+  "couldNotSaveMessage": "本をウィッシュリストに追加できませんでした。再試行してください。",
+  "queueFull": "キューがいっぱいです。保留中のスキャンのアップロードが完了してから追加してください。",
+  "pendingUploads": "アップロード待ち: {{count}}"
 }

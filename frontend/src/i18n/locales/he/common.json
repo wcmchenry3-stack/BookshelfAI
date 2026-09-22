@@ -3,5 +3,8 @@
   "close": "סגור",
   "remove": "הסר",
   "noCoverAvailable": "אין כריכה זמינה",
-  "coverAlt": "כריכה של {{title}}"
+  "coverAlt": "כריכה של {{title}}",
+  "offlineTitle": "אין חיבור",
+  "requiresConnection": "פעולה זו דורשת חיבור לאינטרנט.",
+  "offlineEditNotice": "אין חיבור לאינטרנט. התחבר כדי לערוך את הספרייה שלך."
 }
