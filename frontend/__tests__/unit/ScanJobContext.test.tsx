@@ -704,6 +704,43 @@ describe('ScanJobContext — enhanced scan', () => {
 
     expect(result.current.jobs[0].status).toBe('complete');
     expect(result.current.jobs[0].results?.map((b) => b.title)).toEqual(['Dune']);
+    // The sheet closed when the re-scan started — it must reopen on the earlier books.
+    expect(result.current.reviewingJob?.id).toBe(result.current.jobs[0].id);
+  });
+
+  it('reopens the earlier results when the enhanced scan errors', async () => {
+    const { result } = await renderScanJobs();
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'A' }]));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+
+    mockPost.mockRejectedValueOnce({ response: { status: 503 } });
+    await act(async () => {
+      await result.current.requestEnhancedScan(result.current.jobs[0].id);
+    });
+
+    expect(result.current.jobs[0]).toEqual(
+      expect.objectContaining({ status: 'complete', enhanced: false })
+    );
+    expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
+  });
+
+  it('reopens the earlier results when out of credits', async () => {
+    const { result } = await renderScanJobs();
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'A' }]));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+
+    mockPost.mockRejectedValueOnce({ response: { status: 402 } });
+    await act(async () => {
+      await result.current.requestEnhancedScan(result.current.jobs[0].id);
+    });
+
+    expect(result.current.enhancedCredits).toBe(0);
+    expect(result.current.reviewingJob?.status).toBe('complete');
+    expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
   });
 
   it('falls back and records zero credits when the server says none are left', async () => {

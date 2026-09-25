@@ -47,5 +47,7 @@
   "addedSomeMessage": "Added {{added}} of {{total}} books. Tap Add to retry the rest.",
   "tryEnhanced": "Try enhanced scan",
   "enhancedNoBooksFound": "Enhanced scan couldn't find any books either",
-  "noEnhancedCredits": "You're out of enhanced scans."
+  "noEnhancedCredits": "You're out of enhanced scans.",
+  "enhancedNoNewBooks": "Enhanced scan didn't find any more books. Showing your earlier results.",
+  "enhancedFailed": "Enhanced scan failed. Showing your earlier results."
 }

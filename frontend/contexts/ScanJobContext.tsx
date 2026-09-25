@@ -378,6 +378,19 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // without creating circular deps. Updated after every render so closures
   // always capture the current retryScan / queueForLater callbacks.
   useEffect(() => {
+    // The review sheet closes when an enhanced re-scan starts, and no screen
+    // lists jobs, so reopen it on the earlier results or they'd be unreachable.
+    function restorePriorResults(
+      job: ScanJob,
+      updates: Partial<ScanJob>,
+      message: string,
+      type: 'info' | 'error'
+    ) {
+      updateJob(job.id, { status: 'complete', error: undefined, ...updates });
+      setReviewingJobId(job.id);
+      showBanner({ message, type, duration: 6000 });
+    }
+
     executeScanRef.current = async function executeScan(job: ScanJob) {
       updateJob(job.id, { status: 'searching' });
       // Credits reported by this response (the state update lands next render).
@@ -425,12 +438,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (results.length === 0) {
-          // An enhanced scan that found nothing leaves any earlier results intact.
+          // An enhanced scan that found nothing leaves the earlier results intact.
           if (job.enhanced && job.results?.length) {
-            updateJob(job.id, { status: 'complete' });
-          } else {
-            updateJob(job.id, { status: 'failed', error: 'no_results' });
+            restorePriorResults(job, { enhanced: true }, t('enhancedNoNewBooks'), 'info');
+            return;
           }
+          updateJob(job.id, { status: 'failed', error: 'no_results' });
           // Offer the stronger model once, unless this already was the enhanced
           // pass or the server told us the user is out of credits.
           const canEnhance = job.type === 'image' && !job.enhanced && reportedCredits !== 0;
@@ -490,19 +503,25 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         if (job.enhanced && isOutOfCredits(err)) {
           setEnhancedCredits(0);
           // Fall back to whatever the standard scan found, if anything.
-          updateJob(
-            job.id,
-            job.results?.length
-              ? { status: 'complete', enhanced: false }
-              : { status: 'failed', enhanced: false, error: 'no_results' }
-          );
-          showBanner({ message: t('noEnhancedCredits'), type: 'error', duration: 6000 });
+          if (job.results?.length) {
+            restorePriorResults(job, { enhanced: false }, t('noEnhancedCredits'), 'error');
+          } else {
+            updateJob(job.id, { status: 'failed', enhanced: false, error: 'no_results' });
+            showBanner({ message: t('noEnhancedCredits'), type: 'error', duration: 6000 });
+          }
           return;
         }
 
         Sentry.captureException(err, {
           tags: { feature: 'scan', action: 'execute_scan', jobType: job.type },
         });
+
+        // A failed enhanced re-scan must not strand the books the standard scan
+        // already found — a failed job has no review sheet.
+        if (job.enhanced && job.results?.length) {
+          restorePriorResults(job, { enhanced: false }, t('enhancedFailed'), 'error');
+          return;
+        }
         updateJob(job.id, { status: 'failed', error: 'network_or_server' });
         showBanner({
           message: t('scanFailedTitle'),

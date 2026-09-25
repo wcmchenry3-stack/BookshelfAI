@@ -262,6 +262,31 @@ class TestEnhancedScan:
         db.execute.assert_not_called()
         db.commit.assert_not_called()
 
+    def test_enhanced_scan_is_free_when_enrichment_yields_nothing(self, make_client):
+        client, db = make_client(_user_with_credits(3))
+        with (
+            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
+            patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
+        ):
+            mock_id_cls.return_value.identify = AsyncMock(
+                return_value=[
+                    BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
+                ]
+            )
+            # Every Open Library / Google Books lookup failed.
+            mock_enrich_cls.return_value.enrich = AsyncMock(return_value=[])
+            mock_dedup_cls.return_value.check = AsyncMock(return_value=[])
+            resp = client.post(
+                "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["books"] == []
+        assert resp.json()["enhanced_scan_credits"] == 3
+        db.execute.assert_not_called()
+        db.commit.assert_not_called()
+
     def test_standard_scan_does_not_spend_credits(self, make_client):
         client, db = make_client(_user_with_credits(3))
         with (

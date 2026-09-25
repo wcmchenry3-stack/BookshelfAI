@@ -170,11 +170,7 @@ async def scan(
         )
 
     if not candidates:
-        # An enhanced scan that finds nothing isn't charged.
         return ScanResponse(books=[], enhanced=enhanced, enhanced_scan_credits=credits)
-
-    if enhanced:
-        credits = await _spend_enhanced_credit(db, current_user)
 
     enrichment = EnrichmentService()
     enriched = await enrichment.enrich(candidates, limit=settings.scan_max_books)
@@ -182,6 +178,11 @@ async def scan(
 
     dedup = DeduplicationService()
     enriched = await dedup.check(db, str(current_user.id), enriched)
+
+    # Charge only once there are books to hand back: an enhanced scan that
+    # yields nothing — no candidates, or every lookup failed — is free.
+    if enhanced and enriched:
+        credits = await _spend_enhanced_credit(db, current_user)
 
     return ScanResponse(
         books=enriched, enhanced=enhanced, enhanced_scan_credits=credits
