@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     # External APIs
     openai_api_key: str = ""
     openai_max_tokens: int = 512
+    # Multi-book scan: one photo can hold up to scan_max_books covers or spines.
+    # The JSON for 15 books needs far more room than openai_max_tokens allows,
+    # and high-detail images take longer to process, hence separate knobs.
+    scan_max_books: int = 15
+    scan_max_tokens: int = 2048
+    scan_timeout_seconds: float = 45.0
+    scan_model: str = "gpt-4o-mini"
+    # "Enhanced" scan — a stronger model the user can opt into when the standard
+    # scan misses books. Each successful enhanced scan costs one credit; new
+    # users start with enhanced_scan_free_credits.
+    scan_enhanced_model: str = "gpt-4o"
+    enhanced_scan_free_credits: int = 5
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 

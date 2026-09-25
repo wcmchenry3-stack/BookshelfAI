@@ -69,20 +69,22 @@ class TestIdentifySuccess:
         assert candidates[0].isbn_13 == "9780441013593"
         assert candidates[0].isbn_10 is None
 
-    async def test_caps_at_three_candidates(self, identifier):
-        four_books = json.dumps(
-            [
-                {
-                    "title": f"Book {i}",
-                    "author": "Author",
-                    "confidence": 0.9,
-                    "isbn_13": None,
-                    "isbn_10": None,
-                }
-                for i in range(4)
-            ]
+    async def test_caps_at_max_books(self, identifier):
+        many_books = json.dumps(
+            {
+                "books": [
+                    {
+                        "title": f"Book {i}",
+                        "author": "Author",
+                        "confidence": 0.9,
+                        "isbn_13": None,
+                        "isbn_10": None,
+                    }
+                    for i in range(20)
+                ]
+            }
         )
-        mock_resp = _make_mock_response(four_books)
+        mock_resp = _make_mock_response(many_books)
         with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
@@ -92,7 +94,7 @@ class TestIdentifySuccess:
 
             candidates = await identifier.identify(IMAGE_BYTES)
 
-        assert len(candidates) == 3
+        assert len(candidates) == 15
 
     async def test_skips_malformed_items(self, identifier):
         bad_json = json.dumps(
@@ -237,3 +239,79 @@ class TestIdentifyFailures:
 
             with pytest.raises(httpx.ConnectError):
                 await identifier.identify(IMAGE_BYTES)
+
+
+def _patched_client(mock_resp):
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    return mock_client
+
+
+class TestMultiBook:
+    async def test_parses_books_object_shape(self, identifier):
+        body = json.dumps(
+            {
+                "books": [
+                    {"title": "Dune", "author": "Frank Herbert", "confidence": 0.9},
+                    {"title": "Emma", "author": "Jane Austen", "confidence": 0.8},
+                ]
+            }
+        )
+        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+            cls.return_value = _patched_client(_make_mock_response(body))
+            candidates = await identifier.identify(IMAGE_BYTES)
+
+        assert [c.title for c in candidates] == ["Dune", "Emma"]
+
+    async def test_drops_duplicate_books(self, identifier):
+        body = json.dumps(
+            {
+                "books": [
+                    {"title": "Dune", "author": "Frank Herbert"},
+                    {"title": " dune ", "author": "FRANK HERBERT"},
+                ]
+            }
+        )
+        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+            cls.return_value = _patched_client(_make_mock_response(body))
+            candidates = await identifier.identify(IMAGE_BYTES)
+
+        assert len(candidates) == 1
+
+    async def test_returns_empty_for_unexpected_shape(self, identifier):
+        body = json.dumps({"books": "none"})
+        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+            cls.return_value = _patched_client(_make_mock_response(body))
+            candidates = await identifier.identify(IMAGE_BYTES)
+
+        assert candidates == []
+
+    async def test_skips_non_object_items(self, identifier):
+        body = json.dumps({"books": ["Dune", {"title": "Emma", "author": "Austen"}]})
+        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+            cls.return_value = _patched_client(_make_mock_response(body))
+            candidates = await identifier.identify(IMAGE_BYTES)
+
+        assert [c.title for c in candidates] == ["Emma"]
+
+    async def test_standard_scan_uses_standard_model_in_json_mode(self):
+        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+            client = _patched_client(_make_mock_response('{"books": []}'))
+            cls.return_value = client
+            await ChatGPTVisionIdentifier().identify(IMAGE_BYTES)
+
+        payload = client.post.call_args.kwargs["json"]
+        assert payload["model"] == "gpt-4o-mini"
+        assert payload["response_format"] == {"type": "json_object"}
+        image_part = payload["messages"][1]["content"][0]
+        assert image_part["image_url"]["detail"] == "high"
+
+    async def test_enhanced_scan_uses_enhanced_model(self):
+        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+            client = _patched_client(_make_mock_response('{"books": []}'))
+            cls.return_value = client
+            await ChatGPTVisionIdentifier(enhanced=True).identify(IMAGE_BYTES)
+
+        assert client.post.call_args.kwargs["json"]["model"] == "gpt-4o"
