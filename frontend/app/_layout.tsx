@@ -87,14 +87,23 @@ const headerStyles = StyleSheet.create({
 });
 
 function GlobalBookPicker() {
-  const { reviewingJob, dismissReview, handleSelectBook } = useScanJobs();
+  const { reviewingJob, dismissReview, handleAddBooks, requestEnhancedScan, enhancedCredits } =
+    useScanJobs();
+  const isPhotoScan = reviewingJob?.type === 'image';
+  // Offer the stronger model only on a photo that hasn't already had it.
+  const canEnhance = isPhotoScan && !reviewingJob?.enhanced && !!reviewingJob?.imageUri;
 
   return (
     <BookCandidatePicker
+      // Remount per job/result set so the checklist selection resets.
+      key={reviewingJob ? `${reviewingJob.id}-${reviewingJob.results?.length ?? 0}` : 'none'}
       visible={reviewingJob !== null}
       candidates={reviewingJob?.results ?? []}
-      onSelect={handleSelectBook}
+      onConfirm={handleAddBooks}
       onDismiss={dismissReview}
+      preselect={isPhotoScan}
+      onEnhance={canEnhance ? () => requestEnhancedScan(reviewingJob.id) : undefined}
+      enhancedCredits={enhancedCredits}
     />
   );
 }

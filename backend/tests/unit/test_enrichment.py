@@ -79,6 +79,18 @@ class TestEnrich:
 
         assert len(results) == 3
 
+    async def test_respects_custom_limit(self, service):
+        service.ol.search = AsyncMock(return_value=OL_DOC)
+        service.gb.search = AsyncMock(return_value=GB_VOLUME)
+
+        candidates = [
+            BookCandidate(title=f"Book {i}", author="Author", confidence=0.9)
+            for i in range(12)
+        ]
+        results = await service.enrich(candidates, limit=15)
+
+        assert [r.title for r in results] == [f"Book {i}" for i in range(12)]
+
     async def test_skips_failed_candidates(self, service):
         # When both APIs fail, the service logs warnings and continues with None values,
         # producing an EnrichedBook with the candidate's title/author but no enriched data.

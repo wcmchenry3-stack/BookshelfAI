@@ -1,13 +1,26 @@
 {
   "bookCandidatePicker": {
-    "title": "Which book is this?",
+    "title_one": "{{count}} book found",
+    "title_other": "{{count}} books found",
     "cancel": "Cancel",
     "closePicker": "Close picker",
     "selectBook": "Select {{title}} by {{author}}",
-    "addToWishlistHint": "Adds this book to your wishlist",
+    "selectAll": "Select all",
+    "selectAllA11y": "Select all books",
+    "clearAll": "Clear all",
+    "clearAllA11y": "Clear all selections",
+    "addSelected_one": "Add {{count}} book to wishlist",
+    "addSelected_other": "Add {{count}} books to wishlist",
+    "addNone": "Select books to add",
+    "addToWishlistHint": "Adds the selected books to your wishlist",
     "alreadyOwned": "Already owned",
-    "noneOfThese": "None of these",
-    "noneOfTheseA11y": "None of these books match"
+    "enhance": "Missing books? Try enhanced scan",
+    "enhanceA11y": "Try enhanced scan",
+    "enhanceHint": "Re-scans this photo with a more powerful AI model. Uses one credit if it finds books.",
+    "enhanceCostsCredit": "Uses 1 enhanced scan credit",
+    "creditsLeft_one": "{{count}} enhanced scan left",
+    "creditsLeft_other": "{{count}} enhanced scans left",
+    "noCreditsLeft": "No enhanced scans left"
   },
   "themeToggle": {
     "toDark": "Switch to dark mode",

@@ -97,6 +97,19 @@ beforeEach(() => {
   mockDeleteScanImage.mockResolvedValue(undefined);
 });
 
+function scanResponse(books: { title: string; author: string }[], credits = 5) {
+  return { data: { books, enhanced: false, enhanced_scan_credits: credits } };
+}
+
+const BOOK = {
+  title: 'Dune',
+  author: 'Herbert',
+  subjects: [],
+  confidence: 0.9,
+  already_in_library: false,
+  editions: [],
+};
+
 function queuedJob(i: number) {
   return {
     id: `queued-${i}`,
@@ -125,7 +138,7 @@ describe('ScanJobContext — startScan', () => {
   });
 
   it('creates a job and fires image scan API call', async () => {
-    mockPost.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'Herbert' }]));
     const { result } = await renderScanJobs();
 
     await act(async () => {
@@ -137,15 +150,40 @@ describe('ScanJobContext — startScan', () => {
     expect(mockPost).toHaveBeenCalledWith('/scan', expect.any(FormData), expect.any(Object));
   });
 
-  it('deletes the image once a scan completes — it has been uploaded and nothing else needs it', async () => {
-    mockPost.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
+  it('keeps the image after a scan completes so an enhanced re-scan can use it', async () => {
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'Herbert' }]));
     const { result } = await renderScanJobs();
 
     await act(async () => {
       await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
     });
 
-    expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/photo.jpg');
+    expect(mockDeleteScanImage).not.toHaveBeenCalled();
+  });
+
+  it('stores every book found in a multi-book photo and records credits', async () => {
+    mockPost.mockResolvedValueOnce(
+      scanResponse(
+        [
+          { title: 'Dune', author: 'Herbert' },
+          { title: 'Emma', author: 'Austen' },
+          { title: 'Ulysses', author: 'Joyce' },
+        ],
+        4
+      )
+    );
+    const { result } = await renderScanJobs();
+
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+
+    expect(result.current.jobs[0].results?.map((b) => b.title)).toEqual([
+      'Dune',
+      'Emma',
+      'Ulysses',
+    ]);
+    expect(result.current.enhancedCredits).toBe(4);
   });
 
   it('does not delete the image when the scan fails (kept for retry)', async () => {
@@ -474,7 +512,7 @@ describe('ScanJobContext — reviewJob', () => {
   });
 });
 
-describe('ScanJobContext — handleSelectBook', () => {
+describe('ScanJobContext — handleAddBooks', () => {
   it('posts to wishlist and removes job on success', async () => {
     const { result } = await renderScanJobs();
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
@@ -490,14 +528,7 @@ describe('ScanJobContext — handleSelectBook', () => {
     });
 
     await act(async () => {
-      await result.current.handleSelectBook({
-        title: 'Dune',
-        author: 'Herbert',
-        subjects: [],
-        confidence: 0.9,
-        already_in_library: false,
-        editions: [],
-      });
+      await result.current.handleAddBooks([BOOK]);
     });
 
     expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
@@ -518,14 +549,7 @@ describe('ScanJobContext — handleSelectBook', () => {
     // Connection drops after results arrive, before the user picks a book.
     mockNetInfoFetch.mockResolvedValue({ isConnected: false });
     await act(async () => {
-      await result.current.handleSelectBook({
-        title: 'Dune',
-        author: 'Herbert',
-        subjects: [],
-        confidence: 0.9,
-        already_in_library: false,
-        editions: [],
-      });
+      await result.current.handleAddBooks([BOOK]);
     });
 
     expect(mockPost).not.toHaveBeenCalled();
@@ -547,16 +571,171 @@ describe('ScanJobContext — handleSelectBook', () => {
     mockNetInfoFetch.mockResolvedValue({ isConnected: null });
     mockPost.mockResolvedValueOnce({});
     await act(async () => {
-      await result.current.handleSelectBook({
-        title: 'Dune',
-        author: 'Herbert',
-        subjects: [],
-        confidence: 0.9,
-        already_in_library: false,
-        editions: [],
-      });
+      await result.current.handleAddBooks([BOOK]);
     });
 
     expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
+  });
+});
+
+describe('ScanJobContext — multi-book review', () => {
+  async function scanPhoto(result: { current: ReturnType<typeof useScanJobs> }, books: string[]) {
+    mockPost.mockResolvedValueOnce(scanResponse(books.map((title) => ({ title, author: 'A' }))));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+    await act(() => {
+      result.current.reviewJob(result.current.jobs[0].id);
+    });
+  }
+
+  it('adds every ticked book to the wishlist and discards the job and its image', async () => {
+    const { result } = await renderScanJobs();
+    await scanPhoto(result, ['Dune', 'Emma']);
+    mockPost.mockResolvedValue({});
+
+    await act(async () => {
+      await result.current.handleAddBooks([
+        { ...BOOK, title: 'Dune' },
+        { ...BOOK, title: 'Emma' },
+      ]);
+    });
+
+    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
+    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Emma' }));
+    expect(result.current.jobs).toHaveLength(0);
+    expect(result.current.reviewingJob).toBeNull();
+    expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/photo.jpg');
+  });
+
+  it('keeps only the books that failed to save under review', async () => {
+    const { result } = await renderScanJobs();
+    await scanPhoto(result, ['Dune', 'Emma']);
+    mockPost.mockImplementation((_url: string, book: { title: string }) =>
+      book.title === 'Emma' ? Promise.reject(new Error('500')) : Promise.resolve({})
+    );
+
+    await act(async () => {
+      await result.current.handleAddBooks([
+        { ...BOOK, title: 'Dune' },
+        { ...BOOK, title: 'Emma' },
+      ]);
+    });
+
+    expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Emma']);
+    expect(mockDeleteScanImage).not.toHaveBeenCalled();
+  });
+
+  it('closing the review discards a completed job and frees its image', async () => {
+    const { result } = await renderScanJobs();
+    await scanPhoto(result, ['Dune']);
+
+    await act(() => {
+      result.current.dismissReview();
+    });
+
+    expect(result.current.jobs).toHaveLength(0);
+    expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/photo.jpg');
+  });
+
+  it('drops restored completed jobs — their results are not persisted', async () => {
+    mockLoadJobs.mockResolvedValue([
+      { ...queuedJob(1), id: 'done', status: 'complete' },
+      queuedJob(2),
+    ]);
+    const { result } = await renderScanJobs();
+
+    await waitFor(() => {
+      expect(result.current.jobs.map((j) => j.id)).toEqual(['queued-2']);
+    });
+    expect(mockSweep).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: 'queued-2' })],
+      expect.any(Number)
+    );
+  });
+});
+
+describe('ScanJobContext — enhanced scan', () => {
+  function enhancedField(call: unknown[]): unknown {
+    const form = call[1] as FormData & { _parts?: [string, unknown][] };
+    if (typeof form.get === 'function') return form.get('enhanced') ?? undefined;
+    return Object.fromEntries(form._parts ?? []).enhanced;
+  }
+
+  it('re-runs the photo with the enhanced flag and replaces the results', async () => {
+    const { result } = await renderScanJobs();
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'A' }], 5));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+    expect(enhancedField(mockPost.mock.calls[0])).toBeUndefined();
+
+    mockPost.mockResolvedValueOnce({
+      data: {
+        books: [
+          { title: 'Dune', author: 'A' },
+          { title: 'Emma', author: 'B' },
+        ],
+        enhanced: true,
+        enhanced_scan_credits: 4,
+      },
+    });
+    await act(async () => {
+      await result.current.requestEnhancedScan(result.current.jobs[0].id);
+    });
+
+    expect(enhancedField(mockPost.mock.calls[1])).toBe('true');
+    expect(result.current.jobs[0].status).toBe('complete');
+    expect(result.current.jobs[0].results).toHaveLength(2);
+    expect(result.current.enhancedCredits).toBe(4);
+  });
+
+  it('keeps the standard results when the enhanced scan finds nothing', async () => {
+    const { result } = await renderScanJobs();
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'A' }]));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+
+    mockPost.mockResolvedValueOnce(scanResponse([]));
+    await act(async () => {
+      await result.current.requestEnhancedScan(result.current.jobs[0].id);
+    });
+
+    expect(result.current.jobs[0].status).toBe('complete');
+    expect(result.current.jobs[0].results?.map((b) => b.title)).toEqual(['Dune']);
+  });
+
+  it('falls back and records zero credits when the server says none are left', async () => {
+    const { result } = await renderScanJobs();
+    mockPost.mockResolvedValueOnce(scanResponse([]));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
+    });
+    expect(result.current.jobs[0].status).toBe('failed');
+
+    mockPost.mockRejectedValueOnce({ response: { status: 402 } });
+    await act(async () => {
+      await result.current.requestEnhancedScan(result.current.jobs[0].id);
+    });
+
+    expect(result.current.enhancedCredits).toBe(0);
+    expect(result.current.jobs[0]).toEqual(
+      expect.objectContaining({ status: 'failed', enhanced: false, error: 'no_results' })
+    );
+  });
+
+  it('ignores enhanced requests for text searches', async () => {
+    const { result } = await renderScanJobs();
+    mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
+    await act(async () => {
+      await result.current.startScan('text', undefined, 'Dune');
+    });
+
+    await act(async () => {
+      await result.current.requestEnhancedScan(result.current.jobs[0].id);
+    });
+
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });

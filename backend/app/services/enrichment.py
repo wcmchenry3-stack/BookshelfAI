@@ -11,13 +11,26 @@ from app.services.open_library import OpenLibraryService
 logger = logging.getLogger(__name__)
 
 
+# Each candidate fires one Open Library and one Google Books request. A shelf
+# photo can yield 15 candidates, so cap how many are in flight at once.
+MAX_CONCURRENT_ENRICHMENTS = 5
+
+
 class EnrichmentService:
     def __init__(self) -> None:
         self.ol = OpenLibraryService()
         self.gb = GoogleBooksService()
 
-    async def enrich(self, candidates: list[BookCandidate]) -> list[EnrichedBook]:
-        tasks = [self._enrich_one(c) for c in candidates[:3]]
+    async def enrich(
+        self, candidates: list[BookCandidate], limit: int = 3
+    ) -> list[EnrichedBook]:
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_ENRICHMENTS)
+
+        async def _bounded(candidate: BookCandidate) -> EnrichedBook:
+            async with semaphore:
+                return await self._enrich_one(candidate)
+
+        tasks = [_bounded(c) for c in candidates[:limit]]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         enriched = []
         for r in results:

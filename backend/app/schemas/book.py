@@ -67,3 +67,11 @@ class EnrichedBook(BaseModel):
     confidence: float  # 0–1, from image recognition
     already_in_library: bool = False
     editions: list[EditionPreview] = []
+
+
+class ScanResponse(BaseModel):
+    """Returned by POST /scan — one entry per distinct book found in the photo."""
+
+    books: list[EnrichedBook] = []
+    enhanced: bool = False  # True when the stronger model was used
+    enhanced_scan_credits: int  # credits remaining after this scan

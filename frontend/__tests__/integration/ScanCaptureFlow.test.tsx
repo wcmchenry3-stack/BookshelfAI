@@ -117,7 +117,7 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
     const utils = await renderWithBanner();
-    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture books')));
 
     // The real BannerProvider + InAppBanner must now show the error text.
     await waitFor(() => {
@@ -134,7 +134,7 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
     const utils = await renderWithBanner();
-    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture books')));
 
     await waitFor(() => {
       expect(utils.getByText('Something went wrong. Please try again.')).toBeTruthy();
@@ -150,7 +150,7 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
     const utils = await renderWithBanner();
-    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture books')));
 
     const retryButton = await waitFor(() => utils.getByLabelText('Retry'));
     await act(async () => await fireEvent.press(retryButton));
@@ -163,7 +163,7 @@ describe('Scan capture flow — integration with real BannerProvider', () => {
     mockTakePictureAsync.mockResolvedValue({ uri: 'file://tmp/photo.jpg' });
 
     const utils = await renderWithBanner();
-    await act(async () => await fireEvent.press(utils.getByLabelText('Capture book cover')));
+    await act(async () => await fireEvent.press(utils.getByLabelText('Capture books')));
 
     await waitFor(() => expect(mockStartScan).toHaveBeenCalled());
     expect(mockStartScan).toHaveBeenCalledWith(

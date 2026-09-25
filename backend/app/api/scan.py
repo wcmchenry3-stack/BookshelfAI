@@ -2,6 +2,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
@@ -11,7 +12,7 @@ from app.core.file_security import sanitize_image, scan_for_malware
 from app.core.file_validation import validate_magic_bytes
 from app.core.limiter import limiter
 from app.models.user import User
-from app.schemas.book import EnrichedBook
+from app.schemas.book import EnrichedBook, ScanResponse
 from app.services.book_identifier import ScanUnavailableError
 from app.services.chatgpt_vision import ChatGPTVisionIdentifier
 from app.services.deduplication import DeduplicationService
@@ -47,7 +48,45 @@ async def _verify_turnstile(token: str) -> bool:
         return False
 
 
-@router.post("/scan", response_model=list[EnrichedBook])
+def _dedupe_enriched(books: list[EnrichedBook]) -> list[EnrichedBook]:
+    """Drop books that resolved to the same work as an earlier one.
+
+    The vision model dedupes by title/author, but two differently-read spines
+    (e.g. a subtitle vs. none) can still enrich to the same Open Library work.
+    """
+    seen: set[str] = set()
+    unique: list[EnrichedBook] = []
+    for book in books:
+        keys = [
+            f"ol:{book.open_library_work_id}" if book.open_library_work_id else None,
+            f"gb:{book.google_books_id}" if book.google_books_id else None,
+        ]
+        keys = [k for k in keys if k]
+        if any(k in seen for k in keys):
+            continue
+        seen.update(keys)
+        unique.append(book)
+    return unique
+
+
+async def _spend_enhanced_credit(db: AsyncSession, user: User) -> int:
+    """Atomically decrement the user's enhanced-scan credits; return the balance.
+
+    The ``> 0`` guard makes two concurrent enhanced scans unable to drive the
+    balance negative — the loser simply isn't charged.
+    """
+    result = await db.execute(
+        update(User)
+        .where(User.id == user.id, User.enhanced_scan_credits > 0)
+        .values(enhanced_scan_credits=User.enhanced_scan_credits - 1)
+        .returning(User.enhanced_scan_credits)
+    )
+    remaining = result.scalar_one_or_none()
+    await db.commit()
+    return int(remaining) if remaining is not None else 0
+
+
+@router.post("/scan", response_model=ScanResponse)
 @limiter.limit(settings.rate_limit_scan)
 async def scan(
     request: Request,
@@ -55,7 +94,8 @@ async def scan(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     cf_turnstile_response: str | None = Form(None, alias="cf-turnstile-response"),
-) -> list[EnrichedBook]:
+    enhanced: bool = Form(False),
+) -> ScanResponse:
     # --- Cloudflare Turnstile bot check ---
     # Enabled when TURNSTILE_REQUIRED=true (the default).
     # The startup handler already confirmed the secret key is present when required.
@@ -113,7 +153,14 @@ async def scan(
     # re-encoding to JPEG.  Consistent with the data:image/jpeg type sent to OpenAI.
     image_bytes = sanitize_image(image_bytes)
 
-    identifier = ChatGPTVisionIdentifier()
+    credits = current_user.enhanced_scan_credits or 0
+    if enhanced and credits <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="no_enhanced_credits",
+        )
+
+    identifier = ChatGPTVisionIdentifier(enhanced=enhanced)
     try:
         candidates = await identifier.identify(image_bytes)
     except ScanUnavailableError:
@@ -123,12 +170,19 @@ async def scan(
         )
 
     if not candidates:
-        return []
+        # An enhanced scan that finds nothing isn't charged.
+        return ScanResponse(books=[], enhanced=enhanced, enhanced_scan_credits=credits)
+
+    if enhanced:
+        credits = await _spend_enhanced_credit(db, current_user)
 
     enrichment = EnrichmentService()
-    enriched = await enrichment.enrich(candidates)
+    enriched = await enrichment.enrich(candidates, limit=settings.scan_max_books)
+    enriched = _dedupe_enriched(enriched)
 
     dedup = DeduplicationService()
     enriched = await dedup.check(db, str(current_user.id), enriched)
 
-    return enriched
+    return ScanResponse(
+        books=enriched, enhanced=enhanced, enhanced_scan_credits=credits
+    )
