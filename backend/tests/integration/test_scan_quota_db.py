@@ -14,8 +14,9 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api import scan as scan_api
 from app.core.config import settings
-from app.core.database import Base
+from app.core.database import AsyncSessionLocal, Base
 from app.models.scan_usage import ScanUsageDaily
 from app.models.user import User
 from app.services import scan_quota
@@ -126,6 +127,46 @@ class TestScanQuotaDb:
         assert await _count(factory, user_id, old) is None
         assert await _count(factory, user_id, boundary) == 1
         assert await _count(factory, user_id, today) == 1
+
+    async def test_reserve_and_refund_reuse_the_request_session(self, sessions):
+        """Regression: with a one-connection pool, a request session that already
+        holds a connection (as get_current_user leaves it) can still reserve and
+        refund — no second checkout. The commit also hands the connection back
+        to the pool before the provider would be called."""
+        _, make_user = sessions
+        user_id = await make_user()
+
+        engine = create_async_engine(
+            settings.async_database_url, pool_size=1, max_overflow=0, pool_timeout=1
+        )
+        # Same session options as the app's request sessions.
+        factory = async_sessionmaker(**{**AsyncSessionLocal.kw, "bind": engine})
+        assert AsyncSessionLocal.kw["expire_on_commit"] is False
+        try:
+            async with factory() as db:
+                user = await db.get(User, user_id)  # transaction open, conn held
+                assert engine.pool.checkedout() == 1
+
+                await scan_api._reserve_daily_scan(db, user, DAY)
+                # Committed: connection returned during the provider call.
+                assert engine.pool.checkedout() == 0
+                assert user.id == user_id  # not expired by the commit
+
+                await scan_api._refund_daily_scan(db, user, DAY)
+                assert engine.pool.checkedout() == 0
+        finally:
+            await engine.dispose()
+
+        async with sessions[0]() as check:
+            scans = (
+                await check.execute(
+                    select(ScanUsageDaily.scans).where(
+                        ScanUsageDaily.user_id == user_id,
+                        ScanUsageDaily.usage_date == DAY,
+                    )
+                )
+            ).scalar_one()
+        assert scans == 0
 
     async def test_user_delete_cascades_to_usage_rows(self, sessions):
         factory, make_user = sessions

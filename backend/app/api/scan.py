@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal, get_db
+from app.core.database import get_db
 from app.core.file_security import sanitize_image, scan_for_malware
 from app.core.file_validation import validate_magic_bytes
 from app.core.limiter import limiter
@@ -88,23 +88,25 @@ async def _spend_enhanced_credit(db: AsyncSession, user: User) -> int:
     return int(remaining) if remaining is not None else 0
 
 
-async def _reserve_daily_scan(user: User, usage_day: date) -> None:
+async def _reserve_daily_scan(db: AsyncSession, user: User, usage_day: date) -> None:
     """Enforce the global and per-user daily caps, reserving one scan.
 
-    Uses its own short-lived session so the reservation commits on its own,
-    independent of the request's session.
+    Runs on the request's own session, so no second pool connection is needed.
+    ``reserve_scan`` commits, which makes the reservation visible to concurrent
+    requests and hands the connection back to the pool before the provider is
+    called; the session factory uses ``expire_on_commit=False``, so ``user``
+    stays loaded after the commit.
     """
-    async with AsyncSessionLocal() as quota_db:
-        used_globally = await scan_quota.global_scans_today(quota_db, usage_day)
-        if used_globally >= settings.scan_global_daily_limit:
-            logger.warning("scan: global daily limit reached (%d)", used_globally)
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="scan_capacity",
-            )
-        reserved = await scan_quota.reserve_scan(
-            quota_db, user.id, usage_day, settings.scan_daily_limit_per_user
+    used_globally = await scan_quota.global_scans_today(db, usage_day)
+    if used_globally >= settings.scan_global_daily_limit:
+        logger.warning("scan: global daily limit reached (%d)", used_globally)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="scan_capacity",
         )
+    reserved = await scan_quota.reserve_scan(
+        db, user.id, usage_day, settings.scan_daily_limit_per_user
+    )
     if reserved is None:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -113,13 +115,16 @@ async def _reserve_daily_scan(user: User, usage_day: date) -> None:
         )
 
 
-async def _refund_daily_scan(user: User, usage_day: date) -> None:
+async def _refund_daily_scan(db: AsyncSession, user: User, usage_day: date) -> None:
     """Give back a reservation; a failure here must not mask the original error."""
     try:
-        async with AsyncSessionLocal() as quota_db:
-            await scan_quota.refund_scan(quota_db, user.id, usage_day)
+        await scan_quota.refund_scan(db, user.id, usage_day)
     except Exception:
         logger.exception("scan: failed to refund daily scan reservation")
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("scan: rollback after failed refund also failed")
 
 
 @router.post("/scan", response_model=ScanResponse)
@@ -133,8 +138,9 @@ async def scan(
     enhanced: bool = Form(False),
 ) -> ScanResponse:
     # --- Kill switches (env, no release needed) ---
-    # Checked first: before the upload body is read, before Turnstile and
-    # before any provider call.
+    # Checked first: before the image is processed, Turnstile is called or any
+    # provider is contacted. (The framework has already received the multipart
+    # body by the time the handler runs.)
     if not settings.scan_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -212,23 +218,20 @@ async def scan(
 
     # --- Daily caps: global ceiling, then an exact per-user reservation ---
     usage_day = scan_quota.utc_today()
-    await _reserve_daily_scan(current_user, usage_day)
+    await _reserve_daily_scan(db, current_user, usage_day)
 
     identifier = ChatGPTVisionIdentifier(enhanced=enhanced)
-    # The reservation is given back unless the provider call returns normally.
-    # An empty result still counts: the provider was paid for.
-    refund = True
+    # The reservation is given back only when the provider reports itself
+    # unavailable. Any other failure (or a cancelled request) keeps it: the
+    # provider may already have been paid. An empty result also counts.
     try:
         candidates = await identifier.identify(image_bytes)
-        refund = False
     except ScanUnavailableError:
+        await _refund_daily_scan(db, current_user, usage_day)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="scan_unavailable",
         ) from None
-    finally:
-        if refund:
-            await _refund_daily_scan(current_user, usage_day)
 
     if not candidates:
         return ScanResponse(books=[], enhanced=enhanced, enhanced_scan_credits=credits)

@@ -1,5 +1,6 @@
 """POST /scan kill switches and daily caps — provider mocked, quota store in memory."""
 
+import asyncio
 import io
 import uuid
 from datetime import UTC, date, datetime
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.api import scan as scan_module
@@ -217,7 +219,8 @@ class TestRefund:
         assert resp.json()["detail"] == "scan_unavailable"
         assert store.count() == 0
 
-    def test_unexpected_provider_error_refunds_and_reraises(self, store, provider):
+    def test_unexpected_provider_error_is_not_refunded(self, store, provider):
+        """Only ScanUnavailableError refunds: the provider may have been paid."""
         from app.auth.dependencies import get_current_user
         from app.core.database import get_db
 
@@ -234,7 +237,31 @@ class TestRefund:
         finally:
             app.dependency_overrides.clear()
         assert resp.status_code == 500
-        assert store.count() == 0
+        assert store.count() == 1
+
+    async def test_cancelled_provider_call_is_not_refunded(self, store, provider):
+        # Called directly (below the rate-limit wrapper) so the CancelledError
+        # reaches the test instead of being turned into a transport error.
+        provider.return_value.identify = AsyncMock(side_effect=asyncio.CancelledError())
+        upload = StarletteUploadFile(
+            file=io.BytesIO(_JPEG),
+            filename="scan.jpg",
+            headers=Headers({"content-type": "image/jpeg"}),
+        )
+        with (
+            _set(turnstile_required=False),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await scan_module.scan.__wrapped__(
+                request=MagicMock(),
+                file=upload,
+                current_user=USER,
+                db=AsyncMock(),
+                cf_turnstile_response=None,
+                enhanced=False,
+            )
+        provider.return_value.identify.assert_awaited_once()
+        assert store.count() == 1
 
     def test_successful_scan_is_not_refunded(self, client, store, provider):
         provider.return_value.identify = AsyncMock(
@@ -257,6 +284,96 @@ class TestRefund:
             resp = client.post("/scan", files=_file())
         assert resp.status_code == 503
         assert resp.json()["detail"] == "scan_unavailable"
+
+
+class TestFailClosed:
+    def test_reservation_error_blocks_provider_and_returns_5xx(self, provider):
+        from app.auth.dependencies import get_current_user
+        from app.core.database import get_db
+
+        async def _fake_db():
+            yield AsyncMock()
+
+        app.dependency_overrides[get_current_user] = lambda: USER
+        app.dependency_overrides[get_db] = _fake_db
+        try:
+            with (
+                patch.object(
+                    scan_quota, "global_scans_today", AsyncMock(return_value=0)
+                ),
+                patch.object(
+                    scan_quota, "reserve_scan", AsyncMock(side_effect=OSError("db"))
+                ),
+            ):
+                resp = TestClient(app, raise_server_exceptions=False).post(
+                    "/scan", files=_file()
+                )
+        finally:
+            app.dependency_overrides.clear()
+        assert resp.status_code >= 500
+        provider.assert_not_called()
+        provider.return_value.identify.assert_not_awaited()
+
+    def test_global_check_error_blocks_provider_and_returns_5xx(self, provider):
+        from app.auth.dependencies import get_current_user
+        from app.core.database import get_db
+
+        async def _fake_db():
+            yield AsyncMock()
+
+        app.dependency_overrides[get_current_user] = lambda: USER
+        app.dependency_overrides[get_db] = _fake_db
+        try:
+            with patch.object(
+                scan_quota, "global_scans_today", AsyncMock(side_effect=OSError("db"))
+            ):
+                resp = TestClient(app, raise_server_exceptions=False).post(
+                    "/scan", files=_file()
+                )
+        finally:
+            app.dependency_overrides.clear()
+        assert resp.status_code >= 500
+        provider.return_value.identify.assert_not_awaited()
+
+
+class TestRequestSession:
+    def test_quota_calls_use_the_request_session(self, client, store, provider):
+        """Reservation and refund run on the request's session (no second
+        pool checkout)."""
+        seen = []
+        request_db = AsyncMock()
+
+        async def _db():
+            yield request_db
+
+        from app.core.database import get_db
+
+        app.dependency_overrides[get_db] = _db
+        provider.return_value.identify = AsyncMock(
+            side_effect=ScanUnavailableError("timeout")
+        )
+
+        def _record(fn):
+            async def wrapper(db, *args):
+                seen.append(db)
+                return await fn(db, *args)
+
+            return wrapper
+
+        with (
+            patch.object(
+                scan_quota, "global_scans_today", _record(store.global_scans_today)
+            ),
+            patch.object(scan_quota, "reserve_scan", _record(store.reserve_scan)),
+            patch.object(scan_quota, "refund_scan", _record(store.refund_scan)),
+            patch("app.core.database.AsyncSessionLocal") as other_sessions,
+        ):
+            resp = client.post("/scan", files=_file())
+
+        assert resp.status_code == 503
+        assert len(seen) == 3
+        assert all(db is request_db for db in seen)
+        other_sessions.assert_not_called()
 
 
 class TestQuotaHelpers:
