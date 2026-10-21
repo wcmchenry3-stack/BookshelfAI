@@ -10,7 +10,7 @@ It is launched inside the FastAPI lifespan and cancelled on shutdown.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import delete
 
@@ -32,7 +32,7 @@ async def cleanup_expired_tokens() -> None:
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     delete(RefreshToken).where(
-                        RefreshToken.expires_at < datetime.now(timezone.utc)
+                        RefreshToken.expires_at < datetime.now(UTC)
                     )
                 )
                 await db.commit()

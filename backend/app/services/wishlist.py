@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,7 +118,7 @@ class WishlistService:
             book_id=book_id,
             edition_id=edition_id,
             status="wishlisted",
-            wishlisted_at=datetime.now(timezone.utc),
+            wishlisted_at=datetime.now(UTC),
         )
         db.add(user_book)
         await db.flush()

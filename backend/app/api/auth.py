@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -79,9 +79,7 @@ async def google_auth(
 
     access_token = create_access_token(str(user.id), user.email)
     refresh_token, jti = create_refresh_token(str(user.id))
-    expires_at = datetime.now(timezone.utc) + timedelta(
-        days=settings.refresh_token_expiry_days
-    )
+    expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
     db.add(RefreshToken(jti=jti, user_id=user.id, expires_at=expires_at))
     await db.commit()
     logger.info("Auth successful (user_id=%s)", user.id)
@@ -134,11 +132,9 @@ async def refresh(
         )
 
     # Rotate: revoke old token, issue new one
-    stored.revoked_at = datetime.now(timezone.utc)
+    stored.revoked_at = datetime.now(UTC)
     new_refresh, new_jti = create_refresh_token(str(user.id))
-    expires_at = datetime.now(timezone.utc) + timedelta(
-        days=settings.refresh_token_expiry_days
-    )
+    expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
     db.add(RefreshToken(jti=new_jti, user_id=user.id, expires_at=expires_at))
     access_token = create_access_token(str(user.id), user.email)
     await db.commit()
@@ -170,7 +166,7 @@ async def logout(
     result = await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
     stored = result.scalar_one_or_none()
     if stored is not None and stored.revoked_at is None:
-        stored.revoked_at = datetime.now(timezone.utc)
+        stored.revoked_at = datetime.now(UTC)
         await db.commit()
 
 

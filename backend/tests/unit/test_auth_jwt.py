@@ -1,6 +1,6 @@
 """Unit tests for JWT token creation and decoding (no DB required)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import jwt
@@ -61,8 +61,8 @@ class TestCreateAccessToken:
         patch_settings.jwt_expiry_hours = 2
         token = create_access_token("u", "e@x.com")
         payload = jwt.decode(token, public_pem, algorithms=["RS256"])
-        now = datetime.now(timezone.utc)
-        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        now = datetime.now(UTC)
+        exp = datetime.fromtimestamp(payload["exp"], tz=UTC)
         delta = exp - now
         assert 1.9 * 3600 < delta.total_seconds() < 2.1 * 3600
 
@@ -92,8 +92,8 @@ class TestCreateRefreshToken:
         patch_settings.refresh_token_expiry_days = 3
         token, _ = create_refresh_token("u")
         payload = jwt.decode(token, public_pem, algorithms=["RS256"])
-        now = datetime.now(timezone.utc)
-        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        now = datetime.now(UTC)
+        exp = datetime.fromtimestamp(payload["exp"], tz=UTC)
         delta = exp - now
         assert 2.9 * 86400 < delta.total_seconds() < 3.1 * 86400
 
@@ -116,8 +116,8 @@ class TestDecodeToken:
         payload = {
             "sub": "u",
             "type": "access",
-            "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
-            "iat": datetime.now(timezone.utc) - timedelta(hours=1),
+            "exp": datetime.now(UTC) - timedelta(seconds=1),
+            "iat": datetime.now(UTC) - timedelta(hours=1),
         }
         expired_token = jwt.encode(payload, private_pem, algorithm="RS256")
         with pytest.raises(jwt.ExpiredSignatureError):
@@ -146,8 +146,8 @@ class TestAlgorithmSecurity:
         payload = {
             "sub": "attacker",
             "type": "access",
-            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
-            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
         }
         # PyJWT refuses to encode with alg=none; craft the token manually.
         import base64
@@ -179,8 +179,8 @@ class TestAlgorithmSecurity:
         payload = {
             "sub": "attacker",
             "type": "access",
-            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
-            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
         }
         hs256_token = jwt.encode(payload, "any-hmac-secret", algorithm="HS256")
 
@@ -201,8 +201,8 @@ class TestAlgorithmSecurity:
         payload = {
             "sub": "user",
             "type": "access",
-            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
-            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
         }
         foreign_token = jwt.encode(payload, other_private_pem, algorithm="RS256")
 

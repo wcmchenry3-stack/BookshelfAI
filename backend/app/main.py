@@ -2,7 +2,7 @@ import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import sentry_sdk
 from fastapi import FastAPI, Request
@@ -293,7 +293,7 @@ if not settings.is_hardened:
 
             access_token = create_access_token(str(user.id), user.email)
             refresh_token, jti = create_refresh_token(str(user.id))
-            expires_at = datetime.now(timezone.utc) + timedelta(
+            expires_at = datetime.now(UTC) + timedelta(
                 days=settings.refresh_token_expiry_days
             )
             db.add(RefreshTokenModel(jti=jti, user_id=user.id, expires_at=expires_at))
