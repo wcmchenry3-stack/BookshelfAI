@@ -1,6 +1,6 @@
 from urllib.parse import urlsplit
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     # users start with enhanced_scan_free_credits.
     scan_enhanced_model: str = "gpt-4o"
     enhanced_scan_free_credits: int = 5
+    # Kill switches and daily caps for /scan, changeable via env without a
+    # release. scan_enabled=false rejects every scan before the upload body is
+    # read; scan_enhanced_enabled=false rejects only enhanced scans. The caps
+    # count provider calls per UTC day (table scan_usage_daily); the per-user
+    # cap is exact, the global cap may overshoot slightly under concurrency.
+    scan_enabled: bool = True
+    scan_enhanced_enabled: bool = True
+    scan_daily_limit_per_user: int = Field(default=20, ge=1, le=1000)
+    scan_global_daily_limit: int = Field(default=2000, ge=1, le=1_000_000)
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 

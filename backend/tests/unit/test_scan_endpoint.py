@@ -34,6 +34,17 @@ def _image_file(size_bytes: int = 100, content_type: str = "image/jpeg"):
     return ("scan.jpg", io.BytesIO(_JPEG_MAGIC + padding), content_type)
 
 
+@pytest.fixture(autouse=True)
+def _allow_daily_scan_quota():
+    """These tests use a fake DB; the daily-cap store is covered separately
+    (test_scan_daily_caps.py, integration/test_scan_quota_db.py)."""
+    with (
+        patch("app.api.scan._reserve_daily_scan", new=AsyncMock()),
+        patch("app.api.scan._refund_daily_scan", new=AsyncMock()),
+    ):
+        yield
+
+
 @pytest.fixture
 def client():
     from app.auth.dependencies import get_current_user
