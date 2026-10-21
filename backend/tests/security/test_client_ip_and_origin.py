@@ -61,8 +61,10 @@ class TestDefaultMode:
     """Unset TRUSTED_PROXY_MODE: cloudflare when hardened, none otherwise."""
 
     @pytest.fixture(autouse=True)
-    def _unset_env(self, monkeypatch):
+    def _unset_env(self, monkeypatch, tmp_path):
         monkeypatch.delenv("TRUSTED_PROXY_MODE", raising=False)
+        # Keep a developer's local backend/.env out of Settings().
+        monkeypatch.chdir(tmp_path)
 
     @pytest.mark.parametrize(
         ("environment", "expected"),
@@ -368,6 +370,11 @@ class TestRateLimitEndToEnd:
 
 
 class TestSettingsValidation:
+    @pytest.fixture(autouse=True)
+    def _no_local_dotenv(self, monkeypatch, tmp_path):
+        # Keep a developer's local backend/.env out of Settings().
+        monkeypatch.chdir(tmp_path)
+
     def test_invalid_trusted_proxy_mode_fails(self):
         with pytest.raises(ValidationError):
             Settings(database_url=DB_URL, trusted_proxy_mode="render")
