@@ -61,7 +61,8 @@ export function useFeedbackSubmit(): UseFeedbackSubmit {
 
     const title = payload.title.slice(0, TITLE_MAX);
     const description = payload.description.slice(0, DESCRIPTION_MAX);
-    const logs = SessionLogger.getLogs();
+    // Logs help debug a bug report; a feature request has no use for them.
+    const logs = payload.type === 'bug' ? SessionLogger.getLogs() : '';
 
     try {
       Sentry.captureFeedback(

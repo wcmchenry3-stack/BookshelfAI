@@ -85,6 +85,16 @@ describe('useFeedbackSubmit', () => {
       expect(hint.attachments[0].data).toMatch(/captured log/);
     });
 
+    it('does not attach session logs to a feature request', async () => {
+      SessionLogger.init();
+      console.warn('captured log');
+
+      await submitOnce({ ...basePayload, type: 'feature' });
+
+      const [, hint] = mockCaptureFeedback.mock.calls[0];
+      expect(hint.attachments).toBeUndefined();
+    });
+
     it('omits the attachment when the log buffer is empty', async () => {
       await submitOnce();
       const [, hint] = mockCaptureFeedback.mock.calls[0];
