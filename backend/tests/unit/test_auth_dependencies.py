@@ -1,7 +1,7 @@
 """Unit tests for get_current_user dependency — exercises all error branches."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import jwt
@@ -68,8 +68,8 @@ class TestGetCurrentUser:
         payload = {
             "sub": str(USER_ID),
             "type": "access",
-            "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
-            "iat": datetime.now(timezone.utc) - timedelta(hours=1),
+            "exp": datetime.now(UTC) - timedelta(seconds=1),
+            "iat": datetime.now(UTC) - timedelta(hours=1),
         }
         expired = jwt.encode(payload, private_pem, algorithm="RS256")
 
