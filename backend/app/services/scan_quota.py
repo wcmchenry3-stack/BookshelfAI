@@ -14,8 +14,8 @@ Every scan that reaches the vision provider is counted in ``scan_usage_daily``
   overshoot by at most the number of in-flight requests. That is accepted:
   the per-user cap and the rate limit bound how large that window can be.
 - **Refund.** :func:`refund_scan` gives a reservation back when the provider
-  reports itself unavailable
-  (``ScanUnavailableError``), never taking the count below zero.
+  reports itself unavailable (``ScanUnavailableError``) or the connection was
+  never established (``httpx.ConnectError``), never taking the count below zero.
 - **Retention.** :func:`purge_old_scan_usage` deletes rows older than
   ``RETENTION_DAYS`` in bounded batches; it runs from the daily cleanup task.
 """

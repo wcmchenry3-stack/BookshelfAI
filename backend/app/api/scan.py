@@ -222,8 +222,9 @@ async def scan(
 
     identifier = ChatGPTVisionIdentifier(enhanced=enhanced)
     # The reservation is given back only when the provider reports itself
-    # unavailable. Any other failure (or a cancelled request) keeps it: the
-    # provider may already have been paid. An empty result also counts.
+    # unavailable or was never reached (connection not established). Any other
+    # failure (or a cancelled request) keeps it: the provider may already have
+    # been paid. An empty result also counts.
     try:
         candidates = await identifier.identify(image_bytes)
     except (ScanUnavailableError, httpx.ConnectError):

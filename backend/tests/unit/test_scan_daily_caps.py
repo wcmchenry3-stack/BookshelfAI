@@ -234,7 +234,7 @@ class TestRefund:
         assert store.count() == 0
 
     def test_unexpected_provider_error_is_not_refunded(self, store, provider):
-        """Only ScanUnavailableError refunds: the provider may have been paid."""
+        """Other errors don't refund: the provider may have been paid."""
         from app.auth.dependencies import get_current_user
         from app.core.database import get_db
 
