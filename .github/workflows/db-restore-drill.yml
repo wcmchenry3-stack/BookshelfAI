@@ -1,0 +1,294 @@
+name: DB Restore Drill
+
+# Manual restore drill: downloads the latest encrypted backup, decrypts it,
+# restores into a throwaway Postgres container and runs sanity checks.
+# Gated by the `backup-restore` environment (required reviewers, deployment
+# branches restricted). See docs/backups.md.
+#
+# This repository is public, so job summaries and logs are world-readable.
+# The drill therefore reports pass/fail per check only: no row counts and no
+# byte sizes are printed anywhere. Unexpected restore errors are printed as an
+# error class only; the full stderr stays on the runner and is never uploaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: "Optional alembic revision the restored database must be at (fails on mismatch)"
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: db-restore-drill
+  cancel-in-progress: false
+
+env:
+  # Single source of truth for the Postgres major used by the throwaway
+  # container and the restore client. Keep in sync with PG_MAJOR in
+  # db-backup.yml.
+  PG_MAJOR: "17"
+  R2_PREFIX: bookshelf/prod
+  # A backup older than this is flagged as stale.
+  STALE_HOURS: "36"
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: backup-restore
+    steps:
+      - name: Check required secrets
+        env:
+          BACKUP_AGE_IDENTITY: ${{ secrets.BACKUP_AGE_IDENTITY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_READ_ACCESS_KEY_ID: ${{ secrets.R2_READ_ACCESS_KEY_ID }}
+          R2_READ_SECRET_ACCESS_KEY: ${{ secrets.R2_READ_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          missing=""
+          for name in BACKUP_AGE_IDENTITY R2_ACCOUNT_ID R2_READ_ACCESS_KEY_ID R2_READ_SECRET_ACCESS_KEY R2_BUCKET; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s):$missing. See docs/backups.md for setup."
+            exit 1
+          fi
+
+      - name: Install age
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+
+      - name: Start throwaway Postgres
+        run: |
+          set -euo pipefail
+          docker run -d --name drillpg \
+            --network host \
+            -e POSTGRES_PASSWORD=drill -e POSTGRES_DB=restore_drill \
+            "postgres:${PG_MAJOR}" >/dev/null
+          # Bounded wait over TCP: the image's init phase only listens on a
+          # unix socket, so a TCP check avoids reporting ready too early.
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec drillpg pg_isready -h 127.0.0.1 -U postgres -d restore_drill >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            echo "::error::Throwaway Postgres did not become ready in time."
+            exit 1
+          fi
+
+      - name: Download latest backup
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_READ_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_READ_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          # Keys embed a UTC timestamp, so the lexicographic max is the newest.
+          # List first, on its own, so an auth/endpoint failure is reported as
+          # such and not as "no backups". aws stderr is not printed (it can
+          # contain the endpoint URL, which embeds the account id).
+          if ! objects="$(aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "${R2_PREFIX}/" \
+            --endpoint-url "$endpoint" --query 'Contents[].Key' --output text 2>/dev/null)"; then
+            echo "::error::Could not list backup objects: check the R2 credentials, bucket name and endpoint."
+            exit 1
+          fi
+          key="$(printf '%s\n' "$objects" | tr '\t' '\n' | grep '\.dump\.age$' | sort | tail -n 1 || true)"
+          if [ -z "$key" ]; then
+            echo "::error::No backup objects found under ${R2_PREFIX}/."
+            exit 1
+          fi
+          echo "BACKUP_KEY=${key}" >> "$GITHUB_ENV"
+          echo "ENC_FILE=${RUNNER_TEMP}/restore.dump.age" >> "$GITHUB_ENV"
+
+          # Staleness: a nightly job should leave an object newer than STALE_HOURS.
+          modified="$(aws s3api head-object --bucket "$R2_BUCKET" --key "$key" \
+            --endpoint-url "$endpoint" --query LastModified --output text)"
+          age_s=$(( $(date -u +%s) - $(date -u -d "$modified" +%s) ))
+          if [ "$age_s" -gt $(( STALE_HOURS * 3600 )) ]; then
+            echo "::warning::Newest backup is older than ${STALE_HOURS} hours; the nightly backup may be failing."
+            # Do not stop here: the restore still runs so every other check
+            # reports. The stale flag fails the drill in "Sanity checks".
+            echo "BACKUP_STALE=1" >> "$GITHUB_ENV"
+          else
+            echo "BACKUP_STALE=0" >> "$GITHUB_ENV"
+          fi
+
+          aws s3 cp "s3://${R2_BUCKET}/${key}" "${RUNNER_TEMP}/restore.dump.age" \
+            --endpoint-url "$endpoint" --only-show-errors
+
+      - name: Decrypt and restore
+        env:
+          BACKUP_AGE_IDENTITY: ${{ secrets.BACKUP_AGE_IDENTITY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          identity="${RUNNER_TEMP}/age-identity.txt"
+          dump="${RUNNER_TEMP}/restore.dump"
+          errfile="${RUNNER_TEMP}/restore.err"
+          echo "IDENTITY_FILE=${identity}" >> "$GITHUB_ENV"
+          echo "DUMP_FILE=${dump}" >> "$GITHUB_ENV"
+          echo "ERR_FILE=${errfile}" >> "$GITHUB_ENV"
+          printf '%s\n' "$BACKUP_AGE_IDENTITY" > "$identity"
+          chmod 600 "$identity"
+          age -d -i "$identity" -o "$dump" "$ENC_FILE"
+          rm -f "$identity"
+          chmod 600 "$dump"
+
+          # The dump is streamed to pg_restore on stdin, so it is never
+          # mounted into the container and stays owner-readable only.
+          # Capture stderr; do not abort on a non-zero exit, the error
+          # classification below decides whether the restore is acceptable.
+          rc=0
+          docker run --rm -i --network host -e PGPASSWORD=drill "postgres:${PG_MAJOR}" \
+            pg_restore --no-owner --no-acl -h localhost -U postgres -d restore_drill \
+            < "$dump" 2> "$errfile" || rc=$?
+
+          # Error classification. pg_restore reports each failed statement as
+          # "pg_restore: error: could not execute query: ERROR:  <message>".
+          # Only that exact form is tolerated, and only when <message> is one
+          # of these known-benign hosted-platform messages (extended regex,
+          # case-sensitive):
+          #   - schema "public" already exists (a dump taken with -n public
+          #     includes CREATE SCHEMA public, and the fresh database has it)
+          #   - role "..." does not exist
+          #   - extension "..." is not available / could not open extension
+          #     control file / permission denied for (or to create) extension
+          #   - a message whose first quoted name is a Supabase-owned schema
+          #     (auth, storage, realtime, extensions, graphql, graphql_public,
+          #     vault, pgsodium, supabase_functions, _realtime, net, pgbouncer)
+          # Every other error line, including every "COPY failed" line (data
+          # load), is unexpected and fails the drill. Keep this list in sync
+          # with docs/backups.md.
+          prefix='^pg_restore: error: could not execute query: ERROR: +'
+          benign="${prefix}"'(schema "public" already exists$|role "[^"]+" does not exist$|extension "[^"]+" is not available|could not open extension control file|permission denied (for|to create) extension|[^"]*schema "(auth|storage|realtime|extensions|graphql|graphql_public|vault|pgsodium|supabase_functions|_realtime|net|pgbouncer)")'
+          total="$(grep -c '^pg_restore: error:' "$errfile" || true)"
+          unexpected_lines="$(grep '^pg_restore: error:' "$errfile" | grep -Ev "$benign" || true)"
+          if [ -n "$unexpected_lines" ]; then
+            unexpected="$(printf '%s\n' "$unexpected_lines" | wc -l | tr -d ' ')"
+          else
+            unexpected=0
+          fi
+          tolerated=$(( total - unexpected ))
+          echo "pg_restore exit code: ${rc}"
+          echo "pg_restore errors: ${tolerated} tolerated (known-benign), ${unexpected} unexpected"
+          echo "RESTORE_TOLERATED=${tolerated}" >> "$GITHUB_ENV"
+          echo "RESTORE_UNEXPECTED=${unexpected}" >> "$GITHUB_ENV"
+          if [ "$unexpected" -gt 0 ]; then
+            # The log is public: print only the error class per line, with the
+            # detail (names, values) withheld. The full stderr stays in the
+            # runner-local file, which is deleted in cleanup and never uploaded.
+            echo "::error::pg_restore reported ${unexpected} unexpected error(s) (details withheld):"
+            printf '%s\n' "$unexpected_lines" \
+              | sed -E 's/^pg_restore: error: ([^:"]*)(: ERROR: +[^:"]*)?.*/pg_restore: error: \1\2 [detail withheld]/'
+            exit 1
+          fi
+          # pg_restore exits 1 when it ignored errors; anything higher means it
+          # (or docker) was killed or failed abnormally, so a partial restore.
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::pg_restore or docker exited abnormally (code ${rc})."
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ] && [ "$total" -eq 0 ]; then
+            echo "::error::pg_restore exited non-zero without a recognised error line."
+            exit 1
+          fi
+
+      - name: Sanity checks
+        env:
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
+        run: |
+          set -euo pipefail
+          q() {
+            docker run --rm --network host -e PGPASSWORD=drill "postgres:${PG_MAJOR}" \
+              psql -h localhost -U postgres -d restore_drill -v ON_ERROR_STOP=1 -Atc "$1"
+          }
+          results=""
+          failed=0
+          check() { # name, status (0 = pass, 1 = fail)
+            if [ "$2" = "0" ]; then
+              results="${results}- $1 ✓"$'\n'
+            else
+              results="${results}- $1 ✗"$'\n'
+              failed=1
+              echo "::error::Check failed: $1"
+            fi
+          }
+
+          # A stale newest backup fails the drill, but only here, after the
+          # restore ran, so the other checks still report.
+          if [ "${BACKUP_STALE:-1}" = "0" ]; then
+            check "backup freshness" 0
+          else
+            check "backup freshness" 1
+          fi
+
+          # Required tables must exist. Row contents are never printed.
+          for t in users books editions user_books; do
+            if [ "$(q "select to_regclass('public.${t}') is not null")" = "t" ]; then
+              check "${t}: table present" 0
+            else
+              check "${t}: table present" 1
+            fi
+          done
+
+          # alembic_version must exist and be non-empty.
+          version=""
+          if [ "$(q "select to_regclass('public.alembic_version') is not null")" = "t" ]; then
+            version="$(q "select coalesce(string_agg(version_num, ','), '') from public.alembic_version")"
+          fi
+          if [ -n "$version" ]; then
+            check "alembic_version: present and non-empty" 0
+          else
+            check "alembic_version: present and non-empty" 1
+          fi
+
+          # Production is never empty, so an empty users table means a bad restore.
+          if [ "$(q "select to_regclass('public.users') is not null")" = "t" ] \
+            && [ "$(q "select exists (select 1 from public.users)")" = "t" ]; then
+            check "users: non-empty" 0
+          else
+            check "users: non-empty" 1
+          fi
+
+          if [ -n "$EXPECTED_REVISION" ]; then
+            if [ "$version" = "$EXPECTED_REVISION" ]; then
+              check "alembic revision matches expected_revision" 0
+            else
+              check "alembic revision matches expected_revision" 1
+            fi
+          fi
+
+          {
+            echo "### Restore drill"
+            echo ""
+            echo "- Backup: \`${BACKUP_KEY}\`"
+            echo "- pg_restore errors: ${RESTORE_TOLERATED} tolerated (known-benign), ${RESTORE_UNEXPECTED} unexpected"
+            printf '%s' "$results"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s' "$results"
+
+          if [ "$failed" != "0" ]; then
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f drillpg >/dev/null 2>&1 || true
+          rm -f "${IDENTITY_FILE:-}" "${ENC_FILE:-}" "${DUMP_FILE:-}" "${ERR_FILE:-}"
