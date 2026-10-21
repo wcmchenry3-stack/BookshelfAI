@@ -31,7 +31,9 @@ services:
     branch: main
     autoDeploy: false
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # --no-proxy-headers: the socket peer must never be rewritten from
+    # X-Forwarded-For; app/core/client_ip.py decides the client IP.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
     rootDir: backend
@@ -48,6 +50,14 @@ services:
       - key: TRUSTED_HOSTS
         value: '["bookshelfapi.buffingchi.com"]'
       - key: TURNSTILE_SECRET_KEY
+        sync: false
+      # Client IP for rate limiting comes from CF-Connecting-IP (the API is
+      # served through Cloudflare). See docs/security.md "Client IP and origin
+      # lockdown" for the rollout order.
+      - key: TRUSTED_PROXY_MODE
+        value: cloudflare
+      # Origin lockdown shared secret; empty = disabled. Dashboard only.
+      - key: ORIGIN_AUTH_SECRET
         sync: false
       - key: SENTRY_DSN
         sync: false
@@ -124,7 +134,9 @@ services:
     plan: starter
     branch: dev
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # --no-proxy-headers: the socket peer must never be rewritten from
+    # X-Forwarded-For; app/core/client_ip.py decides the client IP.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
     rootDir: backend
@@ -135,7 +147,7 @@ services:
           property: connectionString
       # staging, not development: Settings.is_hardened (PR #448) treats every
       # environment except development/test as hardened (TrustedHost,
-      # CF-Connecting-IP trust, /docs disabled, HSTS, /auth/test-login
+      # /docs disabled, HSTS, /auth/test-login
       # unregistered). Dev must exercise the hardened path like prod does.
       - key: ENVIRONMENT
         value: staging
@@ -144,6 +156,14 @@ services:
       - key: TRUSTED_HOSTS
         sync: false # dashboard-authoritative — dev hostnames are not fixed here
       - key: TURNSTILE_SECRET_KEY
+        sync: false
+      # Client IP for rate limiting comes from CF-Connecting-IP (the API is
+      # served through Cloudflare). See docs/security.md "Client IP and origin
+      # lockdown" for the rollout order.
+      - key: TRUSTED_PROXY_MODE
+        value: cloudflare
+      # Origin lockdown shared secret; empty = disabled. Dashboard only.
+      - key: ORIGIN_AUTH_SECRET
         sync: false
       - key: SENTRY_DSN
         sync: false

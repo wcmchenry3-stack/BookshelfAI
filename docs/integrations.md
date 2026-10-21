@@ -127,9 +127,9 @@ When configured, every `POST /scan` must include `cf-turnstile-response` as a mu
 
 Zone has Bot Fight Mode enabled — it 403s GitHub Actions runner IPs (Azure ranges) on free tier and **cannot be skipped via WAF custom rules**. See [architecture.md → ADR: CI health checks bypass Cloudflare](architecture.md#adr-ci-health-checks-bypass-cloudflare) for the full workaround (direct Render origin + `_HealthExemptTrustedHost`).
 
-### CloudflareRealIP middleware
+### Client IP and origin lockdown
 
-Restores `request.scope["client"]` from `CF-Connecting-IP` header so slowapi keys rate limits by real client IP in production, not Cloudflare's edge IP. See [architecture.md → Middleware stack](architecture.md#middleware-stack).
+With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client IP from a single valid `CF-Connecting-IP` header so slowapi keys rate limits by the real client, not Cloudflare's edge IP. `ORIGIN_AUTH_SECRET` turns on the origin lockdown, so only requests that came through the edge (plus `/health`) reach the API. See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
 
 ## Render
 
@@ -139,7 +139,7 @@ Restores `request.scope["client"]` from `CF-Connecting-IP` header so slowapi key
 
 **Service:** `bookshelf-api` — Python, Oregon region, `starter` plan.
 - Build: `pip install -r requirements.txt`
-- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers`
 - **Pre-deploy:** `alembic upgrade head` — migrations run before the new version takes traffic. A failing migration blocks the deploy (test migrations locally first).
 - Health check path: `/health`
 - Root dir: `backend/`

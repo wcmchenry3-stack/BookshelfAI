@@ -40,7 +40,7 @@ Common status codes:
 
 ### Rate limits
 
-Per-client-IP (Cloudflare `CF-Connecting-IP` in prod). Limits are set via env (see `app/core/config.py`):
+Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudflare `CF-Connecting-IP` when `TRUSTED_PROXY_MODE=cloudflare`, see [security.md](security.md#client-ip-and-origin-lockdown)). Limits are set via env (see `app/core/config.py`):
 
 | Bucket | Default | Applied to |
 |---|---|---|
@@ -403,7 +403,7 @@ Never touches the database — always `200`. Render restarts a service on a fail
 
 ### `GET /health/db` — DB connectivity check
 
-**Auth:** none, but — unlike `/health` — NOT exempt from `TrustedHostMiddleware`. At the raw origin an attacker could otherwise rotate a spoofed `CF-Connecting-IP` per request to dodge the rate limit and exhaust the DB pool; the DB-connectivity uptime monitor uses the public hostname anyway.
+**Auth:** none, but — unlike `/health` — NOT exempt from `TrustedHostMiddleware` or the origin lockdown, because it opens a DB connection. The DB-connectivity uptime monitor uses the public hostname anyway.
 **Rate limit:** `rate_limit_health`
 **Timeout:** the DB probe is bounded to 5s (`_HEALTH_DB_TIMEOUT_SECONDS`); a hang counts as failure
 **Source:** `backend/app/main.py:health_db`

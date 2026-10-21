@@ -1,3 +1,5 @@
+import re
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import field_validator
@@ -9,6 +11,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # "prepared statement ... does not exist" / DuplicatePreparedStatementError.
 # The session pooler on port 5432 must be used instead.
 _SUPABASE_TRANSACTION_POOLER_PORT = 6543
+
+# RFC 9110 field-name token characters.
+_HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 
 
 class Settings(BaseSettings):
@@ -93,11 +98,29 @@ class Settings(BaseSettings):
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]
 
+    # Client-IP trust (app/core/client_ip.py). "none" (default): the socket
+    # peer, every forwarding header ignored. "cloudflare": a single valid
+    # CF-Connecting-IP value, else the socket peer. Any other value fails boot.
+    trusted_proxy_mode: Literal["cloudflare", "none"] = "none"
+
+    # Origin lockdown (app/core/origin_auth.py). When origin_auth_secret is
+    # set, every request except /health must carry origin_auth_header with
+    # exactly that value, or it gets 403. Empty disables the check.
+    origin_auth_header: str = "X-Origin-Auth"
+    origin_auth_secret: str = ""
+
     @field_validator("cors_origins")
     @classmethod
     def no_wildcard_origins(cls, v: list[str]) -> list[str]:
         if "*" in v:
             raise ValueError("Wildcard '*' is not permitted in CORS_ORIGINS")
+        return v
+
+    @field_validator("origin_auth_header")
+    @classmethod
+    def valid_header_name(cls, v: str) -> str:
+        if not _HEADER_NAME_PATTERN.fullmatch(v):
+            raise ValueError("ORIGIN_AUTH_HEADER must be a valid HTTP header name")
         return v
 
     @field_validator("database_url")
@@ -119,8 +142,9 @@ class Settings(BaseSettings):
 
         A public `staging` deployment is just as reachable by attackers as
         `production`, so it must get the same hardening (TrustedHost
-        enforcement, no /docs, no debug/test-only routes, HSTS, trusting
-        CF-Connecting-IP) even though it's tagged separately in Sentry.
+        enforcement, no /docs, no debug/test-only routes, HSTS) even though
+        it's tagged separately in Sentry. Which client-IP header is trusted is
+        a separate setting, ``trusted_proxy_mode``.
         """
         return self.environment not in {"development", "test"}
 
