@@ -4,9 +4,11 @@ Every per-IP rate-limit key comes from :func:`client_ip_bucket`, which is built
 on :func:`resolve_client_ip`. No other app code reads ``CF-Connecting-IP``,
 ``X-Forwarded-For`` or ``request.client`` to identify a caller.
 
-Trust model (``settings.trusted_proxy_mode``, env ``TRUSTED_PROXY_MODE``):
+Trust model (``settings.trusted_proxy_mode``, env ``TRUSTED_PROXY_MODE``;
+when unset it defaults to ``cloudflare`` in hardened environments and ``none``
+otherwise):
 
-``none`` (default)
+``none``
     The socket peer. Every forwarding header is ignored. Use this when uvicorn
     is reached directly, with no trusted proxy in front.
 ``cloudflare``

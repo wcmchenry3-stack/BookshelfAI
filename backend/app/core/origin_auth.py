@@ -10,8 +10,9 @@ which calls the origin directly, keeps working.
 An empty secret disables the check, so the code can be deployed before the
 edge adds the header (rollout order: ``docs/security.md``).
 
-Neither the header name nor any value is ever echoed in a response or a log
-line.
+The secret value never appears in responses or logs (the header name is not
+echoed either), and the header is scrubbed from error reports by the Sentry
+scrubber (``app.core.sentry_context.build_event_scrubber``).
 """
 
 from __future__ import annotations

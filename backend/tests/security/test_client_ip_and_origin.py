@@ -26,7 +26,7 @@ pytestmark = pytest.mark.security
 PEER = "203.0.113.9"
 FORGED_CF = "198.51.100.20"
 FORGED_XFF = "198.51.100.10"
-SECRET = "unit-test-origin-secret-value"
+SECRET = "unit-test-origin-secret-value-0123456789"
 DB_URL = "postgresql+asyncpg://test:test@localhost/test"
 
 
@@ -57,10 +57,59 @@ def proxy_mode(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-class TestNoneMode:
-    def test_default_mode_is_none(self):
-        assert Settings(database_url=DB_URL).trusted_proxy_mode == "none"
+class TestDefaultMode:
+    """Unset TRUSTED_PROXY_MODE: cloudflare when hardened, none otherwise."""
 
+    @pytest.fixture(autouse=True)
+    def _unset_env(self, monkeypatch):
+        monkeypatch.delenv("TRUSTED_PROXY_MODE", raising=False)
+
+    @pytest.mark.parametrize(
+        ("environment", "expected"),
+        [
+            ("development", "none"),
+            ("test", "none"),
+            ("staging", "cloudflare"),
+            ("production", "cloudflare"),
+        ],
+    )
+    def test_unset_defaults_by_environment(self, environment, expected):
+        s = Settings(database_url=DB_URL, environment=environment)
+        assert s.trusted_proxy_mode == expected
+
+    def test_explicit_none_in_production_is_kept(self):
+        s = Settings(
+            database_url=DB_URL, environment="production", trusted_proxy_mode="none"
+        )
+        assert s.trusted_proxy_mode == "none"
+
+    def test_explicit_cloudflare_in_development_is_kept(self):
+        s = Settings(
+            database_url=DB_URL,
+            environment="development",
+            trusted_proxy_mode="cloudflare",
+        )
+        assert s.trusted_proxy_mode == "cloudflare"
+
+    @pytest.mark.parametrize(
+        ("environment", "expected"),
+        [("development", "none"), ("production", "cloudflare")],
+    )
+    def test_empty_string_env_is_treated_as_unset(
+        self, monkeypatch, environment, expected
+    ):
+        monkeypatch.setenv("TRUSTED_PROXY_MODE", "")
+        s = Settings(database_url=DB_URL, environment=environment)
+        assert s.trusted_proxy_mode == expected
+
+    def test_invalid_value_fails(self):
+        with pytest.raises(ValidationError):
+            Settings(
+                database_url=DB_URL, environment="production", trusted_proxy_mode="x"
+            )
+
+
+class TestNoneMode:
     def test_uses_socket_peer(self, proxy_mode):
         proxy_mode("none")
         assert resolve_client_ip(_request()) == PEER
@@ -337,6 +386,44 @@ class TestSettingsValidation:
         with pytest.raises(ValidationError):
             Settings(database_url=DB_URL, origin_auth_header=name)
 
+    @pytest.mark.parametrize(
+        ("value", "rule"),
+        [
+            (" " + "a" * 40, "whitespace"),
+            ("a" * 40 + "\n", "whitespace"),
+            ("a" * 20 + "\u00e9" + "a" * 20, "printable ASCII"),
+            ("a" * 20 + "\x01" + "a" * 20, "printable ASCII"),
+            ("a" * 31, "at least 32"),
+        ],
+    )
+    def test_invalid_origin_auth_secret_fails_without_echoing_it(self, value, rule):
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(database_url=DB_URL, origin_auth_secret=value)
+        message = str(exc_info.value)
+        assert rule in message
+        assert value.strip() not in message
+        assert "a" * 20 not in message
+
+    def test_invalid_origin_auth_secret_from_env_fails(self, monkeypatch):
+        monkeypatch.setenv("ORIGIN_AUTH_SECRET", "too-short")
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(database_url=DB_URL)
+        assert "too-short" not in str(exc_info.value)
+
+    def test_valid_origin_auth_secret_accepted(self):
+        value = "0123456789abcdef" * 4  # e.g. `openssl rand -hex 32`
+        assert (
+            Settings(database_url=DB_URL, origin_auth_secret=value).origin_auth_secret
+            == value
+        )
+
+    def test_origin_auth_secret_of_exactly_min_length_accepted(self):
+        value = "A" * 32
+        assert (
+            Settings(database_url=DB_URL, origin_auth_secret=value).origin_auth_secret
+            == value
+        )
+
     def test_origin_auth_disabled_by_default(self):
         s = Settings(database_url=DB_URL)
         assert s.origin_auth_secret == ""
@@ -358,6 +445,27 @@ def origin_secret(monkeypatch):
 def real_client():
     from app.main import app
 
+    return TestClient(app)
+
+
+CORS_ORIGIN = "https://app.example.test"
+
+
+@pytest.fixture
+def cors_client(monkeypatch):
+    """The real app, with CORSMiddleware allowing CORS_ORIGIN.
+
+    CORSMiddleware copies settings.cors_origins when app.main is imported (empty
+    in tests), so this patches the registered middleware's options and forces
+    the stack to be rebuilt; monkeypatch restores both afterwards.
+    """
+    from starlette.middleware.cors import CORSMiddleware
+
+    from app.main import app
+
+    cors = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
+    monkeypatch.setattr(cors, "kwargs", {**cors.kwargs, "allow_origins": [CORS_ORIGIN]})
+    monkeypatch.setattr(app, "middleware_stack", None)
     return TestClient(app)
 
 
@@ -437,6 +545,44 @@ class TestOriginLockdown:
         assert SECRET.lower() not in text
         assert "wrong-value" not in text
         assert "x-origin-auth" not in text
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/health/",
+            # Full URL: the test client reads a bare "//health" as a host.
+            "http://testserver//health",
+            "/HEALTH",
+            "/health%2F",
+            "/health/db",
+        ],
+    )
+    def test_only_exact_health_path_is_exempt(self, origin_secret, real_client, path):
+        _assert_forbidden(real_client.get(path))
+
+    @pytest.mark.parametrize("path", ["/health", "/health?x=1"])
+    def test_exact_health_path_is_exempt(self, origin_secret, real_client, path):
+        assert real_client.get(path).status_code == 200
+
+    def test_empty_header_value_rejected(self, origin_secret, real_client):
+        response = real_client.get("/openapi.json", headers={"X-Origin-Auth": ""})
+        _assert_forbidden(response)
+
+    def test_forbidden_response_carries_cors_for_allowed_origin(
+        self, origin_secret, cors_client
+    ):
+        response = cors_client.get("/openapi.json", headers={"Origin": CORS_ORIGIN})
+        _assert_forbidden(response)
+        assert response.headers["access-control-allow-origin"] == CORS_ORIGIN
+
+    def test_forbidden_response_has_no_cors_for_unknown_origin(
+        self, origin_secret, cors_client
+    ):
+        response = cors_client.get(
+            "/openapi.json", headers={"Origin": "https://not-allowed.example"}
+        )
+        _assert_forbidden(response)
+        assert "access-control-allow-origin" not in response.headers
 
     def test_rejected_requests_do_not_consume_rate_limit(
         self, origin_secret, proxy_mode

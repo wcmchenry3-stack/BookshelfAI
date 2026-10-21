@@ -90,25 +90,26 @@ Full description: [`security.md` → Client IP and origin lockdown](security.md#
 
 | Variable | Values | Set where |
 | --- | --- | --- |
-| `TRUSTED_PROXY_MODE` | `none` (default) or `cloudflare`; anything else fails boot | `render.yaml` sets `cloudflare` on both API services |
+| `TRUSTED_PROXY_MODE` | `cloudflare` or `none`; default: `cloudflare` in hardened environments, `none` otherwise; anything else fails boot | `render.yaml` sets `cloudflare` explicitly on both API services |
 | `ORIGIN_AUTH_HEADER` | header name, default `X-Origin-Auth` | leave unset unless the edge uses another name |
-| `ORIGIN_AUTH_SECRET` | empty (default) = lockdown off | dashboard secret (`sync: false`) |
+| `ORIGIN_AUTH_SECRET` | empty (default) = lockdown off; otherwise at least 32 printable ASCII characters (e.g. `openssl rand -hex 32`) or boot fails | dashboard secret (`sync: false`) |
 
 Both API start commands carry `--no-proxy-headers` so uvicorn never rewrites
 the client address from `X-Forwarded-For`
 (`backend/tests/unit/test_render_yaml.py` checks this). This file is not
-blueprint-synced, so copy the start command and `TRUSTED_PROXY_MODE` into each
-service's dashboard settings by hand.
+blueprint-synced, so copy the start command into each service's dashboard
+settings by hand.
 
 Rollout, per service (dev first, then prod):
 
-1. In the dashboard set `TRUSTED_PROXY_MODE=cloudflare` and the start command
-   from `render.yaml`, then deploy the code with `ORIGIN_AUTH_SECRET` unset.
-   With the default `none`, every client behind Render's proxy shares one
-   rate-limit bucket.
-2. The owner adds the edge rule that sends the origin header on requests to
+1. Optionally confirm `TRUSTED_PROXY_MODE` in the dashboard (not required:
+   the default is `cloudflare` in hardened environments). Update the start
+   command to the one in `render.yaml` (adds `--no-proxy-headers`, defence in
+   depth).
+2. Deploy, with `ORIGIN_AUTH_SECRET` unset.
+3. The owner adds the edge rule that sends the origin header on requests to
    the API hostname.
-3. Set `ORIGIN_AUTH_SECRET` in the dashboard to the same value. Check that the
+4. Set `ORIGIN_AUTH_SECRET` in the dashboard to the same value. Check that the
    public hostname still works and that `/health` still passes Render's health
    check.
 

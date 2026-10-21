@@ -52,11 +52,13 @@ services:
       - key: TURNSTILE_SECRET_KEY
         sync: false
       # Client IP for rate limiting comes from CF-Connecting-IP (the API is
-      # served through Cloudflare). See docs/security.md "Client IP and origin
-      # lockdown" for the rollout order.
+      # served through Cloudflare). This is also the default when unset in a
+      # hardened environment; set explicitly here for clarity. See
+      # docs/security.md "Client IP and origin lockdown" for the rollout order.
       - key: TRUSTED_PROXY_MODE
         value: cloudflare
-      # Origin lockdown shared secret; empty = disabled. Dashboard only.
+      # Origin lockdown shared secret; empty = disabled. Dashboard only;
+      # >= 32 printable ASCII characters (e.g. `openssl rand -hex 32`).
       - key: ORIGIN_AUTH_SECRET
         sync: false
       - key: SENTRY_DSN
@@ -158,11 +160,13 @@ services:
       - key: TURNSTILE_SECRET_KEY
         sync: false
       # Client IP for rate limiting comes from CF-Connecting-IP (the API is
-      # served through Cloudflare). See docs/security.md "Client IP and origin
-      # lockdown" for the rollout order.
+      # served through Cloudflare). This is also the default when unset in a
+      # hardened environment; set explicitly here for clarity. See
+      # docs/security.md "Client IP and origin lockdown" for the rollout order.
       - key: TRUSTED_PROXY_MODE
         value: cloudflare
-      # Origin lockdown shared secret; empty = disabled. Dashboard only.
+      # Origin lockdown shared secret; empty = disabled. Dashboard only;
+      # >= 32 printable ASCII characters (e.g. `openssl rand -hex 32`).
       - key: ORIGIN_AUTH_SECRET
         sync: false
       - key: SENTRY_DSN

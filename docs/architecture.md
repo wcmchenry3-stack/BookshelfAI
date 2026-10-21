@@ -121,7 +121,7 @@ Backed by `slowapi` + in-memory storage (single Render instance). Every endpoint
 | `rate_limit_reads` | 120/min | GET on `/user-books/*`, `/auth/me` |
 | `rate_limit_health` | 60/min | `/health`, `/health/db` |
 
-**Keying:** `user:<sub>` when the request carries a verified **access** token (`type: access`); otherwise the client IP from `app/core/client_ip.py` (one bucket per IPv4 address, per IPv6 /64). Refresh tokens never select a per-user bucket. The resolver trusts `CF-Connecting-IP` only when `TRUSTED_PROXY_MODE=cloudflare` (set on Render); without it every client behind Cloudflare and Render would share the proxy's IP. See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
+**Keying:** `user:<sub>` when the request carries a verified **access** token (`type: access`); otherwise the client IP from `app/core/client_ip.py` (one bucket per IPv4 address, per IPv6 /64). Refresh tokens never select a per-user bucket. The resolver trusts `CF-Connecting-IP` only when `TRUSTED_PROXY_MODE=cloudflare` (the default in hardened environments, and set explicitly on Render); with `none` every client behind Cloudflare and Render would share the proxy's IP. See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
 
 A 429 response is logged at WARN level with the offending path, so repeated hits surface in Sentry.
 
