@@ -27,9 +27,7 @@ _SECRET_KEY_EXACT = {"SENTRY_DSN", "TURNSTILE_SECRET_KEY"}
 
 _POSTGRES_URL_PATTERN = re.compile(r"postgres(ql)?(\+\w+)?://")
 
-_REQUIRED_CSP_ORIGINS = (
-    "https://*.ingest.us.sentry.io",
-)
+_REQUIRED_CSP_ORIGINS = ("https://*.ingest.us.sentry.io",)
 
 
 def _load_render_yaml() -> dict:
@@ -189,7 +187,9 @@ def test_dev_web_csp_includes_sentry_origin():
 
 @pytest.mark.parametrize("service_name", ["bookshelf-web", "bookshelf-web-dev"])
 def test_web_csp_does_not_allow_retired_feedback_worker(service_name):
-    csp = _header_value(_service(_load_render_yaml(), service_name), "Content-Security-Policy")
+    csp = _header_value(
+        _service(_load_render_yaml(), service_name), "Content-Security-Policy"
+    )
     assert "workers.dev" not in csp
 
 
