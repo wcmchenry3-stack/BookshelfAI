@@ -140,7 +140,8 @@ class TestVisionParseFailureLogs:
         "content", ["not json SECRET-BOOK-TEXT", '"SECRET-BOOK-TEXT"']
     )
     async def test_no_content_logged(self, caplog, content):
-        from app.services import chatgpt_vision
+        from app.ai.providers import openai_vision
+        from app.ai.registry import FEATURES
 
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
@@ -152,10 +153,12 @@ class TestVisionParseFailureLogs:
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
         with (
-            patch.object(chatgpt_vision.httpx, "AsyncClient", return_value=client),
+            patch.object(openai_vision.httpx, "AsyncClient", return_value=client),
             caplog.at_level(logging.INFO),
         ):
-            result = await chatgpt_vision.ChatGPTVisionIdentifier().identify(b"img")
+            result = await openai_vision.OpenAIVisionProvider(
+                FEATURES["scan.standard"]
+            ).identify(b"img")
         assert result == []
         assert "SECRET-BOOK-TEXT" not in caplog.text
         assert hashlib.sha256(content.encode()).hexdigest()[:12] in caplog.text

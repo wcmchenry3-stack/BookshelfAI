@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.gateway import VisionPayload, run_feature
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -16,7 +17,6 @@ from app.models.user import User
 from app.schemas.book import EnrichedBook, ScanResponse
 from app.services import scan_quota
 from app.services.book_identifier import ScanUnavailableError
-from app.services.chatgpt_vision import ChatGPTVisionIdentifier
 from app.services.deduplication import DeduplicationService
 from app.services.enrichment import EnrichmentService
 
@@ -220,13 +220,20 @@ async def scan(
     usage_day = scan_quota.utc_today()
     await _reserve_daily_scan(db, current_user, usage_day)
 
-    identifier = ChatGPTVisionIdentifier(enhanced=enhanced)
+    # The client only chooses standard vs enhanced; the gateway's registry
+    # decides the provider, model, token cap and timeout for that feature.
+    feature = "scan.enhanced" if enhanced else "scan.standard"
     # The reservation is given back only when the provider reports itself
     # unavailable or was never reached (connection not established). Any other
     # failure (or a cancelled request) keeps it: the provider may already have
     # been paid. An empty result also counts.
     try:
-        candidates = await identifier.identify(image_bytes)
+        result = await run_feature(
+            feature,
+            user=current_user,
+            db=db,
+            payload=VisionPayload(image_bytes=image_bytes),
+        )
     except (ScanUnavailableError, httpx.ConnectError):
         # ConnectError: the connection to the provider was never established,
         # so nothing was billed; treat it like any other unavailability.
@@ -235,6 +242,7 @@ async def scan(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="scan_unavailable",
         ) from None
+    candidates = result.candidates
 
     if not candidates:
         return ScanResponse(books=[], enhanced=enhanced, enhanced_scan_credits=credits)

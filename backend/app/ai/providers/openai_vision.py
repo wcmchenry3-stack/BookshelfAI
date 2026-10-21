@@ -1,4 +1,10 @@
-"""Book identification via OpenAI vision — finds every book in a photo."""
+"""OpenAI vision provider — finds every book in a photo.
+
+Moved with no behaviour change from ``app/services/chatgpt_vision.py``
+(``ChatGPTVisionIdentifier``). The model, token cap and timeout now come from
+the feature's ``FeatureSpec`` instead of being picked here from ``settings``;
+the values are the same.
+"""
 
 import base64
 import hashlib
@@ -7,6 +13,7 @@ import logging
 
 import httpx
 
+from app.ai.registry import FeatureSpec
 from app.core.config import settings
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
@@ -69,10 +76,12 @@ def _dedupe_key(candidate: BookCandidate) -> tuple[str, str]:
     return (candidate.title.strip().casefold(), candidate.author.strip().casefold())
 
 
-class ChatGPTVisionIdentifier:
-    def __init__(self, enhanced: bool = False) -> None:
-        self.enhanced = enhanced
-        self.model = settings.scan_enhanced_model if enhanced else settings.scan_model
+class OpenAIVisionProvider:
+    def __init__(self, spec: FeatureSpec) -> None:
+        if spec.provider != "openai":
+            raise ValueError(f"{spec.name} is not an OpenAI feature")
+        self.spec = spec
+        self.model = spec.model
 
     async def identify(self, image_bytes: bytes) -> list[BookCandidate]:
         b64 = base64.standard_b64encode(image_bytes).decode()
@@ -80,7 +89,7 @@ class ChatGPTVisionIdentifier:
 
         payload = {
             "model": self.model,
-            "max_tokens": settings.scan_max_tokens,
+            "max_tokens": self.spec.max_tokens,
             "response_format": {"type": "json_object"},
             "messages": [
                 {
@@ -106,9 +115,7 @@ class ChatGPTVisionIdentifier:
         }
 
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.scan_timeout_seconds
-            ) as client:
+            async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:
                 resp = await client.post(
                     OPENAI_URL,
                     json=payload,

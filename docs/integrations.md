@@ -33,7 +33,7 @@ Every third-party service Bookshelf talks to, what role it plays, and where to l
 **Key env var:** `OPENAI_API_KEY`
 **Timeout:** 15 seconds (httpx)
 **Max tokens:** `OPENAI_MAX_TOKENS` (default 512)
-**Source:** `backend/app/services/chatgpt_vision.py`
+**Source:** `backend/app/ai/providers/openai_vision.py`, called only through the AI gateway (`backend/app/ai/gateway.py`)
 
 **Prompt strategy** — structured JSON output, no free text:
 > You are a book identification assistant. Given a photo of a book cover, identify the book and return a JSON array of up to 3 candidates ranked by confidence. Each candidate must have title, author, confidence (0–1), isbn_13 (nullable), isbn_10 (nullable). Return ONLY a valid JSON array, no other text.

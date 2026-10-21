@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.ai.registry import FEATURES
 from app.api import scan as scan_module
 from app.core.config import Settings
 from app.main import app
@@ -85,7 +86,7 @@ def client():
 def provider():
     """Mock the vision provider and the downstream lookups."""
     with (
-        patch("app.api.scan.ChatGPTVisionIdentifier") as id_cls,
+        patch("app.ai.gateway.OpenAIVisionProvider") as id_cls,
         patch("app.api.scan.EnrichmentService") as enrich_cls,
         patch("app.api.scan.DeduplicationService") as dedup_cls,
     ):
@@ -151,7 +152,7 @@ class TestKillSwitches:
         with _set(scan_enhanced_enabled=False):
             resp = client.post("/scan", files=_file())
         assert resp.status_code == 200
-        provider.assert_called_once_with(enhanced=False)
+        provider.assert_called_once_with(FEATURES["scan.standard"])
 
 
 class TestPerUserDailyLimit:

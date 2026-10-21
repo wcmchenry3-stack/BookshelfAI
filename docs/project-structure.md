@@ -27,6 +27,12 @@ backend/
 ├── alembic.ini            Alembic config
 ├── app/                   Application package
 │   ├── main.py            FastAPI app, middleware stack, /health endpoint
+│   ├── ai/                AI gateway — the only place paid model calls happen
+│   │   ├── gateway.py         run_feature(): single entry point for AI features
+│   │   ├── registry.py        Server-controlled FeatureSpec registry (validated at import)
+│   │   └── providers/         Provider adapters (only package allowed to call a provider)
+│   │       ├── base.py            VisionProvider protocol
+│   │       └── openai_vision.py   OpenAI vision book identifier
 │   ├── api/               HTTP routers (endpoints)
 │   │   ├── auth.py
 │   │   ├── books.py
@@ -55,7 +61,6 @@ backend/
 │   │   └── user_book.py
 │   └── services/          Domain logic (stateless, reusable)
 │       ├── book_identifier.py     Abstract interface + BookCandidate dataclass
-│       ├── chatgpt_vision.py      OpenAI gpt-4o-mini vision identifier
 │       ├── deduplication.py       Per-user library dedup check
 │       ├── enrichment.py          Enrich candidates via Google Books + Open Library
 │       ├── google_books.py        Google Books API client

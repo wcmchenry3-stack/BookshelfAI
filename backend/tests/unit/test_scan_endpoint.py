@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.ai.registry import FEATURES
 from app.main import app
 from app.models.user import User
 from app.schemas.book import EditionPreview, EnrichedBook
@@ -79,7 +80,7 @@ class TestScanEndpoint:
         assert resp.status_code == 413
 
     def test_returns_503_when_vision_service_unavailable(self, client):
-        with patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls:
+        with patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls:
             mock_id_cls.return_value.identify = AsyncMock(
                 side_effect=ScanUnavailableError("timeout")
             )
@@ -90,7 +91,7 @@ class TestScanEndpoint:
 
     def test_returns_empty_list_when_no_candidates(self, client):
         with (
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
@@ -108,7 +109,7 @@ class TestScanEndpoint:
         candidate = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.97)
 
         with (
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -144,7 +145,7 @@ class TestScanEndpoint:
         ]
 
         with (
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -166,12 +167,12 @@ class TestScanEndpoint:
         # Enrichment must not be capped at the single-book limit of 3.
         _, kwargs = mock_enrich_cls.return_value.enrich.call_args
         assert kwargs["limit"] == 15
-        mock_id_cls.assert_called_once_with(enhanced=False)
+        mock_id_cls.assert_called_once_with(FEATURES["scan.standard"])
 
     def test_drops_books_that_enrich_to_the_same_work(self, client):
         dup = ENRICHED_BOOK.model_copy(update={"title": "Dune (Deluxe)"})
         with (
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -225,7 +226,7 @@ class TestEnhancedScan:
 
     def test_returns_402_when_out_of_credits(self, make_client):
         client, _ = make_client(_user_with_credits(0))
-        with patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls:
+        with patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls:
             resp = client.post(
                 "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
             )
@@ -236,7 +237,7 @@ class TestEnhancedScan:
     def test_uses_enhanced_model_and_spends_a_credit(self, make_client):
         client, db = make_client(_user_with_credits(3), remaining_after_spend=2)
         with (
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -257,12 +258,12 @@ class TestEnhancedScan:
         body = resp.json()
         assert body["enhanced"] is True
         assert body["enhanced_scan_credits"] == 2
-        mock_id_cls.assert_called_once_with(enhanced=True)
+        mock_id_cls.assert_called_once_with(FEATURES["scan.enhanced"])
         db.commit.assert_awaited_once()
 
     def test_enhanced_scan_finding_nothing_is_free(self, make_client):
         client, db = make_client(_user_with_credits(3))
-        with patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls:
+        with patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls:
             mock_id_cls.return_value.identify = AsyncMock(return_value=[])
             resp = client.post(
                 "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
@@ -276,7 +277,7 @@ class TestEnhancedScan:
     def test_enhanced_scan_is_free_when_enrichment_yields_nothing(self, make_client):
         client, db = make_client(_user_with_credits(3))
         with (
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -301,7 +302,7 @@ class TestEnhancedScan:
     def test_standard_scan_does_not_spend_credits(self, make_client):
         client, db = make_client(_user_with_credits(3))
         with (
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -366,7 +367,7 @@ class TestTurnstileProtection:
         client, _ = client_with_turnstile
         with (
             patch("app.api.scan._verify_turnstile", new=AsyncMock(return_value=True)),
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
@@ -391,7 +392,7 @@ class TestTurnstileProtection:
 
         with (
             patch("app.api.scan.settings") as mock_settings,
-            patch("app.api.scan.ChatGPTVisionIdentifier") as mock_id_cls,
+            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):

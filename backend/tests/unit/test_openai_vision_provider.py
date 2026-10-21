@@ -1,4 +1,4 @@
-"""Unit tests for ChatGPTVisionIdentifier — all HTTP calls mocked."""
+"""Unit tests for OpenAIVisionProvider — all HTTP calls mocked."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from app.ai.providers.openai_vision import OpenAIVisionProvider
+from app.ai.registry import FEATURES
 from app.services.book_identifier import ScanUnavailableError
-from app.services.chatgpt_vision import ChatGPTVisionIdentifier
 
 IMAGE_BYTES = b"fakeimagebytes"
 
@@ -47,13 +48,15 @@ def _make_mock_response(content: str, status_code: int = 200):
 
 @pytest.fixture
 def identifier():
-    return ChatGPTVisionIdentifier()
+    return OpenAIVisionProvider(FEATURES["scan.standard"])
 
 
 class TestIdentifySuccess:
     async def test_returns_candidates_from_valid_json(self, identifier):
         mock_resp = _make_mock_response(VALID_RESPONSE)
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -85,7 +88,9 @@ class TestIdentifySuccess:
             }
         )
         mock_resp = _make_mock_response(many_books)
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -110,7 +115,9 @@ class TestIdentifySuccess:
             ]
         )
         mock_resp = _make_mock_response(bad_json)
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -127,7 +134,9 @@ class TestIdentifySuccess:
             [{"title": "A Book", "author": "Author", "isbn_13": None, "isbn_10": None}]
         )
         mock_resp = _make_mock_response(no_confidence)
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -142,7 +151,9 @@ class TestIdentifySuccess:
 class TestIdentifyFailures:
     async def test_returns_empty_on_non_json_response(self, identifier):
         mock_resp = _make_mock_response("Sorry, I cannot identify this image.")
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -154,7 +165,9 @@ class TestIdentifyFailures:
         assert candidates == []
 
     async def test_raises_scan_unavailable_on_http_error(self, identifier):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(
                 side_effect=httpx.HTTPStatusError(
@@ -169,7 +182,9 @@ class TestIdentifyFailures:
                 await identifier.identify(IMAGE_BYTES)
 
     async def test_raises_scan_unavailable_on_timeout(self, identifier):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(
                 side_effect=httpx.TimeoutException("timed out")
@@ -182,7 +197,9 @@ class TestIdentifyFailures:
                 await identifier.identify(IMAGE_BYTES)
 
     async def test_raises_scan_unavailable_on_403_forbidden(self, identifier):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(
                 side_effect=httpx.HTTPStatusError(
@@ -197,7 +214,9 @@ class TestIdentifyFailures:
                 await identifier.identify(IMAGE_BYTES)
 
     async def test_raises_scan_unavailable_on_429_rate_limited(self, identifier):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(
                 side_effect=httpx.HTTPStatusError(
@@ -212,7 +231,9 @@ class TestIdentifyFailures:
                 await identifier.identify(IMAGE_BYTES)
 
     async def test_raises_scan_unavailable_on_500_server_error(self, identifier):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(
                 side_effect=httpx.HTTPStatusError(
@@ -228,7 +249,9 @@ class TestIdentifyFailures:
 
     async def test_propagates_connection_error(self, identifier):
         """ConnectError is not caught — it propagates to the caller."""
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as mock_client_cls:
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(
                 side_effect=httpx.ConnectError("connection refused")
@@ -259,7 +282,7 @@ class TestMultiBook:
                 ]
             }
         )
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+        with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
             candidates = await identifier.identify(IMAGE_BYTES)
 
@@ -274,7 +297,7 @@ class TestMultiBook:
                 ]
             }
         )
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+        with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
             candidates = await identifier.identify(IMAGE_BYTES)
 
@@ -282,7 +305,7 @@ class TestMultiBook:
 
     async def test_returns_empty_for_unexpected_shape(self, identifier):
         body = json.dumps({"books": "none"})
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+        with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
             candidates = await identifier.identify(IMAGE_BYTES)
 
@@ -290,17 +313,17 @@ class TestMultiBook:
 
     async def test_skips_non_object_items(self, identifier):
         body = json.dumps({"books": ["Dune", {"title": "Emma", "author": "Austen"}]})
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+        with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
             candidates = await identifier.identify(IMAGE_BYTES)
 
         assert [c.title for c in candidates] == ["Emma"]
 
     async def test_standard_scan_uses_standard_model_in_json_mode(self):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+        with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             client = _patched_client(_make_mock_response('{"books": []}'))
             cls.return_value = client
-            await ChatGPTVisionIdentifier().identify(IMAGE_BYTES)
+            await OpenAIVisionProvider(FEATURES["scan.standard"]).identify(IMAGE_BYTES)
 
         payload = client.post.call_args.kwargs["json"]
         assert payload["model"] == "gpt-4o-mini"
@@ -309,10 +332,10 @@ class TestMultiBook:
         assert image_part["image_url"]["detail"] == "high"
 
     async def test_enhanced_scan_uses_enhanced_model(self):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+        with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             client = _patched_client(_make_mock_response('{"books": []}'))
             cls.return_value = client
-            await ChatGPTVisionIdentifier(enhanced=True).identify(IMAGE_BYTES)
+            await OpenAIVisionProvider(FEATURES["scan.enhanced"]).identify(IMAGE_BYTES)
 
         assert client.post.call_args.kwargs["json"]["model"] == "gpt-4o"
 
@@ -358,9 +381,9 @@ class TestMissingContent:
     async def test_returns_empty_without_raising_or_logging_content(
         self, identifier, body, caplog
     ):
-        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+        with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_raw_body_response(body))
-            with caplog.at_level("WARNING", logger="app.services.chatgpt_vision"):
+            with caplog.at_level("WARNING", logger="app.ai.providers.openai_vision"):
                 candidates = await identifier.identify(IMAGE_BYTES)
 
         assert candidates == []
