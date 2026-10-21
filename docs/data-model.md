@@ -8,6 +8,7 @@ PostgreSQL schema, entity reference, and the dedup strategy that makes the colle
 erDiagram
   USERS ||--o{ USER_BOOKS : owns
   USERS ||--o{ REFRESH_TOKENS : issued
+  USERS ||--o{ SCAN_USAGE_DAILY : "scans per day"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
@@ -68,6 +69,11 @@ erDiagram
     timestamptz issued_at
     timestamptz expires_at
     timestamptz revoked_at
+  }
+  SCAN_USAGE_DAILY {
+    uuid user_id PK,FK "cascade delete"
+    date usage_date PK "UTC, indexed"
+    int scans
   }
 ```
 
@@ -174,6 +180,20 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 
 **Lifecycle:** `/auth/refresh` validates the presented refresh JWT → checks `jti` exists and `revoked_at IS NULL` → issues a new access+refresh pair, inserts a new row, and sets `revoked_at = now()` on the old row. The effect is that **refresh tokens are single-use** — a stolen copy is invalidated by the legitimate client's next refresh.
 
+### `scan_usage_daily` (`backend/app/models/scan_usage.py`)
+
+Counts scans that reached the vision provider, per user per UTC day. Backs the per-user and global daily scan caps ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
+| `usage_date` | date, PK part, indexed (`ix_scan_usage_daily_usage_date`) | UTC day |
+| `scans` | int, not null, server default 0 | incremented by the reservation upsert, decremented (never below 0) on a refund |
+
+**Keys:** the composite primary key `(user_id, usage_date)` is the unique key the reservation upsert targets. The `usage_date` index serves the global daily sum and the retention purge.
+
+**Volume and retention:** one row per active user per day (~40 bytes of data, roughly 100 bytes on disk with the indexes). The daily cleanup task (`app/services/token_cleanup.py`, calling `scan_quota.purge_old_scan_usage`) deletes rows with `usage_date` older than 90 days, in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade.
+
 ## Dedup strategy — why work_id, not ISBN
 
 The dedup check lives in `backend/app/services/deduplication.py` and runs inside the `POST /scan` response pipeline. For each candidate returned by the vision identifier + enrichment:
@@ -210,10 +230,13 @@ if candidate.google_books_id:
 
 ## Migration workflow
 
-Migrations are managed with Alembic and live in `backend/alembic/versions/`. Two migrations exist today:
+Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 
 - `0001_initial_schema.py` — creates `users`, `books`, `editions`, `user_books`
 - `0002_refresh_tokens.py` — adds `refresh_tokens` table
+- `0003_enhanced_scan_credits.py` — adds `users.enhanced_scan_credits`
+- `0004_restrict_catalog_deletes.py` — `user_books.book_id` and `editions.book_id` FKs become `ON DELETE RESTRICT`
+- `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps)
 
 ### Writing a new migration
 

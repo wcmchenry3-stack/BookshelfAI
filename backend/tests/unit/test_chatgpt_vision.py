@@ -315,3 +315,54 @@ class TestMultiBook:
             await ChatGPTVisionIdentifier(enhanced=True).identify(IMAGE_BYTES)
 
         assert client.post.call_args.kwargs["json"]["model"] == "gpt-4o"
+
+
+def _raw_body_response(body):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = MagicMock()
+    if isinstance(body, Exception):
+        resp.json.side_effect = body
+    else:
+        resp.json.return_value = body
+    return resp
+
+
+_REFUSAL_TEXT = "I'm sorry, I can't help with that."
+
+
+class TestMissingContent:
+    """A refusal or unexpected body counts as an empty result, not an error."""
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {
+                "choices": [
+                    {
+                        "message": {"content": None, "refusal": _REFUSAL_TEXT},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+            {"choices": [{"message": {"refusal": _REFUSAL_TEXT}}]},
+            {"choices": []},
+            {"choices": [{}]},
+            {"error": {"message": "x"}},
+            [],
+            None,
+            {"choices": [{"message": {"content": ["not", "a", "string"]}}]},
+            ValueError("not JSON"),
+        ],
+    )
+    async def test_returns_empty_without_raising_or_logging_content(
+        self, identifier, body, caplog
+    ):
+        with patch("app.services.chatgpt_vision.httpx.AsyncClient") as cls:
+            cls.return_value = _patched_client(_raw_body_response(body))
+            with caplog.at_level("WARNING", logger="app.services.chatgpt_vision"):
+                candidates = await identifier.identify(IMAGE_BYTES)
+
+        assert candidates == []
+        assert "no message content" in caplog.text
+        assert _REFUSAL_TEXT not in caplog.text

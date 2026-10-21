@@ -36,6 +36,23 @@ Return ONLY a JSON object of the form {{"books": [...]}}. Return {{"books": []}}
 {{"books":[{{"title":"Dune","author":"Frank Herbert","confidence":0.97,"isbn_13":"9780441013593","isbn_10":null}}]}}"""
 
 
+def _message_content(body: object) -> tuple[str | None, str | None]:
+    """Return ``(content, finish_reason)`` from a chat-completions body.
+
+    ``content`` is None when the body has an unexpected shape or the message
+    carries no text (e.g. the model declined and returned a refusal instead).
+    """
+    try:
+        choice = body["choices"][0]  # type: ignore[index]
+        finish_reason = choice.get("finish_reason")
+        content = choice["message"].get("content")
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None, None
+    if not isinstance(content, str):
+        return None, finish_reason if isinstance(finish_reason, str) else None
+    return content, finish_reason
+
+
 def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None:
     """Log a model-output parse failure without logging the content itself."""
     digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()[:12]
@@ -111,9 +128,20 @@ class ChatGPTVisionIdentifier:
                 )
             raise ScanUnavailableError("Vision API returned an error") from exc
 
-        choice = resp.json()["choices"][0]
-        content = choice["message"]["content"].strip()
-        finish_reason = choice.get("finish_reason")
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        content, finish_reason = _message_content(body)
+        if content is None:
+            # No text to parse (refusal or unexpected body). Treated as an empty
+            # result; the response itself is not logged.
+            logger.warning(
+                "GPT response had no message content: finish_reason=%s",
+                finish_reason or "unknown",
+            )
+            return []
+        content = content.strip()
 
         try:
             raw = json.loads(content)

@@ -43,6 +43,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Error handling:**
 - Timeout → `ScanUnavailableError` → endpoint returns `503 scan_unavailable`
 - Non-2xx (including 429 rate limit) → `ScanUnavailableError` → 503
+- Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
 - JSON parse failure → returns empty candidate list (endpoint returns `200 []`)
 - Malformed candidate entries skipped individually (try/except on each)
 
