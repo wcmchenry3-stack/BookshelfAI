@@ -51,8 +51,10 @@ class Settings(BaseSettings):
     scan_enhanced_model: str = "gpt-4o"
     enhanced_scan_free_credits: int = 5
     # Kill switches and daily caps for /scan, changeable via env without a
-    # release. scan_enabled=false rejects every scan before the upload body is
-    # read; scan_enhanced_enabled=false rejects only enhanced scans. The caps
+    # release. scan_enabled=false rejects every scan before the image is
+    # processed, Turnstile is called or the provider is contacted (the framework
+    # has already received the multipart body); scan_enhanced_enabled=false
+    # rejects only enhanced scans. The caps
     # count provider calls per UTC day (table scan_usage_daily); the per-user
     # cap is exact, the global cap may overshoot slightly under concurrency.
     scan_enabled: bool = True

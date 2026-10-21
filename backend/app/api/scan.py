@@ -226,7 +226,9 @@ async def scan(
     # provider may already have been paid. An empty result also counts.
     try:
         candidates = await identifier.identify(image_bytes)
-    except ScanUnavailableError:
+    except (ScanUnavailableError, httpx.ConnectError):
+        # ConnectError: the connection to the provider was never established,
+        # so nothing was billed; treat it like any other unavailability.
         await _refund_daily_scan(db, current_user, usage_day)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

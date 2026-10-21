@@ -219,6 +219,20 @@ class TestRefund:
         assert resp.json()["detail"] == "scan_unavailable"
         assert store.count() == 0
 
+    def test_connection_never_established_refunds_and_returns_503(
+        self, client, store, provider
+    ):
+        """A ConnectError means the provider was never reached, so nothing billed."""
+        import httpx
+
+        provider.return_value.identify = AsyncMock(
+            side_effect=httpx.ConnectError("refused")
+        )
+        resp = client.post("/scan", files=_file())
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "scan_unavailable"
+        assert store.count() == 0
+
     def test_unexpected_provider_error_is_not_refunded(self, store, provider):
         """Only ScanUnavailableError refunds: the provider may have been paid."""
         from app.auth.dependencies import get_current_user
