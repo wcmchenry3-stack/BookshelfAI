@@ -36,7 +36,7 @@ erDiagram
   }
   EDITIONS {
     uuid id PK
-    uuid book_id FK "indexed, cascade delete"
+    uuid book_id FK "indexed, restrict delete"
     string isbn_13 UK
     string isbn_10
     string publisher
@@ -49,7 +49,7 @@ erDiagram
   USER_BOOKS {
     uuid id PK
     uuid user_id FK "indexed, cascade delete"
-    uuid book_id FK "cascade delete"
+    uuid book_id FK "restrict delete"
     uuid edition_id FK "optional"
     string status "indexed, check constraint"
     timestamptz wishlisted_at
@@ -71,7 +71,19 @@ erDiagram
   }
 ```
 
-All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`). All timestamps are `TIMESTAMPTZ` (UTC). `ON DELETE CASCADE` is set on every FK except `user_books.edition_id` (which is nullable and intentionally does not cascade — deleting an edition leaves the `UserBook` with a dangling edition reference).
+All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`). All timestamps are `TIMESTAMPTZ` (UTC).
+
+**Deletion semantics.** Shared catalog rows (`books`, `editions`) must never take user data with them:
+
+| FK | `ON DELETE` | Effect |
+|---|---|---|
+| `user_books.user_id` → `users.id` | `CASCADE` | Deleting an account removes that user's library (intentional). |
+| `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
+| `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
+| `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
+| `user_books.edition_id` → `editions.id` | none (`NO ACTION`) | An edition referenced by a `UserBook` cannot be deleted. |
+
+An unreferenced book can be deleted. The ORM relationships `Book.editions` and `Book.user_books` have no delete cascade and use `passive_deletes=True`, so the database constraint decides (migration `0004`).
 
 ## Entity reference
 
@@ -106,8 +118,8 @@ Represents the **conceptual work** — the thing a user would say "I own Dune" a
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
 **Relationships:**
-- `editions` → `Edition[]` (cascade delete — dropping a Book drops all its Editions)
-- `user_books` → `UserBook[]` (cascade delete — dropping a Book drops all users' tracking rows)
+- `editions` → `Edition[]` (no cascade — a Book with Editions cannot be deleted)
+- `user_books` → `UserBook[]` (no cascade — a Book in any user's library cannot be deleted)
 
 ### `editions` (`backend/app/models/edition.py`)
 
@@ -116,7 +128,7 @@ Specific publication of a Book. Captures ISBN, publisher, year, format.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | generated |
-| `book_id` | UUID FK → `books.id`, indexed, cascade delete, not null | |
+| `book_id` | UUID FK → `books.id`, indexed, restrict delete, not null | |
 | `isbn_13` | string, **unique**, nullable | canonical identifier |
 | `isbn_10` | string, nullable | legacy form |
 | `publisher` | string, nullable | |
@@ -134,7 +146,7 @@ The user's relationship to a Book — this is the "bookshelf" row.
 |---|---|---|
 | `id` | UUID PK | generated |
 | `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | |
-| `book_id` | UUID FK → `books.id`, cascade delete, not null | |
+| `book_id` | UUID FK → `books.id`, restrict delete, not null | |
 | `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet |
 | `status` | string, indexed, not null | check constraint: `wishlisted`, `purchased`, `reading`, `read` |
 | `wishlisted_at` | timestamptz, nullable | set when status first enters `wishlisted` |

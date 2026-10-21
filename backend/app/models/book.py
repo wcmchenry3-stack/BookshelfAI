@@ -34,9 +34,10 @@ class Book(Base):
         nullable=False,
     )
 
+    # Deleting a Book never deletes children: the ON DELETE RESTRICT FKs decide.
     editions: Mapped[list["Edition"]] = relationship(  # noqa: F821
-        "Edition", back_populates="book", cascade="all, delete-orphan"
+        "Edition", back_populates="book", passive_deletes=True
     )
     user_books: Mapped[list["UserBook"]] = relationship(  # noqa: F821
-        "UserBook", back_populates="book", cascade="all, delete-orphan"
+        "UserBook", back_populates="book", passive_deletes=True
     )
