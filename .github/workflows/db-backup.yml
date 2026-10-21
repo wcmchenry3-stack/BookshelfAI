@@ -1,0 +1,131 @@
+name: DB Backup
+
+# Nightly encrypted pg_dump of the production database to Cloudflare R2.
+# Independent of Supabase's own backups. See docs/backups.md.
+
+on:
+  schedule:
+    - cron: "17 7 * * *" # 07:17 UTC daily (off-peak, not on the hour)
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+env:
+  # Major version of the postgres image used for pg_dump. Must be >= the server
+  # major. Check with `select version();` on the production database and update
+  # here (see docs/backups.md).
+  PG_MAJOR: "17"
+  R2_PREFIX: bookshelf/prod
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # The production database URL and the R2 write token are secrets of the
+    # `backup` environment (deployment branch restricted to `dev`), not
+    # repository-wide secrets. See docs/backups.md.
+    environment: backup
+    steps:
+      - name: Check required secrets
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+        run: |
+          missing=""
+          for name in BACKUP_DATABASE_URL R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET BACKUP_AGE_RECIPIENT; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s):$missing. See docs/backups.md for setup."
+            exit 1
+          fi
+          case "$BACKUP_AGE_RECIPIENT" in
+            age1*) ;;
+            *) echo "::error::BACKUP_AGE_RECIPIENT must be an age public key (starts with age1)."; exit 1 ;;
+          esac
+
+      - name: Install age
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+
+      - name: Dump and encrypt
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ts="$(date -u +%Y%m%dT%H%M%SZ)"
+          day="$(date -u +%Y/%m/%d)"
+          file="${RUNNER_TEMP}/bookshelf-${ts}.dump.age"
+          errfile="${RUNNER_TEMP}/pgdump.err"
+          echo "BACKUP_FILE=${file}" >> "$GITHUB_ENV"
+          echo "BACKUP_ERR_FILE=${errfile}" >> "$GITHUB_ENV"
+          echo "BACKUP_KEY=${R2_PREFIX}/${day}/bookshelf-${ts}.dump.age" >> "$GITHUB_ENV"
+          # The plaintext dump only ever exists in the pipe. The URL is passed
+          # into the container by variable name, so it is not on the host
+          # command line and not in logs. It does appear in pg_dump's argv
+          # inside the container, which is isolated and removed on exit.
+          # Only the application schema (`public`) is dumped; platform-owned
+          # schemas are out of scope.
+          # The repository is public, so pg_dump's stderr (which can echo
+          # connection details) goes to a runner-local file that is never
+          # printed or uploaded; a failure prints a fixed message. pipefail
+          # makes the group fail if either pg_dump or age fails.
+          if ! { docker run --rm -e BACKUP_DATABASE_URL "postgres:${PG_MAJOR}" \
+            sh -c 'pg_dump -Fc -n public --no-owner --no-acl "$BACKUP_DATABASE_URL"' \
+            2> "$errfile" \
+            | age -r "$BACKUP_AGE_RECIPIENT" > "$file"; }; then
+            echo "::error::pg_dump or encryption failed. Details are withheld because workflow logs are public; reproduce locally to debug."
+            exit 1
+          fi
+          size="$(stat -c %s "$file")"
+          if [ "$size" -lt 1024 ]; then
+            echo "::error::Encrypted dump is suspiciously small."
+            exit 1
+          fi
+          echo "BACKUP_SIZE=${size}" >> "$GITHUB_ENV"
+
+      - name: Upload to R2 and verify size
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          aws s3 cp "$BACKUP_FILE" "s3://${R2_BUCKET}/${BACKUP_KEY}" \
+            --endpoint-url "$endpoint" --only-show-errors
+          remote_size="$(aws s3api head-object --bucket "$R2_BUCKET" --key "$BACKUP_KEY" \
+            --endpoint-url "$endpoint" --query ContentLength --output text)"
+          if [ "$remote_size" != "$BACKUP_SIZE" ]; then
+            echo "::error::Size mismatch between local file and uploaded object."
+            exit 1
+          fi
+          {
+            echo "### Database backup"
+            echo ""
+            echo "- Key: \`${BACKUP_KEY}\`"
+            echo "- Size verified against R2 ✓"
+            echo "- Postgres client image: \`postgres:${PG_MAJOR}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary files
+        if: always()
+        run: |
+          rm -f "${BACKUP_FILE:-}" "${BACKUP_ERR_FILE:-}"
