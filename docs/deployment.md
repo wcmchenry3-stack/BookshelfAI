@@ -2,7 +2,7 @@
 
 How the app gets shipped. Four separate pipelines — one per platform. Everything is triggered by git pushes or manual store uploads; no EAS (rules #1–3 in the native-build section of `CLAUDE.md`).
 
-For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](claude/ios-ci.md) and [`claude/android-ci.md`](claude/android-ci.md). For the architectural constraints driving the deploy layout, see [`architecture.md`](architecture.md). For the Render dev/prod topology and Supabase connection rules, see [`RENDER.md`](RENDER.md).
+For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](claude/ios-ci.md) and [`claude/android-ci.md`](claude/android-ci.md). For the architectural constraints driving the deploy layout, see [`architecture.md`](architecture.md). For the Render dev/prod topology and Supabase connection rules, see [`RENDER.md`](RENDER.md). For nightly database backups and the restore drill, see [`backups.md`](backups.md).
 
 ## Pipelines at a glance
 
