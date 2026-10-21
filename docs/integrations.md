@@ -31,8 +31,8 @@ Every third-party service Bookshelf talks to, what role it plays, and where to l
 **Endpoint:** `https://api.openai.com/v1/chat/completions`
 **Model:** `gpt-4o-mini`
 **Key env var:** `OPENAI_API_KEY`
-**Timeout:** 15 seconds (httpx)
-**Max tokens:** `OPENAI_MAX_TOKENS` (default 512)
+**Timeout:** 45 seconds (`SCAN_TIMEOUT_SECONDS`)
+**Max tokens:** `SCAN_MAX_TOKENS` (default 2048), applied via the feature registry
 **Source:** `backend/app/ai/providers/openai_vision.py`, called only through the AI gateway (`backend/app/ai/gateway.py`)
 
 **Prompt strategy** — structured JSON output, no free text:

@@ -13,6 +13,11 @@ Values that existed before the gateway still come from ``settings`` for now
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from app.ai.models_allowlist import (
+    ALLOWED_MODELS,
+    MAX_TOKENS_BOUNDS,
+    TIMEOUT_S_BOUNDS,
+)
 from app.core.config import settings
 
 
@@ -24,28 +29,11 @@ class UnknownFeatureError(LookupError):
     """The requested feature name is not in the registry."""
 
 
-# Models each provider may be asked for. Anything else is rejected at import.
-ALLOWED_MODELS: MappingProxyType[str, frozenset[str]] = MappingProxyType(
-    {
-        "openai": frozenset(
-            {
-                "gpt-4o-mini",
-                "gpt-4o-mini-2024-07-18",
-                "gpt-4o",
-                "gpt-4o-2024-08-06",
-                "gpt-4o-2024-11-20",
-            }
-        ),
-    }
-)
-
 ALLOWED_EFFORTS = frozenset({"low", "medium", "high"})
 
 # Inclusive bounds: (min, max).
-MAX_TOKENS_BOUNDS = (1, 16_384)
 IMAGE_LONG_EDGE_BOUNDS = (256, 4_096)
 MAX_IMAGES_BOUNDS = (1, 10)
-TIMEOUT_S_BOUNDS = (1.0, 120.0)
 # One US dollar is 1,000,000 micros.
 COST_CEILING_MICROS_BOUNDS = (1, 1_000_000)
 

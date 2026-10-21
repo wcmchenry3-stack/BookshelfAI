@@ -81,14 +81,13 @@ class OpenAIVisionProvider:
         if spec.provider != "openai":
             raise ValueError(f"{spec.name} is not an OpenAI feature")
         self.spec = spec
-        self.model = spec.model
 
     async def identify(self, image_bytes: bytes) -> list[BookCandidate]:
         b64 = base64.standard_b64encode(image_bytes).decode()
         max_books = settings.scan_max_books
 
         payload = {
-            "model": self.model,
+            "model": self.spec.model,
             "max_tokens": self.spec.max_tokens,
             "response_format": {"type": "json_object"},
             "messages": [

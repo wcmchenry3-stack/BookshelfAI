@@ -154,3 +154,31 @@ class TestCorsOriginsValidator:
                 database_url="postgresql+asyncpg://u:p@localhost/db",
                 cors_origins=["https://example.com", "*"],
             )
+
+
+class TestScanAiSettingsValidation:
+    DB = "postgresql+asyncpg://u:p@localhost/db"
+
+    @pytest.mark.parametrize("field", ["scan_model", "scan_enhanced_model"])
+    def test_unknown_model_names_field(self, field):
+        with pytest.raises(ValidationError, match=field.upper()):
+            Settings(database_url=self.DB, **{field: "gpt-4.1-mini"})
+
+    @pytest.mark.parametrize("value", [0, 16_385])
+    def test_scan_max_tokens_out_of_range(self, value):
+        with pytest.raises(ValidationError, match="scan_max_tokens"):
+            Settings(database_url=self.DB, scan_max_tokens=value)
+
+    @pytest.mark.parametrize("value", [0.5, 120.5])
+    def test_scan_timeout_out_of_range(self, value):
+        with pytest.raises(ValidationError, match="scan_timeout_seconds"):
+            Settings(database_url=self.DB, scan_timeout_seconds=value)
+
+    def test_bounds_and_allowed_models_accepted(self):
+        s = Settings(
+            database_url=self.DB,
+            scan_model="gpt-4o-2024-08-06",
+            scan_max_tokens=16_384,
+            scan_timeout_seconds=1.0,
+        )
+        assert s.scan_model == "gpt-4o-2024-08-06"

@@ -25,6 +25,7 @@ PROVIDER_SDKS = frozenset({"openai", "anthropic"})
 PROVIDER_HOST_RE = re.compile(r"api\.(?:openai|anthropic)\.com", re.IGNORECASE)
 DYNAMIC_IMPORTERS = frozenset({"import_module", "__import__"})
 ALLOWED_DIR = Path("ai") / "providers"
+PROVIDERS_MODULE = "app.ai.providers"
 
 APP_ROOT = Path(app_package.__file__).resolve().parent
 
@@ -46,6 +47,29 @@ def _sdk_root(module: str | None) -> str | None:
     return root if root in PROVIDER_SDKS else None
 
 
+def _imports_provider_package(module: str | None) -> bool:
+    """True for ``app.ai.providers`` and anything beneath it."""
+    return bool(module) and (
+        module == PROVIDERS_MODULE or module.startswith(PROVIDERS_MODULE + ".")
+    )
+
+
+def _resolve_relative(path: Path, level: int, module: str | None) -> str | None:
+    """Resolve a relative import in ``path`` to a dotted name under ``app``.
+
+    ``path`` is relative to the app root (``services/leak.py``). Returns None if
+    the import climbs out of the package.
+    """
+    package = list(path.with_suffix("").parts[:-1])
+    if path.name == "__init__.py":
+        package = list(path.parts[:-1])
+    drop = level - 1
+    if drop > len(package):
+        return None
+    base = ["app", *package[: len(package) - drop]]
+    return ".".join([*base, *([module] if module else [])])
+
+
 def _call_name(func: ast.expr) -> str | None:
     if isinstance(func, ast.Name):
         return func.id
@@ -54,22 +78,41 @@ def _call_name(func: ast.expr) -> str | None:
     return None
 
 
-def _ast_violations(path: Path, source: str) -> list[Violation]:
+def _ast_violations(
+    path: Path, source: str, rel: Path | None = None
+) -> list[Violation]:
     try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError as exc:
         # Fail closed: a file we cannot read cannot be shown to be clean.
         return [Violation(path, exc.lineno or 0, "could not parse file")]
 
+    # Inside app/ai/ (the gateway) importing the providers is the intended path.
+    in_ai_package = bool(rel) and rel.parts[:1] == ("ai",)
     found: list[Violation] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if sdk := _sdk_root(alias.name):
                     found.append(Violation(path, node.lineno, f"imports {sdk} SDK"))
+                if not in_ai_package and _imports_provider_package(alias.name):
+                    found.append(
+                        Violation(path, node.lineno, "imports app.ai.providers")
+                    )
         elif isinstance(node, ast.ImportFrom):
             if node.level == 0 and (sdk := _sdk_root(node.module)):
                 found.append(Violation(path, node.lineno, f"imports {sdk} SDK"))
+            module = node.module
+            if node.level:
+                module = _resolve_relative(rel or path, node.level, node.module)
+            if not in_ai_package and (
+                _imports_provider_package(module)
+                or (
+                    module == "app.ai"
+                    and any(a.name == "providers" for a in node.names)
+                )
+            ):
+                found.append(Violation(path, node.lineno, "imports app.ai.providers"))
         elif (
             isinstance(node, ast.Call)
             and _call_name(node.func) in DYNAMIC_IMPORTERS
@@ -101,7 +144,7 @@ def find_provider_calls(root: Path, allowed: Path = ALLOWED_DIR) -> list[Violati
             if PROVIDER_HOST_RE.search(line):
                 violations.append(Violation(rel, lineno, "names a provider API host"))
         violations.extend(
-            Violation(rel, v.line, v.reason) for v in _ast_violations(path, source)
+            Violation(rel, v.line, v.reason) for v in _ast_violations(path, source, rel)
         )
     return violations
 
@@ -149,6 +192,11 @@ _LEAKS = [
         for sdk in sorted(PROVIDER_SDKS)
     ],
     *[f'mod = __import__("{sdk}")\n' for sdk in sorted(PROVIDER_SDKS)],
+    "from app.ai.providers.openai_vision import OpenAIVisionProvider\n",
+    "import app.ai.providers.openai_vision\n",
+    "from app.ai import providers\n",
+    "from ..ai.providers import openai_vision\n",
+    "from ..ai.providers.openai_vision import OpenAIVisionProvider\n",
     "def broken(:\n",
 ]
 
@@ -179,10 +227,20 @@ def test_checker_ignores_lookalike_names(tmp_path: Path, sdk: str) -> None:
     _write(
         tmp_path,
         "services/clean.py",
-        f"from app.ai.providers import {sdk}_vision\n"
+        "from app.ai.gateway import run_feature\n"
+        f"from app.ai.providers_extra import {sdk}_vision\n"
         "from app.core.config import settings\n"
         f"import {sdk}_helpers_not_real\n"
         f"key = settings.{sdk}_api_key\n"
         f'url = "https://api.{sdk}.example/v1"\n',
+    )
+    assert find_provider_calls(tmp_path) == []
+
+
+def test_gateway_inside_ai_package_may_import_providers(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "ai/gateway.py",
+        "from app.ai.providers.openai_vision import OpenAIVisionProvider\n",
     )
     assert find_provider_calls(tmp_path) == []
