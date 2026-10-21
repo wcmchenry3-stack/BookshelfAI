@@ -11,11 +11,8 @@
   "placeholder_description": "Beschrijf wat er is gebeurd, of wat je graag zou willen zien...",
   "submit": "Versturen",
   "submit_success": "Bedankt voor je feedback!",
-  "submit_success_issue": "Je rapport is ingediend als issue #{{number}}.",
   "submit_error": "Er is iets misgegaan. Probeer het opnieuw.",
   "submit_error_rate_limit": "Te veel inzendingen. Wacht {{seconds}} seconden.",
-  "submit_error_rejected": "Je inzending kon niet worden geaccepteerd. Pas het aan en probeer het opnieuw.",
-  "submit_error_network": "Netwerkfout. Controleer je verbinding en probeer het opnieuw.",
   "error_title_required": "Titel is verplicht.",
   "error_description_required": "Beschrijving is verplicht."
 }

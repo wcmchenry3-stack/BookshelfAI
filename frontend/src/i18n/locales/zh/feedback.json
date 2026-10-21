@@ -11,11 +11,8 @@
   "placeholder_description": "描述发生了什么，或者您希望看到什么...",
   "submit": "提交",
   "submit_success": "感谢您的反馈！",
-  "submit_success_issue": "您的报告已作为 issue #{{number}} 提交。",
   "submit_error": "出现了问题。请重试。",
   "submit_error_rate_limit": "提交次数过多。请等待 {{seconds}} 秒。",
-  "submit_error_rejected": "您的提交无法被接受。请修改后重试。",
-  "submit_error_network": "网络错误。请检查您的连接并重试。",
   "error_title_required": "标题为必填项。",
   "error_description_required": "描述为必填项。"
 }

@@ -11,11 +11,8 @@
   "placeholder_description": "बताएं कि क्या हुआ, या आप क्या देखना चाहेंगे...",
   "submit": "सबमिट करें",
   "submit_success": "आपके फ़ीडबैक के लिए धन्यवाद!",
-  "submit_success_issue": "आपकी रिपोर्ट issue #{{number}} के रूप में दर्ज की गई।",
   "submit_error": "कुछ गलत हो गया। कृपया पुनः प्रयास करें।",
   "submit_error_rate_limit": "बहुत अधिक सबमिशन। कृपया {{seconds}} सेकंड प्रतीक्षा करें।",
-  "submit_error_rejected": "आपका सबमिशन स्वीकार नहीं किया जा सका। कृपया संशोधित करके पुनः प्रयास करें।",
-  "submit_error_network": "नेटवर्क त्रुटि। कृपया अपना कनेक्शन जांचें और पुनः प्रयास करें।",
   "error_title_required": "शीर्षक आवश्यक है।",
   "error_description_required": "विवरण आवश्यक है।"
 }
