@@ -128,6 +128,14 @@ SENTRY_DSN=                              # leave blank to disable
 TURNSTILE_SECRET_KEY=                    # leave blank to skip Turnstile check on /scan
 ```
 
+### Scan dials
+```bash
+SCAN_ENABLED=true                        # false → /scan returns 503 scan_disabled
+SCAN_ENHANCED_ENABLED=true               # false → enhanced scans return 503
+SCAN_DAILY_LIMIT_PER_USER=20             # 1..1000, per UTC day
+SCAN_GLOBAL_DAILY_LIMIT=2000             # 1..1000000, all users, per UTC day
+```
+
 ### App
 ```bash
 ENVIRONMENT=development

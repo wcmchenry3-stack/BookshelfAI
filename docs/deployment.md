@@ -51,6 +51,13 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 - `GOOGLE_BOOKS_API_KEY`
 - `OPENAI_MAX_TOKENS` (optional)
 
+Scan dials (optional; defaults shown; change in the dashboard and restart, no release needed — out-of-range values fail at boot):
+
+- `SCAN_ENABLED` (`true`) — `false` turns off all scans (`503 scan_disabled`)
+- `SCAN_ENHANCED_ENABLED` (`true`) — `false` turns off enhanced scans only
+- `SCAN_DAILY_LIMIT_PER_USER` (`20`, range 1–1000) — scans per user per UTC day
+- `SCAN_GLOBAL_DAILY_LIMIT` (`2000`, range 1–1,000,000) — scans per UTC day across all users
+
 ### Database
 
 `bookshelf-db` — Postgres, `basic-256mb` plan, Oregon. Connection string is auto-injected into the API service.

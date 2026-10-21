@@ -243,11 +243,11 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `402` — enhanced scan requested with no enhanced credits left (`detail: "no_enhanced_credits"`)
 - `429` — the user's daily scan limit is reached (`detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets. Limit: `SCAN_DAILY_LIMIT_PER_USER` (default 20).
 - `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily limit
-- `503` — scanning switched off by the operator (`detail: "scan_disabled"`, `SCAN_ENABLED=false`); returned before the upload is read or Turnstile is checked
+- `503` — scanning switched off by the operator (`detail: "scan_disabled"`, `SCAN_ENABLED=false`); returned before the image is processed, Turnstile is called or any provider is contacted (the multipart body is still received by the framework)
 - `503` — enhanced scanning switched off (`detail: "enhanced_scan_disabled"`, `SCAN_ENHANCED_ENABLED=false`); standard scans still work
 - `503` — the service-wide daily scan capacity is used up (`detail: "scan_capacity"`, `SCAN_GLOBAL_DAILY_LIMIT`, default 2000)
 
-Check order: kill switches → Turnstile → file validation → enhanced-credit check → global daily capacity → per-user daily limit → vision provider. A scan counts toward the daily limits once it reaches the provider, even if nothing is found; it is refunded only if the provider call fails.
+Check order: kill switches → Turnstile → file validation → enhanced-credit check → global daily capacity → per-user daily limit → vision provider. A scan counts toward the daily limits once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`).
 
 **Example:**
 ```bash
