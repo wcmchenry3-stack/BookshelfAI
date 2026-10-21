@@ -1,12 +1,14 @@
 """Integration tests: deleting shared catalog rows never removes user data.
 
-Requires a real PostgreSQL database with migrations applied (0004) — skipped
-when DATABASE_URL is dummy.
+Requires a real PostgreSQL database (skipped when DATABASE_URL is dummy). The
+schema comes from the models (create_all); migration 0004 itself is exercised
+by CI's alembic upgrade / check / downgrade job.
 """
 
 import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.models.book import Book
 from app.models.edition import Edition
@@ -94,3 +96,38 @@ class TestCatalogDeleteRestrict:
         assert count == 0
         # The shared catalog row is untouched.
         assert await db_session.scalar(select(Book).where(Book.id == book.id))
+
+
+@pytest.mark.integration
+async def test_orm_delete_with_loaded_children_hits_restrict_fk(db_session):
+    """Loaded children must not be nulled out: the RESTRICT FK must reject it."""
+    user, book = await _user_and_book(db_session, "loaded")
+    db_session.add_all(
+        [
+            Edition(book_id=book.id, isbn_13="9780000000777"),
+            UserBook(user_id=user.id, book_id=book.id, status="wishlisted"),
+        ]
+    )
+    await db_session.flush()
+    book_id = book.id
+    db_session.expunge_all()
+
+    loaded = (
+        await db_session.execute(
+            select(Book)
+            .where(Book.id == book_id)
+            .options(selectinload(Book.user_books), selectinload(Book.editions))
+        )
+    ).scalar_one()
+    assert loaded.user_books and loaded.editions
+
+    with pytest.raises(IntegrityError) as exc_info:
+        async with db_session.begin_nested():
+            await db_session.delete(loaded)
+            await db_session.flush()
+    assert "foreign key" in str(exc_info.value.orig).lower()
+
+    remaining = await db_session.scalar(
+        select(func.count()).select_from(UserBook).where(UserBook.book_id == book_id)
+    )
+    assert remaining == 1

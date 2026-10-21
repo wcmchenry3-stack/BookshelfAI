@@ -83,7 +83,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
 | `user_books.edition_id` → `editions.id` | none (`NO ACTION`) | An edition referenced by a `UserBook` cannot be deleted. |
 
-An unreferenced book can be deleted. The ORM relationships `Book.editions` and `Book.user_books` have no delete cascade and use `passive_deletes=True`, so the database constraint decides (migration `0004`).
+An unreferenced book can be deleted. The ORM relationships `Book.editions` and `Book.user_books` have no delete cascade and use `passive_deletes="all"`, so the ORM never deletes or nulls out children (even when they are loaded in the session) and the `ON DELETE RESTRICT` FKs reject the delete (migration `0004`).
 
 ## Entity reference
 
