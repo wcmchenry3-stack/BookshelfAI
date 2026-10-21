@@ -61,3 +61,8 @@ These project subagents live in `.claude/agents/` and are invoked via the `Agent
 | lint-review | `lint-review` | Auto-fix lint issues after a lint-gate hook failure |
 | plan-issues | `plan-issues` | Break a feature/bug/initiative into scoped GitHub issues — investigates code first, drafts for confirmation, then calls `gh issue create` |
 | policy-compliance | `policy-compliance` | Check and fix policy violations after a policy-gate hook failure |
+| story-implementer | `story-implementer` | Implement one planned story on a branch (dispatched by the `ship-story` skill with a per-story model) |
+
+## Skills
+
+- **`ship-story`** (`.claude/skills/ship-story/`) — "work on story #N" / "work the epic #N": plan, pick agent + cheapest capable model, draft PR, review loops (code, Codex, security, data & cost) documented on the PR, CI green, then hand off for the owner to merge. Owner decisions go in `blocked:owner-decision` issues, never only in chat.
