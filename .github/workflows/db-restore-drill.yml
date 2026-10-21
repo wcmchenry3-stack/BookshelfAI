@@ -1,0 +1,151 @@
+name: DB Restore Drill
+
+# Manual restore drill: downloads the latest encrypted backup, decrypts it,
+# restores into a throwaway Postgres service and runs sanity checks.
+# Gated by the `backup-restore` environment (required reviewers). See docs/backups.md.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: db-restore-drill
+  cancel-in-progress: false
+
+env:
+  # Keep in sync with PG_MAJOR in db-backup.yml. The service image below
+  # cannot read workflow env, so update both places together.
+  PG_MAJOR: "17"
+  R2_PREFIX: bookshelf/prod
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: backup-restore
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: drill
+          POSTGRES_DB: restore_drill
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Check required secrets
+        env:
+          BACKUP_AGE_IDENTITY: ${{ secrets.BACKUP_AGE_IDENTITY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          missing=""
+          for name in BACKUP_AGE_IDENTITY R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
+            if [ -z "${!name}" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s):$missing. See docs/backups.md for setup."
+            exit 1
+          fi
+
+      - name: Install age
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+
+      - name: Download latest backup
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          # Keys embed a UTC timestamp, so the lexicographic max is the newest.
+          key="$(aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "${R2_PREFIX}/" \
+            --endpoint-url "$endpoint" --query 'Contents[].Key' --output text \
+            | tr '\t' '\n' | grep '\.dump\.age$' | sort | tail -n 1 || true)"
+          if [ -z "$key" ]; then
+            echo "::error::No backup objects found under ${R2_PREFIX}/."
+            exit 1
+          fi
+          echo "BACKUP_KEY=${key}" >> "$GITHUB_ENV"
+          echo "ENC_FILE=${RUNNER_TEMP}/restore.dump.age" >> "$GITHUB_ENV"
+          aws s3 cp "s3://${R2_BUCKET}/${key}" "${RUNNER_TEMP}/restore.dump.age" \
+            --endpoint-url "$endpoint" --only-show-errors
+
+      - name: Decrypt and restore
+        env:
+          BACKUP_AGE_IDENTITY: ${{ secrets.BACKUP_AGE_IDENTITY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          identity="${RUNNER_TEMP}/age-identity.txt"
+          dump="${RUNNER_TEMP}/restore.dump"
+          echo "IDENTITY_FILE=${identity}" >> "$GITHUB_ENV"
+          echo "DUMP_FILE=${dump}" >> "$GITHUB_ENV"
+          printf '%s\n' "$BACKUP_AGE_IDENTITY" > "$identity"
+          chmod 600 "$identity"
+          age -d -i "$identity" -o "$dump" "$ENC_FILE"
+          rm -f "$identity"
+          chmod 644 "$dump"
+          # pg_restore may report non-fatal errors (for example hosted-platform
+          # extensions that do not exist in a stock image). Do not abort on
+          # them; the sanity checks decide whether the restore is usable.
+          rc=0
+          docker run --rm --network host -e PGPASSWORD=drill \
+            -v "${RUNNER_TEMP}:/work:ro" "postgres:${PG_MAJOR}" \
+            pg_restore --no-owner --no-acl -h localhost -U postgres -d restore_drill \
+            /work/restore.dump || rc=$?
+          echo "pg_restore exit code: ${rc}"
+          echo "RESTORE_RC=${rc}" >> "$GITHUB_ENV"
+
+      - name: Sanity checks
+        run: |
+          set -euo pipefail
+          q() {
+            docker run --rm --network host -e PGPASSWORD=drill "postgres:${PG_MAJOR}" \
+              psql -h localhost -U postgres -d restore_drill -v ON_ERROR_STOP=1 -Atc "$1"
+          }
+          if [ "$(q "select to_regclass('public.alembic_version') is not null")" != "t" ]; then
+            echo "::error::alembic_version table is missing from the restored database."
+            exit 1
+          fi
+          version="$(q "select version_num from alembic_version")"
+          if [ -z "$version" ]; then
+            echo "::error::alembic_version is empty."
+            exit 1
+          fi
+          {
+            echo "### Restore drill"
+            echo ""
+            echo "- Backup: \`${BACKUP_KEY}\`"
+            echo "- alembic_version: \`${version}\`"
+            echo "- pg_restore exit code: ${RESTORE_RC} (non-zero means some objects were skipped; check the step log)"
+            echo ""
+            echo "| Table | Rows |"
+            echo "| --- | --- |"
+            for t in users books editions user_books refresh_tokens; do
+              n="$(q "select count(*) from public.${t}")"
+              echo "| ${t} | ${n} |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary files
+        if: always()
+        run: |
+          rm -f "${IDENTITY_FILE:-}" "${ENC_FILE:-}" "${DUMP_FILE:-}"
