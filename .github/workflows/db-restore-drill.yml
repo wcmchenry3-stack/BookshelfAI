@@ -7,7 +7,8 @@ name: DB Restore Drill
 #
 # This repository is public, so job summaries and logs are world-readable.
 # The drill therefore reports pass/fail per check only: no row counts and no
-# byte sizes are printed anywhere.
+# byte sizes are printed anywhere. Unexpected restore errors are printed as an
+# error class only; the full stderr stays on the runner and is never uploaded.
 
 on:
   workflow_dispatch:
@@ -67,8 +68,9 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name drillpg \
+            --network host \
             -e POSTGRES_PASSWORD=drill -e POSTGRES_DB=restore_drill \
-            -p 5432:5432 "postgres:${PG_MAJOR}" >/dev/null
+            "postgres:${PG_MAJOR}" >/dev/null
           # Bounded wait over TCP: the image's init phase only listens on a
           # unix socket, so a TCP check avoids reporting ready too early.
           ready=0
@@ -98,9 +100,15 @@ jobs:
           umask 077
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           # Keys embed a UTC timestamp, so the lexicographic max is the newest.
-          key="$(aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "${R2_PREFIX}/" \
-            --endpoint-url "$endpoint" --query 'Contents[].Key' --output text \
-            | tr '\t' '\n' | grep '\.dump\.age$' | sort | tail -n 1 || true)"
+          # List first, on its own, so an auth/endpoint failure is reported as
+          # such and not as "no backups". aws stderr is not printed (it can
+          # contain the endpoint URL, which embeds the account id).
+          if ! objects="$(aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "${R2_PREFIX}/" \
+            --endpoint-url "$endpoint" --query 'Contents[].Key' --output text 2>/dev/null)"; then
+            echo "::error::Could not list backup objects: check the R2 credentials, bucket name and endpoint."
+            exit 1
+          fi
+          key="$(printf '%s\n' "$objects" | tr '\t' '\n' | grep '\.dump\.age$' | sort | tail -n 1 || true)"
           if [ -z "$key" ]; then
             echo "::error::No backup objects found under ${R2_PREFIX}/."
             exit 1
@@ -114,9 +122,11 @@ jobs:
           age_s=$(( $(date -u +%s) - $(date -u -d "$modified" +%s) ))
           if [ "$age_s" -gt $(( STALE_HOURS * 3600 )) ]; then
             echo "::warning::Newest backup is older than ${STALE_HOURS} hours; the nightly backup may be failing."
-            echo "BACKUP_FRESH=stale (older than ${STALE_HOURS}h) ⚠" >> "$GITHUB_ENV"
+            # Do not stop here: the restore still runs so every other check
+            # reports. The stale flag fails the drill in "Sanity checks".
+            echo "BACKUP_STALE=1" >> "$GITHUB_ENV"
           else
-            echo "BACKUP_FRESH=within ${STALE_HOURS}h ✓" >> "$GITHUB_ENV"
+            echo "BACKUP_STALE=0" >> "$GITHUB_ENV"
           fi
 
           aws s3 cp "s3://${R2_BUCKET}/${key}" "${RUNNER_TEMP}/restore.dump.age" \
@@ -149,23 +159,26 @@ jobs:
             pg_restore --no-owner --no-acl -h localhost -U postgres -d restore_drill \
             < "$dump" 2> "$errfile" || rc=$?
 
-          # Error classification. Each reported error is a line starting with
-          # "pg_restore: error:". Only this explicit allowlist of known-benign
-          # hosted-platform noise is tolerated (extended regex, matched
-          # case-insensitively against the error line):
+          # Error classification. pg_restore reports each failed statement as
+          # "pg_restore: error: could not execute query: ERROR:  <message>".
+          # Only that exact form is tolerated, and only when <message> is one
+          # of these known-benign hosted-platform messages (extended regex,
+          # case-sensitive):
           #   - schema "public" already exists (a dump taken with -n public
           #     includes CREATE SCHEMA public, and the fresh database has it)
           #   - role "..." does not exist
           #   - extension "..." is not available / could not open extension
           #     control file / permission denied for (or to create) extension
-          #   - errors that name a Supabase-owned schema (auth, storage,
-          #     realtime, extensions, graphql, graphql_public, vault,
-          #     pgsodium, supabase_functions, _realtime, net, pgbouncer)
-          # Anything else is unexpected and fails the drill. Keep this list
-          # in sync with docs/backups.md.
-          benign='schema "public" already exists|role ".*" does not exist|extension ".*" is not available|could not open extension control file|permission denied (for|to create) extension|schema "?(auth|storage|realtime|extensions|graphql|graphql_public|vault|pgsodium|supabase_functions|_realtime|net|pgbouncer)"?'
+          #   - a message whose first quoted name is a Supabase-owned schema
+          #     (auth, storage, realtime, extensions, graphql, graphql_public,
+          #     vault, pgsodium, supabase_functions, _realtime, net, pgbouncer)
+          # Every other error line, including every "COPY failed" line (data
+          # load), is unexpected and fails the drill. Keep this list in sync
+          # with docs/backups.md.
+          prefix='^pg_restore: error: could not execute query: ERROR: +'
+          benign="${prefix}"'(schema "public" already exists$|role "[^"]+" does not exist$|extension "[^"]+" is not available|could not open extension control file|permission denied (for|to create) extension|[^"]*schema "(auth|storage|realtime|extensions|graphql|graphql_public|vault|pgsodium|supabase_functions|_realtime|net|pgbouncer)")'
           total="$(grep -c '^pg_restore: error:' "$errfile" || true)"
-          unexpected_lines="$(grep '^pg_restore: error:' "$errfile" | grep -Eiv "$benign" || true)"
+          unexpected_lines="$(grep '^pg_restore: error:' "$errfile" | grep -Ev "$benign" || true)"
           if [ -n "$unexpected_lines" ]; then
             unexpected="$(printf '%s\n' "$unexpected_lines" | wc -l | tr -d ' ')"
           else
@@ -177,8 +190,12 @@ jobs:
           echo "RESTORE_TOLERATED=${tolerated}" >> "$GITHUB_ENV"
           echo "RESTORE_UNEXPECTED=${unexpected}" >> "$GITHUB_ENV"
           if [ "$unexpected" -gt 0 ]; then
-            echo "::error::pg_restore reported ${unexpected} unexpected error(s):"
-            printf '%s\n' "$unexpected_lines"
+            # The log is public: print only the error class per line, with the
+            # detail (names, values) withheld. The full stderr stays in the
+            # runner-local file, which is deleted in cleanup and never uploaded.
+            echo "::error::pg_restore reported ${unexpected} unexpected error(s) (details withheld):"
+            printf '%s\n' "$unexpected_lines" \
+              | sed -E 's/^pg_restore: error: ([^:"]*)(: ERROR: +[^:"]*)?.*/pg_restore: error: \1\2 [detail withheld]/'
             exit 1
           fi
           if [ "$rc" -ne 0 ] && [ "$total" -eq 0 ]; then
@@ -206,6 +223,14 @@ jobs:
               echo "::error::Check failed: $1"
             fi
           }
+
+          # A stale newest backup fails the drill, but only here, after the
+          # restore ran, so the other checks still report.
+          if [ "${BACKUP_STALE:-1}" = "0" ]; then
+            check "backup freshness" 0
+          else
+            check "backup freshness" 1
+          fi
 
           # Required tables must exist. Row contents are never printed.
           for t in users books editions user_books; do
@@ -247,7 +272,6 @@ jobs:
             echo "### Restore drill"
             echo ""
             echo "- Backup: \`${BACKUP_KEY}\`"
-            echo "- Backup freshness: ${BACKUP_FRESH}"
             echo "- pg_restore errors: ${RESTORE_TOLERATED} tolerated (known-benign), ${RESTORE_UNEXPECTED} unexpected"
             printf '%s' "$results"
           } >> "$GITHUB_STEP_SUMMARY"

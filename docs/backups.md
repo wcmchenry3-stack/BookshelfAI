@@ -86,9 +86,17 @@ level secrets for backups.
    the user who last changed the cron schedule in the workflow file, according
    to that user's Actions notification settings (Settings > Notifications >
    Actions). Confirm that this is the owner and that notifications for failed
-   workflows are on; otherwise failures are silent. The restore drill also warns
-   when the newest backup is older than 36 hours, which catches a backup that
-   has stopped running.
+   workflows are on; otherwise failures are silent. The restore drill also fails
+   its "backup freshness" check when the newest backup is older than 36 hours,
+   which catches a backup that has stopped running.
+
+   **Auto-disable after inactivity.** In a public repository GitHub
+   automatically disables scheduled workflows after 60 days without repository
+   activity (commits, PRs and so on), and a disabled schedule stops silently.
+   To re-enable: Actions > DB Backup > "Enable workflow" (or
+   `gh workflow enable "DB Backup"`), then trigger a manual run to confirm. Any
+   new commit also restarts the 60-day clock. Treat a stale-backup failure in
+   the drill as the signal to check this first.
 8. **Postgres major version.** Run `select version();` against production. Set
    `PG_MAJOR` in both workflows to that major (or higher; the dump client must
    not be older than the server). The default is 17.
@@ -144,25 +152,37 @@ The drill fails when any of these is true:
 - `users`, `books`, `editions` or `user_books` is missing;
 - `public.users` has no rows (production is never empty);
 - `expected_revision` was given and does not match;
-- `pg_restore` reports an error that is not on the allowlist below.
+- `pg_restore` reports an error that is not on the allowlist below;
+- the newest backup object is older than 36 hours (the "backup freshness"
+  check). The restore still runs in that case, so the other checks report too.
 
-It warns (`::warning::` and a summary line) when the newest backup object is
-older than 36 hours.
+`pg_restore` stderr is written to a runner-local temporary file that is deleted
+in cleanup and never uploaded as an artifact. The log and summary show only the
+count of tolerated and unexpected errors, plus, for each unexpected error, its
+error class with the detail withheld (names and values are not printed, because
+the logs are public). Read the full text by re-running the restore locally.
 
-`pg_restore` stderr is written to a temporary file (deleted in cleanup). Only
-the count of tolerated and unexpected errors is printed, plus the unexpected
-error lines. The tolerated (known-benign hosted-platform noise) allowlist is:
+Only lines of the exact form
+`pg_restore: error: could not execute query: ERROR:  <message>` can be
+tolerated, and only when `<message>` is one of these known-benign
+hosted-platform messages (case-sensitive):
 
 - `schema "public" already exists` (the dump includes `CREATE SCHEMA public`);
-- `role "..." does not exist`;
-- `extension "..." is not available`, `could not open extension control file`,
+- `role "<name>" does not exist`;
+- `extension "<name>" is not available`, `could not open extension control file`,
   `permission denied for extension` / `permission denied to create extension`;
-- errors naming a Supabase-owned schema: `auth`, `storage`, `realtime`,
-  `extensions`, `graphql`, `graphql_public`, `vault`, `pgsodium`,
-  `supabase_functions`, `_realtime`, `net`, `pgbouncer`.
+- a message whose first quoted name is a whole Supabase-owned schema name:
+  `schema "auth"`, `"storage"`, `"realtime"`, `"extensions"`, `"graphql"`,
+  `"graphql_public"`, `"vault"`, `"pgsodium"`, `"supabase_functions"`,
+  `"_realtime"`, `"net"`, `"pgbouncer"`.
 
-Anything else fails the drill. The allowlist lives in the `benign` variable of
-the "Decrypt and restore" step; keep this list and that variable in sync.
+Everything else fails the drill. In particular a `COPY failed for table ...`
+line (data load) never matches, whatever its message, and neither does a
+lookalike such as `schema "network_x"` or an unquoted
+`permission denied for schema extensions` (not tolerated because the unquoted
+form cannot be told apart from a failure on application objects; the check
+fails closed). The allowlist lives in the `benign` variable of the "Decrypt and
+restore" step; keep this list and that variable in sync.
 
 ## Cost
 
