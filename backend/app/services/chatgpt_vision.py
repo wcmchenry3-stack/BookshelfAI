@@ -1,6 +1,7 @@
 """Book identification via OpenAI vision — finds every book in a photo."""
 
 import base64
+import hashlib
 import json
 import logging
 
@@ -33,6 +34,18 @@ For each book return:
 Provide at least one ISBN whenever you can identify the book, even if you are not certain which specific edition is shown. The ISBN will only be used as a search hint.
 Return ONLY a JSON object of the form {{"books": [...]}}. Return {{"books": []}} if no book is readable. Example:
 {{"books":[{{"title":"Dune","author":"Frank Herbert","confidence":0.97,"isbn_13":"9780441013593","isbn_10":null}}]}}"""
+
+
+def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None:
+    """Log a model-output parse failure without logging the content itself."""
+    digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()[:12]
+    logger.warning(
+        "GPT returned %s: length=%d sha256=%s finish_reason=%s",
+        kind,
+        len(content),
+        digest,
+        finish_reason or "unknown",
+    )
 
 
 def _dedupe_key(candidate: BookCandidate) -> tuple[str, str]:
@@ -98,18 +111,20 @@ class ChatGPTVisionIdentifier:
                 )
             raise ScanUnavailableError("Vision API returned an error") from exc
 
-        content = resp.json()["choices"][0]["message"]["content"].strip()
+        choice = resp.json()["choices"][0]
+        content = choice["message"]["content"].strip()
+        finish_reason = choice.get("finish_reason")
 
         try:
             raw = json.loads(content)
         except json.JSONDecodeError:
-            logger.warning("GPT returned non-JSON: %s", content)
+            _log_unparseable("non-JSON", content, finish_reason)
             return []
 
         # JSON mode yields {"books": [...]}; tolerate a bare array too.
         items = raw.get("books", []) if isinstance(raw, dict) else raw
         if not isinstance(items, list):
-            logger.warning("GPT returned unexpected JSON shape: %s", content)
+            _log_unparseable("unexpected JSON shape", content, finish_reason)
             return []
 
         candidates: list[BookCandidate] = []

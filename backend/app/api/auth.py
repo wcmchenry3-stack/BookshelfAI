@@ -36,9 +36,7 @@ async def google_auth(
     try:
         claims = await verify_google_id_token(body.id_token)
         logger.info(
-            "Google token verified — email=%s verified=%s",
-            claims.get("email"),
-            claims.get("email_verified"),
+            "Google token verified — email_verified=%s", claims.get("email_verified")
         )
     except Exception:
         logger.exception("Google token verification failed")
@@ -49,17 +47,13 @@ async def google_auth(
 
     email: str = claims.get("email", "")
     if not claims.get("email_verified"):
-        logger.warning("Email not verified for %s", email)
+        logger.warning("Google account email not verified")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Google email not verified"
         )
 
     if settings.allowed_emails_list and email not in settings.allowed_emails_list:
-        logger.warning(
-            "Email not in allowlist: %s (allowed: %s)",
-            email,
-            settings.allowed_emails_list,
-        )
+        logger.warning("Email not in allowlist")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Email not authorized"
         )
@@ -67,7 +61,7 @@ async def google_auth(
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     if user is None:
-        logger.info("Creating new user for %s", email)
+        logger.info("Creating new user")
         user = User(
             email=email,
             google_id=claims.get("sub", ""),
@@ -76,7 +70,7 @@ async def google_auth(
         )
         db.add(user)
     else:
-        logger.info("Existing user found for %s (id=%s)", email, user.id)
+        logger.info("Existing user found (id=%s)", user.id)
         user.display_name = claims.get("name")
         user.avatar_url = claims.get("picture")
 
@@ -90,7 +84,7 @@ async def google_auth(
     )
     db.add(RefreshToken(jti=jti, user_id=user.id, expires_at=expires_at))
     await db.commit()
-    logger.info("Auth successful for %s", email)
+    logger.info("Auth successful (user_id=%s)", user.id)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,

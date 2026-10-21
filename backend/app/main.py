@@ -309,7 +309,7 @@ if not settings.is_hardened:
             db.add(RefreshTokenModel(jti=jti, user_id=user.id, expires_at=expires_at))
             await db.commit()
 
-            logger.info("test-login: issued tokens for %s", email)
+            logger.info("test-login: issued tokens (user_id=%s)", user.id)
             return JSONResponse(
                 content={
                     "access_token": access_token,
