@@ -1,6 +1,7 @@
 """Book identification via OpenAI vision — finds every book in a photo."""
 
 import base64
+import hashlib
 import json
 import logging
 
@@ -50,6 +51,18 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     if not isinstance(content, str):
         return None, finish_reason if isinstance(finish_reason, str) else None
     return content, finish_reason
+
+
+def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None:
+    """Log a model-output parse failure without logging the content itself."""
+    digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()[:12]
+    logger.warning(
+        "GPT returned %s: length=%d sha256=%s finish_reason=%s",
+        kind,
+        len(content),
+        digest,
+        finish_reason or "unknown",
+    )
 
 
 def _dedupe_key(candidate: BookCandidate) -> tuple[str, str]:
@@ -133,13 +146,13 @@ class ChatGPTVisionIdentifier:
         try:
             raw = json.loads(content)
         except json.JSONDecodeError:
-            logger.warning("GPT returned non-JSON: %s", content)
+            _log_unparseable("non-JSON", content, finish_reason)
             return []
 
         # JSON mode yields {"books": [...]}; tolerate a bare array too.
         items = raw.get("books", []) if isinstance(raw, dict) else raw
         if not isinstance(items, list):
-            logger.warning("GPT returned unexpected JSON shape: %s", content)
+            _log_unparseable("unexpected JSON shape", content, finish_reason)
             return []
 
         candidates: list[BookCandidate] = []

@@ -12,8 +12,9 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | JWT expiry | 24hr access token, 7-day refresh token with JTI revocation |
 | Refresh token theft | Single-use rotation — every `/auth/refresh` revokes the old `jti` and issues a new one |
 | Single-user lock | `ALLOWED_EMAILS` env var checked post-Google-auth |
-| Rate limiting | `slowapi` — per-client-IP; 10 req/min on `/scan`, 5/min auth, 120/min reads, etc. |
-| Real client IP | `CloudflareRealIPMiddleware` reads `CF-Connecting-IP` when hardened (`settings.is_hardened` — staging + production) |
+| Rate limiting | `slowapi` — keyed by user (`user:<sub>`) only for a verified **access** token, otherwise by client IP (one bucket per IPv4 address / per IPv6 /64); 10 req/min on `/scan`, 5/min auth, 120/min reads, etc. Unauthenticated routes (including `/auth/*`) are always per-IP |
+| Real client IP | One resolver, `app/core/client_ip.py`, set by `TRUSTED_PROXY_MODE` (`cloudflare` / `none`; default: `cloudflare` in hardened environments, `none` otherwise). Forwarding headers are trusted only in `cloudflare` mode, and only a single valid `CF-Connecting-IP`; `X-Forwarded-For` is never read. uvicorn runs with `--no-proxy-headers`. See [Client IP and origin lockdown](#client-ip-and-origin-lockdown) |
+| Origin lockdown | `OriginAuthMiddleware` (`app/core/origin_auth.py`): when `ORIGIN_AUTH_SECRET` is set, requests without the matching origin header get `403 {"detail":"forbidden"}` before routing or rate limiting; only `/health` is exempt. Disabled while the secret is empty |
 | Host header spoofing | `TrustedHostMiddleware` (hardened only — staging + production) rejects requests with Host header outside `TRUSTED_HOSTS`; only `/health` (not `/health/db`) is exempted via `_HealthExemptTrustedHost` so origin-direct liveness probes still work |
 | Request size limit | `RequestSizeLimitMiddleware` drops bodies > 10 MB with 413 before reading the stream |
 | DDoS / Bot protection | Cloudflare free tier (Bot Fight Mode, HTTP DDoS protection) |
@@ -30,7 +31,73 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Web token storage | In-memory `Map` (never `localStorage`); native uses `SecureStore` |
 | Security headers | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Permissions-Policy |
 | Error disclosure | Exception messages stripped from HTTP error responses; logged server-side only |
-| Error-report PII | Three layers in `app/core/sentry_context.py` (`sentry_privacy_options()`): (1) `include_local_variables=False` — frame locals are never sent, because auth frames hold ID/refresh tokens inside model reprs that no key-name list can see; (2) `before_send` / `before_send_transaction` / `before_breadcrumb` strip URL query strings (the Google Books key travels as `?key=`); (3) a recursive `EventScrubber` for request bodies, headers and extras — request token names plus every secret-looking `Settings` field, derived from `Settings.model_fields` so it cannot drift. `send_default_pii=False`. Deployed events carry `release=bookshelf-api@<RENDER_GIT_COMMIT>` and the `environment` tag |
+| Error-report PII | Three layers in `app/core/sentry_context.py` (`sentry_privacy_options()`): (1) `include_local_variables=False` — frame locals are never sent, because auth frames hold ID/refresh tokens inside model reprs that no key-name list can see; (2) `before_send` / `before_send_transaction` / `before_breadcrumb` strip URL query strings (the Google Books key travels as `?key=`); (3) a recursive `EventScrubber` for request bodies, headers and extras — request token names plus every secret-looking `Settings` field, derived from `Settings.model_fields` so it cannot drift, plus the configured origin-lockdown header name (`ORIGIN_AUTH_HEADER`). `send_default_pii=False`. Deployed events carry `release=bookshelf-api@<RENDER_GIT_COMMIT>` and the `environment` tag |
+
+## Client IP and origin lockdown
+
+Per-IP rate limits are only as good as the client IP they key on, and the API
+can only trust a forwarding header on requests that really came through the
+Cloudflare edge. Two controls work together.
+
+**Client-IP resolver** (`app/core/client_ip.py`) is the only code that decides
+a request's client IP. It is configured by `TRUSTED_PROXY_MODE`:
+
+| Value | Client IP |
+| --- | --- |
+| `none` | The socket peer. All forwarding headers are ignored. |
+| `cloudflare` | `CF-Connecting-IP` when the request has exactly one such header holding one valid IP address; otherwise the socket peer. `X-Forwarded-For` is never read. |
+| unset or empty (default) | `cloudflare` in hardened environments (`staging`, `production`), `none` otherwise. |
+
+Any other value fails settings validation, so the API refuses to boot rather
+than trust the wrong header. Addresses are canonicalised with `ipaddress`
+(IPv4-mapped IPv6 becomes IPv4), and rate-limit keys group IPv6 by /64.
+uvicorn is started with `--no-proxy-headers` so the socket peer is never
+rewritten from `X-Forwarded-For` before the resolver sees it.
+
+**Origin lockdown** (`app/core/origin_auth.py`) uses the settings
+`ORIGIN_AUTH_HEADER` (default `X-Origin-Auth`) and `ORIGIN_AUTH_SECRET`
+(default empty, which disables it). A non-empty secret must be at least 32
+printable ASCII characters with no leading or trailing whitespace, or the API
+refuses to boot (the error names the rule, never the value); generate one with
+e.g. `openssl rand -hex 32`. When the secret is set, the edge must add
+that header with that value to every request it forwards. A request without
+exactly one matching value (compared in constant time) gets
+`403 {"detail":"forbidden"}` before routing, so no handler, DB query or
+rate-limit counter runs. `/health` is the only exempt path, because Render's
+health check calls the origin directly. The 403 carries the normal security
+headers. The value never appears in responses or logs, and the header is
+scrubbed from error reports by the Sentry scrubber (`build_event_scrubber()`
+in `app/core/sentry_context.py` denylists the configured header name).
+The secret is a dashboard-only Render secret (`sync: false`) and is never
+committed.
+
+**Rollout order:**
+
+1. Optionally confirm `TRUSTED_PROXY_MODE` on each API service (not required:
+   the default is already `cloudflare` in hardened environments). Update the
+   start command to the one in `render.yaml`, which adds `--no-proxy-headers`
+   (defence in depth).
+2. Deploy, with `ORIGIN_AUTH_SECRET` unset.
+3. The owner configures the edge to add the origin header to every request it
+   forwards to the API hostname, and checks that it arrives.
+4. Set `ORIGIN_AUTH_SECRET` on the Render service to the same value. From then
+   on only requests that came through the edge (plus `/health`) are served,
+   which is what makes `CF-Connecting-IP` trustworthy.
+
+To roll back the lockdown, clear `ORIGIN_AUTH_SECRET`. To stop trusting
+`CF-Connecting-IP`, set `TRUSTED_PROXY_MODE=none`.
+
+## Logging
+
+Application logs are structured JSON on stdout (`backend/app/core/logging.py`).
+
+**Logged:** request IDs, internal user IDs (when known), HTTP status codes, counts, and for AI-model parse failures only the response length, a 12-character SHA-256 prefix and the finish reason.
+
+**Never logged:** email addresses, Google client IDs / allowed audiences, the email allowlist, ID/access/refresh tokens, `Authorization` headers, or raw model output.
+
+**Safety net:** a `RedactingFilter` replaces email addresses, `Bearer <token>` values, JWT-shaped strings (three base64url segments) and credential-looking URL query parameters (`key=`, `token=`, `api_key=`, …) with `[REDACTED*]` markers. It renders the full message once, so values nested in lists, dicts or objects are covered, and it also redacts exception tracebacks and stack info. The JSON formatter applies the same redaction to the message and traceback as a second layer. It uses precompiled regexes and never raises.
+
+**Scope:** the filter is attached to the root handler (all `app.*` loggers) and to the `uvicorn`, `uvicorn.error` and `uvicorn.access` handlers, which don't propagate to root. On those handlers it runs in `preserve_args` mode: string args are redacted in place so uvicorn's access formatter, which unpacks the args, keeps working. Sentry events are scrubbed separately (`app/core/sentry_context.py`). It is a backstop, not a licence to log such values: new log lines should not include them in the first place.
 
 ## Pre-commit Hook (gitleaks)
 
@@ -164,6 +231,8 @@ for i in range(10):
 ```
 
 **Known limitation:** Rate limits use in-memory storage (no Redis). Limits reset on uvicorn process restart. Acceptable for current personal-app scale.
+
+**Expected:** a refresh token sent as `Authorization: Bearer` does not get a per-user bucket; it is limited by client IP like an anonymous request. Forwarding headers sent by a client (`X-Forwarded-For`, or `CF-Connecting-IP` when `TRUSTED_PROXY_MODE=none`) do not change which bucket a request lands in.
 
 ---
 

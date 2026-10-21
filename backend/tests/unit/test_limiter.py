@@ -27,7 +27,7 @@ class TestGetUserIdOrIp:
         req = _make_request(auth_header="Bearer valid.jwt.token", client_ip="10.0.0.3")
 
         with patch("app.auth.jwt.decode_token") as mock_decode:
-            mock_decode.return_value = {"sub": "user-abc-123"}
+            mock_decode.return_value = {"sub": "user-abc-123", "type": "access"}
             result = _get_user_id_or_ip(req)
 
         assert result == "user:user-abc-123"

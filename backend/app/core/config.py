@@ -1,6 +1,8 @@
+import re
+from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
@@ -10,9 +12,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # The session pooler on port 5432 must be used instead.
 _SUPABASE_TRANSACTION_POOLER_PORT = 6543
 
+# RFC 9110 field-name token characters.
+_HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+
+# ORIGIN_AUTH_SECRET, when set: printable ASCII (it travels as a header value),
+# long enough not to be guessed. Generate with e.g. `openssl rand -hex 32`.
+_ORIGIN_AUTH_SECRET_MIN_LENGTH = 32
+_PRINTABLE_ASCII_PATTERN = re.compile(r"[\x20-\x7e]+")
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # hide_input_in_errors: a validation error must never echo a secret value
+    # (e.g. ORIGIN_AUTH_SECRET) into boot logs.
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", hide_input_in_errors=True
+    )
 
     # Database
     database_url: str
@@ -104,12 +118,71 @@ class Settings(BaseSettings):
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]
 
+    # Client-IP trust (app/core/client_ip.py). "none": the socket peer, every
+    # forwarding header ignored. "cloudflare": a single valid CF-Connecting-IP
+    # value, else the socket peer. Any other value fails boot. When unset (or
+    # empty) it defaults to "cloudflare" in hardened environments and "none"
+    # otherwise — see _default_trusted_proxy_mode; after validation it always
+    # holds one of the two values.
+    trusted_proxy_mode: Literal["cloudflare", "none"] | None = None
+
+    # Origin lockdown (app/core/origin_auth.py). When origin_auth_secret is
+    # set, every request except /health must carry origin_auth_header with
+    # exactly that value, or it gets 403. Empty disables the check.
+    origin_auth_header: str = "X-Origin-Auth"
+    origin_auth_secret: str = ""
+
     @field_validator("cors_origins")
     @classmethod
     def no_wildcard_origins(cls, v: list[str]) -> list[str]:
         if "*" in v:
             raise ValueError("Wildcard '*' is not permitted in CORS_ORIGINS")
         return v
+
+    @field_validator("origin_auth_header")
+    @classmethod
+    def valid_header_name(cls, v: str) -> str:
+        if not _HEADER_NAME_PATTERN.fullmatch(v):
+            raise ValueError("ORIGIN_AUTH_HEADER must be a valid HTTP header name")
+        return v
+
+    @field_validator("trusted_proxy_mode", mode="before")
+    @classmethod
+    def empty_proxy_mode_is_unset(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("origin_auth_secret")
+    @classmethod
+    def valid_origin_auth_secret(cls, v: str) -> str:
+        # Messages describe the rule only; the value is never echoed.
+        if not v:
+            return v
+        if v != v.strip():
+            raise ValueError(
+                "ORIGIN_AUTH_SECRET must not have leading or trailing whitespace"
+            )
+        if not _PRINTABLE_ASCII_PATTERN.fullmatch(v):
+            raise ValueError("ORIGIN_AUTH_SECRET must be printable ASCII")
+        if len(v) < _ORIGIN_AUTH_SECRET_MIN_LENGTH:
+            raise ValueError(
+                "ORIGIN_AUTH_SECRET must be at least "
+                f"{_ORIGIN_AUTH_SECRET_MIN_LENGTH} characters"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _default_trusted_proxy_mode(self) -> "Settings":
+        """Unset TRUSTED_PROXY_MODE: "cloudflare" when hardened, else "none".
+
+        Hardened deployments are served through the Cloudflare edge, so the
+        safe default there is to key rate limits on CF-Connecting-IP; locally
+        there is no proxy and every forwarding header is ignored.
+        """
+        if self.trusted_proxy_mode is None:
+            self.trusted_proxy_mode = "cloudflare" if self.is_hardened else "none"
+        return self
 
     @field_validator("database_url")
     @classmethod
@@ -130,8 +203,9 @@ class Settings(BaseSettings):
 
         A public `staging` deployment is just as reachable by attackers as
         `production`, so it must get the same hardening (TrustedHost
-        enforcement, no /docs, no debug/test-only routes, HSTS, trusting
-        CF-Connecting-IP) even though it's tagged separately in Sentry.
+        enforcement, no /docs, no debug/test-only routes, HSTS) even though
+        it's tagged separately in Sentry. Which client-IP header is trusted is
+        a separate setting, ``trusted_proxy_mode``.
         """
         return self.environment not in {"development", "test"}
 
