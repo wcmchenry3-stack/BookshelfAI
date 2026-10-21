@@ -94,10 +94,10 @@ class TestWishlistDb:
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
-    async def test_cascade_delete_book_removes_editions_and_user_books(
+    async def test_delete_book_with_editions_and_user_books_is_restricted(
         self, db_session
     ):
-        """Deleting a Book cascades to its Editions and UserBooks."""
+        """Deleting a Book that is referenced by Editions/UserBooks is rejected."""
         user = User(email="carol@example.com", google_id="google_carol_001")
         book = Book(title="1984", author="George Orwell")
         db_session.add_all([user, book])
@@ -111,8 +111,10 @@ class TestWishlistDb:
         edition_id = edition.id
         user_book_id = user_book.id
 
-        await db_session.delete(book)
-        await db_session.flush()
+        with pytest.raises(IntegrityError):
+            async with db_session.begin_nested():
+                await db_session.delete(book)
+                await db_session.flush()
 
-        assert await db_session.get(Edition, edition_id) is None
-        assert await db_session.get(UserBook, user_book_id) is None
+        assert await db_session.get(Edition, edition_id) is not None
+        assert await db_session.get(UserBook, user_book_id) is not None
