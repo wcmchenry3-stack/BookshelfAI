@@ -198,6 +198,12 @@ jobs:
               | sed -E 's/^pg_restore: error: ([^:"]*)(: ERROR: +[^:"]*)?.*/pg_restore: error: \1\2 [detail withheld]/'
             exit 1
           fi
+          # pg_restore exits 1 when it ignored errors; anything higher means it
+          # (or docker) was killed or failed abnormally, so a partial restore.
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::pg_restore or docker exited abnormally (code ${rc})."
+            exit 1
+          fi
           if [ "$rc" -ne 0 ] && [ "$total" -eq 0 ]; then
             echo "::error::pg_restore exited non-zero without a recognised error line."
             exit 1
