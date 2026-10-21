@@ -20,6 +20,36 @@ import app as app_package
 pytestmark = pytest.mark.security
 
 PROVIDER_SDKS = frozenset({"openai", "anthropic"})
+# Wrappers and other vendors' SDKs. Matched on the full dotted module path
+# (``google.genai`` or ``google.genai.x``), so ``google.cloud.storage`` and a
+# bare ``import google`` are not flagged.
+OTHER_SDK_MODULES = frozenset(
+    {
+        "litellm",
+        "langchain_openai",
+        "langchain_anthropic",
+        "google.genai",
+        "google.generativeai",
+        "mistralai",
+        "cohere",
+    }
+)
+_ALL_SDK_MODULES = PROVIDER_SDKS | OTHER_SDK_MODULES
+# Provider API key names: settings attributes (any case) and environment keys.
+API_KEY_ATTR_RE = re.compile(
+    r"^(openai|anthropic|gemini|google|mistral|cohere)_api_key$", re.IGNORECASE
+)
+API_KEY_ENV_RE = re.compile(
+    r"^(OPENAI|ANTHROPIC|GEMINI|GOOGLE|MISTRAL|COHERE)_API_KEY$"
+)
+# Only the gateway may import the provider adapters. Modules inside
+# app/ai/providers/ are skipped entirely. Other app/ai/ modules (registry,
+# models_allowlist, __init__) must not import them.
+GATEWAY_FILE = Path("ai") / "gateway.py"
+# Narrow, explicit exceptions to the API-key rule: (path under app/, reason).
+# Currently empty: the only reference outside providers is the field
+# definition in core/config.py, which is an AnnAssign target, not an access.
+API_KEY_ALLOWLIST: dict[Path, str] = {}
 # Provider API hosts. Matches any mention, so an httpx call (or a URL constant
 # later passed to one) is caught wherever it appears.
 PROVIDER_HOST_RE = re.compile(r"api\.(?:openai|anthropic)\.com", re.IGNORECASE)
@@ -41,10 +71,52 @@ class Violation:
 
 
 def _sdk_root(module: str | None) -> str | None:
+    """Return the matched SDK name if ``module`` is or is under one."""
     if not module:
         return None
-    root = module.split(".", 1)[0]
-    return root if root in PROVIDER_SDKS else None
+    parts = module.split(".")
+    for i in range(1, len(parts) + 1):
+        prefix = ".".join(parts[:i])
+        if prefix in _ALL_SDK_MODULES:
+            return prefix
+    return None
+
+
+def _is_os_environ(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "environ"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "os"
+    )
+
+
+def _const_str(node: ast.expr | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _api_key_reason(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Attribute) and API_KEY_ATTR_RE.match(node.attr):
+        return f"reads provider API key ({node.attr})"
+    key: str | None = None
+    if isinstance(node, ast.Subscript) and _is_os_environ(node.value):
+        key = _const_str(node.slice)
+    elif isinstance(node, ast.Call) and node.args:
+        func = node.func
+        if isinstance(func, ast.Attribute) and (
+            (func.attr == "get" and _is_os_environ(func.value))
+            or (
+                func.attr == "getenv"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "os"
+            )
+        ):
+            key = _const_str(node.args[0])
+    if key and API_KEY_ENV_RE.match(key):
+        return f"reads provider API key from environment ({key})"
+    return None
 
 
 def _imports_provider_package(module: str | None) -> bool:
@@ -87,10 +159,13 @@ def _ast_violations(
         # Fail closed: a file we cannot read cannot be shown to be clean.
         return [Violation(path, exc.lineno or 0, "could not parse file")]
 
-    # Inside app/ai/ (the gateway) importing the providers is the intended path.
-    in_ai_package = bool(rel) and rel.parts[:1] == ("ai",)
+    # Only the gateway may import the providers.
+    in_ai_package = rel == GATEWAY_FILE
+    key_allowed = rel in API_KEY_ALLOWLIST
     found: list[Violation] = []
     for node in ast.walk(tree):
+        if not key_allowed and (reason := _api_key_reason(node)):
+            found.append(Violation(path, getattr(node, "lineno", 0), reason))
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if sdk := _sdk_root(alias.name):
@@ -178,6 +253,24 @@ def test_checker_sees_the_real_provider_when_not_allowed() -> None:
 # OpenAI/Claude policy greps don't mistake this test for an API caller.
 _HOSTS = [f"api.{sdk}.com" for sdk in sorted(PROVIDER_SDKS)]
 
+_NEW_LEAKS = [
+    "from app.core.config import settings\n\nkey = settings.openai_api_key\n",
+    "from app.core.config import settings\n\nkey = settings.ANTHROPIC_API_KEY\n",
+    'import os\n\nkey = os.getenv("ANTHROPIC_API_KEY")\n',
+    'import os\n\nkey = os.environ.get("OPENAI_API_KEY")\n',
+    'import os\n\nkey = os.environ["GEMINI_API_KEY"]\n',
+    "import litellm\n",
+    "from litellm import completion\n",
+    "from google.genai import Client\n",
+    "import google.generativeai as genai\n",
+    "from google.genai.types import Part\n",
+    "from langchain_openai import ChatOpenAI\n",
+    "from langchain_anthropic import ChatAnthropic\n",
+    "import mistralai\n",
+    "import cohere\n",
+    'import importlib\n\nm = importlib.import_module("litellm")\n',
+]
+
 _LEAKS = [
     *[
         f'import httpx\n\nasync def f():\n    await httpx.AsyncClient().post("https://{host}/v1/x")\n'
@@ -197,6 +290,7 @@ _LEAKS = [
     "from app.ai import providers\n",
     "from ..ai.providers import openai_vision\n",
     "from ..ai.providers.openai_vision import OpenAIVisionProvider\n",
+    *_NEW_LEAKS,
     "def broken(:\n",
 ]
 
@@ -231,7 +325,7 @@ def test_checker_ignores_lookalike_names(tmp_path: Path, sdk: str) -> None:
         f"from app.ai.providers_extra import {sdk}_vision\n"
         "from app.core.config import settings\n"
         f"import {sdk}_helpers_not_real\n"
-        f"key = settings.{sdk}_api_key\n"
+        f"configured = settings.{sdk}_api_key_configured\n"
         f'url = "https://api.{sdk}.example/v1"\n',
     )
     assert find_provider_calls(tmp_path) == []
@@ -242,5 +336,50 @@ def test_gateway_inside_ai_package_may_import_providers(tmp_path: Path) -> None:
         tmp_path,
         "ai/gateway.py",
         "from app.ai.providers.openai_vision import OpenAIVisionProvider\n",
+    )
+    assert find_provider_calls(tmp_path) == []
+
+
+def test_other_ai_module_may_not_import_providers(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "ai/batch_scan.py",
+        "from app.ai.providers.openai_vision import OpenAIVisionProvider\n",
+    )
+    violations = find_provider_calls(tmp_path)
+    assert {v.path for v in violations} == {Path("ai") / "batch_scan.py"}
+
+
+@pytest.mark.parametrize("name", ["registry.py", "__init__.py", "models_allowlist.py"])
+def test_ai_support_modules_may_not_import_providers(tmp_path: Path, name: str) -> None:
+    _write(tmp_path, f"ai/{name}", "from .providers import base\n")
+    assert find_provider_calls(tmp_path), name
+
+
+def test_checker_ignores_lookalike_sdk_and_key_names(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "services/clean.py",
+        "import google\n"
+        "import google.cloud.storage\n"
+        "from google.cloud import storage\n"
+        "import litellm_helpers_not_real\n"
+        "import cohere_extras\n"
+        "import os\n"
+        "from app.core.config import settings\n"
+        "a = settings.openai_api_key_configured\n"
+        "b = settings.my_openai_api_key\n"
+        'c = os.getenv("OPENAI_API_KEY_CONFIGURED")\n'
+        'd = os.getenv("SOME_OTHER_KEY")\n'
+        'e = os.environ.get("PATH")\n',
+    )
+    assert find_provider_calls(tmp_path) == []
+
+
+def test_config_field_definition_is_not_an_attribute_access(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "core/config.py",
+        'class Settings:\n    openai_api_key: str = ""\n',
     )
     assert find_provider_calls(tmp_path) == []
