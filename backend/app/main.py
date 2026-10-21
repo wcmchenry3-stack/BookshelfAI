@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
+from app.core.origin_auth import OriginAuthMiddleware
 from app.core.sentry_context import SentryContextMiddleware, sentry_privacy_options
 from app.services.token_cleanup import cleanup_expired_tokens
 
@@ -84,23 +85,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "max-age=31536000; includeSubDomains"
             )
         return response
-
-
-class CloudflareRealIPMiddleware(BaseHTTPMiddleware):
-    """Restore the real client IP from the CF-Connecting-IP header set by Cloudflare.
-
-    Without this, slowapi keys unauthenticated rate limits by Cloudflare's edge IP
-    rather than the real client IP, effectively disabling per-IP rate limiting.
-    The hardened guard prevents a locally supplied CF-Connecting-IP header from
-    being trusted outside staging/production, where Cloudflare is guaranteed to
-    be the one setting it.
-    """
-
-    async def dispatch(self, request: Request, call_next) -> Response:
-        cf_ip = request.headers.get("CF-Connecting-IP")
-        if cf_ip and settings.is_hardened:
-            request.scope["client"] = (cf_ip, 0)
-        return await call_next(request)
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
@@ -166,10 +150,16 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).
+#
+# OriginAuthMiddleware is innermost: it rejects requests that lack the origin
+# header before routing (so no handler, DB query or rate-limit counter runs),
+# while its 403 still passes back through SecurityHeadersMiddleware.
+# The client IP used for rate limiting is not set by a middleware: the
+# limiter's key function calls app.core.client_ip directly.
+app.add_middleware(OriginAuthMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SentryContextMiddleware)
 app.add_middleware(RequestIdMiddleware)
-app.add_middleware(CloudflareRealIPMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -187,10 +177,10 @@ app.add_middleware(RequestSizeLimitMiddleware)
 # balancers) legitimately hits the origin directly without going through the
 # public hostname, and it does nothing an attacker could abuse.
 #
-# /health/db is deliberately NOT exempt: at the raw Render origin, an attacker
-# can rotate a spoofed CF-Connecting-IP header per request to dodge its rate
-# limit and exhaust the DB connection pool. The DB-connectivity uptime monitor
-# uses the public hostname, so it doesn't need the exemption anyway.
+# /health/db is deliberately NOT exempt: it opens a DB connection, so it gets
+# the same Host (and origin-header) enforcement as every other route. The
+# DB-connectivity uptime monitor uses the public hostname, so it doesn't need
+# the exemption anyway.
 class _HealthExemptTrustedHost(TrustedHostMiddleware):
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http" and scope.get("path") == "/health":

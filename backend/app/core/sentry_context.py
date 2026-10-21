@@ -68,10 +68,27 @@ def _settings_secret_names() -> list[str]:
     ]
 
 
+def _configured_header_names() -> list[str]:
+    """Request headers named by settings that carry a secret value.
+
+    The origin-lockdown header (``ORIGIN_AUTH_HEADER``) holds the shared
+    origin secret on every request; its name is configurable, so it is read
+    from settings rather than hard-coded.
+    """
+    from app.core.config import settings
+
+    return [settings.origin_auth_header.lower()]
+
+
 def build_event_scrubber() -> EventScrubber:
     """Key-name scrubber; ``recursive=True`` reaches into nested bodies/extras."""
     return EventScrubber(
-        denylist=[*DEFAULT_DENYLIST, *_REQUEST_DENYLIST, *_settings_secret_names()],
+        denylist=[
+            *DEFAULT_DENYLIST,
+            *_REQUEST_DENYLIST,
+            *_settings_secret_names(),
+            *_configured_header_names(),
+        ],
         recursive=True,
     )
 

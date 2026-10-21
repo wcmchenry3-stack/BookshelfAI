@@ -14,6 +14,7 @@ See docs/RENDER.md for the full topology.
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 RENDER_YAML_PATH = Path(__file__).resolve().parents[3] / "render.yaml"
@@ -242,3 +243,37 @@ def test_secret_shaped_env_vars_never_carry_a_literal_value():
                 "a literal 'value' — it must be sync:false (or fromDatabase "
                 "for dev's DATABASE_URL) only"
             )
+
+
+# --- Client-IP trust and origin lockdown (#510) -----------------------------
+
+_API_SERVICES = ("bookshelf-api", "bookshelf-api-dev")
+
+
+@pytest.mark.parametrize("name", _API_SERVICES)
+def test_api_start_command_disables_uvicorn_proxy_headers(name):
+    """uvicorn must not rewrite the socket peer from X-Forwarded-For; the
+    client IP is decided only by app/core/client_ip.py."""
+    service = _service(_load_render_yaml(), name)
+    assert "--no-proxy-headers" in service["startCommand"].split()
+
+
+def test_dockerfile_disables_uvicorn_proxy_headers():
+    dockerfile = (RENDER_YAML_PATH.parent / "backend" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert '"--no-proxy-headers"' in dockerfile
+
+
+@pytest.mark.parametrize("name", _API_SERVICES)
+def test_api_trusts_cloudflare_client_ip(name):
+    service = _service(_load_render_yaml(), name)
+    assert _env_var(service, "TRUSTED_PROXY_MODE")["value"] == "cloudflare"
+
+
+@pytest.mark.parametrize("name", _API_SERVICES)
+def test_api_origin_auth_secret_is_dashboard_secret(name):
+    service = _service(_load_render_yaml(), name)
+    env_var = _env_var(service, "ORIGIN_AUTH_SECRET")
+    assert env_var.get("sync") is False
+    assert "value" not in env_var

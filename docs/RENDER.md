@@ -73,8 +73,9 @@ Turnstile, and Sentry DSNs.
 ## Environment values
 
 `ENVIRONMENT` drives `Settings.is_hardened` (#448): everything except
-`development`/`test` is hardened (TrustedHost enforcement, CF-Connecting-IP
-trust, `/docs` disabled, HSTS, `/auth/test-login` unregistered).
+`development`/`test` is hardened (TrustedHost enforcement, `/docs` disabled,
+HSTS, `/auth/test-login` unregistered). Which client-IP header is trusted is a
+separate setting, `TRUSTED_PROXY_MODE` (see below).
 
 | Value         | Hardened? | Used by                                      |
 | ------------- | --------- | --------------------------------------------- |
@@ -83,6 +84,38 @@ trust, `/docs` disabled, HSTS, `/auth/test-login` unregistered).
 | `staging`     | yes       | `bookshelf-api-dev` — exercises the prod path  |
 | `production`  | yes       | `bookshelf-api`                                |
 
+## Client IP and origin lockdown
+
+Full description: [`security.md` → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
+
+| Variable | Values | Set where |
+| --- | --- | --- |
+| `TRUSTED_PROXY_MODE` | `cloudflare` or `none`; default: `cloudflare` in hardened environments, `none` otherwise; anything else fails boot | `render.yaml` sets `cloudflare` explicitly on both API services |
+| `ORIGIN_AUTH_HEADER` | header name, default `X-Origin-Auth` | leave unset unless the edge uses another name |
+| `ORIGIN_AUTH_SECRET` | empty (default) = lockdown off; otherwise at least 32 printable ASCII characters (e.g. `openssl rand -hex 32`) or boot fails | dashboard secret (`sync: false`) |
+
+Both API start commands carry `--no-proxy-headers` so uvicorn never rewrites
+the client address from `X-Forwarded-For`
+(`backend/tests/unit/test_render_yaml.py` checks this). This file is not
+blueprint-synced, so copy the start command into each service's dashboard
+settings by hand.
+
+Rollout, per service (dev first, then prod):
+
+1. Optionally confirm `TRUSTED_PROXY_MODE` in the dashboard (not required:
+   the default is `cloudflare` in hardened environments). Update the start
+   command to the one in `render.yaml` (adds `--no-proxy-headers`, defence in
+   depth).
+2. Deploy, with `ORIGIN_AUTH_SECRET` unset.
+3. The owner adds the edge rule that sends the origin header on requests to
+   the API hostname.
+4. Set `ORIGIN_AUTH_SECRET` in the dashboard to the same value. Check that the
+   public hostname still works and that `/health` still passes Render's health
+   check.
+
+To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
+`TRUSTED_PROXY_MODE=none`.
+
 ## Health checks
 
 **Depends on PR #448 (health-check split).** This section describes the
@@ -90,12 +123,12 @@ post-#448 behavior; until #448 is merged and deployed, `/health` still
 touches the DB itself (no separate `/health/db` exists yet).
 
 - `GET /health` — liveness only, no DB touch. This is `healthCheckPath` in
-  `render.yaml` and is TrustedHost-exempt so Render's own prober can hit the
-  origin directly; a DB outage must not restart-loop the service.
+  `render.yaml` and is exempt from both TrustedHost and the origin lockdown
+  so Render's own prober can hit the origin directly; a DB outage must not restart-loop the service.
 - `GET /health/db` — `SELECT 1` against the database, bounded at a 5 second
   timeout so a stalled pooler yields a prompt response; returns `200` (ok) or
   `503` (unavailable/unconfigured); rate limited. It is **not**
-  TrustedHost-exempt, so probe it only via the public hostname
+  exempt from TrustedHost or the origin lockdown, so probe it only via the public hostname
   (`https://bookshelfapi.buffingchi.com/health/db`), never the Render origin.
   Point an external uptime monitor at it every 5 minutes; on Supabase's free
   plan this is also what stops the project from pausing due to inactivity.

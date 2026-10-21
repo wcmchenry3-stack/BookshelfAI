@@ -21,7 +21,7 @@ For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](clau
 **Source:** `render.yaml`
 
 **Build:** `pip install -r requirements.txt`
-**Start:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+**Start:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers`
 **Pre-deploy:** `alembic upgrade head` (migrations run before the new version takes traffic — a failing migration blocks the deploy)
 **Health check:** `/health` (liveness only, never touches the DB — a Render restart must not be triggered by a transient DB blip; use `/health/db` to check DB connectivity)
 
@@ -38,7 +38,7 @@ TURNSTILE_SECRET_KEY      (sync:false — set in dashboard)
 SENTRY_DSN                (sync:false — set in dashboard)
 ```
 
-**`ENVIRONMENT` values:** `development` | `test` | `staging` | `production`. Only `development` and `test` are treated as trusted/local (`settings.is_hardened == False`). Any other value — including `staging` — gets full production-grade hardening: `/docs` disabled, `TrustedHostMiddleware` enforced, HSTS sent, `CF-Connecting-IP` trusted, and the `/debug/sentry-test` + `/auth/test-login` routes not even registered. `staging` still reports as `staging` (not `production`) to Sentry so events are distinguishable. A public staging deploy must always use `ENVIRONMENT=staging`, never `development`.
+**`ENVIRONMENT` values:** `development` | `test` | `staging` | `production`. Only `development` and `test` are treated as trusted/local (`settings.is_hardened == False`). Any other value — including `staging` — gets full production-grade hardening: `/docs` disabled, `TrustedHostMiddleware` enforced, HSTS sent, and the `/debug/sentry-test` + `/auth/test-login` routes not even registered. `staging` still reports as `staging` (not `production`) to Sentry so events are distinguishable. A public staging deploy must always use `ENVIRONMENT=staging`, never `development`.
 
 ### Env vars that live only in the Render dashboard
 
