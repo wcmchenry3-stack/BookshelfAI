@@ -200,3 +200,47 @@ class TestAuthFlowLogs:
         assert (r1.status_code, r2.status_code) == (401, 403)
         assert "test@example.com" not in caplog.text
         assert "secret-allowed@example.com" not in caplog.text
+
+
+class TestUvicornAccessLogs:
+    """uvicorn's AccessFormatter unpacks record.args as a 5-tuple."""
+
+    def _access_record(self):
+        return logging.LogRecord(
+            "uvicorn.access",
+            logging.INFO,
+            __file__,
+            1,
+            '%s - "%s %s HTTP/%s" %d',
+            ("1.2.3.4:5678", "GET", "/books?token=abc123&e=h@example.com", "1.1", 200),
+            None,
+        )
+
+    def test_preserve_args_mode_keeps_access_formatter_working(self):
+        from uvicorn.logging import AccessFormatter
+
+        record = self._access_record()
+        RedactingFilter(preserve_args=True).filter(record)
+        out = AccessFormatter(
+            fmt='%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False
+        ).format(record)
+        assert "GET /books" in out and "200" in out
+        assert "abc123" not in out
+        assert "h@example.com" not in out
+
+    def test_configure_logging_uses_preserve_args_for_uvicorn(self):
+        from app.core.logging import configure_logging
+
+        root = logging.getLogger()
+        saved_handlers, saved_level = list(root.handlers), root.level
+        uv_handler = logging.StreamHandler()
+        uv_logger = logging.getLogger("uvicorn.access")
+        uv_logger.addHandler(uv_handler)
+        try:
+            configure_logging()
+            filters = [f for f in uv_handler.filters if isinstance(f, RedactingFilter)]
+            assert filters and all(f.preserve_args for f in filters)
+        finally:
+            uv_logger.removeHandler(uv_handler)
+            root.handlers = saved_handlers
+            root.setLevel(saved_level)

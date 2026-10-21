@@ -31,21 +31,43 @@ def redact(text: str) -> str:
     return _EMAIL_RE.sub("[REDACTED_EMAIL]", text)
 
 
-class RedactingFilter(logging.Filter):
-    """Safety net: scrub emails and tokens from the rendered message and traceback.
+def _redact_value(value):
+    return redact(value) if isinstance(value, str) else value
 
-    The message is rendered once (so nested args and objects' ``__str__`` are
-    covered) and stored back with no args. Exception text is rendered into
-    ``exc_text``, which standard formatters use instead of re-formatting.
+
+class RedactingFilter(logging.Filter):
+    """Safety net: scrub emails and tokens from the message and traceback.
+
+    Default mode renders the message once (so nested args and objects'
+    ``__str__`` are covered), redacts it and clears the args. That suits
+    formatters that only use ``getMessage()``, like :class:`JsonFormatter`.
+
+    ``preserve_args=True`` redacts string args in place and keeps their
+    number and order, for formatters that unpack ``record.args`` themselves
+    (uvicorn's access formatter expects a 5-tuple).
+
+    Exception text is rendered into ``exc_text`` and redacted in both modes.
     Never raises; on any failure the record is passed through unchanged.
     """
 
     _exc_formatter = logging.Formatter()
 
+    def __init__(self, name: str = "", *, preserve_args: bool = False) -> None:
+        super().__init__(name)
+        self.preserve_args = preserve_args
+
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            record.msg = redact(record.getMessage())
-            record.args = ()
+            if self.preserve_args:
+                if isinstance(record.msg, str):
+                    record.msg = redact(record.msg)
+                if isinstance(record.args, tuple):
+                    record.args = tuple(_redact_value(a) for a in record.args)
+                elif isinstance(record.args, dict):
+                    record.args = {k: _redact_value(v) for k, v in record.args.items()}
+            else:
+                record.msg = redact(record.getMessage())
+                record.args = ()
             if record.exc_info and not record.exc_text:
                 record.exc_text = self._exc_formatter.formatException(record.exc_info)
             if record.exc_text:
@@ -80,9 +102,12 @@ def configure_logging() -> None:
     root.setLevel(logging.INFO)
     root.handlers = [handler]
     # uvicorn's loggers don't propagate to root, so filter their handlers too.
+    # Their formatters unpack record.args, so keep the args shape. This relies
+    # on uvicorn having configured its handlers before the app is imported,
+    # which is the case for `uvicorn app.main:app` (render.yaml, Dockerfile).
     for name in _UVICORN_LOGGERS:
         for uv_handler in logging.getLogger(name).handlers:
-            uv_handler.addFilter(RedactingFilter())
+            uv_handler.addFilter(RedactingFilter(preserve_args=True))
 
 
 def new_request_id() -> str:

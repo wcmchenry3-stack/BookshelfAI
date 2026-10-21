@@ -42,7 +42,7 @@ Application logs are structured JSON on stdout (`backend/app/core/logging.py`).
 
 **Safety net:** a `RedactingFilter` replaces email addresses, `Bearer <token>` values, JWT-shaped strings (three base64url segments) and credential-looking URL query parameters (`key=`, `token=`, `api_key=`, …) with `[REDACTED*]` markers. It renders the full message once, so values nested in lists, dicts or objects are covered, and it also redacts exception tracebacks and stack info. The JSON formatter applies the same redaction to the message and traceback as a second layer. It uses precompiled regexes and never raises.
 
-**Scope:** the filter is attached to the root handler (all `app.*` loggers) and to the `uvicorn`, `uvicorn.error` and `uvicorn.access` handlers, which don't propagate to root. Sentry events are scrubbed separately (`app/core/sentry_context.py`). It is a backstop, not a licence to log such values: new log lines should not include them in the first place.
+**Scope:** the filter is attached to the root handler (all `app.*` loggers) and to the `uvicorn`, `uvicorn.error` and `uvicorn.access` handlers, which don't propagate to root. On those handlers it runs in `preserve_args` mode: string args are redacted in place so uvicorn's access formatter, which unpacks the args, keeps working. Sentry events are scrubbed separately (`app/core/sentry_context.py`). It is a backstop, not a licence to log such values: new log lines should not include them in the first place.
 
 ## Pre-commit Hook (gitleaks)
 
