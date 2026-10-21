@@ -34,9 +34,9 @@ Common status codes:
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 413 | Payload Too Large | request body > 10 MB (middleware) or image > 5 MB (endpoint) |
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload |
-| 429 | Too Many Requests | rate limit hit |
+| 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`) |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
-| 503 | Service Unavailable | DB down (/health/db), scan service unavailable |
+| 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity |
 
 ### Rate limits
 
@@ -240,7 +240,14 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `403` — Turnstile verification failed
 - `413` — image > 5 MB
 - `415` — bad extension / MIME / magic bytes
-- `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`)
+- `402` — enhanced scan requested with no enhanced credits left (`detail: "no_enhanced_credits"`)
+- `429` — the user's daily scan limit is reached (`detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets. Limit: `SCAN_DAILY_LIMIT_PER_USER` (default 20).
+- `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily limit
+- `503` — scanning switched off by the operator (`detail: "scan_disabled"`, `SCAN_ENABLED=false`); returned before the upload is read or Turnstile is checked
+- `503` — enhanced scanning switched off (`detail: "enhanced_scan_disabled"`, `SCAN_ENHANCED_ENABLED=false`); standard scans still work
+- `503` — the service-wide daily scan capacity is used up (`detail: "scan_capacity"`, `SCAN_GLOBAL_DAILY_LIMIT`, default 2000)
+
+Check order: kill switches → Turnstile → file validation → enhanced-credit check → global daily capacity → per-user daily limit → vision provider. A scan counts toward the daily limits once it reaches the provider, even if nothing is found; it is refunded only if the provider call fails.
 
 **Example:**
 ```bash
