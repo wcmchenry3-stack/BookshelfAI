@@ -31,7 +31,7 @@ services:
     branch: main
     autoDeploy: false
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
     rootDir: backend
@@ -47,6 +47,15 @@ services:
         value: '["https://bookshelfai.buffingchi.com"]'
       - key: TRUSTED_HOSTS
         value: '["bookshelfapi.buffingchi.com"]'
+      # Cloudflare proxies all traffic; trust its IP headers only.
+      - key: TRUSTED_PROXY_MODE
+        value: cloudflare
+      # Origin auth: Cloudflare sets X-Origin-Auth on every request so the raw
+      # Render origin rejects anything that bypasses the CDN.  Set this to the
+      # same 32+ char secret configured in the Cloudflare Transform Rule.
+      # Leave unset to disable the check (safe during initial rollout).
+      - key: ORIGIN_AUTH_SECRET
+        sync: false
       - key: TURNSTILE_SECRET_KEY
         sync: false
       - key: SENTRY_DSN
@@ -124,7 +133,7 @@ services:
     plan: starter
     branch: dev
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
     rootDir: backend
@@ -143,6 +152,12 @@ services:
         sync: false # dashboard-authoritative — dev hostnames are not fixed here
       - key: TRUSTED_HOSTS
         sync: false # dashboard-authoritative — dev hostnames are not fixed here
+      # Cloudflare proxies all traffic; trust its IP headers only.
+      - key: TRUSTED_PROXY_MODE
+        value: cloudflare
+      # Origin auth: same secret as prod but scoped to the dev Cloudflare rule.
+      - key: ORIGIN_AUTH_SECRET
+        sync: false
       - key: TURNSTILE_SECRET_KEY
         sync: false
       - key: SENTRY_DSN

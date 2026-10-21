@@ -1,0 +1,135 @@
+name: DB Restore Drill
+
+on:
+  workflow_dispatch:
+
+env:
+  # Must match the Supabase Postgres major version — run `SELECT version();`
+  # on production to confirm.  Update here if the version changes.
+  PG_MAJOR: "17"
+  # Temporary database name for the drill — dropped at the end.
+  TEST_DB: restore_drill_${{ github.run_id }}
+
+jobs:
+  restore:
+    name: Download → decrypt → restore → verify
+    runs-on: ubuntu-latest
+    environment: backup-restore
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: drill
+          POSTGRES_PASSWORD: drill
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U drill"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Install PostgreSQL ${{ env.PG_MAJOR }} client and age
+        run: |
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] \
+            https://apt.postgresql.org/pub/repos/pgdg \
+            $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-client-${{ env.PG_MAJOR }} age awscli
+
+      - name: Download latest backup from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_READ_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_READ_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          LATEST=$(aws s3 ls \
+            "s3://${{ secrets.R2_BUCKET }}/bookshelf/prod/" \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+            | sort | tail -1 | awk '{print $4}')
+
+          if [ -z "$LATEST" ]; then
+            echo "::error::No backup files found in R2 — run DB Backup first."
+            exit 1
+          fi
+
+          echo "Downloading bookshelf/prod/$LATEST"
+          aws s3 cp \
+            "s3://${{ secrets.R2_BUCKET }}/bookshelf/prod/$LATEST" \
+            backup.sql.gz.age \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+
+      - name: Decrypt
+        run: |
+          echo "${{ secrets.BACKUP_AGE_IDENTITY }}" | \
+            age --decrypt --identity - backup.sql.gz.age --output backup.sql.gz
+          rm -f backup.sql.gz.age
+
+      - name: Decompress
+        run: gunzip backup.sql.gz
+
+      - name: Create drill database
+        env:
+          PGPASSWORD: drill
+        run: |
+          createdb \
+            --host=localhost --port=5432 \
+            --username=drill \
+            "${{ env.TEST_DB }}"
+
+      - name: Restore
+        env:
+          PGPASSWORD: drill
+        run: |
+          psql \
+            --host=localhost --port=5432 \
+            --username=drill \
+            --dbname="${{ env.TEST_DB }}" \
+            --single-transaction \
+            --file=backup.sql \
+            2>&1 | tail -20
+          echo "psql exit code: $?"
+
+      - name: Verify (row counts)
+        env:
+          PGPASSWORD: drill
+        run: |
+          psql \
+            --host=localhost --port=5432 \
+            --username=drill \
+            --dbname="${{ env.TEST_DB }}" \
+            --tuples-only \
+            --command="SELECT 'users', COUNT(*) FROM users UNION ALL SELECT 'books', COUNT(*) FROM books;" \
+            2>&1 | tee counts.txt
+
+          # Fail if the users table has 0 rows — an empty restore is suspicious.
+          USER_COUNT=$(psql \
+            --host=localhost --port=5432 \
+            --username=drill \
+            --dbname="${{ env.TEST_DB }}" \
+            --tuples-only \
+            --no-align \
+            --command="SELECT COUNT(*) FROM users;")
+          echo "users row count: $USER_COUNT"
+          if [ "$USER_COUNT" -eq 0 ]; then
+            echo "::warning::users table is empty — verify the backup source."
+          fi
+
+      - name: Drop drill database
+        if: always()
+        env:
+          PGPASSWORD: drill
+        run: |
+          dropdb \
+            --host=localhost --port=5432 \
+            --username=drill \
+            --if-exists \
+            "${{ env.TEST_DB }}" || true

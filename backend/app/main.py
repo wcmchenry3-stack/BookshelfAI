@@ -103,6 +103,37 @@ class CloudflareRealIPMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class OriginAuthMiddleware(BaseHTTPMiddleware):
+    """Reject requests that bypass Cloudflare by checking a shared secret.
+
+    Cloudflare's Transform Rule injects X-Origin-Auth: <secret> on every
+    request to the API hostname.  When ORIGIN_AUTH_SECRET is configured and the
+    service is hardened, any request missing or carrying a wrong header is
+    rejected with 403 before any other processing.
+
+    /health is exempt so Render's own liveness prober (which hits the raw
+    Render origin) always succeeds.
+
+    Rollback: clear ORIGIN_AUTH_SECRET in the Render dashboard; the middleware
+    becomes a no-op on the next request.
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if (
+            settings.is_hardened
+            and settings.origin_auth_secret
+            and request.url.path != "/health"
+        ):
+            header_val = request.headers.get(settings.origin_auth_header, "")
+            if not hmac.compare_digest(header_val, settings.origin_auth_secret):
+                return Response(
+                    content='{"detail":"Forbidden"}',
+                    status_code=403,
+                    media_type="application/json",
+                )
+        return await call_next(request)
+
+
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     """Reject requests whose Content-Length exceeds the limit before reading the body.
 
@@ -179,6 +210,9 @@ app.add_middleware(
 )
 # RequestSizeLimitMiddleware runs before CORS/headers to drop oversized bodies early.
 app.add_middleware(RequestSizeLimitMiddleware)
+# OriginAuthMiddleware runs outside RequestSize so blocked requests are rejected
+# before the body is read; inside TrustedHost so Host-spoofed requests never reach it.
+app.add_middleware(OriginAuthMiddleware)
 
 
 # TrustedHostMiddleware is outermost when hardened (staging + production) —

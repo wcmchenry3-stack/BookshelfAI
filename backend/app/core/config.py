@@ -41,6 +41,24 @@ class Settings(BaseSettings):
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 
+    # Scan service — configurable so cost ceilings can be tightened in the
+    # Render dashboard without a redeploy.
+    scan_model: str = "gpt-4o-mini"
+    scan_enhanced_model: str = "gpt-4o"
+    scan_timeout_seconds: int = 15
+    # Number of free enhanced-scan credits per user before the feature requires
+    # a paid tier.  0 disables enhanced scan entirely.
+    enhanced_scan_free_credits: int = 5
+
+    # Origin auth — when set the API rejects any request that does not carry
+    # X-Origin-Auth: <secret>, forcing all traffic through Cloudflare.
+    # Leave empty during initial rollout; set after the Cloudflare Transform
+    # Rule is in place.  Rollback: clear the env var.
+    origin_auth_secret: str = ""
+    # Override with ORIGIN_AUTH_HEADER if you used a different header name in
+    # the Cloudflare Transform Rule.
+    origin_auth_header: str = "X-Origin-Auth"
+
     # Cloudflare Turnstile — bot protection on /scan.
     # turnstile_required=true (default) means every /scan request must supply a valid
     # cf-turnstile-response token.  If turnstile_secret_key is absent at startup the

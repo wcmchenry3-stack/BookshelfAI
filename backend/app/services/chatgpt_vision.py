@@ -33,7 +33,7 @@ class ChatGPTVisionIdentifier:
         b64 = base64.standard_b64encode(image_bytes).decode()
 
         payload = {
-            "model": "gpt-4o-mini",
+            "model": settings.scan_model,
             "max_tokens": settings.openai_max_tokens,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -51,7 +51,7 @@ class ChatGPTVisionIdentifier:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=settings.scan_timeout_seconds) as client:
                 resp = await client.post(
                     OPENAI_URL,
                     json=payload,

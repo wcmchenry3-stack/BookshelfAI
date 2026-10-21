@@ -242,3 +242,41 @@ def test_secret_shaped_env_vars_never_carry_a_literal_value():
                 "a literal 'value' — it must be sync:false (or fromDatabase "
                 "for dev's DATABASE_URL) only"
             )
+
+
+# --- Origin auth and proxy mode guards ---------------------------------------
+
+
+def test_api_services_have_trusted_proxy_mode_cloudflare():
+    """Both API services must declare TRUSTED_PROXY_MODE=cloudflare."""
+    config = _load_render_yaml()
+    for name in ("bookshelf-api", "bookshelf-api-dev"):
+        svc = _service(config, name)
+        var = _env_var(svc, "TRUSTED_PROXY_MODE")
+        assert var.get("value") == "cloudflare", (
+            f"{name}: TRUSTED_PROXY_MODE must be 'cloudflare'"
+        )
+
+
+def test_api_services_have_origin_auth_secret_as_dashboard_secret():
+    """ORIGIN_AUTH_SECRET must be sync:false on both API services."""
+    config = _load_render_yaml()
+    for name in ("bookshelf-api", "bookshelf-api-dev"):
+        svc = _service(config, name)
+        var = _env_var(svc, "ORIGIN_AUTH_SECRET")
+        assert var.get("sync") is False, (
+            f"{name}: ORIGIN_AUTH_SECRET must be sync:false"
+        )
+        assert "value" not in var, (
+            f"{name}: ORIGIN_AUTH_SECRET must not carry a literal value"
+        )
+
+
+def test_api_services_use_no_proxy_headers_flag():
+    """Both API services must pass --no-proxy-headers in the start command."""
+    config = _load_render_yaml()
+    for name in ("bookshelf-api", "bookshelf-api-dev"):
+        svc = _service(config, name)
+        assert "--no-proxy-headers" in svc.get("startCommand", ""), (
+            f"{name}: startCommand must include --no-proxy-headers"
+        )
