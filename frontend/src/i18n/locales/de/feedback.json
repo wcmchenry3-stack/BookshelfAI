@@ -11,11 +11,8 @@
   "placeholder_description": "Beschreibe, was passiert ist, oder was du dir wünschst...",
   "submit": "Absenden",
   "submit_success": "Danke für dein Feedback!",
-  "submit_success_issue": "Dein Bericht wurde als Issue #{{number}} eingereicht.",
   "submit_error": "Etwas ist schiefgelaufen. Bitte versuche es erneut.",
   "submit_error_rate_limit": "Zu viele Einsendungen. Bitte warte {{seconds}} Sekunden.",
-  "submit_error_rejected": "Deine Einsendung konnte nicht akzeptiert werden. Bitte überarbeite sie und versuche es erneut.",
-  "submit_error_network": "Netzwerkfehler. Bitte überprüfe deine Verbindung und versuche es erneut.",
   "error_title_required": "Titel ist erforderlich.",
   "error_description_required": "Beschreibung ist erforderlich."
 }

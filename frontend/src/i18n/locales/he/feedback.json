@@ -11,11 +11,8 @@
   "placeholder_description": "תאר מה קרה, או מה היית רוצה לראות...",
   "submit": "שלח",
   "submit_success": "תודה על המשוב!",
-  "submit_success_issue": "הדיווח שלך נפתח כבעיה מספר #{{number}}.",
   "submit_error": "משהו השתבש. אנא נסה שוב.",
   "submit_error_rate_limit": "יותר מדי הגשות. אנא המתן {{seconds}} שניות.",
-  "submit_error_rejected": "הגשתך לא יכולה להתקבל. אנא בדוק ונסה שוב.",
-  "submit_error_network": "שגיאת רשת. אנא בדוק את החיבור שלך ונסה שוב.",
   "error_title_required": "כותרת היא שדה חובה.",
   "error_description_required": "תיאור הוא שדה חובה."
 }
