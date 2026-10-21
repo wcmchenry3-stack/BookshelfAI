@@ -59,7 +59,9 @@ class RedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             if self.preserve_args:
-                if isinstance(record.msg, str):
+                # Only redact a format string with no placeholders: redacting
+                # around a "%s" could change the placeholder count.
+                if isinstance(record.msg, str) and "%" not in record.msg:
                     record.msg = redact(record.msg)
                 if isinstance(record.args, tuple):
                     record.args = tuple(_redact_value(a) for a in record.args)

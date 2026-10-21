@@ -244,3 +244,18 @@ class TestUvicornAccessLogs:
             uv_logger.removeHandler(uv_handler)
             root.handlers = saved_handlers
             root.setLevel(saved_level)
+
+
+def test_preserve_args_keeps_placeholder_count():
+    """A format string with placeholders is left alone so formatting can't break."""
+    r = logging.LogRecord(
+        "uvicorn.error",
+        logging.INFO,
+        __file__,
+        1,
+        "GET /x?token=%s for %s@example.com",
+        ("abc123", "z"),
+        None,
+    )
+    RedactingFilter(preserve_args=True).filter(r)
+    assert r.getMessage() == "GET /x?token=abc123 for z@example.com"
