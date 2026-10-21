@@ -29,6 +29,7 @@ backend/
 │   ├── main.py            FastAPI app, middleware stack, /health endpoint
 │   ├── ai/                AI gateway — the only place paid model calls happen
 │   │   ├── gateway.py         run_feature(): single entry point for AI features
+│   │   ├── models_allowlist.py Allowed models and token/timeout bounds (shared by config and registry)
 │   │   ├── registry.py        Server-controlled FeatureSpec registry (validated at import)
 │   │   └── providers/         Provider adapters (only package allowed to call a provider)
 │   │       ├── base.py            VisionProvider protocol
