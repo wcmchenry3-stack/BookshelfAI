@@ -28,7 +28,7 @@ jobs:
       working-directory: backend
       # Keep in sync with backend/requirements-dev.txt — unpinned installs let
       # upstream rule changes silently break lint on unrelated PRs.
-      black-version: '26.5.1'
+      black-version: '26.10.1'
       ruff-version: '0.17.1'
     secrets: inherit
 
