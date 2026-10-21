@@ -235,6 +235,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0001_initial_schema.py` — creates `users`, `books`, `editions`, `user_books`
 - `0002_refresh_tokens.py` — adds `refresh_tokens` table
 - `0003_enhanced_scan_credits.py` — adds `users.enhanced_scan_credits`
+- `0004_restrict_catalog_deletes.py` — `user_books.book_id` and `editions.book_id` FKs become `ON DELETE RESTRICT`
 - `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps)
 
 ### Writing a new migration
