@@ -27,10 +27,7 @@ _SECRET_KEY_EXACT = {"SENTRY_DSN", "TURNSTILE_SECRET_KEY"}
 
 _POSTGRES_URL_PATTERN = re.compile(r"postgres(ql)?(\+\w+)?://")
 
-_REQUIRED_CSP_ORIGINS = (
-    "https://*.ingest.us.sentry.io",
-    "https://feedback-worker.wcmchenry3.workers.dev",
-)
+_REQUIRED_CSP_ORIGINS = ("https://*.ingest.us.sentry.io",)
 
 
 def _load_render_yaml() -> dict:
@@ -162,7 +159,7 @@ def test_prod_web_csp_references_prod_api_and_not_dev():
     assert "-dev" not in csp
 
 
-def test_prod_web_csp_includes_sentry_and_feedback_worker_origins():
+def test_prod_web_csp_includes_sentry_origin():
     config = _load_render_yaml()
     prod_web = _service(config, "bookshelf-web")
     csp = _header_value(prod_web, "Content-Security-Policy")
@@ -180,12 +177,20 @@ def test_dev_web_csp_does_not_reference_prod_api():
     assert "https://bookshelfapi.buffingchi.com" not in csp
 
 
-def test_dev_web_csp_includes_sentry_and_feedback_worker_origins():
+def test_dev_web_csp_includes_sentry_origin():
     config = _load_render_yaml()
     dev_web = _service(config, "bookshelf-web-dev")
     csp = _header_value(dev_web, "Content-Security-Policy")
     for origin in _REQUIRED_CSP_ORIGINS:
         assert origin in csp, f"bookshelf-web-dev CSP is missing {origin!r}"
+
+
+@pytest.mark.parametrize("service_name", ["bookshelf-web", "bookshelf-web-dev"])
+def test_web_csp_does_not_allow_retired_feedback_worker(service_name):
+    csp = _header_value(
+        _service(_load_render_yaml(), service_name), "Content-Security-Policy"
+    )
+    assert "workers.dev" not in csp
 
 
 # --- Secret-leak guards -------------------------------------------------------

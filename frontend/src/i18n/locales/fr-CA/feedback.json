@@ -11,11 +11,8 @@
   "placeholder_description": "Décrivez ce qui s'est passé ou ce que vous aimeriez voir...",
   "submit": "Envoyer",
   "submit_success": "Merci pour vos commentaires !",
-  "submit_success_issue": "Votre rapport a été enregistré sous le numéro #{{number}}.",
   "submit_error": "Une erreur s'est produite. Veuillez réessayer.",
   "submit_error_rate_limit": "Trop de soumissions. Veuillez patienter {{seconds}} secondes.",
-  "submit_error_rejected": "Votre soumission n'a pas pu être acceptée. Veuillez la réviser et réessayer.",
-  "submit_error_network": "Erreur réseau. Vérifiez votre connexion et réessayez.",
   "error_title_required": "Le titre est obligatoire.",
   "error_description_required": "La description est obligatoire."
 }
