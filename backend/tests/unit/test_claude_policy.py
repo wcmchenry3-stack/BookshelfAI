@@ -230,7 +230,7 @@ def test_real_provider_log_wrapper_replaced_fails():
 
 def test_real_provider_request_without_max_tokens_fails():
     text = REAL_PROVIDER.read_text()
-    old = '            "max_tokens": self.spec.max_tokens,\n'
+    old = '        "max_tokens": spec.max_tokens,\n'
     assert text.count(old) == 1
     got = policy.check_file(PROVIDER, text.replace(old, ""), ALLOWED)
     assert "max-tokens" in checks(got)
