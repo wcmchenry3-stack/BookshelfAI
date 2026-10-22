@@ -40,5 +40,9 @@
   "dismissNotice": "Cerrar",
   "tryAgainNotice": "Intentar de nuevo",
   "queueFullLimited": "Has alcanzado tu límite de escaneos. Tus fotos guardadas se enviarán cuando el escaneo vuelva a estar disponible.",
-  "sendPendingNow": "Enviar ahora"
+  "sendPendingNow": "Enviar ahora",
+  "enhancedRequiresPremium": "Los escaneos mejorados son parte de Premium.",
+  "enhancedLimitReached": "Has usado todos tus escaneos mejorados de este mes.",
+  "enhancedThrottled": "Varios escaneos mejorados recientes no encontraron libros. Inténtalo de nuevo después de las {{time}}.",
+  "enhancedThrottledLater": "Varios escaneos mejorados recientes no encontraron libros. Inténtalo de nuevo más tarde."
 }

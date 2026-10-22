@@ -87,11 +87,22 @@ const headerStyles = StyleSheet.create({
 });
 
 function GlobalBookPicker() {
-  const { reviewingJob, dismissReview, handleAddBooks, requestEnhancedScan, enhancedCredits } =
-    useScanJobs();
+  const {
+    reviewingJob,
+    dismissReview,
+    handleAddBooks,
+    requestEnhancedScan,
+    enhancedScansRemaining,
+  } = useScanJobs();
   const isPhotoScan = reviewingJob?.type === 'image';
-  // Offer the stronger model only on a photo that hasn't already had it.
-  const canEnhance = isPhotoScan && !reviewingJob?.enhanced && !!reviewingJob?.imageUri;
+  // Offer the stronger model only on a photo that hasn't already had it, and
+  // only when the server says enhanced scans are left (Premium-only, #533).
+  const canEnhance =
+    isPhotoScan &&
+    !reviewingJob?.enhanced &&
+    !!reviewingJob?.imageUri &&
+    enhancedScansRemaining !== null &&
+    enhancedScansRemaining > 0;
 
   return (
     <BookCandidatePicker
@@ -103,7 +114,7 @@ function GlobalBookPicker() {
       onDismiss={dismissReview}
       preselect={isPhotoScan}
       onEnhance={canEnhance ? () => requestEnhancedScan(reviewingJob.id) : undefined}
-      enhancedCredits={enhancedCredits}
+      enhancedScansRemaining={enhancedScansRemaining}
     />
   );
 }

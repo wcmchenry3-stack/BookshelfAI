@@ -11,6 +11,21 @@ export interface ScanUsage {
   monthly_limit: number;
   /** First day of next month (UTC), YYYY-MM-DD. */
   period_end: string;
+  /** Enhanced scans this month and the Premium enhanced allowance (0 when not Premium). */
+  enhanced_used_month?: number;
+  enhanced_monthly_limit?: number;
+}
+
+/** Enhanced scans left this month per the usage counters, or null if unknown. */
+export function enhancedScansLeft(usage: ScanUsage | null): number | null {
+  if (
+    !usage ||
+    typeof usage.enhanced_monthly_limit !== 'number' ||
+    typeof usage.enhanced_used_month !== 'number'
+  ) {
+    return null;
+  }
+  return Math.max(0, usage.enhanced_monthly_limit - usage.enhanced_used_month);
 }
 
 function isScanUsage(v: unknown): v is ScanUsage {

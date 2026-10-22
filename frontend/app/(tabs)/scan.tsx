@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Directory, File, Paths } from 'expo-file-system';
@@ -8,7 +8,7 @@ import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useBanner } from '../../hooks/useBanner';
-import { useScanUsage } from '../../hooks/useScanUsage';
+import { enhancedScansLeft, useScanUsage } from '../../hooks/useScanUsage';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { hasRefusedJobs } from '../../lib/scanErrors';
 import { ScanStatusPanel } from '../../components/ScanStatusPanel';
@@ -31,8 +31,15 @@ export default function ScanScreen() {
     scanNotice,
     dismissScanNotice,
     usageRefreshKey,
+    syncEnhancedScansRemaining,
   } = useScanJobs();
   const usage = useScanUsage(usageRefreshKey ?? 0);
+  // The usage counters also say how many enhanced scans are left (#533), so
+  // the enhanced re-scan offer is right even before this session's first scan.
+  const enhancedLeft = enhancedScansLeft(usage);
+  useEffect(() => {
+    if (enhancedLeft !== null) syncEnhancedScansRemaining?.(enhancedLeft);
+  }, [enhancedLeft, syncEnhancedScansRemaining]);
   const { isConnected } = useNetworkStatus();
   // While scanning is limited or paused, a full queue is not "wait for uploads":
   // the saved photos go out once scanning is available again.

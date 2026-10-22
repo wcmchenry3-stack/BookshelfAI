@@ -47,7 +47,6 @@
   "addedSomeMessage": "Added {{added}} of {{total}} books. Tap Add to retry the rest.",
   "tryEnhanced": "Try enhanced scan",
   "enhancedNoBooksFound": "Enhanced scan couldn't find any books either",
-  "noEnhancedCredits": "You're out of enhanced scans.",
   "enhancedNoNewBooks": "Enhanced scan didn't find any more books. Showing your earlier results.",
   "enhancedFailed": "Enhanced scan failed. Showing your earlier results.",
   "usageMonth": "Scans used this month: {{used}} of {{limit}}",
@@ -62,5 +61,9 @@
   "dismissNotice": "Dismiss",
   "tryAgainNotice": "Try again",
   "queueFullLimited": "You've reached your scan limit. Your saved photos will be sent when scanning is available again.",
-  "sendPendingNow": "Send now"
+  "sendPendingNow": "Send now",
+  "enhancedRequiresPremium": "Enhanced scans are part of Premium.",
+  "enhancedLimitReached": "You've used all your enhanced scans for this month.",
+  "enhancedThrottled": "Several recent enhanced scans found no books. Try again after {{time}}.",
+  "enhancedThrottledLater": "Several recent enhanced scans found no books. Please try again later."
 }

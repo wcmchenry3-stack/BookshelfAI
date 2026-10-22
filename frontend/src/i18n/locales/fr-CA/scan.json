@@ -40,5 +40,9 @@
   "dismissNotice": "Fermer",
   "tryAgainNotice": "Réessayer",
   "queueFullLimited": "Vous avez atteint votre limite de numérisations. Vos photos enregistrées seront envoyées lorsque la numérisation sera de nouveau disponible.",
-  "sendPendingNow": "Envoyer maintenant"
+  "sendPendingNow": "Envoyer maintenant",
+  "enhancedRequiresPremium": "Les numérisations améliorées font partie de Premium.",
+  "enhancedLimitReached": "Vous avez utilisé toutes vos numérisations améliorées de ce mois-ci.",
+  "enhancedThrottled": "Plusieurs numérisations améliorées récentes n'ont trouvé aucun livre. Réessayez après {{time}}.",
+  "enhancedThrottledLater": "Plusieurs numérisations améliorées récentes n'ont trouvé aucun livre. Réessayez plus tard."
 }

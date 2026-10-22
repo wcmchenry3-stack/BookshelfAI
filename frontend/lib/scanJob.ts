@@ -13,7 +13,9 @@ export type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'q
 export interface ScanResponse {
   books: EnrichedBook[];
   enhanced: boolean;
-  enhanced_scan_credits: number;
+  /** Premium enhanced scans left this month after this scan; null when the
+   * user is not Premium (enhanced scans are Premium-only, #533). */
+  enhanced_scans_remaining: number | null;
 }
 
 export interface ScanJob {
@@ -24,7 +26,7 @@ export interface ScanJob {
   query?: string;
   imageUri?: string;
   results?: EnrichedBook[];
-  /** Re-scan with the stronger (credit-costing) model. */
+  /** Re-scan with the stronger model (Premium; uses an enhanced scan if it finds books). */
   enhanced?: boolean;
   error?: string;
   retryCount: number;
