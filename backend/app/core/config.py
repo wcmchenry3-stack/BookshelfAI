@@ -1,7 +1,15 @@
+import re
+from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.ai.models_allowlist import (
+    ALLOWED_MODELS,
+    MAX_TOKENS_BOUNDS,
+    TIMEOUT_S_BOUNDS,
+)
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
 # asyncpg's server-side prepared statements, which asyncpg uses by default. It
@@ -10,9 +18,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # The session pooler on port 5432 must be used instead.
 _SUPABASE_TRANSACTION_POOLER_PORT = 6543
 
+# RFC 9110 field-name token characters.
+_HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+
+# ORIGIN_AUTH_SECRET, when set: printable ASCII (it travels as a header value),
+# long enough not to be guessed. Generate with e.g. `openssl rand -hex 32`.
+_ORIGIN_AUTH_SECRET_MIN_LENGTH = 32
+_PRINTABLE_ASCII_PATTERN = re.compile(r"[\x20-\x7e]+")
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # hide_input_in_errors: a validation error must never echo a secret value
+    # (e.g. ORIGIN_AUTH_SECRET) into boot logs.
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", hide_input_in_errors=True
+    )
 
     # Database
     database_url: str
@@ -38,6 +58,33 @@ class Settings(BaseSettings):
     # External APIs
     openai_api_key: str = ""
     openai_max_tokens: int = 512
+    # Multi-book scan: one photo can hold up to scan_max_books covers or spines.
+    # The JSON for 15 books needs far more room than openai_max_tokens allows,
+    # and high-detail images take longer to process, hence separate knobs.
+    scan_max_books: int = 15
+    scan_max_tokens: int = Field(
+        default=2048, ge=MAX_TOKENS_BOUNDS[0], le=MAX_TOKENS_BOUNDS[1]
+    )
+    scan_timeout_seconds: float = Field(
+        default=45.0, ge=TIMEOUT_S_BOUNDS[0], le=TIMEOUT_S_BOUNDS[1]
+    )
+    scan_model: str = "gpt-4o-mini"
+    # "Enhanced" scan — a stronger model the user can opt into when the standard
+    # scan misses books. Each successful enhanced scan costs one credit; new
+    # users start with enhanced_scan_free_credits.
+    scan_enhanced_model: str = "gpt-4o"
+    enhanced_scan_free_credits: int = 5
+    # Kill switches and daily caps for /scan, changeable via env without a
+    # release. scan_enabled=false rejects every scan before the image is
+    # processed, Turnstile is called or the provider is contacted (the framework
+    # has already received the multipart body); scan_enhanced_enabled=false
+    # rejects only enhanced scans. The caps
+    # count provider calls per UTC day (table scan_usage_daily); the per-user
+    # cap is exact, the global cap may overshoot slightly under concurrency.
+    scan_enabled: bool = True
+    scan_enhanced_enabled: bool = True
+    scan_daily_limit_per_user: int = Field(default=20, ge=1, le=1000)
+    scan_global_daily_limit: int = Field(default=2000, ge=1, le=1_000_000)
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 
@@ -103,12 +150,81 @@ class Settings(BaseSettings):
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]
 
+    # Client-IP trust (app/core/client_ip.py). "none": the socket peer, every
+    # forwarding header ignored. "cloudflare": a single valid CF-Connecting-IP
+    # value, else the socket peer. Any other value fails boot. When unset (or
+    # empty) it defaults to "cloudflare" in hardened environments and "none"
+    # otherwise — see _default_trusted_proxy_mode; after validation it always
+    # holds one of the two values.
+    trusted_proxy_mode: Literal["cloudflare", "none"] | None = None
+
+    # Origin lockdown (app/core/origin_auth.py). When origin_auth_secret is
+    # set, every request except /health must carry origin_auth_header with
+    # exactly that value, or it gets 403. Empty disables the check.
+    origin_auth_header: str = "X-Origin-Auth"
+    origin_auth_secret: str = ""
+
     @field_validator("cors_origins")
     @classmethod
     def no_wildcard_origins(cls, v: list[str]) -> list[str]:
         if "*" in v:
             raise ValueError("Wildcard '*' is not permitted in CORS_ORIGINS")
         return v
+
+    @field_validator("scan_model", "scan_enhanced_model")
+    @classmethod
+    def allowed_openai_model(cls, v: str, info) -> str:
+        if v not in ALLOWED_MODELS["openai"]:
+            raise ValueError(
+                f"{info.field_name.upper()}={v!r} is not an allowed OpenAI model; "
+                f"allowed: {', '.join(sorted(ALLOWED_MODELS['openai']))}"
+            )
+        return v
+
+    @field_validator("origin_auth_header")
+    @classmethod
+    def valid_header_name(cls, v: str) -> str:
+        if not _HEADER_NAME_PATTERN.fullmatch(v):
+            raise ValueError("ORIGIN_AUTH_HEADER must be a valid HTTP header name")
+        return v
+
+    @field_validator("trusted_proxy_mode", mode="before")
+    @classmethod
+    def empty_proxy_mode_is_unset(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("origin_auth_secret")
+    @classmethod
+    def valid_origin_auth_secret(cls, v: str) -> str:
+        # Messages describe the rule only; the value is never echoed.
+        if not v:
+            return v
+        if v != v.strip():
+            raise ValueError(
+                "ORIGIN_AUTH_SECRET must not have leading or trailing whitespace"
+            )
+        if not _PRINTABLE_ASCII_PATTERN.fullmatch(v):
+            raise ValueError("ORIGIN_AUTH_SECRET must be printable ASCII")
+        if len(v) < _ORIGIN_AUTH_SECRET_MIN_LENGTH:
+            raise ValueError(
+                "ORIGIN_AUTH_SECRET must be at least "
+                f"{_ORIGIN_AUTH_SECRET_MIN_LENGTH} characters"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _default_trusted_proxy_mode(self) -> "Settings":
+        """Unset TRUSTED_PROXY_MODE: "cloudflare" when hardened, else "none".
+
+        Hardened deployments are served through the Cloudflare edge, so the
+        safe default there is to key rate limits on CF-Connecting-IP; locally
+        there is no proxy and every forwarding header is ignored.
+        """
+        if self.trusted_proxy_mode is None:
+            self.trusted_proxy_mode = "cloudflare" if self.is_hardened else "none"
+        return self
 
     @field_validator("database_url")
     @classmethod
@@ -129,8 +245,9 @@ class Settings(BaseSettings):
 
         A public `staging` deployment is just as reachable by attackers as
         `production`, so it must get the same hardening (TrustedHost
-        enforcement, no /docs, no debug/test-only routes, HSTS, trusting
-        CF-Connecting-IP) even though it's tagged separately in Sentry.
+        enforcement, no /docs, no debug/test-only routes, HSTS) even though
+        it's tagged separately in Sentry. Which client-IP header is trusted is
+        a separate setting, ``trusted_proxy_mode``.
         """
         return self.environment not in {"development", "test"}
 

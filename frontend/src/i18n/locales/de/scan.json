@@ -24,5 +24,7 @@
   "addedTitle": "Zur Wunschliste hinzugefügt",
   "addedMessage": "\"{{title}}\" wurde zur Wunschliste hinzugefügt.",
   "couldNotSaveTitle": "Konnte nicht speichern",
-  "couldNotSaveMessage": "Buch konnte nicht zur Wunschliste hinzugefügt werden. Bitte erneut versuchen."
+  "couldNotSaveMessage": "Buch konnte nicht zur Wunschliste hinzugefügt werden. Bitte erneut versuchen.",
+  "queueFull": "Warteschlange voll. Warte, bis ausstehende Scans hochgeladen sind, bevor du weitere hinzufügst.",
+  "pendingUploads": "Ausstehende Uploads: {{count}}"
 }

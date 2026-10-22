@@ -1,7 +1,7 @@
 """Unit tests for user-books endpoints — DB and services mocked."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +13,7 @@ from app.models.user import User
 FAKE_USER = User(id="00000000-0000-0000-0000-000000000001", email="test@example.com")
 BOOK_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 USER_BOOK_ID = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 def _make_user_book(**overrides):

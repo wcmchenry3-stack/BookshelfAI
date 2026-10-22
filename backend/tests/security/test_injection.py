@@ -171,10 +171,14 @@ class TestScanUploadValidation:
         jpeg_magic = b"\xff\xd8\xff\xe0" + b"\x00" * 100
         data = io.BytesIO(jpeg_magic)
 
-        with patch(
-            "app.api.scan.ChatGPTVisionIdentifier.identify",
-            new_callable=AsyncMock,
-            return_value=[],
+        with (
+            patch(
+                "app.ai.providers.openai_vision.OpenAIVisionProvider.identify",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            # No database here: stub the daily-cap reservation.
+            patch("app.api.scan._reserve_daily_scan", new=AsyncMock()),
         ):
             response = client.post(
                 "/scan",

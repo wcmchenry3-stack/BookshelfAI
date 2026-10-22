@@ -3,5 +3,8 @@
   "close": "Close",
   "remove": "Remove",
   "noCoverAvailable": "No cover available",
-  "coverAlt": "Cover of {{title}}"
+  "coverAlt": "Cover of {{title}}",
+  "offlineTitle": "You're offline",
+  "requiresConnection": "This action requires an internet connection.",
+  "offlineEditNotice": "You're offline. Go online to edit your library."
 }

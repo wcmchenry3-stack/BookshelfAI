@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -113,7 +113,7 @@ async def add_purchased(
         )
     )
     user_book = ub_result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if user_book:
         user_book.status = "purchased"
@@ -155,7 +155,7 @@ async def update_user_book(
     if not user_book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if req.status and req.status != user_book.status:
         user_book.status = req.status

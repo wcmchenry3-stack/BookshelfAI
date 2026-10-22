@@ -1,9 +1,12 @@
 import logging
+from datetime import date
 
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.gateway import VisionPayload, run_feature
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -11,9 +14,9 @@ from app.core.file_security import sanitize_image, scan_for_malware
 from app.core.file_validation import validate_magic_bytes
 from app.core.limiter import limiter
 from app.models.user import User
-from app.schemas.book import EnrichedBook
+from app.schemas.book import EnrichedBook, ScanResponse
+from app.services import scan_quota
 from app.services.book_identifier import ScanUnavailableError
-from app.services.chatgpt_vision import ChatGPTVisionIdentifier
 from app.services.deduplication import DeduplicationService
 from app.services.enrichment import EnrichmentService
 
@@ -47,7 +50,84 @@ async def _verify_turnstile(token: str) -> bool:
         return False
 
 
-@router.post("/scan", response_model=list[EnrichedBook])
+def _dedupe_enriched(books: list[EnrichedBook]) -> list[EnrichedBook]:
+    """Drop books that resolved to the same work as an earlier one.
+
+    The vision model dedupes by title/author, but two differently-read spines
+    (e.g. a subtitle vs. none) can still enrich to the same Open Library work.
+    """
+    seen: set[str] = set()
+    unique: list[EnrichedBook] = []
+    for book in books:
+        keys = [
+            f"ol:{book.open_library_work_id}" if book.open_library_work_id else None,
+            f"gb:{book.google_books_id}" if book.google_books_id else None,
+        ]
+        keys = [k for k in keys if k]
+        if any(k in seen for k in keys):
+            continue
+        seen.update(keys)
+        unique.append(book)
+    return unique
+
+
+async def _spend_enhanced_credit(db: AsyncSession, user: User) -> int:
+    """Atomically decrement the user's enhanced-scan credits; return the balance.
+
+    The ``> 0`` guard makes two concurrent enhanced scans unable to drive the
+    balance negative — the loser simply isn't charged.
+    """
+    result = await db.execute(
+        update(User)
+        .where(User.id == user.id, User.enhanced_scan_credits > 0)
+        .values(enhanced_scan_credits=User.enhanced_scan_credits - 1)
+        .returning(User.enhanced_scan_credits)
+    )
+    remaining = result.scalar_one_or_none()
+    await db.commit()
+    return int(remaining) if remaining is not None else 0
+
+
+async def _reserve_daily_scan(db: AsyncSession, user: User, usage_day: date) -> None:
+    """Enforce the global and per-user daily caps, reserving one scan.
+
+    Runs on the request's own session, so no second pool connection is needed.
+    ``reserve_scan`` commits, which makes the reservation visible to concurrent
+    requests and hands the connection back to the pool before the provider is
+    called; the session factory uses ``expire_on_commit=False``, so ``user``
+    stays loaded after the commit.
+    """
+    used_globally = await scan_quota.global_scans_today(db, usage_day)
+    if used_globally >= settings.scan_global_daily_limit:
+        logger.warning("scan: global daily limit reached (%d)", used_globally)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="scan_capacity",
+        )
+    reserved = await scan_quota.reserve_scan(
+        db, user.id, usage_day, settings.scan_daily_limit_per_user
+    )
+    if reserved is None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="daily_scan_limit",
+            headers={"Retry-After": str(scan_quota.seconds_until_utc_midnight())},
+        )
+
+
+async def _refund_daily_scan(db: AsyncSession, user: User, usage_day: date) -> None:
+    """Give back a reservation; a failure here must not mask the original error."""
+    try:
+        await scan_quota.refund_scan(db, user.id, usage_day)
+    except Exception:
+        logger.exception("scan: failed to refund daily scan reservation")
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("scan: rollback after failed refund also failed")
+
+
+@router.post("/scan", response_model=ScanResponse)
 @limiter.limit(settings.rate_limit_scan)
 async def scan(
     request: Request,
@@ -55,7 +135,23 @@ async def scan(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     cf_turnstile_response: str | None = Form(None, alias="cf-turnstile-response"),
-) -> list[EnrichedBook]:
+    enhanced: bool = Form(False),
+) -> ScanResponse:
+    # --- Kill switches (env, no release needed) ---
+    # Checked first: before the image is processed, Turnstile is called or any
+    # provider is contacted. (The framework has already received the multipart
+    # body by the time the handler runs.)
+    if not settings.scan_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="scan_disabled",
+        )
+    if enhanced and not settings.scan_enhanced_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="enhanced_scan_disabled",
+        )
+
     # --- Cloudflare Turnstile bot check ---
     # Enabled when TURNSTILE_REQUIRED=true (the default).
     # The startup handler already confirmed the secret key is present when required.
@@ -113,22 +209,56 @@ async def scan(
     # re-encoding to JPEG.  Consistent with the data:image/jpeg type sent to OpenAI.
     image_bytes = sanitize_image(image_bytes)
 
-    identifier = ChatGPTVisionIdentifier()
+    credits = current_user.enhanced_scan_credits or 0
+    if enhanced and credits <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="no_enhanced_credits",
+        )
+
+    # --- Daily caps: global ceiling, then an exact per-user reservation ---
+    usage_day = scan_quota.utc_today()
+    await _reserve_daily_scan(db, current_user, usage_day)
+
+    # The client only chooses standard vs enhanced; the gateway's registry
+    # decides the provider, model, token cap and timeout for that feature.
+    feature = "scan.enhanced" if enhanced else "scan.standard"
+    # The reservation is given back only when the provider reports itself
+    # unavailable or was never reached (connection not established). Any other
+    # failure (or a cancelled request) keeps it: the provider may already have
+    # been paid. An empty result also counts.
     try:
-        candidates = await identifier.identify(image_bytes)
-    except ScanUnavailableError:
+        result = await run_feature(
+            feature,
+            user=current_user,
+            db=db,
+            payload=VisionPayload(image_bytes=image_bytes),
+        )
+    except (ScanUnavailableError, httpx.ConnectError):
+        # ConnectError: the connection to the provider was never established,
+        # so nothing was billed; treat it like any other unavailability.
+        await _refund_daily_scan(db, current_user, usage_day)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="scan_unavailable",
-        )
+        ) from None
+    candidates = result.candidates
 
     if not candidates:
-        return []
+        return ScanResponse(books=[], enhanced=enhanced, enhanced_scan_credits=credits)
 
     enrichment = EnrichmentService()
-    enriched = await enrichment.enrich(candidates)
+    enriched = await enrichment.enrich(candidates, limit=settings.scan_max_books)
+    enriched = _dedupe_enriched(enriched)
 
     dedup = DeduplicationService()
     enriched = await dedup.check(db, str(current_user.id), enriched)
 
-    return enriched
+    # Charge only once there are books to hand back: an enhanced scan that
+    # yields nothing — no candidates, or every lookup failed — is free.
+    if enhanced and enriched:
+        credits = await _spend_enhanced_credit(db, current_user)
+
+    return ScanResponse(
+        books=enriched, enhanced=enhanced, enhanced_scan_credits=credits
+    )

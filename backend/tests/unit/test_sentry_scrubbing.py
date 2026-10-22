@@ -104,6 +104,38 @@ class TestDenylist:
         assert _is_filtered(headers["cf-turnstile-response"])
         assert headers["User-Agent"] == "BookShelfAI/1.0"
 
+    def test_origin_auth_header_is_filtered(self):
+        event = {
+            "request": {
+                "headers": {
+                    "X-Origin-Auth": "origin-shared-value",
+                    "User-Agent": "BookShelfAI/1.0",
+                }
+            }
+        }
+        build_event_scrubber().scrub_event(event)
+        headers = event["request"]["headers"]
+        assert _is_filtered(headers["X-Origin-Auth"])
+        assert headers["User-Agent"] == "BookShelfAI/1.0"
+
+    def test_custom_origin_auth_header_name_is_filtered(self, monkeypatch):
+        """The denylist follows ORIGIN_AUTH_HEADER, not a hard-coded name."""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "origin_auth_header", "X-Edge-Proof")
+        event = {
+            "request": {
+                "headers": {
+                    "x-edge-proof": "origin-shared-value",
+                    "X-Origin-Auth": "not-the-configured-header",
+                }
+            }
+        }
+        build_event_scrubber().scrub_event(event)
+        headers = event["request"]["headers"]
+        assert _is_filtered(headers["x-edge-proof"])
+        assert headers["X-Origin-Auth"] == "not-the-configured-header"
+
 
 class _RefreshRequest(BaseModel):
     refresh_token: str

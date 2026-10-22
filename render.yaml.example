@@ -98,7 +98,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-prod-api-domain> https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-prod-api-domain> https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -191,7 +191,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-dev-api-domain> https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://<your-dev-api-domain> https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache

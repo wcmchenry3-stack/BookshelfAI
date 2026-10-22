@@ -24,5 +24,7 @@
   "addedTitle": "위시리스트에 추가됨",
   "addedMessage": "\"{{title}}\"이(가) 위시리스트에 추가되었습니다.",
   "couldNotSaveTitle": "저장 불가",
-  "couldNotSaveMessage": "책을 위시리스트에 추가할 수 없습니다. 다시 시도해 주세요."
+  "couldNotSaveMessage": "책을 위시리스트에 추가할 수 없습니다. 다시 시도해 주세요.",
+  "queueFull": "대기열이 가득 찼습니다. 대기 중인 스캔이 업로드된 후에 추가해 주세요.",
+  "pendingUploads": "대기 중인 업로드: {{count}}"
 }

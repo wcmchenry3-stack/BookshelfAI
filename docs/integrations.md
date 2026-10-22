@@ -31,9 +31,9 @@ Every third-party service Bookshelf talks to, what role it plays, and where to l
 **Endpoint:** `https://api.openai.com/v1/chat/completions`
 **Model:** `gpt-4o-mini`
 **Key env var:** `OPENAI_API_KEY`
-**Timeout:** 15 seconds (httpx)
-**Max tokens:** `OPENAI_MAX_TOKENS` (default 512)
-**Source:** `backend/app/services/chatgpt_vision.py`
+**Timeout:** 45 seconds (`SCAN_TIMEOUT_SECONDS`)
+**Max tokens:** `SCAN_MAX_TOKENS` (default 2048), applied via the feature registry
+**Source:** `backend/app/ai/providers/openai_vision.py`, called only through the AI gateway (`backend/app/ai/gateway.py`)
 
 **Prompt strategy** — structured JSON output, no free text:
 > You are a book identification assistant. Given a photo of a book cover, identify the book and return a JSON array of up to 3 candidates ranked by confidence. Each candidate must have title, author, confidence (0–1), isbn_13 (nullable), isbn_10 (nullable). Return ONLY a valid JSON array, no other text.
@@ -43,6 +43,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Error handling:**
 - Timeout → `ScanUnavailableError` → endpoint returns `503 scan_unavailable`
 - Non-2xx (including 429 rate limit) → `ScanUnavailableError` → 503
+- Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
 - JSON parse failure → returns empty candidate list (endpoint returns `200 []`)
 - Malformed candidate entries skipped individually (try/except on each)
 
@@ -127,9 +128,9 @@ When configured, every `POST /scan` must include `cf-turnstile-response` as a mu
 
 Zone has Bot Fight Mode enabled — it 403s GitHub Actions runner IPs (Azure ranges) on free tier and **cannot be skipped via WAF custom rules**. See [architecture.md → ADR: CI health checks bypass Cloudflare](architecture.md#adr-ci-health-checks-bypass-cloudflare) for the full workaround (direct Render origin + `_HealthExemptTrustedHost`).
 
-### CloudflareRealIP middleware
+### Client IP and origin lockdown
 
-Restores `request.scope["client"]` from `CF-Connecting-IP` header so slowapi keys rate limits by real client IP in production, not Cloudflare's edge IP. See [architecture.md → Middleware stack](architecture.md#middleware-stack).
+With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client IP from a single valid `CF-Connecting-IP` header so slowapi keys rate limits by the real client, not Cloudflare's edge IP. `ORIGIN_AUTH_SECRET` turns on the origin lockdown, so only requests that came through the edge (plus `/health`) reach the API. See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
 
 ## Render
 
@@ -139,7 +140,7 @@ Restores `request.scope["client"]` from `CF-Connecting-IP` header so slowapi key
 
 **Service:** `bookshelf-api` — Python, Oregon region, `starter` plan.
 - Build: `pip install -r requirements.txt`
-- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers`
 - **Pre-deploy:** `alembic upgrade head` — migrations run before the new version takes traffic. A failing migration blocks the deploy (test migrations locally first).
 - Health check path: `/health`
 - Root dir: `backend/`

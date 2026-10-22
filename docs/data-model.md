@@ -8,6 +8,7 @@ PostgreSQL schema, entity reference, and the dedup strategy that makes the colle
 erDiagram
   USERS ||--o{ USER_BOOKS : owns
   USERS ||--o{ REFRESH_TOKENS : issued
+  USERS ||--o{ SCAN_USAGE_DAILY : "scans per day"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
@@ -36,7 +37,7 @@ erDiagram
   }
   EDITIONS {
     uuid id PK
-    uuid book_id FK "indexed, cascade delete"
+    uuid book_id FK "indexed, restrict delete"
     string isbn_13 UK
     string isbn_10
     string publisher
@@ -49,7 +50,7 @@ erDiagram
   USER_BOOKS {
     uuid id PK
     uuid user_id FK "indexed, cascade delete"
-    uuid book_id FK "cascade delete"
+    uuid book_id FK "restrict delete"
     uuid edition_id FK "optional"
     string status "indexed, check constraint"
     timestamptz wishlisted_at
@@ -69,9 +70,26 @@ erDiagram
     timestamptz expires_at
     timestamptz revoked_at
   }
+  SCAN_USAGE_DAILY {
+    uuid user_id PK,FK "cascade delete"
+    date usage_date PK "UTC, indexed"
+    int scans
+  }
 ```
 
-All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`). All timestamps are `TIMESTAMPTZ` (UTC). `ON DELETE CASCADE` is set on every FK except `user_books.edition_id` (which is nullable and intentionally does not cascade — deleting an edition leaves the `UserBook` with a dangling edition reference).
+All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`). All timestamps are `TIMESTAMPTZ` (UTC).
+
+**Deletion semantics.** Shared catalog rows (`books`, `editions`) must never take user data with them:
+
+| FK | `ON DELETE` | Effect |
+|---|---|---|
+| `user_books.user_id` → `users.id` | `CASCADE` | Deleting an account removes that user's library (intentional). |
+| `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
+| `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
+| `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
+| `user_books.edition_id` → `editions.id` | none (`NO ACTION`) | An edition referenced by a `UserBook` cannot be deleted. |
+
+An unreferenced book can be deleted. The ORM relationships `Book.editions` and `Book.user_books` have no delete cascade and use `passive_deletes="all"`, so the ORM never deletes or nulls out children (even when they are loaded in the session) and the `ON DELETE RESTRICT` FKs reject the delete (migration `0004`).
 
 ## Entity reference
 
@@ -106,8 +124,8 @@ Represents the **conceptual work** — the thing a user would say "I own Dune" a
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
 **Relationships:**
-- `editions` → `Edition[]` (cascade delete — dropping a Book drops all its Editions)
-- `user_books` → `UserBook[]` (cascade delete — dropping a Book drops all users' tracking rows)
+- `editions` → `Edition[]` (no cascade — a Book with Editions cannot be deleted)
+- `user_books` → `UserBook[]` (no cascade — a Book in any user's library cannot be deleted)
 
 ### `editions` (`backend/app/models/edition.py`)
 
@@ -116,7 +134,7 @@ Specific publication of a Book. Captures ISBN, publisher, year, format.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | generated |
-| `book_id` | UUID FK → `books.id`, indexed, cascade delete, not null | |
+| `book_id` | UUID FK → `books.id`, indexed, restrict delete, not null | |
 | `isbn_13` | string, **unique**, nullable | canonical identifier |
 | `isbn_10` | string, nullable | legacy form |
 | `publisher` | string, nullable | |
@@ -134,7 +152,7 @@ The user's relationship to a Book — this is the "bookshelf" row.
 |---|---|---|
 | `id` | UUID PK | generated |
 | `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | |
-| `book_id` | UUID FK → `books.id`, cascade delete, not null | |
+| `book_id` | UUID FK → `books.id`, restrict delete, not null | |
 | `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet |
 | `status` | string, indexed, not null | check constraint: `wishlisted`, `purchased`, `reading`, `read` |
 | `wishlisted_at` | timestamptz, nullable | set when status first enters `wishlisted` |
@@ -161,6 +179,20 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 | `revoked_at` | timestamptz, nullable | set on `/auth/refresh` (old jti) or `/auth/logout` |
 
 **Lifecycle:** `/auth/refresh` validates the presented refresh JWT → checks `jti` exists and `revoked_at IS NULL` → issues a new access+refresh pair, inserts a new row, and sets `revoked_at = now()` on the old row. The effect is that **refresh tokens are single-use** — a stolen copy is invalidated by the legitimate client's next refresh.
+
+### `scan_usage_daily` (`backend/app/models/scan_usage.py`)
+
+Counts scans that reached the vision provider, per user per UTC day. Backs the per-user and global daily scan caps ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
+| `usage_date` | date, PK part, indexed (`ix_scan_usage_daily_usage_date`) | UTC day |
+| `scans` | int, not null, server default 0 | incremented by the reservation upsert, decremented (never below 0) on a refund |
+
+**Keys:** the composite primary key `(user_id, usage_date)` is the unique key the reservation upsert targets. The `usage_date` index serves the global daily sum and the retention purge.
+
+**Volume and retention:** one row per active user per day (~40 bytes of data, roughly 100 bytes on disk with the indexes). The daily cleanup task (`app/services/token_cleanup.py`, calling `scan_quota.purge_old_scan_usage`) deletes rows with `usage_date` older than 90 days, in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade.
 
 ## Dedup strategy — why work_id, not ISBN
 
@@ -198,10 +230,13 @@ if candidate.google_books_id:
 
 ## Migration workflow
 
-Migrations are managed with Alembic and live in `backend/alembic/versions/`. Two migrations exist today:
+Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 
 - `0001_initial_schema.py` — creates `users`, `books`, `editions`, `user_books`
 - `0002_refresh_tokens.py` — adds `refresh_tokens` table
+- `0003_enhanced_scan_credits.py` — adds `users.enhanced_scan_credits`
+- `0004_restrict_catalog_deletes.py` — `user_books.book_id` and `editions.book_id` FKs become `ON DELETE RESTRICT`
+- `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps)
 
 ### Writing a new migration
 

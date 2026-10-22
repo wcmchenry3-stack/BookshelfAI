@@ -2,11 +2,15 @@ import React from 'react';
 import { render, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { FeedbackWidget } from '../../components/FeedbackWidget/FeedbackWidget';
 import { SessionLogger } from '../../components/FeedbackWidget/SessionLogger';
+import { _resetFeedbackThrottle } from '../../components/FeedbackWidget/useFeedbackSubmit';
+import { Sentry } from '../../lib/sentry';
 
-const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
-global.fetch = mockFetch;
+jest.mock('../../lib/sentry', () => ({
+  Sentry: { getClient: jest.fn(), captureFeedback: jest.fn() },
+}));
 
-const WORKER_URL = 'https://feedback-worker.wcmchenry3.workers.dev';
+const mockGetClient = Sentry.getClient as jest.Mock;
+const mockCaptureFeedback = Sentry.captureFeedback as jest.Mock;
 
 // Mock useTheme to avoid ThemeContext setup
 jest.mock('../../hooks/useTheme', () => ({
@@ -37,13 +41,13 @@ jest.mock('../../hooks/useTheme', () => ({
 }));
 
 beforeEach(() => {
-  mockFetch.mockReset();
+  mockGetClient.mockReset().mockReturnValue({});
+  mockCaptureFeedback.mockReset();
   SessionLogger._reset();
-  process.env.EXPO_PUBLIC_FEEDBACK_WORKER_URL = WORKER_URL;
+  _resetFeedbackThrottle();
 });
 
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_FEEDBACK_WORKER_URL;
   SessionLogger._reset();
 });
 
@@ -95,7 +99,7 @@ describe('FeedbackWidget', () => {
         await fireEvent.press(getByText('Submit'));
       });
       expect(getByText('Title is required.')).toBeTruthy();
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockCaptureFeedback).not.toHaveBeenCalled();
     });
 
     it('shows description error when title filled but description empty', async () => {
@@ -108,18 +112,12 @@ describe('FeedbackWidget', () => {
         await fireEvent.press(getByText('Submit'));
       });
       expect(getByText('Description is required.')).toBeTruthy();
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockCaptureFeedback).not.toHaveBeenCalled();
     });
   });
 
   describe('successful submission', () => {
-    it('shows success message after 201 response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 201,
-        json: async () => ({ issueNumber: 12, issueUrl: 'https://github.com/issues/12' }),
-        headers: { get: () => null },
-      } as unknown as Response);
-
+    it('sends feedback to Sentry and shows the thank-you message', async () => {
       const { getByText, getByPlaceholderText } = await renderWidget();
       await fireEvent.changeText(
         getByPlaceholderText('Brief summary of the issue or idea'),
@@ -135,33 +133,47 @@ describe('FeedbackWidget', () => {
       await waitFor(() => {
         expect(getByText('Thanks for your feedback!')).toBeTruthy();
       });
-      expect(getByText('Your report was filed as issue #12.')).toBeTruthy();
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(1);
+      expect(mockCaptureFeedback.mock.calls[0][0].message).toBe('My title\n\nMy description');
     });
   });
 
   describe('error states', () => {
-    it('shows rate limit message on 429', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 429,
-        headers: { get: (h: string) => (h === 'Retry-After' ? '60' : null) },
-        json: async () => ({}),
-      } as unknown as Response);
-
-      const { getByText, getByPlaceholderText } = await renderWidget();
+    async function fillAndSubmit(r: Awaited<ReturnType<typeof renderWidget>>) {
       await fireEvent.changeText(
-        getByPlaceholderText('Brief summary of the issue or idea'),
+        r.getByPlaceholderText('Brief summary of the issue or idea'),
         'Title'
       );
       await fireEvent.changeText(
-        getByPlaceholderText("Describe what happened, or what you'd like to see..."),
+        r.getByPlaceholderText("Describe what happened, or what you'd like to see..."),
         'Description'
       );
       await act(async () => {
-        await fireEvent.press(getByText('Submit'));
+        await fireEvent.press(r.getByText('Submit'));
       });
+    }
+
+    it('shows the generic error when Sentry is not initialised', async () => {
+      mockGetClient.mockReturnValue(undefined);
+      const r = await renderWidget();
+      await fillAndSubmit(r);
       await waitFor(() => {
-        expect(getByText(/Too many submissions/)).toBeTruthy();
+        expect(r.getByText('Something went wrong. Please try again.')).toBeTruthy();
       });
+    });
+
+    it('shows the rate limit message on a rapid second submission', async () => {
+      const r = await renderWidget();
+      await fillAndSubmit(r);
+      await waitFor(() => expect(r.getByText('Thanks for your feedback!')).toBeTruthy());
+      await fireEvent.press(r.getByLabelText('Close'));
+
+      const r2 = await renderWidget();
+      await fillAndSubmit(r2);
+      await waitFor(() => {
+        expect(r2.getByText(/Too many submissions/)).toBeTruthy();
+      });
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(1);
     });
   });
 

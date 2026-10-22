@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import WishlistScreen from '../../app/(tabs)/wishlist';
@@ -109,7 +110,7 @@ describe('WishlistScreen', () => {
     await waitFor(() => expect(queryByText('Dune')).toBeNull());
   });
 
-  it('removes book optimistically before PATCH resolves', async () => {
+  it('keeps the book and locks its buttons until PATCH resolves, then removes it', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
     const { getByLabelText, queryByText } = await render(<WishlistScreen />);
 
@@ -124,18 +125,43 @@ describe('WishlistScreen', () => {
 
     // Deliberately not awaited: under v14, awaiting fireEvent.press blocks
     // until all work the event triggers has settled, which would hang here
-    // on the still-pending PATCH call — defeating the point of asserting
-    // optimistic (pre-resolution) UI state.
+    // on the still-pending PATCH call.
     fireEvent.press(getByLabelText('Mark Dune as purchased'));
 
-    // Item gone before PATCH resolves
-    await waitFor(() => expect(queryByText('Dune')).toBeNull());
+    // Server-authoritative: no optimistic removal while the request is in flight.
+    await waitFor(() =>
+      expect(getByLabelText('Mark Dune as purchased').props.accessibilityState.disabled).toBe(true)
+    );
+    expect(queryByText('Dune')).toBeTruthy();
+    expect(getByLabelText('Remove Dune from wishlist').props.accessibilityState.disabled).toBe(
+      true
+    );
+
     await act(async () => {
       resolvePatch();
     });
+    await waitFor(() => expect(queryByText('Dune')).toBeNull());
   });
 
-  it('restores book when PATCH fails', async () => {
+  it('ignores a second press while a request for the same book is in flight', async () => {
+    mockGet.mockResolvedValue({ data: [BOOK_1] });
+    mockPatch.mockReturnValue(new Promise(() => {}));
+    const { getByLabelText } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByLabelText('Mark Dune as purchased')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Mark Dune as purchased'));
+    await waitFor(() =>
+      expect(getByLabelText('Mark Dune as purchased').props.accessibilityState.disabled).toBe(true)
+    );
+    fireEvent.press(getByLabelText('Mark Dune as purchased'));
+    fireEvent.press(getByLabelText('Remove Dune from wishlist'));
+
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('keeps the book, alerts, and unlocks its buttons when PATCH fails', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockPatch.mockRejectedValue(new Error('Network error'));
     mockGet.mockResolvedValue({ data: [BOOK_1] });
     const { getByLabelText, queryByText } = await render(<WishlistScreen />);
@@ -145,7 +171,9 @@ describe('WishlistScreen', () => {
       await fireEvent.press(getByLabelText('Mark Dune as purchased'));
     });
 
-    await waitFor(() => expect(queryByText('Dune')).toBeTruthy());
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(queryByText('Dune')).toBeTruthy();
+    expect(getByLabelText('Mark Dune as purchased').props.accessibilityState.disabled).toBe(false);
   });
 
   it('calls DELETE and removes book when Remove pressed', async () => {
@@ -161,7 +189,7 @@ describe('WishlistScreen', () => {
     await waitFor(() => expect(queryByText('Dune')).toBeNull());
   });
 
-  it('removes book optimistically before DELETE resolves', async () => {
+  it('keeps the book until DELETE resolves, then removes it', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
     const { getByLabelText, queryByText } = await render(<WishlistScreen />);
 
@@ -177,13 +205,21 @@ describe('WishlistScreen', () => {
     // Deliberately not awaited — see the analogous PATCH test above for why.
     fireEvent.press(getByLabelText('Remove Dune from wishlist'));
 
-    await waitFor(() => expect(queryByText('Dune')).toBeNull());
+    await waitFor(() =>
+      expect(getByLabelText('Remove Dune from wishlist').props.accessibilityState.disabled).toBe(
+        true
+      )
+    );
+    expect(queryByText('Dune')).toBeTruthy();
+
     await act(async () => {
       resolveDelete();
     });
+    await waitFor(() => expect(queryByText('Dune')).toBeNull());
   });
 
-  it('restores book when DELETE fails', async () => {
+  it('keeps the book and alerts when DELETE fails', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockDelete.mockRejectedValue(new Error('Network error'));
     mockGet.mockResolvedValue({ data: [BOOK_1] });
     const { getByLabelText, queryByText } = await render(<WishlistScreen />);
@@ -193,7 +229,8 @@ describe('WishlistScreen', () => {
       await fireEvent.press(getByLabelText('Remove Dune from wishlist'));
     });
 
-    await waitFor(() => expect(queryByText('Dune')).toBeTruthy());
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(queryByText('Dune')).toBeTruthy();
   });
 
   it('fetches with status=wishlisted filter', async () => {

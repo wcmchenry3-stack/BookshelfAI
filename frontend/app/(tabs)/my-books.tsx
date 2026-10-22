@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -19,6 +19,8 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
+import { OfflineNotice } from '../../components/OfflineNotice';
+import { useOnlineOnly } from '../../hooks/useOnlineOnly';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
 
@@ -74,6 +76,36 @@ export default function MyBooksScreen() {
   const [activeTab, setActiveTab] = useState<Status>('all');
   const [selected, setSelected] = useState<UserBook | null>(null);
   const [query, setQuery] = useState('');
+  // Rows with a request in flight. The server is the source of truth, so the
+  // list only changes once a request succeeds; this just blocks double-taps.
+  // `mutatingRef` is the actual guard — it's checked-and-set synchronously, so
+  // two presses handled before a re-render can't both slip through the way
+  // they could reading `mutatingIds` state directly. `mutatingIds` just drives
+  // the disabled/opacity styling.
+  const mutatingRef = useRef<Set<string>>(new Set());
+  const [mutatingIds, setMutatingIds] = useState<ReadonlySet<string>>(new Set());
+  const { isConnected, requireOnline } = useOnlineOnly();
+
+  /** Atomically claims `id` for a mutation. Returns false if one is already in flight. */
+  function beginMutating(id: string): boolean {
+    if (mutatingRef.current.has(id)) return false;
+    mutatingRef.current.add(id);
+    setMutatingIds(new Set(mutatingRef.current));
+    return true;
+  }
+
+  function endMutating(id: string) {
+    mutatingRef.current.delete(id);
+    setMutatingIds(new Set(mutatingRef.current));
+  }
+
+  // Read inside the async mutation handlers below, so a tab switch while a
+  // request is in flight is picked up instead of applying a stale tab's rule
+  // to whatever list is on screen by the time the server responds.
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
   async function fetchBooks(tab: Status = activeTab) {
     try {
@@ -104,33 +136,37 @@ export default function MyBooksScreen() {
 
   async function handleAdvanceStatus(item: UserBook) {
     const next = NEXT_STATUS[item.status];
-    if (!next) return;
-    setBooks((prev) =>
-      activeTab === 'all'
-        ? prev.map((b) => (b.id === item.id ? { ...b, status: next } : b))
-        : prev.filter((b) => b.id !== item.id)
-    );
-    setSelected(null);
+    if (!next || !requireOnline() || !beginMutating(item.id)) return;
     try {
-      await api.patch(`/user-books/${item.id}`, { status: next });
+      const { data } = await api.patch<UserBook>(`/user-books/${item.id}`, { status: next });
+      // Only after the server confirms, and against whatever tab is current —
+      // not the tab that was active when the button was pressed, which the
+      // user may have since left (fetchBooks would have already replaced
+      // `books` with that tab's data).
+      setBooks((prev) => {
+        if (!prev.some((b) => b.id === item.id)) return prev;
+        return activeTabRef.current === 'all'
+          ? prev.map((b) => (b.id === item.id ? { ...b, ...data } : b))
+          : prev.filter((b) => b.id !== item.id);
+      });
+      setSelected(null);
     } catch {
-      setBooks((prev) =>
-        activeTab === 'all'
-          ? prev.map((b) => (b.id === item.id ? { ...b, status: item.status } : b))
-          : [...prev, item]
-      );
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorUpdateStatus'));
+    } finally {
+      endMutating(item.id);
     }
   }
 
   async function handleRemove(item: UserBook) {
-    setBooks((prev) => prev.filter((b) => b.id !== item.id));
-    setSelected(null);
+    if (!requireOnline() || !beginMutating(item.id)) return;
     try {
       await api.delete(`/user-books/${item.id}`);
+      setBooks((prev) => prev.filter((b) => b.id !== item.id));
+      setSelected(null);
     } catch {
-      setBooks((prev) => [...prev, item]);
       Alert.alert(t('errorTitle', { ns: 'common' }), t('errorRemoveBook'));
+    } finally {
+      endMutating(item.id);
     }
   }
 
@@ -141,6 +177,8 @@ export default function MyBooksScreen() {
       (b) => b.book.title.toLowerCase().includes(q) || b.book.author.toLowerCase().includes(q)
     );
   }, [books, query]);
+
+  const sheetActionsDisabled = !isConnected || (selected != null && mutatingIds.has(selected.id));
 
   if (loading) {
     return (
@@ -253,6 +291,8 @@ export default function MyBooksScreen() {
         </View>
       </ScrollView>
 
+      {!isConnected && <OfflineNotice />}
+
       {/* Bento list */}
       {filteredBooks.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -283,6 +323,7 @@ export default function MyBooksScreen() {
           }
           renderItem={({ item }) => {
             const nextStatus = NEXT_STATUS[item.status];
+            const actionsDisabled = !isConnected || mutatingIds.has(item.id);
             return (
               <Pressable
                 style={[
@@ -367,12 +408,18 @@ export default function MyBooksScreen() {
                   <View style={styles.actions}>
                     {nextStatus && (
                       <Pressable
-                        style={[styles.actionButton, { backgroundColor: activeColor }]}
+                        style={[
+                          styles.actionButton,
+                          { backgroundColor: activeColor },
+                          actionsDisabled && styles.actionDisabled,
+                        ]}
                         onPress={() => handleAdvanceStatus(item)}
+                        disabled={actionsDisabled}
                         accessibilityRole="button"
                         accessibilityLabel={t('markAsA11y', {
                           status: t(`status.${nextStatus}`),
                         })}
+                        accessibilityState={{ disabled: actionsDisabled }}
                       >
                         <Text
                           style={[
@@ -388,10 +435,13 @@ export default function MyBooksScreen() {
                       style={[
                         styles.actionButton,
                         { backgroundColor: theme.colors.secondaryContainer },
+                        actionsDisabled && styles.actionDisabled,
                       ]}
                       onPress={() => handleRemove(item)}
+                      disabled={actionsDisabled}
                       accessibilityRole="button"
                       accessibilityLabel={t('removeBookA11y', { title: item.book.title })}
+                      accessibilityState={{ disabled: actionsDisabled }}
                     >
                       <Text
                         style={[
@@ -485,12 +535,18 @@ export default function MyBooksScreen() {
 
               {NEXT_STATUS[selected.status] && (
                 <Pressable
-                  style={[styles.sheetButton, { backgroundColor: activeColor }]}
+                  style={[
+                    styles.sheetButton,
+                    { backgroundColor: activeColor },
+                    sheetActionsDisabled && styles.actionDisabled,
+                  ]}
                   onPress={() => handleAdvanceStatus(selected)}
+                  disabled={sheetActionsDisabled}
                   accessibilityRole="button"
                   accessibilityLabel={t('markAsA11y', {
                     status: t(`status.${NEXT_STATUS[selected.status]}`),
                   })}
+                  accessibilityState={{ disabled: sheetActionsDisabled }}
                 >
                   <Text
                     style={[
@@ -504,10 +560,16 @@ export default function MyBooksScreen() {
               )}
 
               <Pressable
-                style={[styles.sheetButton, { backgroundColor: theme.colors.surfaceContainerHigh }]}
+                style={[
+                  styles.sheetButton,
+                  { backgroundColor: theme.colors.surfaceContainerHigh },
+                  sheetActionsDisabled && styles.actionDisabled,
+                ]}
                 onPress={() => handleRemove(selected)}
+                disabled={sheetActionsDisabled}
                 accessibilityRole="button"
                 accessibilityLabel={t('removeBookA11y', { title: selected.book.title })}
+                accessibilityState={{ disabled: sheetActionsDisabled }}
               >
                 <Text
                   style={[
@@ -615,6 +677,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionText: { fontWeight: '600' },
+  actionDisabled: { opacity: 0.5 },
 
   // Empty
   emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },

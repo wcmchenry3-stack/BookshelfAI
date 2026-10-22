@@ -31,6 +31,8 @@ services:
     branch: main
     autoDeploy: false
     buildCommand: pip install -r requirements.txt
+    # --no-proxy-headers: the socket peer must never be rewritten from
+    # X-Forwarded-For; app/core/client_ip.py decides the client IP.
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
@@ -47,16 +49,17 @@ services:
         value: '["https://bookshelfai.buffingchi.com"]'
       - key: TRUSTED_HOSTS
         value: '["bookshelfapi.buffingchi.com"]'
-      # Cloudflare proxies all traffic; trust its IP headers only.
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      # Client IP for rate limiting comes from CF-Connecting-IP (the API is
+      # served through Cloudflare). This is also the default when unset in a
+      # hardened environment; set explicitly here for clarity. See
+      # docs/security.md "Client IP and origin lockdown" for the rollout order.
       - key: TRUSTED_PROXY_MODE
         value: cloudflare
-      # Origin auth: Cloudflare sets X-Origin-Auth on every request so the raw
-      # Render origin rejects anything that bypasses the CDN.  Set this to the
-      # same 32+ char secret configured in the Cloudflare Transform Rule.
-      # Leave unset to disable the check (safe during initial rollout).
+      # Origin lockdown shared secret; empty = disabled. Dashboard only;
+      # >= 32 printable ASCII characters (e.g. `openssl rand -hex 32`).
       - key: ORIGIN_AUTH_SECRET
-        sync: false
-      - key: TURNSTILE_SECRET_KEY
         sync: false
       - key: SENTRY_DSN
         sync: false
@@ -109,7 +112,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi.buffingchi.com https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -133,6 +136,8 @@ services:
     plan: starter
     branch: dev
     buildCommand: pip install -r requirements.txt
+    # --no-proxy-headers: the socket peer must never be rewritten from
+    # X-Forwarded-For; app/core/client_ip.py decides the client IP.
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
@@ -144,7 +149,7 @@ services:
           property: connectionString
       # staging, not development: Settings.is_hardened (PR #448) treats every
       # environment except development/test as hardened (TrustedHost,
-      # CF-Connecting-IP trust, /docs disabled, HSTS, /auth/test-login
+      # /docs disabled, HSTS, /auth/test-login
       # unregistered). Dev must exercise the hardened path like prod does.
       - key: ENVIRONMENT
         value: staging
@@ -152,13 +157,17 @@ services:
         sync: false # dashboard-authoritative — dev hostnames are not fixed here
       - key: TRUSTED_HOSTS
         sync: false # dashboard-authoritative — dev hostnames are not fixed here
-      # Cloudflare proxies all traffic; trust its IP headers only.
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      # Client IP for rate limiting comes from CF-Connecting-IP (the API is
+      # served through Cloudflare). This is also the default when unset in a
+      # hardened environment; set explicitly here for clarity. See
+      # docs/security.md "Client IP and origin lockdown" for the rollout order.
       - key: TRUSTED_PROXY_MODE
         value: cloudflare
-      # Origin auth: same secret as prod but scoped to the dev Cloudflare rule.
+      # Origin lockdown shared secret; empty = disabled. Dashboard only;
+      # >= 32 printable ASCII characters (e.g. `openssl rand -hex 32`).
       - key: ORIGIN_AUTH_SECRET
-        sync: false
-      - key: TURNSTILE_SECRET_KEY
         sync: false
       - key: SENTRY_DSN
         sync: false
@@ -208,7 +217,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com https://*.ingest.us.sentry.io https://feedback-worker.wcmchenry3.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self'"
       - path: /*
         name: Cache-Control
         value: no-cache

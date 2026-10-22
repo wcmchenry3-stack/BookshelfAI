@@ -3,5 +3,8 @@
   "close": "Cerrar",
   "remove": "Eliminar",
   "noCoverAvailable": "Sin portada disponible",
-  "coverAlt": "Portada de {{title}}"
+  "coverAlt": "Portada de {{title}}",
+  "offlineTitle": "Sin conexión",
+  "requiresConnection": "Esta acción requiere conexión a internet.",
+  "offlineEditNotice": "Estás sin conexión. Conéctate para editar tu biblioteca."
 }

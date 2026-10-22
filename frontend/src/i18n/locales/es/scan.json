@@ -24,5 +24,7 @@
   "addedTitle": "Añadido a wishlist",
   "addedMessage": "\"{{title}}\" se ha añadido a tu wishlist.",
   "couldNotSaveTitle": "No se pudo guardar",
-  "couldNotSaveMessage": "No se pudo añadir el libro a la wishlist. Inténtalo de nuevo."
+  "couldNotSaveMessage": "No se pudo añadir el libro a la wishlist. Inténtalo de nuevo.",
+  "queueFull": "Cola llena. Espera a que se suban los escaneos pendientes antes de añadir más.",
+  "pendingUploads": "Subidas pendientes: {{count}}"
 }

@@ -11,11 +11,8 @@
   "placeholder_description": "صف ما حدث أو ما تودّ رؤيته...",
   "submit": "إرسال",
   "submit_success": "شكرًا على ملاحظاتك!",
-  "submit_success_issue": "تم تسجيل تقريرك كمشكلة رقم #{{number}}.",
   "submit_error": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
   "submit_error_rate_limit": "طلبات كثيرة جدًا. يرجى الانتظار {{seconds}} ثانية.",
-  "submit_error_rejected": "لم يمكن قبول إرسالك. يرجى مراجعته والمحاولة مرة أخرى.",
-  "submit_error_network": "خطأ في الشبكة. يرجى التحقق من اتصالك والمحاولة مرة أخرى.",
   "error_title_required": "العنوان مطلوب.",
   "error_description_required": "الوصف مطلوب."
 }

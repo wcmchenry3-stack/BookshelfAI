@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class GoogleAuthRequest(BaseModel):
@@ -40,6 +40,13 @@ class UserRead(BaseModel):
     email: str
     display_name: str | None = None
     avatar_url: str | None = None
+    enhanced_scan_credits: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("enhanced_scan_credits", mode="before")
+    @classmethod
+    def _none_credits_to_zero(cls, v: int | None) -> int:
+        # Unflushed User instances haven't had the column default applied yet.
+        return v or 0

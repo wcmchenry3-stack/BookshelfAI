@@ -63,6 +63,7 @@ npx expo start            # press i for iOS sim, a for Android, w for web
 | [`docs/api.md`](docs/api.md) | REST endpoint reference with examples and error codes |
 | [`docs/integrations.md`](docs/integrations.md) | Google OAuth / Books / OpenAI / Open Library / Sentry / Cloudflare / Render |
 | [`docs/deployment.md`](docs/deployment.md) | Render config, env vars, release process, rollback |
+| [`docs/backups.md`](docs/backups.md) | Nightly encrypted DB backup to R2, owner setup, restore drill |
 | [`docs/testing.md`](docs/testing.md) | Test strategy (unit/integration/security/accuracy/perf), patterns, how to run |
 | [`docs/security.md`](docs/security.md) | Security controls, OWASP test cases, incident runbook |
 | [`docs/claude/`](docs/claude/) | Claude-specific guides (git workflow, iOS/Android CI, backend/frontend conventions) |

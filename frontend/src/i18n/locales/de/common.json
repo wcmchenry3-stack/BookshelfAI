@@ -3,5 +3,8 @@
   "close": "Schließen",
   "remove": "Entfernen",
   "noCoverAvailable": "Kein Cover verfügbar",
-  "coverAlt": "Cover von {{title}}"
+  "coverAlt": "Cover von {{title}}",
+  "offlineTitle": "Du bist offline",
+  "requiresConnection": "Für diese Aktion ist eine Internetverbindung erforderlich.",
+  "offlineEditNotice": "Du bist offline. Geh online, um deine Bibliothek zu bearbeiten."
 }

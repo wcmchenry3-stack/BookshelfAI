@@ -1,26 +1,30 @@
 import { renderHook, act } from '@testing-library/react-native';
-import { useFeedbackSubmit } from '../../components/FeedbackWidget/useFeedbackSubmit';
+import {
+  useFeedbackSubmit,
+  _resetFeedbackThrottle,
+  DESCRIPTION_MAX,
+  SUBMIT_COOLDOWN_MS,
+} from '../../components/FeedbackWidget/useFeedbackSubmit';
 import { SessionLogger } from '../../components/FeedbackWidget/SessionLogger';
+import { Sentry } from '../../lib/sentry';
 
-// Ensure the global fetch mock is available
-const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
-global.fetch = mockFetch;
+jest.mock('../../lib/sentry', () => ({
+  Sentry: { getClient: jest.fn(), captureFeedback: jest.fn() },
+}));
 
-const WORKER_URL = 'https://feedback-worker.wcmchenry3.workers.dev';
-
-function mockEnv(url: string) {
-  process.env.EXPO_PUBLIC_FEEDBACK_WORKER_URL = url;
-}
+const mockGetClient = Sentry.getClient as jest.Mock;
+const mockCaptureFeedback = Sentry.captureFeedback as jest.Mock;
 
 beforeEach(() => {
-  mockFetch.mockReset();
+  mockGetClient.mockReset().mockReturnValue({});
+  mockCaptureFeedback.mockReset();
   SessionLogger._reset();
-  mockEnv(WORKER_URL);
+  _resetFeedbackThrottle();
 });
 
 afterEach(() => {
-  delete process.env.EXPO_PUBLIC_FEEDBACK_WORKER_URL;
   SessionLogger._reset();
+  jest.useRealTimers();
 });
 
 const basePayload = {
@@ -29,211 +33,143 @@ const basePayload = {
   type: 'bug' as const,
 };
 
+async function submitOnce(payload = basePayload) {
+  const hook = await renderHook(() => useFeedbackSubmit());
+  await act(async () => {
+    await hook.result.current.submit(payload);
+  });
+  return hook;
+}
+
 describe('useFeedbackSubmit', () => {
-  describe('initial state', () => {
-    it('starts idle with no result or error', async () => {
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      expect(result.current.status).toBe('idle');
-      expect(result.current.result).toBeNull();
-      expect(result.current.error).toBeNull();
-    });
+  it('starts idle with no error', async () => {
+    const { result } = await renderHook(() => useFeedbackSubmit());
+    expect(result.current.status).toBe('idle');
+    expect(result.current.error).toBeNull();
   });
 
   describe('successful submission', () => {
-    it('transitions idle → submitting → success', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 201,
-        json: async () => ({ issueNumber: 42, issueUrl: 'https://github.com/issues/42' }),
-        headers: { get: () => null },
-      } as unknown as Response);
-
-      const { result } = await renderHook(() => useFeedbackSubmit());
-
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
+    it('sends title, description and type to Sentry and reports success', async () => {
+      const { result } = await submitOnce();
 
       expect(result.current.status).toBe('success');
-      expect(result.current.result).toEqual({
-        issueNumber: 42,
-        issueUrl: 'https://github.com/issues/42',
-      });
       expect(result.current.error).toBeNull();
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(1);
+      const [params] = mockCaptureFeedback.mock.calls[0];
+      expect(params.message).toBe('Test title\n\nTest description');
+      expect(params.tags).toEqual({ feedback_type: 'bug' });
     });
 
-    it('sends appId: gaming_app in request body', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 201,
-        json: async () => ({ issueNumber: 1, issueUrl: 'https://github.com/issues/1' }),
-        headers: { get: () => null },
-      } as unknown as Response);
+    it('sends no name or email', async () => {
+      await submitOnce();
+      const [params] = mockCaptureFeedback.mock.calls[0];
+      expect(params.name).toBeUndefined();
+      expect(params.email).toBeUndefined();
+    });
 
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
-
-      const [, init] = mockFetch.mock.calls[0];
-      const body = JSON.parse((init as RequestInit).body as string);
-      expect(body.appId).toBe('book_app');
+    it('truncates the description to DESCRIPTION_MAX', async () => {
+      await submitOnce({ ...basePayload, description: 'x'.repeat(DESCRIPTION_MAX + 500) });
+      const [params] = mockCaptureFeedback.mock.calls[0];
+      expect(params.message).toBe(`Test title\n\n${'x'.repeat(DESCRIPTION_MAX)}`);
     });
 
     it('attaches session logs when present', async () => {
       SessionLogger.init();
       console.warn('captured log');
 
-      mockFetch.mockResolvedValueOnce({
-        status: 201,
-        json: async () => ({ issueNumber: 1, issueUrl: '' }),
-        headers: { get: () => null },
-      } as unknown as Response);
+      await submitOnce();
 
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
-
-      const [, init] = mockFetch.mock.calls[0];
-      const body = JSON.parse((init as RequestInit).body as string);
-      expect(body.sessionLogs).toMatch(/captured log/);
+      const [, hint] = mockCaptureFeedback.mock.calls[0];
+      expect(hint.attachments).toHaveLength(1);
+      expect(hint.attachments[0].filename).toBe('session-logs.txt');
+      expect(hint.attachments[0].data).toMatch(/captured log/);
     });
 
-    it('omits sessionLogs key when buffer is empty', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 201,
-        json: async () => ({ issueNumber: 1, issueUrl: '' }),
-        headers: { get: () => null },
-      } as unknown as Response);
+    it('does not attach session logs to a feature request', async () => {
+      SessionLogger.init();
+      console.warn('captured log');
 
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
+      await submitOnce({ ...basePayload, type: 'feature' });
 
-      const [, init] = mockFetch.mock.calls[0];
-      const body = JSON.parse((init as RequestInit).body as string);
-      expect(body.sessionLogs).toBeUndefined();
+      const [, hint] = mockCaptureFeedback.mock.calls[0];
+      expect(hint.attachments).toBeUndefined();
+    });
+
+    it('omits the attachment when the log buffer is empty', async () => {
+      await submitOnce();
+      const [, hint] = mockCaptureFeedback.mock.calls[0];
+      expect(hint.attachments).toBeUndefined();
     });
   });
 
-  describe('rate limit (429)', () => {
-    it('sets error kind: rate_limit with Retry-After from header', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 429,
-        headers: { get: (h: string) => (h === 'Retry-After' ? '120' : null) },
-        json: async () => ({}),
-      } as unknown as Response);
+  describe('client throttle', () => {
+    it('rejects a second submission inside the cooldown with rate_limit', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const { result } = await submitOnce();
+      expect(result.current.status).toBe('success');
 
-      const { result } = await renderHook(() => useFeedbackSubmit());
+      jest.setSystemTime(new Date('2026-01-01T00:00:20Z'));
       await act(async () => {
         await result.current.submit(basePayload);
       });
 
       expect(result.current.status).toBe('error');
-      expect(result.current.error).toEqual({ kind: 'rate_limit', retryAfterSeconds: 120 });
+      expect(result.current.error).toEqual({ kind: 'rate_limit', retryAfterSeconds: 40 });
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(1);
     });
 
-    it('defaults retryAfterSeconds to 60 when Retry-After header absent', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 429,
-        headers: { get: () => null },
-        json: async () => ({}),
-      } as unknown as Response);
+    it('allows another submission after the cooldown', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const { result } = await submitOnce();
 
-      const { result } = await renderHook(() => useFeedbackSubmit());
+      jest.setSystemTime(Date.now() + SUBMIT_COOLDOWN_MS + 1);
       await act(async () => {
         await result.current.submit(basePayload);
       });
 
-      expect(result.current.error?.retryAfterSeconds).toBe(60);
-    });
-  });
-
-  describe('rejected (422)', () => {
-    it('sets error kind: rejected', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 422,
-        headers: { get: () => null },
-        json: async () => ({}),
-      } as unknown as Response);
-
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
-
-      expect(result.current.status).toBe('error');
-      expect(result.current.error).toEqual({ kind: 'rejected' });
+      expect(result.current.status).toBe('success');
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(2);
     });
   });
 
-  describe('network error', () => {
-    it('sets error kind: network when fetch throws', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network request failed'));
+  describe('failure', () => {
+    it('reports an error and does not send when Sentry is not initialised', async () => {
+      mockGetClient.mockReturnValue(undefined);
 
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
-
-      expect(result.current.status).toBe('error');
-      expect(result.current.error).toEqual({ kind: 'network' });
-    });
-  });
-
-  describe('unknown error', () => {
-    it('sets error kind: unknown for unexpected status codes', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 500,
-        headers: { get: () => null },
-        json: async () => ({}),
-      } as unknown as Response);
-
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
+      const { result } = await submitOnce();
 
       expect(result.current.status).toBe('error');
       expect(result.current.error).toEqual({ kind: 'unknown' });
+      expect(mockCaptureFeedback).not.toHaveBeenCalled();
     });
-  });
 
-  describe('no-op when WORKER_URL unset', () => {
-    it('returns without calling fetch', async () => {
-      delete process.env.EXPO_PUBLIC_FEEDBACK_WORKER_URL;
-
-      const { result } = await renderHook(() => useFeedbackSubmit());
-      await act(async () => {
-        await result.current.submit(basePayload);
+    it('reports an error and skips the throttle when captureFeedback throws', async () => {
+      mockCaptureFeedback.mockImplementationOnce(() => {
+        throw new Error('boom');
       });
 
-      expect(mockFetch).not.toHaveBeenCalled();
-      // Status stays idle (no transition since the hook bails early before setStatus)
-      expect(result.current.status).toBe('idle');
-    });
-  });
+      const { result } = await submitOnce();
+      expect(result.current.status).toBe('error');
+      expect(result.current.error).toEqual({ kind: 'unknown' });
 
-  describe('reset()', () => {
-    it('clears status, result, and error back to initial state', async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 201,
-        json: async () => ({ issueNumber: 5, issueUrl: '' }),
-        headers: { get: () => null },
-      } as unknown as Response);
-
-      const { result } = await renderHook(() => useFeedbackSubmit());
       await act(async () => {
         await result.current.submit(basePayload);
       });
       expect(result.current.status).toBe('success');
+    });
+  });
+
+  describe('reset()', () => {
+    it('clears status and error back to initial state', async () => {
+      mockGetClient.mockReturnValue(undefined);
+      const { result } = await submitOnce();
+      expect(result.current.status).toBe('error');
 
       await act(() => {
         result.current.reset();
       });
 
       expect(result.current.status).toBe('idle');
-      expect(result.current.result).toBeNull();
       expect(result.current.error).toBeNull();
     });
   });

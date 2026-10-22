@@ -14,6 +14,7 @@ See docs/RENDER.md for the full topology.
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 RENDER_YAML_PATH = Path(__file__).resolve().parents[3] / "render.yaml"
@@ -26,10 +27,7 @@ _SECRET_KEY_EXACT = {"SENTRY_DSN", "TURNSTILE_SECRET_KEY"}
 
 _POSTGRES_URL_PATTERN = re.compile(r"postgres(ql)?(\+\w+)?://")
 
-_REQUIRED_CSP_ORIGINS = (
-    "https://*.ingest.us.sentry.io",
-    "https://feedback-worker.wcmchenry3.workers.dev",
-)
+_REQUIRED_CSP_ORIGINS = ("https://*.ingest.us.sentry.io",)
 
 
 def _load_render_yaml() -> dict:
@@ -161,7 +159,7 @@ def test_prod_web_csp_references_prod_api_and_not_dev():
     assert "-dev" not in csp
 
 
-def test_prod_web_csp_includes_sentry_and_feedback_worker_origins():
+def test_prod_web_csp_includes_sentry_origin():
     config = _load_render_yaml()
     prod_web = _service(config, "bookshelf-web")
     csp = _header_value(prod_web, "Content-Security-Policy")
@@ -179,12 +177,20 @@ def test_dev_web_csp_does_not_reference_prod_api():
     assert "https://bookshelfapi.buffingchi.com" not in csp
 
 
-def test_dev_web_csp_includes_sentry_and_feedback_worker_origins():
+def test_dev_web_csp_includes_sentry_origin():
     config = _load_render_yaml()
     dev_web = _service(config, "bookshelf-web-dev")
     csp = _header_value(dev_web, "Content-Security-Policy")
     for origin in _REQUIRED_CSP_ORIGINS:
         assert origin in csp, f"bookshelf-web-dev CSP is missing {origin!r}"
+
+
+@pytest.mark.parametrize("service_name", ["bookshelf-web", "bookshelf-web-dev"])
+def test_web_csp_does_not_allow_retired_feedback_worker(service_name):
+    csp = _header_value(
+        _service(_load_render_yaml(), service_name), "Content-Security-Policy"
+    )
+    assert "workers.dev" not in csp
 
 
 # --- Secret-leak guards -------------------------------------------------------
@@ -244,39 +250,35 @@ def test_secret_shaped_env_vars_never_carry_a_literal_value():
             )
 
 
-# --- Origin auth and proxy mode guards ---------------------------------------
+# --- Client-IP trust and origin lockdown (#510) -----------------------------
+
+_API_SERVICES = ("bookshelf-api", "bookshelf-api-dev")
 
 
-def test_api_services_have_trusted_proxy_mode_cloudflare():
-    """Both API services must declare TRUSTED_PROXY_MODE=cloudflare."""
-    config = _load_render_yaml()
-    for name in ("bookshelf-api", "bookshelf-api-dev"):
-        svc = _service(config, name)
-        var = _env_var(svc, "TRUSTED_PROXY_MODE")
-        assert var.get("value") == "cloudflare", (
-            f"{name}: TRUSTED_PROXY_MODE must be 'cloudflare'"
-        )
+@pytest.mark.parametrize("name", _API_SERVICES)
+def test_api_start_command_disables_uvicorn_proxy_headers(name):
+    """uvicorn must not rewrite the socket peer from X-Forwarded-For; the
+    client IP is decided only by app/core/client_ip.py."""
+    service = _service(_load_render_yaml(), name)
+    assert "--no-proxy-headers" in service["startCommand"].split()
 
 
-def test_api_services_have_origin_auth_secret_as_dashboard_secret():
-    """ORIGIN_AUTH_SECRET must be sync:false on both API services."""
-    config = _load_render_yaml()
-    for name in ("bookshelf-api", "bookshelf-api-dev"):
-        svc = _service(config, name)
-        var = _env_var(svc, "ORIGIN_AUTH_SECRET")
-        assert var.get("sync") is False, (
-            f"{name}: ORIGIN_AUTH_SECRET must be sync:false"
-        )
-        assert "value" not in var, (
-            f"{name}: ORIGIN_AUTH_SECRET must not carry a literal value"
-        )
+def test_dockerfile_disables_uvicorn_proxy_headers():
+    dockerfile = (RENDER_YAML_PATH.parent / "backend" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert '"--no-proxy-headers"' in dockerfile
 
 
-def test_api_services_use_no_proxy_headers_flag():
-    """Both API services must pass --no-proxy-headers in the start command."""
-    config = _load_render_yaml()
-    for name in ("bookshelf-api", "bookshelf-api-dev"):
-        svc = _service(config, name)
-        assert "--no-proxy-headers" in svc.get("startCommand", ""), (
-            f"{name}: startCommand must include --no-proxy-headers"
-        )
+@pytest.mark.parametrize("name", _API_SERVICES)
+def test_api_trusts_cloudflare_client_ip(name):
+    service = _service(_load_render_yaml(), name)
+    assert _env_var(service, "TRUSTED_PROXY_MODE")["value"] == "cloudflare"
+
+
+@pytest.mark.parametrize("name", _API_SERVICES)
+def test_api_origin_auth_secret_is_dashboard_secret(name):
+    service = _service(_load_render_yaml(), name)
+    env_var = _env_var(service, "ORIGIN_AUTH_SECRET")
+    assert env_var.get("sync") is False
+    assert "value" not in env_var

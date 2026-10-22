@@ -1,7 +1,7 @@
 """Unit tests for auth endpoints — DB and Google verification mocked."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -12,7 +12,7 @@ from app.main import app
 from app.models.user import User
 
 FAKE_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 FAKE_USER = User(
     id=FAKE_USER_ID,
     email="test@example.com",
@@ -266,13 +266,13 @@ class TestRefresh:
         assert "revoked or not found" in resp.json()["detail"].lower()
 
     def test_returns_401_for_revoked_token(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from app.core.database import get_db
         from app.models.refresh_token import RefreshToken
 
         revoked_record = MagicMock(spec=RefreshToken)
-        revoked_record.revoked_at = datetime.now(timezone.utc)
+        revoked_record.revoked_at = datetime.now(UTC)
 
         async def _db_revoked():
             db = AsyncMock()
@@ -447,13 +447,13 @@ class TestLogout:
         assert resp.status_code == 204
 
     def test_returns_204_for_already_revoked_token(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from app.core.database import get_db
         from app.models.refresh_token import RefreshToken
 
         revoked_record = MagicMock(spec=RefreshToken)
-        revoked_record.revoked_at = datetime.now(timezone.utc)
+        revoked_record.revoked_at = datetime.now(UTC)
 
         async def _db():
             db = AsyncMock()

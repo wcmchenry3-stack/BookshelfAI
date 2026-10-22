@@ -3,5 +3,8 @@
   "close": "关闭",
   "remove": "移除",
   "noCoverAvailable": "无封面",
-  "coverAlt": "{{title}} 的封面"
+  "coverAlt": "{{title}} 的封面",
+  "offlineTitle": "您已离线",
+  "requiresConnection": "此操作需要联网。",
+  "offlineEditNotice": "您已离线。请联网后再编辑您的书库。"
 }

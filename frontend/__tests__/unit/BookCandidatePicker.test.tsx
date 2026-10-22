@@ -42,7 +42,7 @@ const BOOKS: EnrichedBook[] = [
 ];
 
 describe('BookCandidatePicker', () => {
-  const onSelect = jest.fn();
+  const onConfirm = jest.fn();
   const onDismiss = jest.fn();
 
   beforeEach(() => {
@@ -54,7 +54,7 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={false}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
@@ -66,7 +66,7 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
@@ -79,7 +79,7 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
@@ -92,7 +92,7 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
@@ -104,24 +104,133 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
     expect(getByText('Already owned')).toBeTruthy();
   });
 
-  it('calls onSelect with the correct book when tapped', async () => {
-    const { getByLabelText } = await render(
+  it('toggles a book and confirms only the ticked books', async () => {
+    const { getByLabelText, getByText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
     await fireEvent.press(getByLabelText('Select Dune by Frank Herbert'));
-    expect(onSelect).toHaveBeenCalledWith(BOOKS[0]);
+    await fireEvent.press(getByText('Add 1 book to wishlist'));
+    expect(onConfirm).toHaveBeenCalledWith([BOOKS[0]]);
+  });
+
+  it('starts with nothing ticked and the add button disabled without preselect', async () => {
+    const { getByText } = await render(
+      <BookCandidatePicker
+        visible={true}
+        candidates={BOOKS}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+      />
+    );
+    await fireEvent.press(getByText('Select books to add'));
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('preselects every book not already in the library', async () => {
+    const { getByLabelText, getByText } = await render(
+      <BookCandidatePicker
+        visible={true}
+        candidates={BOOKS}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+        preselect
+      />
+    );
+    expect(getByLabelText('Select Dune by Frank Herbert').props.accessibilityState).toEqual(
+      expect.objectContaining({ checked: true })
+    );
+    expect(getByLabelText('Select Foundation by Isaac Asimov').props.accessibilityState).toEqual(
+      expect.objectContaining({ checked: false })
+    );
+    await fireEvent.press(getByText('Add 1 book to wishlist'));
+    expect(onConfirm).toHaveBeenCalledWith([BOOKS[0]]);
+  });
+
+  it('select all ticks every book, then clear all unticks them', async () => {
+    const { getByLabelText, getByText } = await render(
+      <BookCandidatePicker
+        visible={true}
+        candidates={BOOKS}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+      />
+    );
+    await fireEvent.press(getByLabelText('Select all books'));
+    await fireEvent.press(getByText('Add 2 books to wishlist'));
+    expect(onConfirm).toHaveBeenCalledWith(BOOKS);
+
+    await fireEvent.press(getByLabelText('Clear all selections'));
+    expect(getByText('Select books to add')).toBeTruthy();
+  });
+
+  it('shows the book count in the title', async () => {
+    const { getByText } = await render(
+      <BookCandidatePicker
+        visible={true}
+        candidates={BOOKS}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+      />
+    );
+    expect(getByText('2 books found')).toBeTruthy();
+  });
+
+  it('hides the enhanced scan option when onEnhance is not provided', async () => {
+    const { queryByLabelText } = await render(
+      <BookCandidatePicker
+        visible={true}
+        candidates={BOOKS}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+      />
+    );
+    expect(queryByLabelText('Try enhanced scan')).toBeNull();
+  });
+
+  it('offers an enhanced scan with the remaining credit count', async () => {
+    const onEnhance = jest.fn();
+    const { getByLabelText, getByText } = await render(
+      <BookCandidatePicker
+        visible={true}
+        candidates={BOOKS}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+        onEnhance={onEnhance}
+        enhancedCredits={3}
+      />
+    );
+    expect(getByText('3 enhanced scans left')).toBeTruthy();
+    await fireEvent.press(getByLabelText('Try enhanced scan'));
+    expect(onEnhance).toHaveBeenCalled();
+  });
+
+  it('disables the enhanced scan when out of credits', async () => {
+    const onEnhance = jest.fn();
+    const { getByLabelText, getByText } = await render(
+      <BookCandidatePicker
+        visible={true}
+        candidates={BOOKS}
+        onConfirm={onConfirm}
+        onDismiss={onDismiss}
+        onEnhance={onEnhance}
+        enhancedCredits={0}
+      />
+    );
+    expect(getByText('No enhanced scans left')).toBeTruthy();
+    await fireEvent.press(getByLabelText('Try enhanced scan'));
+    expect(onEnhance).not.toHaveBeenCalled();
   });
 
   it('calls onDismiss when Cancel is pressed', async () => {
@@ -129,24 +238,11 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
     await fireEvent.press(getByLabelText('Close picker'));
-    expect(onDismiss).toHaveBeenCalled();
-  });
-
-  it('calls onDismiss when None of these is pressed', async () => {
-    const { getByLabelText } = await render(
-      <BookCandidatePicker
-        visible={true}
-        candidates={BOOKS}
-        onSelect={onSelect}
-        onDismiss={onDismiss}
-      />
-    );
-    await fireEvent.press(getByLabelText('None of these books match'));
     expect(onDismiss).toHaveBeenCalled();
   });
 
@@ -155,7 +251,7 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );
@@ -169,7 +265,7 @@ describe('BookCandidatePicker', () => {
       <BookCandidatePicker
         visible={true}
         candidates={withCover}
-        onSelect={onSelect}
+        onConfirm={onConfirm}
         onDismiss={onDismiss}
       />
     );

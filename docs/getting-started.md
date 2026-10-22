@@ -128,12 +128,28 @@ SENTRY_DSN=                              # leave blank to disable
 TURNSTILE_SECRET_KEY=                    # leave blank to skip Turnstile check on /scan
 ```
 
+### Scan dials
+```bash
+SCAN_ENABLED=true                        # false → /scan returns 503 scan_disabled
+SCAN_ENHANCED_ENABLED=true               # false → enhanced scans return 503
+SCAN_DAILY_LIMIT_PER_USER=20             # 1..1000, per UTC day
+SCAN_GLOBAL_DAILY_LIMIT=2000             # 1..1000000, all users, per UTC day
+```
+
 ### App
 ```bash
 ENVIRONMENT=development
 CORS_ORIGINS=http://localhost:8081,exp://localhost:8081
 ```
 In dev, `CORS_ORIGINS` must include the Expo dev-server origin. The wildcard `*` is blocked by a validator in `app/core/config.py`.
+
+### Client IP and origin lockdown
+```bash
+TRUSTED_PROXY_MODE=                      # leave blank: defaults to none locally (cloudflare when ENVIRONMENT is staging/production)
+# ORIGIN_AUTH_HEADER=X-Origin-Auth       # default; omit unless your edge uses another name (empty is invalid)
+ORIGIN_AUTH_SECRET=                      # leave blank locally (origin lockdown off)
+```
+`TRUSTED_PROXY_MODE` accepts `none` or `cloudflare`; any other value stops the API from starting. A non-empty `ORIGIN_AUTH_SECRET` must be at least 32 printable ASCII characters (e.g. `openssl rand -hex 32`). See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
 
 ## 4. Frontend `.env`
 
