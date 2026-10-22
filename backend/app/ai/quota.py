@@ -78,8 +78,9 @@ Every other give-back of the enhanced unit (:func:`refund`, a refusal in
 failed attempt committed, and a repeat would take a second unit off, so a
 failure leaves the user charged. Threshold 0: with
 ``charge`` every zero-result enhanced scan is charged (no rows, no warning);
-with ``throttle`` every enhanced scan is refused. A future result-cache hit
-(#534) makes no provider call and must not pass a :class:`ZeroResult`.
+with ``throttle`` every enhanced scan is refused. A repeat served from a
+scan record (#585) makes no provider call and must not pass a
+:class:`ZeroResult`.
 
 Every step commits straight away, on the request's own session: the
 reservation is visible to concurrent requests and the connection goes back to
@@ -970,6 +971,20 @@ async def refund(db: AsyncSession, reservation: Reservation) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def require_enhanced_entitlement(
+    db: AsyncSession, user: User, enhanced: bool
+) -> Tier:
+    """The user's tier (``entitlements.tier_for``, server-side only); raises
+    :class:`EnhancedRequiresPremium` for an enhanced scan by any tier but
+    Premium (#533). Used by :func:`reserve` and by ``/scan`` before a scan
+    record is served (#585), so feature gating applies to repeats too.
+    Takes nothing."""
+    tier = await entitlements.tier_for(db, user)
+    if enhanced and tier is not Tier.PREMIUM:
+        raise EnhancedRequiresPremium("enhanced_requires_premium")
+    return tier
+
+
 async def reserve(
     db: AsyncSession,
     *,
@@ -992,10 +1007,8 @@ async def reserve(
     taken before it propagates. On success the caller owns the reservation and
     must :func:`release` it after the provider call.
     """
-    tier = await entitlements.tier_for(db, user)
-    if enhanced and tier is not Tier.PREMIUM:
-        # Before anything is taken (#533).
-        raise EnhancedRequiresPremium("enhanced_requires_premium")
+    # Before anything is taken (#533).
+    tier = await require_enhanced_entitlement(db, user, enhanced)
     allowance = allowance_for(ai, tier)
     today = utc_today(now)
     month = month_start(today)
@@ -1193,6 +1206,30 @@ async def enhanced_remaining(db: AsyncSession, reservation: Reservation) -> int 
     finally:
         await db.commit()
     return max(0, reservation.enhanced_allowance - used)
+
+
+async def enhanced_remaining_for(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    tier: Tier,
+    ai: AISettings,
+    now: datetime | None = None,
+) -> int | None:
+    """The user's remaining enhanced allowance this month with no
+    reservation (a repeat served from a scan record, #585, which takes
+    nothing): ``None`` for every tier but Premium, as
+    :func:`enhanced_remaining`. Ends its read transaction."""
+    if tier is not Tier.PREMIUM:
+        return None
+    month = month_start(utc_today(now))
+    try:
+        used = await units_used(
+            db, user_id, ENHANCED_QUOTA_FEATURE, WINDOW_MONTH, month
+        )
+    finally:
+        await db.commit()
+    return max(0, ai.enhanced_monthly_allowance(tier.value) - used)
 
 
 # ---------------------------------------------------------------------------

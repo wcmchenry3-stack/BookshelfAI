@@ -38,12 +38,21 @@ key                         type     meaning
                                      ``throttle`` (enhanced scans refused, 429
                                      ``enhanced_throttled``, until the window
                                      clears)
+``scan_records.enabled``    bool     false switches off scan records
+                                     (#585): no lookup, no save; every scan
+                                     takes the normal (charged) path
+``scan_records.``           int      1..30 days a scan record is kept and
+``retention_days``                   served; older ones are purged daily
+``scan_records.``           int      1..10,000 scan records per user; the
+``max_per_user``                     oldest are evicted first
 ==========================  =======  =========================================
 
 Enhanced scans are Premium-only (#533): non-Premium tiers have no enhanced
 allowance key and are refused (403 ``enhanced_requires_premium``) before any
 reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
-code defaults (3, 24, ``charge``), not from the env.
+code defaults (3, 24, ``charge``), not from the env, as are the three
+``scan_records.*`` keys (``enabled`` ``true``, ``retention_days`` 30,
+``max_per_user`` 500).
 
 The ``quota.*`` allowances are per tier and shared by standard and enhanced
 scans (one ``ai_quota`` counter per user and window, under
@@ -169,6 +178,16 @@ ZERO_RESULT_ACTIONS = (ZERO_RESULT_ACTION_CHARGE, ZERO_RESULT_ACTION_THROTTLE)
 DEFAULT_ZERO_RESULT_THRESHOLD = 3
 DEFAULT_ZERO_RESULT_WINDOW_HOURS = 24
 DEFAULT_ZERO_RESULT_ACTION = ZERO_RESULT_ACTION_CHARGE
+# Scan records (#585): per user, keyed by the normalised-image SHA-256.
+SCAN_RECORDS_ENABLED_KEY = "scan_records.enabled"
+SCAN_RECORDS_RETENTION_DAYS_KEY = "scan_records.retention_days"
+SCAN_RECORDS_MAX_PER_USER_KEY = "scan_records.max_per_user"
+# At most 30 days (decision #573), to be revisited with the privacy review.
+SCAN_RECORDS_RETENTION_DAYS_BOUNDS = (1, 30)
+SCAN_RECORDS_MAX_PER_USER_BOUNDS = (1, 10_000)
+DEFAULT_SCAN_RECORDS_ENABLED = True
+DEFAULT_SCAN_RECORDS_RETENTION_DAYS = 30
+DEFAULT_SCAN_RECORDS_MAX_PER_USER = 500
 # Tiers with allowance keys: quota.<tier>.daily / quota.<tier>.monthly. Plain
 # strings (the Tier enum values) so this module stays free of request-side
 # imports; app/ai/quota.py maps a Tier to its keys.
@@ -252,6 +271,8 @@ _free_daily_ceiling = _bounded_int(FREE_DAILY_CEILING_MICROS_BOUNDS)
 _enhanced_monthly_allowance = _bounded_int(ENHANCED_MONTHLY_ALLOWANCE_BOUNDS)
 _zero_result_threshold = _bounded_int(ZERO_RESULT_THRESHOLD_BOUNDS)
 _zero_result_window_hours = _bounded_int(ZERO_RESULT_WINDOW_HOURS_BOUNDS)
+_scan_records_retention_days = _bounded_int(SCAN_RECORDS_RETENTION_DAYS_BOUNDS)
+_scan_records_max_per_user = _bounded_int(SCAN_RECORDS_MAX_PER_USER_BOUNDS)
 
 
 def _zero_result_action(value: Any) -> str:
@@ -369,6 +390,27 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: DEFAULT_ZERO_RESULT_ACTION,
             "at the threshold: charge (use the enhanced allowance) or throttle "
             "(refuse enhanced scans until the window clears) (seed: charge)",
+        ),
+        SettingDefinition(
+            SCAN_RECORDS_ENABLED_KEY,
+            _bool,
+            lambda: DEFAULT_SCAN_RECORDS_ENABLED,
+            "per-user scan records on/off; off, every scan takes the normal "
+            "path; an invalid value disables them (seed: code default true)",
+        ),
+        SettingDefinition(
+            SCAN_RECORDS_RETENTION_DAYS_KEY,
+            _scan_records_retention_days,
+            lambda: DEFAULT_SCAN_RECORDS_RETENTION_DAYS,
+            "days a scan record is kept and served, then purged "
+            "(seed: code default 30)",
+        ),
+        SettingDefinition(
+            SCAN_RECORDS_MAX_PER_USER_KEY,
+            _scan_records_max_per_user,
+            lambda: DEFAULT_SCAN_RECORDS_MAX_PER_USER,
+            "scan records kept per user, oldest evicted first "
+            "(seed: code default 500)",
         ),
     ]
     return MappingProxyType({d.key: d for d in defs})
@@ -529,6 +571,18 @@ class AISettings:
     @property
     def zero_result_action(self) -> str:
         return self.get(ZERO_RESULT_ACTION_KEY)
+
+    @property
+    def scan_records_enabled(self) -> bool:
+        return self.get(SCAN_RECORDS_ENABLED_KEY)
+
+    @property
+    def scan_records_retention_days(self) -> int:
+        return self.get(SCAN_RECORDS_RETENTION_DAYS_KEY)
+
+    @property
+    def scan_records_max_per_user(self) -> int:
+        return self.get(SCAN_RECORDS_MAX_PER_USER_KEY)
 
     def allowance(self, tier: str) -> tuple[int, int]:
         """``(daily, monthly)`` scans for ``tier`` (``"free"`` or ``"premium"``)."""

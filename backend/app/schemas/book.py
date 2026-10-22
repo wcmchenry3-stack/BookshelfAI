@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class EditionBase(BaseModel):
@@ -68,6 +68,15 @@ class EnrichedBook(BaseModel):
     already_in_library: bool = False
     editions: list[EditionPreview] = []
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def in_library(self) -> bool:
+        """Whether the user already has this book (#585): the same work-level
+        match as ``already_in_library`` (Open Library work ID or Google Books
+        ID), checked against the library on every scan, repeats included.
+        Read-only; edition-level matching is #587."""
+        return self.already_in_library
+
 
 class ScanResponse(BaseModel):
     """Returned by POST /scan — one entry per distinct book found in the photo."""
@@ -77,3 +86,6 @@ class ScanResponse(BaseModel):
     # The remaining Premium enhanced monthly allowance after this scan (#533);
     # None for users who are not Premium (enhanced scans are Premium-only).
     enhanced_scans_remaining: int | None = None
+    # True when the answer came from the user's saved scan record for this
+    # exact photo (#585): no AI call and nothing charged.
+    repeat: bool = False

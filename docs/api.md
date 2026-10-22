@@ -185,7 +185,7 @@ Queries Google Books, maps the top 3 volumes to candidates, then runs them throu
 **Query params:**
 - `q` (required, min length 2) — free-text query, e.g. `"John Adams McCullough"`
 
-**Response `200`:** array of up to 3 `EnrichedBook` objects (see shape under `/scan`).
+**Response `200`:** array of up to 3 `EnrichedBook` objects (see shape under `/scan`). Search does not check the library, so `already_in_library` and `in_library` are always `false` here.
 
 **Errors:**
 - `422` — `q` missing or too short
@@ -232,17 +232,19 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
       "subjects": ["Science fiction", "Arrakis"],
       "confidence": 0.92,
       "already_in_library": false,
+      "in_library": false,
       "editions": [
         { "isbn_13": "9780441013593", "publisher": "Ace", "publish_year": 2005, "format": "paperback", "page_count": 688 }
       ]
     }
   ],
   "enhanced": false,
-  "enhanced_scans_remaining": null
+  "enhanced_scans_remaining": null,
+  "repeat": false
 }
 ```
 
-`book_id` is `null` when the work isn't yet in the `books` table — it's created on `POST /wishlist` or `POST /purchased`. `already_in_library` is `true` when the user already has a `UserBook` for this work (dedup keyed on work_id / volume_id — see [data-model.md](data-model.md#dedup-strategy--why-work_id-not-isbn)).
+`book_id` is `null` when the work isn't yet in the `books` table — it's created on `POST /wishlist` or `POST /purchased`. `already_in_library` is `true` when the user already has a `UserBook` for this work (dedup keyed on work_id / volume_id — see [data-model.md](data-model.md#dedup-strategy--why-work_id-not-isbn)). `in_library` (#585) carries the same value under the name the app's repeat flow uses; edition-level matching is #587. `repeat` (#585) is `true` when the answer came from the user's saved scan record for this exact photo (no AI call, nothing charged; see "Scan records" below) and `false` otherwise. Both fields are additive: older clients can ignore them.
 
 **Errors:**
 - `400` — Turnstile token missing (when configured)
@@ -268,7 +270,14 @@ Allowances (`ai_settings`, by tier; everyone is Free until purchases exist): Fre
 
 Enhanced scans (#533) are Premium-only. On top of the shared units, each enhanced scan reserves one unit of the Premium enhanced monthly allowance (`quota.premium.enhanced_monthly`, default 20, quota key `scan.enhanced`) before the provider is called. That unit is charged only when the provider returned books: an enhanced scan whose provider answered but returned no books gives the unit back and is recorded (table `ai_enhanced_zero_results`), as long as the user has fewer than `scan.enhanced.zero_result_threshold` (default 3) such uncharged scans in the last `scan.enhanced.zero_result_window_hours` (default 24, sliding). At or above the threshold, `scan.enhanced.zero_result_action` decides: `charge` (default) keeps the unit for every further empty enhanced scan until the window clears; `throttle` refuses further enhanced scans (`429 enhanced_throttled`). Threshold 0: with `charge` every empty enhanced scan is charged; with `throttle` every enhanced scan is refused. The shared daily and monthly units are counted for every scan, empty or not. A provider error or timeout is never an empty scan: the enhanced unit follows the shared units (refunded on `503 scan_unavailable`, kept otherwise) and nothing is recorded. None of these settings can be read or changed by a client.
 
-Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → entitlement (tier; `enhanced_requires_premium` for a non-Premium enhanced scan) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → zero-result throttle (`enhanced_throttled`, enhanced with action `throttle` only) → daily allowance (`daily_scan_limit`) → monthly allowance (`scan_limit_reached`) → enhanced monthly allowance (`enhanced_limit_reached`, enhanced only) → vision provider. Every refusal gives back what was already taken (the cost estimate, the lease, the daily, monthly and enhanced reservations) and happens before the provider is called. A scan counts toward the daily and monthly allowances once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan or an enhanced scan.
+Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → scan-record lookup (#585) → entitlement (tier; `enhanced_requires_premium` for a non-Premium enhanced scan) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → zero-result throttle (`enhanced_throttled`, enhanced with action `throttle` only) → daily allowance (`daily_scan_limit`) → monthly allowance (`scan_limit_reached`) → enhanced monthly allowance (`enhanced_limit_reached`, enhanced only) → vision provider. Every refusal gives back what was already taken (the cost estimate, the lease, the daily, monthly and enhanced reservations) and happens before the provider is called. A scan counts toward the daily and monthly allowances once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan or an enhanced scan.
+
+**Scan records (#585).** Every photo is fingerprinted on the server (the SHA-256 of the image after normalisation, so only the exact same file matches). For each user the server keeps a scan record per fingerprint: the AI's answer, the Open Library / Google Books result, and which of those steps finished. Records are kept `scan_records.retention_days` (default 30) and are not keyed on the prompt or model, so an old answer is still served after either changes. The lookup happens after normalisation and before any allowance:
+- **The same photo, all steps done:** the saved result is returned with `"repeat": true`. No AI call, no Google Books / Open Library call, no daily, monthly or enhanced allowance used, no lease (so no `scan_in_progress`), not counted by the global capacity or the cost ceiling; `enhanced_scans_remaining` and `GET /scan/usage` are unchanged. There is no cap on repeats (the per-minute rate limit still applies).
+- **The same photo, AI answer saved but enrichment missing** (a lookup failed last time): only the enrichment is redone, with no AI call and no charge; `"repeat": true`.
+- **A new photo:** the normal path (allowance, AI, enrichment); `"repeat": false`. The answer is saved only when the AI returned outcome `ok` with at least one book: refusals, truncated replies, errors and timeouts are never saved, and neither is an empty list yet, because the providers' adapters cannot yet tell a real "no books" from a missing or unreadable reply (#572), so re-uploading a "no book found" photo is a normal scan for now.
+
+A standard scan is answered by any record of the photo. An enhanced scan (Premium) is answered only by a record an enhanced scan produced; otherwise it takes the normal path and its answer replaces the saved one. The only refusals a repeat can get are the ones before the lookup (settings, kill switches, Turnstile, file validation, normalisation) and `403 enhanced_requires_premium` for an enhanced repeat by a non-Premium user. Records are per user; no client field names a record, a fingerprint, a user or a step, and a scan-record failure never fails a scan (it takes the normal path). `in_library` (per book) is checked against the user's library on every scan, repeats included.
 
 **Example:**
 ```bash

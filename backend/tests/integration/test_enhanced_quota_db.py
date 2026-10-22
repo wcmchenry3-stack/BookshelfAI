@@ -9,6 +9,7 @@ Needs DATABASE_URL pointing at a Postgres database.
 import asyncio
 import importlib.util
 import io
+import os
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -51,13 +52,10 @@ MIGRATION = (
 DUNE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 
 
-def _jpeg() -> bytes:
+def _distinct_jpeg() -> bytes:
     buf = io.BytesIO()
-    Image.new("RGB", (32, 24), (10, 120, 30)).save(buf, format="JPEG")
+    Image.frombytes("RGB", (32, 24), os.urandom(32 * 24 * 3)).save(buf, format="JPEG")
     return buf.getvalue()
-
-
-_JPEG = _jpeg()
 
 
 @pytest.fixture
@@ -149,7 +147,10 @@ def downstream():
 
 def _upload() -> StarletteUploadFile:
     return StarletteUploadFile(
-        file=io.BytesIO(_JPEG),
+        # A different photo each call: since #585 a re-upload of the same
+        # photo by the same user is a repeat served from its scan record (no
+        # provider call).
+        file=io.BytesIO(_distinct_jpeg()),
         filename="scan.jpg",
         headers=Headers({"content-type": "image/jpeg"}),
     )

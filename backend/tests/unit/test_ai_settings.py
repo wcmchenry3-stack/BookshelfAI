@@ -619,6 +619,10 @@ _VALID = {
     "scan.enhanced.zero_result_threshold": [0, 3, 20],
     "scan.enhanced.zero_result_window_hours": [1, 24, 720],
     "scan.enhanced.zero_result_action": ["charge", "throttle"],
+    # #585 scan records
+    "scan_records.enabled": [True, False],
+    "scan_records.retention_days": [1, 30],
+    "scan_records.max_per_user": [1, 500, 10_000],
 }
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
@@ -654,6 +658,10 @@ _INVALID = {
         1,
         None,
     ],
+    # #585 scan records
+    "scan_records.enabled": ["true", 1, 0, None],
+    "scan_records.retention_days": [0, 31, -1, False, 30.0, "30", None],
+    "scan_records.max_per_user": [0, -1, 10_001, True, 5.0, "500", None],
 }
 
 
@@ -683,6 +691,10 @@ def test_initial_key_set():
         "scan.enhanced.zero_result_threshold",
         "scan.enhanced.zero_result_window_hours",
         "scan.enhanced.zero_result_action",
+        # #585
+        "scan_records.enabled",
+        "scan_records.retention_days",
+        "scan_records.max_per_user",
     }
 
 
@@ -854,6 +866,10 @@ class TestSeeding:
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
+            # #585: code defaults
+            "scan_records.enabled": True,
+            "scan_records.retention_days": 30,
+            "scan_records.max_per_user": 500,
         }
 
     async def test_seed_is_insert_if_missing(self):

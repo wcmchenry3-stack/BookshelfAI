@@ -16,6 +16,9 @@ export interface ScanResponse {
   /** Premium enhanced scans left this month after this scan; null when the
    * user is not Premium (enhanced scans are Premium-only, #533). */
   enhanced_scans_remaining: number | null;
+  /** True when the answer came from the user's saved scan record for this
+   * exact photo: no AI call and nothing charged (#585). The app copy is #588. */
+  repeat?: boolean;
 }
 
 export interface ScanJob {
