@@ -38,6 +38,7 @@ from app.core.config import settings
 from app.core.database import Base
 from app.models.ai_quota import AIInflight
 from app.models.ai_usage import AIUsage, AIUsageDaily
+from app.models.user import User
 from tests.limits import _harness as h
 
 pytestmark = pytest.mark.integration
@@ -246,22 +247,33 @@ async def _cleanup(factory, feature: str) -> None:
         await session.commit()
 
 
-def test_downgrade_keeps_the_rollup_working_and_upgrade_validates():
-    """#572 review: after ``alembic downgrade 0012`` the raw ``malformed``
-    rows written before it still roll up (``ai_usage_daily`` keeps the
-    widened CHECK), ``ai_usage`` refuses new ``malformed`` rows again, and the
-    upgrade validates both CHECKs. Runs real ``alembic`` commands, so the
-    database must be at head (CI runs ``alembic upgrade head`` first)."""
+def test_downgrade_keeps_malformed_rows_working_and_upgrade_validates():
+    """#572 review (and Codex on PR #593): ``alembic downgrade 0012`` keeps
+    both widened CHECKs, so with the old code the ``malformed`` rows written
+    before it still roll up into ``ai_usage_daily`` and deleting their user
+    (``ON DELETE SET NULL``) still works; the upgrade then validates both
+    CHECKs again. Runs real ``alembic`` commands, so the database must be at
+    head (CI runs ``alembic upgrade head`` first)."""
     head = _run(_revision)
     if head is None:
         pytest.skip("database not migrated with alembic (create_all only)")
     feature = f"test.{uuid.uuid4().hex[:12]}"
     old = NOW - timedelta(days=31)
+    user_id = uuid.uuid4()
 
     async def _seed(factory):
         async with factory() as session:
+            session.add(
+                User(
+                    id=user_id, email=f"{user_id}@example.com", google_id=f"g-{user_id}"
+                )
+            )
+            await session.flush()
             await session.execute(_usage_row(feature, "malformed", old))
             await session.execute(_usage_row(feature, "ok", old))
+            await session.execute(
+                _usage_row(feature, "malformed").values(user_id=user_id)
+            )
             await session.commit()
 
     async def _rollup(factory):
@@ -275,37 +287,36 @@ def test_downgrade_keeps_the_rollup_working_and_upgrade_validates():
                     )
                 )
             ).all()
-            raw = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(AIUsage)
-                    .where(AIUsage.feature == feature)
-                )
-            ).scalar_one()
-        return sorted(daily), raw
+        return sorted(daily)
 
-    async def _new_malformed_refused(factory):
+    async def _delete_user(factory):
         async with factory() as session:
-            with pytest.raises(IntegrityError, match="ck_ai_usage_status"):
-                await session.execute(_usage_row(feature, "malformed"))
-            await session.rollback()
+            await session.execute(delete(User).where(User.id == user_id))
+            await session.commit()
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    select(AIUsage.status, AIUsage.user_id).where(
+                        AIUsage.feature == feature
+                    )
+                )
+            ).all()
+        return rows
 
     try:
         _run(_seed)
         _alembic("downgrade", "0012")
         checks = _run(_checks)
-        # ai_usage: the old CHECK, NOT VALID (the kept rows do not fail it).
-        assert checks["ck_ai_usage_status"][0] is False
-        assert "'malformed'" not in checks["ck_ai_usage_status"][1]
-        # ai_usage_daily: still the widened, validated CHECK.
-        assert checks["ck_ai_usage_daily_status"][0] is True
-        assert "'malformed'" in checks["ck_ai_usage_daily_status"][1]
-
-        assert _run(_rollup) == ([("malformed", 1), ("ok", 1)], 0)
-        _run(_new_malformed_refused)
+        # Both CHECKs stay widened and validated.
+        assert all(valid and "'malformed'" in sql for valid, sql in checks.values())
+        # The rollup of the kept raw rows works (the recent one stays raw).
+        assert _run(_rollup) == [("malformed", 1), ("ok", 1)]
+        # Deleting the user nulls user_id on its malformed row.
+        assert _run(_delete_user) == [("malformed", None)]
     finally:
         _alembic("upgrade", head)
         _run(lambda factory: _cleanup(factory, feature))
+        _run(lambda factory: _delete_user(factory))
 
     checks = _run(_checks)
     assert set(checks) == {"ck_ai_usage_status", "ck_ai_usage_daily_status"}

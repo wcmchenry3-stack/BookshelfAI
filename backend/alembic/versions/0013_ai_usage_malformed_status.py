@@ -16,12 +16,14 @@ while the rows are scanned. If a validation fails, the widened CHECK stays
 ``NOT VALID`` (still enforced on new rows) and the revision is not stamped;
 running the upgrade again redoes both steps.
 
-The downgrade restores the previous CHECK on ``ai_usage`` only, as
-``NOT VALID``: rows already written as ``malformed`` are kept (deleting or
-relabelling cost history would lose data), and the old code never writes
-``malformed``. ``ai_usage_daily`` keeps the widened CHECK: the rollup
-(``ledger.rollup_and_purge``) copies those kept raw rows into it, and the old
-CHECK there would make every rollup batch fail.
+The downgrade leaves both widened CHECKs in place (a no-op). Rows already
+written as ``malformed`` are kept (deleting or relabelling cost history would
+lose data), and any narrower CHECK, even ``NOT VALID``, breaks the old code
+on them: the rollup (``ledger.rollup_and_purge``) copies them into
+``ai_usage_daily``, and deleting a user (``ON DELETE SET NULL`` on
+``ai_usage.user_id``) updates them, and Postgres checks updated rows. The old
+code never writes ``malformed``, so accepting it costs nothing. Re-running
+the upgrade afterwards swaps in the same CHECKs again.
 
 Revision ID: 0013
 Revises: 0012
@@ -68,9 +70,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
-    table, name = _CHECKS[0]
-    op.drop_constraint(name, table, type_="check")
-    op.create_check_constraint(
-        name, table, f"status IN ({_OLD_STATUSES})", postgresql_not_valid=True
-    )
+    # Deliberately a no-op: see the module docstring.
+    pass
