@@ -19,7 +19,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Request size limit | `RequestSizeLimitMiddleware` drops bodies > 10 MB with 413 before reading the stream |
 | DDoS / Bot protection | Cloudflare free tier (Bot Fight Mode, HTTP DDoS protection) |
 | Bot protection on /scan | Cloudflare Turnstile — opt-in via `TURNSTILE_SECRET_KEY` env var. Request must carry `cf-turnstile-response`; verified against Cloudflare siteverify with 5s timeout |
-| CORS | Explicit method/header allowlist; wildcard origins rejected at config validation |
+| CORS | Explicit method/header allowlist; wildcard origins rejected at config validation; only `Retry-After` is exposed to scripts (`expose_headers`), for the scan 429s |
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
 | Upload normalisation | Every `/scan` image is fully decoded, bomb-checked, stripped of metadata, downscaled and re-encoded as JPEG before any paid call. See [Upload pipeline](#upload-pipeline-post-scan) |
 | SQL injection | SQLAlchemy ORM throughout; no raw SQL |

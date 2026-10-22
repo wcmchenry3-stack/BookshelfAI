@@ -591,6 +591,14 @@ class TestOriginLockdown:
         _assert_forbidden(response)
         assert "access-control-allow-origin" not in response.headers
 
+    def test_cross_origin_response_exposes_retry_after(self, cors_client):
+        # Browsers hide Retry-After from scripts unless CORS exposes it; the
+        # web client needs it for the scan 429s (daily_scan_limit,
+        # scan_in_progress).
+        response = cors_client.get("/health", headers={"Origin": CORS_ORIGIN})
+        assert response.headers["access-control-allow-origin"] == CORS_ORIGIN
+        assert response.headers["access-control-expose-headers"] == "Retry-After"
+
     def test_rejected_requests_do_not_consume_rate_limit(
         self, origin_secret, proxy_mode
     ):
