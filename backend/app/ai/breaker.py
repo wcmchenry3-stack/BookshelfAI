@@ -57,9 +57,13 @@ Idempotency: the settle is executed only when the usage-ledger row was
 actually inserted in that transaction (``ON CONFLICT (call_id) DO NOTHING
 RETURNING``). A retry after a commit whose acknowledgement was lost finds the
 row already there, which proves the earlier attempt (spend and lease delete)
-committed, so the spend is not added twice. Known limit: if that first
-attempt committed and the retry then fails with an error, the lease-only
-fallback settles again without this check.
+committed, so the spend is not added twice. Give-backs with no ledger row
+(refusals, and the lease-only fallback) use the lease the same way: it is
+deleted in the same commit as the spend, so a retry deletes it first and
+settles only if it was still there. The cost release before a lease exists
+(lease busy or not acquired) has nothing to show that it committed, so it is
+attempted once; a failure leaves the estimate reserved until the day ends,
+which can only make the breaker refuse sooner.
 
 Alerts
 ------

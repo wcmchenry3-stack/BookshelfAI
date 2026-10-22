@@ -438,6 +438,43 @@ class TestScan:
             ).all()
         assert len(rows) == 1
 
+    async def test_retried_release_without_a_ledger_row_gives_back_once(self, env):
+        """A refusal-path release (no ledger row) commits the spend release
+        and the lease delete, then raises as if the acknowledgement was lost.
+        The retry finds the lease gone and leaves another call's estimate
+        reserved."""
+        factory, make_user, make_day = env
+        day = make_day()
+        user_id = await make_user()
+        real = quota.release_lease
+        calls = []
+
+        async def committed_then_raised(*a):
+            calls.append(1)
+            deleted = await real(*a)
+            if len(calls) == 1:
+                raise OSError("ack lost")
+            return deleted
+
+        async with factory() as db:
+            user = await db.get(User, user_id)
+            with _on(day):
+                reservation = await quota.reserve(
+                    db,
+                    user=user,
+                    feature=quota.SCAN_QUOTA_FEATURE,
+                    timeout_s=30,
+                    ai=ai_settings.AISettings({}),
+                    est_cost_micros=EST,
+                )
+            await breaker.reserve(db, day, EST, 10**9, enforce=True)  # another
+            with patch.object(quota, "release_lease", committed_then_raised):
+                await quota.release(db, reservation)
+        assert len(calls) == 2
+        assert await _totals(factory, day) == (EST, 0, 0)
+        async with factory() as db:
+            assert await db.get(AIInflight, user_id) is None
+
     async def test_count_backstop_refuses_even_with_cost_room(self, env, downstream):
         """The global count cap is a second, independent limit, checked
         before the cost ceiling: nothing is added to the spend."""

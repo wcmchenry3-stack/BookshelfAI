@@ -540,6 +540,101 @@ class TestAlerts:
         capture.assert_not_called()
 
 
+class TestGiveBackRetries:
+    """A give-back with no ledger row must not be applied twice when its first
+    attempt committed but raised (acknowledgement lost) and is retried."""
+
+    async def test_pre_lease_cost_release_is_not_retried(self, store):
+        """Lease busy: the estimate is released once, even if that release
+        committed and then raised; another call's estimate stays reserved."""
+        store.spend[TODAY] = [EST, 0, 0]  # another call's estimate
+        store.leases[USER.id] = uuid.uuid4()  # a scan already in flight
+        real = store.spend_release
+        calls = []
+
+        async def committed_then_raised(*a):
+            calls.append(1)
+            await real(*a)
+            raise OSError("ack lost")
+
+        with (
+            patch.object(breaker, "release", committed_then_raised),
+            pytest.raises(quota.ScanInProgress),
+        ):
+            await _reserve()
+        assert len(calls) == 1
+        assert store.spend[TODAY] == [EST, 0, 0]
+
+    async def test_retried_refusal_release_gives_the_estimate_back_once(self, store):
+        """No ledger row: the first attempt commits the spend release and the
+        lease delete, then raises. The retry finds the lease gone and leaves
+        the spend alone."""
+        r = await _reserve()
+        store.spend[TODAY][0] += EST  # another call's estimate
+        real = store.release_lease
+        calls = []
+
+        async def committed_then_raised(*a):
+            calls.append(1)
+            deleted = await real(*a)
+            if len(calls) == 1:
+                raise OSError("ack lost")
+            return deleted
+
+        with patch.object(quota, "release_lease", committed_then_raised):
+            await quota.release(AsyncMock(), r)
+        assert len(calls) == 2
+        assert store.spend[TODAY] == [EST, 0, 0]
+        assert store.leases == {}
+
+    async def test_retry_settles_when_the_first_attempt_did_not_commit(self, store):
+        """The first attempt fails before anything is applied (rolled back):
+        the lease is still held, so the retry releases the estimate."""
+        r = await _reserve()
+        spend_calls = []
+        real_settle = store.spend_settle
+
+        async def settle(*a):
+            spend_calls.append(1)
+            if len(spend_calls) == 1:
+                raise OSError("blip before commit")
+            return await real_settle(*a)
+
+        with patch.object(breaker, "settle", settle):
+            await quota.release(AsyncMock(), r)
+        assert len(spend_calls) == 2
+        assert store.spend[TODAY] == [0, 0, 0]
+        assert store.leases == {}
+
+    async def test_fallback_after_a_committed_settle_does_not_settle_again(self, store):
+        """The settle with the ledger row committed, but both attempts raised;
+        the lease-only fallback finds the lease gone and adds nothing."""
+        r = await _reserve()
+        store.spend[TODAY][0] += EST  # another call's estimate
+        real = store.release_lease
+        calls = []
+
+        async def committed_then_raised(*a):
+            calls.append(1)
+            deleted = await real(*a)
+            if len(calls) <= 2:
+                raise OSError("ack lost")
+            return deleted
+
+        inserted, conflict = MagicMock(), MagicMock()
+        inserted.scalar_one_or_none.return_value = uuid.uuid4()
+        conflict.scalar_one_or_none.return_value = None  # row already committed
+        db = AsyncMock()
+        db.execute.side_effect = [inserted, conflict]
+        with patch.object(quota, "release_lease", committed_then_raised):
+            await quota.release(db, r, object(), _settlement(600))
+        assert len(calls) == 3  # two settle attempts, then the fallback
+        # The first attempt's settle is the only one: the second attempt's
+        # insert conflicts and the fallback finds the lease gone.
+        assert store.spend[TODAY] == [EST, 600, 0]
+        assert store.leases == {}
+
+
 # ---------------------------------------------------------------------------
 # /scan
 # ---------------------------------------------------------------------------

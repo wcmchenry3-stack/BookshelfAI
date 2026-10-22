@@ -401,7 +401,11 @@ GIVE_BACK_TIMED_OUT = "timed_out"
 
 
 async def _give_back(
-    db: AsyncSession, what: str, op: Callable[[], Awaitable[object]]
+    db: AsyncSession,
+    what: str,
+    op: Callable[[], Awaitable[object]],
+    *,
+    attempts: int = 2,
 ) -> str:
     """Run a give-back so that it cannot mask the original outcome.
 
@@ -410,7 +414,9 @@ async def _give_back(
     e.g. at server shutdown, cuts through the shield), and bounded by ``CLEANUP_TIMEOUT_SECONDS``. A failure is logged and retried
     once after a rollback (the session may be in a failed transaction after
     the error being handled); a second failure is logged and swallowed: the
-    lease expiry is the backstop.
+    lease expiry is the backstop. ``attempts=1`` is for an operation that is
+    not safe to repeat: if it raised after its commit (an acknowledgement
+    lost), a retry would apply it twice.
 
     If the bound cuts a query off mid-execute, SQLAlchemy invalidates the
     session's connection and every later query on the request session would
@@ -421,7 +427,7 @@ async def _give_back(
     raised) or :data:`GIVE_BACK_TIMED_OUT` (the bound cut it off).
     """
     with anyio.move_on_after(CLEANUP_TIMEOUT_SECONDS, shield=True) as scope:
-        for attempt in (1, 2):
+        for attempt in range(1, attempts + 1):
             try:
                 await op()
                 return GIVE_BACK_DONE
@@ -476,20 +482,40 @@ async def release(
     The ledger insert is idempotent (``ON CONFLICT (call_id) DO NOTHING
     RETURNING call_id``), so a retry after a commit whose acknowledgement was
     lost adds no second row; when it returns no row the cost settle is
-    skipped too, since it was committed with that row (#531). The paths
-    without a ledger row (the lease-only fallback, refusals in
-    :func:`reserve`) are not idempotent this way.
+    skipped too, since it was committed with that row (#531). Without a
+    ledger row (refusals in :func:`reserve`, and the lease-only fallback) the
+    lease is the proof instead: it is deleted in the same commit as the
+    spend, so a retry deletes the lease first and settles the spend only if
+    it was still there. If the lease was lost to another request for some
+    other reason, the retry leaves the estimate reserved until the day ends,
+    which can only make the breaker refuse sooner.
     """
     est = reservation.est_cost_micros
     cost = settlement.cost_micros if settlement is not None else 0
     settled: list[tuple[int, int, int] | None] = []
+    attempts = 0
 
     async def settle_spend() -> None:
         settled.clear()
         if est or cost:
             settled.append(await breaker.settle(db, reservation.day, est, cost))
 
+    async def settle_after_lease() -> None:
+        # The lease delete commits on its own here, then the spend. If the
+        # spend then fails, the estimate stays reserved (fails safe).
+        settled.clear()
+        if await release_lease(db, reservation.user_id, reservation.lease_id):
+            await settle_spend()
+            await db.commit()
+
     async def settle() -> None:
+        nonlocal attempts
+        attempts += 1
+        if ledger_row is None and attempts > 1:
+            # A retry: the first attempt may have committed (its
+            # acknowledgement lost) with nothing but the lease to show it.
+            await settle_after_lease()
+            return
         inserted = True
         if ledger_row is not None:
             result = await db.execute(ledger_row)
@@ -505,10 +531,6 @@ async def release(
             settled.clear()
         await release_lease(db, reservation.user_id, reservation.lease_id)
 
-    async def settle_without_row() -> None:
-        await settle_spend()
-        await release_lease(db, reservation.user_id, reservation.lease_id)
-
     if ledger_row is None:
         outcome = await _give_back(db, "lease release", settle)
     else:
@@ -521,7 +543,7 @@ async def release(
             return
         if outcome == GIVE_BACK_FAILED:
             logger.error("ai_quota: usage row dropped; releasing the lease without it")
-            outcome = await _give_back(db, "lease release", settle_without_row)
+            outcome = await _give_back(db, "lease release", settle_after_lease)
     if outcome == GIVE_BACK_DONE and settlement is not None and settled:
         await _alert(db, reservation, settlement, settled[0])
 
@@ -621,8 +643,15 @@ async def reserve(
         raise CostCeilingReached("ai_budget_reached")
 
     async def give_back_cost() -> None:
+        # One attempt only: there is no lease or ledger row yet to show
+        # whether a failed attempt committed, and a repeated release would
+        # give back another call's estimate. A failure leaves the estimate
+        # reserved until the day ends (the breaker refuses sooner, not later).
         await _give_back(
-            db, "cost release", lambda: breaker.release(db, today, est_cost_micros)
+            db,
+            "cost release",
+            lambda: breaker.release(db, today, est_cost_micros),
+            attempts=1,
         )
 
     seconds = lease_seconds(timeout_s)
