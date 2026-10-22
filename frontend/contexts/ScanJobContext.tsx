@@ -458,7 +458,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       // Remember the job so the notice can offer "Try again" instead of
       // stranding the photo.
       setScanNotice({ ...notice, jobId: job.id });
-      updateJob(job.id, { status: 'failed', error: state.kind });
+      // A refusal isn't a failure: reset the retry budget so "Try again" always
+      // re-sends instead of hitting MAX_RETRIES and silently re-queueing.
+      updateJob(job.id, { status: 'failed', error: state.kind, retryCount: 0 });
     }
 
     executeScanRef.current = async function executeScan(job: ScanJob) {

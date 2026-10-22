@@ -251,6 +251,28 @@ describe('refusal follow-ups', () => {
     expect(result.current.jobs[0].status).toBe('complete');
   });
 
+  it('"Try again" keeps re-sending after more refusals than the retry budget', async () => {
+    const { result } = await setup();
+    mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    const jobId = result.current.jobs[0].id;
+    for (let i = 0; i < 4; i++) {
+      mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
+      await act(async () => {
+        await result.current.retryScan(jobId);
+      });
+      expect(result.current.jobs[0].status).toBe('failed');
+    }
+    mockPost.mockResolvedValueOnce(OK);
+    await act(async () => {
+      await result.current.retryScan(jobId);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(6);
+    expect(result.current.jobs[0].status).toBe('complete');
+  });
+
   it('a refused enhanced re-scan restores earlier results silently and shows the notice', async () => {
     const { result } = await setup();
     mockPost.mockResolvedValueOnce(OK);
