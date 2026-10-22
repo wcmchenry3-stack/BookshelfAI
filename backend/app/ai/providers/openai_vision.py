@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
+# Bump whenever SYSTEM_PROMPT (or how this adapter parses the reply) changes:
+# it is part of the result-cache key (#534), so old cached results stop
+# being served. The Claude adapter has its own.
+PROMPT_VERSION = "2026-10-1"
+
 SYSTEM_PROMPT = """You are a book identification assistant.
 You will be shown a photo that may contain one book or many: a single cover, a stack of covers, or a shelf of book spines.
 Identify EVERY distinct book you can read in the photo, up to {max_books} books.

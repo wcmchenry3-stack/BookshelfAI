@@ -14,12 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai import entitlements
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
+from app.ai.providers.anthropic_vision import PROMPT_VERSION as ANTHROPIC_PROMPT
 from app.ai.providers.anthropic_vision import AnthropicVisionProvider
 from app.ai.providers.base import (
     ProviderOutcome,
     ProviderTimeoutError,
     VisionProvider,
 )
+from app.ai.providers.openai_vision import PROMPT_VERSION as OPENAI_PROMPT
 from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FeatureSpec, get_feature
 from app.models.user import User
@@ -75,6 +77,22 @@ def resolve_spec(feature: str, current: ai_settings.AISettings) -> FeatureSpec:
     switch applied. ``/scan`` uses it to name the model in the usage ledger
     when the call raised and no :class:`AIResult` exists."""
     return current.spec_for(get_feature(feature))
+
+
+# Each adapter's prompt version (next to its system prompt), part of the
+# result-cache key (#534). Exposed here so nothing outside the gateway
+# imports the providers.
+_PROMPT_VERSIONS = {"openai": OPENAI_PROMPT, "anthropic": ANTHROPIC_PROMPT}
+
+
+def prompt_version(spec: FeatureSpec) -> str:
+    """The prompt version of the adapter ``spec`` uses (its provider's
+    ``PROMPT_VERSION``). Raises ``ValueError`` for a provider with no
+    adapter, like :func:`_build_provider`."""
+    try:
+        return _PROMPT_VERSIONS[spec.provider]
+    except KeyError:
+        raise ValueError(f"no provider adapter for {spec.provider!r}") from None
 
 
 async def run_feature(

@@ -1,5 +1,6 @@
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import date
 from functools import partial
 
@@ -10,12 +11,14 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
-from app.ai import breaker, ledger, quota
+from app.ai import breaker, cache, ledger, quota
+from app.ai.entitlements import Tier
 from app.ai.gateway import (
     AIResult,
     FeatureDisabledError,
     ProviderTimeoutError,
     VisionPayload,
+    prompt_version,
     resolve_spec,
     run_feature,
 )
@@ -29,7 +32,9 @@ from app.core.file_security import sanitize_image, scan_for_malware
 from app.core.file_validation import validate_magic_bytes
 from app.core.limiter import limiter
 from app.models.ai_usage import (
+    STATUS_CACHE_HIT,
     STATUS_ERROR,
+    STATUS_OK,
     STATUS_REFUNDED,
     STATUS_TIMEOUT,
 )
@@ -179,10 +184,7 @@ async def _reserve_scan_quota(
             enhanced=enhanced,
         )
     except quota.EnhancedRequiresPremium:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="enhanced_requires_premium",
-        ) from None
+        raise _enhanced_requires_premium() from None
     except quota.EnhancedThrottled as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -220,6 +222,185 @@ async def _reserve_scan_quota(
         ) from None
     except quota.MonthlyLimitReached as exc:
         raise ScanLimitReachedError(exc.limit, exc.used, exc.period_end) from None
+
+
+def _enhanced_requires_premium() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="enhanced_requires_premium",
+    )
+
+
+async def _require_enhanced_entitlement(
+    db: AsyncSession, user: User, enhanced: bool
+) -> Tier:
+    """The user's tier (server-side); 403 ``enhanced_requires_premium`` for
+    an enhanced scan by a non-Premium user (#533). Checked before a
+    result-cache hit is served, so a hit is gated like a miss (#534); takes
+    nothing."""
+    try:
+        return await quota.require_enhanced_entitlement(db, user, enhanced)
+    except quota.EnhancedRequiresPremium:
+        raise _enhanced_requires_premium() from None
+
+
+# ---------------------------------------------------------------------------
+# Result cache (#534)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _CacheSlot:
+    """Where this request's result is (or would be) cached. Every part is
+    decided by the server."""
+
+    key: str
+    image_hash: str
+    feature: str
+    model: str
+    prompt_version: str
+
+
+def _cache_slot(
+    user_id: uuid.UUID, image_bytes: bytes, feature: str, ai: AISettings
+) -> _CacheSlot | None:
+    """The cache slot for this request, or None when the cache is off (or
+    the feature is switched off: the gateway then refuses as before). The
+    model is the per-request resolved one (``ai_settings`` provider/model
+    override), so a switch misses. Never raises."""
+    if not ai.cache_enabled:
+        return None
+    try:
+        spec = resolve_spec(feature, ai)
+        if not spec.enabled:
+            return None
+        image_hash = cache.image_sha256(image_bytes)
+        version = prompt_version(spec)
+        return _CacheSlot(
+            key=cache.cache_key(
+                user_id=user_id,
+                image_hash=image_hash,
+                feature=spec.name,
+                model=spec.model,
+                prompt_version=version,
+            ),
+            image_hash=image_hash,
+            feature=spec.name,
+            model=spec.model,
+            prompt_version=version,
+        )
+    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
+        logger.warning("scan: result cache key failed (%s)", type(exc).__name__)
+        return None
+
+
+async def _recover_session(db: AsyncSession, user: User | None = None) -> None:
+    """Roll back after a cache failure and reload ``user`` (a rollback
+    expires it), so the normal path can continue. Never raises."""
+    try:
+        await db.rollback()
+        if user is not None:
+            await db.refresh(user)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "scan: session recovery after a cache failure failed (%s)",
+            type(exc).__name__,
+        )
+
+
+async def _cache_lookup(
+    db: AsyncSession, user: User, slot: _CacheSlot | None
+) -> list | None:
+    """The cached candidates, or None (miss, cache off, or any failure:
+    logged without content, then the normal path runs)."""
+    if slot is None:
+        return None
+    try:
+        return await cache.lookup(db, key=slot.key)
+    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
+        logger.warning(
+            "scan: result cache lookup failed (%s); calling the provider",
+            type(exc).__name__,
+        )
+        await _recover_session(db, user)
+        return None
+
+
+async def _cache_store(
+    db: AsyncSession,
+    slot: _CacheSlot | None,
+    user_id: uuid.UUID,
+    result: AIResult,
+    ai: AISettings,
+) -> None:
+    """Cache a provider result: only outcome ``ok`` (an empty list
+    included), never a refusal, a truncated reply or an error (those never
+    reach here). Idempotent by key; a failure is logged without content and
+    the scan still returns."""
+    if (
+        slot is None
+        or result.outcome != STATUS_OK
+        or result.model != slot.model
+        or result.feature != slot.feature
+    ):
+        return
+    try:
+        await cache.store(
+            db,
+            key=slot.key,
+            user_id=user_id,
+            image_hash=slot.image_hash,
+            feature=slot.feature,
+            model=slot.model,
+            prompt_version=slot.prompt_version,
+            candidates=result.candidates,
+            ttl_days=ai.cache_ttl_days,
+            max_rows_per_user=ai.cache_max_rows_per_user,
+        )
+    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
+        logger.warning("scan: result cache store failed (%s)", type(exc).__name__)
+        await _recover_session(db)
+
+
+async def _serve_cache_hit(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    tier: Tier,
+    enhanced: bool,
+    slot: _CacheSlot,
+    candidates: list,
+    ai: AISettings,
+) -> ScanResponse:
+    """A cache hit: no provider call, no reservation, lease, count-cap unit,
+    cost settle or zero-result row. One ``cache_hit`` ledger row (cost 0),
+    then the usual enrichment, dedup and response; the remaining enhanced
+    allowance is read as it stands (unchanged by the hit)."""
+    try:
+        await ledger.record(
+            db,
+            call_id=uuid.uuid4(),
+            user_id=user_id,
+            feature=slot.feature,
+            model=slot.model,
+            status=STATUS_CACHE_HIT,
+            request_id=ledger.current_request_id(),
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail a hit on the ledger
+        logger.warning("scan: cache-hit ledger row failed (%s)", type(exc).__name__)
+        await _recover_session(db)
+    books = await _books_for(db, user_id, candidates)
+    try:
+        remaining = await quota.enhanced_remaining_for(
+            db, user_id=user_id, tier=tier, ai=ai
+        )
+    except Exception:
+        logger.exception("scan: could not read the remaining enhanced allowance")
+        await _recover_session(db)
+        remaining = None
+    return ScanResponse(
+        books=books, enhanced=enhanced, enhanced_scans_remaining=remaining
+    )
 
 
 async def _refund_scan_quota(db: AsyncSession, reservation: quota.Reservation) -> None:
@@ -469,6 +650,30 @@ async def scan(
     # Read before anything can roll the session back: a failed give-back
     # (refund or lease release) rolls back, which expires current_user.
     user_id = current_user.id
+
+    # --- Result cache (#534) ---
+    # Per user, keyed by the SHA-256 of the normalised bytes, the feature, the
+    # resolved model and the prompt version. A hit makes no provider call and
+    # takes nothing: no reservation, lease, global count-cap unit, cost
+    # estimate or zero-result row; it writes one cache_hit ledger row (cost
+    # 0). A cache failure is a miss. Feature gating still applies: an
+    # enhanced hit for a non-Premium user (e.g. one who has since left
+    # Premium) gets the same 403 enhanced_requires_premium as a miss, which
+    # quota.reserve refuses before anything is taken.
+    slot = _cache_slot(user_id, image_bytes, feature, ai)
+    cached = await _cache_lookup(db, current_user, slot)
+    if cached is not None and slot is not None:
+        tier = await _require_enhanced_entitlement(db, current_user, enhanced)
+        return await _serve_cache_hit(
+            db,
+            user_id=user_id,
+            tier=tier,
+            enhanced=enhanced,
+            slot=slot,
+            candidates=cached,
+            ai=ai,
+        )
+
     reservation = await _reserve_scan_quota(db, current_user, feature, ai, enhanced)
 
     # The reservation is given back only when the provider reports itself
@@ -486,8 +691,8 @@ async def scan(
     # The decision is on the provider's candidates, so enrichment stays after
     # the settle (the lease covers only the provider call); enrichment returns
     # a book for every candidate it does not crash on. A provider error,
-    # timeout or unavailability is never a zero-result. A future result-cache
-    # hit (#534) makes no provider call and must not record one.
+    # timeout or unavailability is never a zero-result. A result-cache hit
+    # (#534) returned above: it made no provider call and records none.
     #
     # Usage ledger (#530): every outcome of the provider call writes one
     # ai_usage row, committed with the lease release. call_id is generated
@@ -557,6 +762,9 @@ async def scan(
             ledger_row = row(status=STATUS_ERROR)
             settlement = spend(status=STATUS_ERROR)
         await _release_scan_lease(db, reservation, ledger_row, settlement, zero_result)
+
+    # After the settle, outside the lease; never fails the scan.
+    await _cache_store(db, slot, user_id, result, ai)
 
     books = await _books_for(db, user_id, result.candidates)
 

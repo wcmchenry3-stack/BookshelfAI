@@ -76,6 +76,10 @@ logger = logging.getLogger(__name__)
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 
 USER_TEXT = "Identify every book in this photo."
+# Bump whenever SYSTEM_PROMPT, USER_TEXT, the output schema or the parsing
+# changes: it is part of the result-cache key (#534), so old cached results
+# stop being served.
+PROMPT_VERSION = "2026-10-1"
 
 MAX_RETRIES = 2
 RETRYABLE_STATUSES = frozenset({429, 500, 503, 529})

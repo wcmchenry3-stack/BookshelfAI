@@ -11,6 +11,7 @@ quota and lease rows go with them via ON DELETE CASCADE.
 import asyncio
 import importlib.util
 import io
+import os
 import uuid
 from datetime import date, timedelta
 from pathlib import Path
@@ -60,6 +61,12 @@ def _jpeg() -> bytes:
 
 
 _JPEG = _jpeg()
+
+
+def _distinct_jpeg() -> bytes:
+    buf = io.BytesIO()
+    Image.frombytes("RGB", (32, 24), os.urandom(32 * 24 * 3)).save(buf, format="JPEG")
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -119,7 +126,9 @@ async def _expire_lease(factory, user_id) -> None:
 
 def _upload() -> StarletteUploadFile:
     return StarletteUploadFile(
-        file=io.BytesIO(_JPEG),
+        # A different photo each call: since #534 a re-upload of the same
+        # photo by the same user is a result-cache hit (no provider call).
+        file=io.BytesIO(_distinct_jpeg()),
         filename="scan.jpg",
         headers=Headers({"content-type": "image/jpeg"}),
     )

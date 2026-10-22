@@ -619,6 +619,10 @@ _VALID = {
     "scan.enhanced.zero_result_threshold": [0, 3, 20],
     "scan.enhanced.zero_result_window_hours": [1, 24, 720],
     "scan.enhanced.zero_result_action": ["charge", "throttle"],
+    # #534 result cache
+    "cache.enabled": [True, False],
+    "cache.max_rows_per_user": [1, 500, 10_000],
+    "cache.ttl_days": [1, 30],
 }
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
@@ -654,6 +658,10 @@ _INVALID = {
         1,
         None,
     ],
+    # #534 result cache
+    "cache.enabled": ["true", 1, 0, None],
+    "cache.max_rows_per_user": [0, -1, 10_001, True, 5.0, "500", None],
+    "cache.ttl_days": [0, 31, -1, False, 30.0, "30", None],
 }
 
 
@@ -683,6 +691,10 @@ def test_initial_key_set():
         "scan.enhanced.zero_result_threshold",
         "scan.enhanced.zero_result_window_hours",
         "scan.enhanced.zero_result_action",
+        # #534
+        "cache.enabled",
+        "cache.max_rows_per_user",
+        "cache.ttl_days",
     }
 
 
@@ -854,6 +866,10 @@ class TestSeeding:
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
+            # #534: code defaults
+            "cache.enabled": True,
+            "cache.max_rows_per_user": 500,
+            "cache.ttl_days": 30,
         }
 
     async def test_seed_is_insert_if_missing(self):
