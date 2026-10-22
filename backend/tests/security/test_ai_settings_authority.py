@@ -66,8 +66,9 @@ def provider():
         patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),
-        patch("app.api.scan._reserve_daily_scan", new=AsyncMock()),
-        patch("app.api.scan._refund_daily_scan", new=AsyncMock()),
+        patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._refund_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._release_scan_lease", new=AsyncMock()),
     ):
         provider_cls.return_value.identify = AsyncMock(return_value=[])
         yield provider_cls

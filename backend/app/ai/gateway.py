@@ -8,6 +8,7 @@ the client reaches those settings.
 
 from dataclasses import dataclass
 
+import anyio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import entitlements
@@ -78,6 +79,14 @@ async def run_feature(
     or in ``ai_settings``), ``AISettingsUnavailableError`` when the settings
     cannot be read and nothing recent enough is cached, and whatever the provider raises
     (``ScanUnavailableError``, ``httpx.ConnectError``).
+
+    The whole provider call is bounded by the spec's ``timeout_s`` (an
+    overall deadline, on top of the provider client's own per-phase HTTP
+    timeouts). Past it the call is cancelled and ``ScanUnavailableError`` is
+    raised, so callers treat it like any other unavailability (``/scan``
+    refunds the reservation), and the quota lease (``timeout_s`` + 30 s)
+    always outlives the call. It lives here, not in a provider, so every
+    adapter gets it.
     """
     spec = get_feature(feature)
     current = (
@@ -96,7 +105,14 @@ async def run_feature(
     tier = await entitlements.tier_for(db, user)
 
     provider = _build_provider(spec)
-    candidates = await provider.identify(payload.image_bytes)
+    # move_on_after rather than fail_after, so only this deadline (not a
+    # TimeoutError raised inside the provider) becomes ScanUnavailableError.
+    with anyio.move_on_after(spec.timeout_s) as deadline:
+        candidates = await provider.identify(payload.image_bytes)
+    if deadline.cancelled_caught:
+        raise ScanUnavailableError(
+            f"AI feature {spec.name!r} exceeded its {spec.timeout_s}s deadline"
+        )
     return AIResult(
         feature=spec.name,
         provider=spec.provider,

@@ -34,7 +34,8 @@ Common status codes:
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 413 | Payload Too Large | request body > 10 MB (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload, or an image that cannot be decoded (`image_undecodable`) |
-| 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`) |
+| 402 | Payment Required | no enhanced credits (`no_enhanced_credits`), monthly scan allowance used (`scan_limit_reached`) |
+| 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), another scan still running (`scan_in_progress`) |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
 | 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity |
 
@@ -48,7 +49,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
 | `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /purchased`, `PATCH` / `DELETE /user-books/*` |
-| `rate_limit_reads` | 120/min | `GET /user-books`, `GET /auth/me` |
+| `rate_limit_reads` | 120/min | `GET /user-books`, `GET /auth/me`, `GET /scan/usage` |
 | `rate_limit_health` | 60/min | `GET /health`, `GET /health/db` |
 
 429 responses are logged at WARN level.
@@ -250,14 +251,18 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `415` — bad extension / MIME / magic bytes
 - `415` — the image cannot be fully decoded as JPEG, PNG, WebP or HEIC/HEIF (`detail: "image_undecodable"`)
 - `402` — enhanced scan requested with no enhanced credits left (`detail: "no_enhanced_credits"`)
-- `429` — the user's daily scan limit is reached (`detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets. Limit: `SCAN_DAILY_LIMIT_PER_USER` (default 20).
-- `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily limit
+- `402` — the user's monthly scan allowance is used (standard and enhanced scans count together; `detail: "scan_limit_reached"`). The body also carries the allowance: `{"detail": "scan_limit_reached", "limit": 5, "used": 5, "period_end": "2026-11-01"}`. `period_end` is the UTC date the monthly count resets (the 1st of the next month). Both `402`s use the same status; clients tell them apart by the `detail` string, which stays a string here as in every other error. No `Retry-After`.
+- `429` — another scan by the same user is still running (`detail: "scan_in_progress"`, `Retry-After: 2`). One paid scan per user may be in flight at a time.
+- `429` — the user's daily scan limit is reached (standard and enhanced scans count together; `detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets.
+- `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily or monthly allowance
 - `503` — scanning switched off by the operator (`detail: "scan_disabled"`, `ai_settings` key `scan.standard.enabled=false`); returned before the upload is read, Turnstile is called or any provider is contacted (the multipart body is still received by the framework)
 - `503` — enhanced scanning switched off (`detail: "enhanced_scan_disabled"`, `ai_settings` key `scan.enhanced.enabled=false`); standard scans still work
 - `503` — the server's AI settings cannot be read and none are cached (`detail: "ai_unavailable"`); returned before the upload is read
-- `503` — the service-wide daily scan capacity is used up (`detail: "scan_capacity"`, `SCAN_GLOBAL_DAILY_LIMIT`, default 2000)
+- `503` — the service-wide daily scan capacity is used up (`detail: "scan_capacity"`, `ai_settings` key `scan.global_daily_limit`, seeded from `SCAN_GLOBAL_DAILY_LIMIT`, default 2000)
 
-Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → enhanced-credit check → global daily capacity → per-user daily limit → vision provider. A scan counts toward the daily limits once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan or an enhanced credit.
+Allowances (`ai_settings`, by tier; everyone is Free until purchases exist): Free 5 scans a day and 5 a month (`quota.free.daily` / `quota.free.monthly`), Premium 30 and 300 (`quota.premium.*`). Days are UTC days and months UTC calendar months. Standard and enhanced scans share one allowance (quota key `scan`, OD-1): for example 3 standard + 2 enhanced scans use a daily limit of 5. Enhanced scans also still need an enhanced credit.
+
+Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → entitlement (tier, enhanced-credit check) → global daily capacity → in-flight lease (`scan_in_progress`) → daily allowance (`daily_scan_limit`) → monthly allowance (`scan_limit_reached`) → vision provider. Every refusal gives back what was already taken (the lease, the daily reservation) and happens before the provider is called. A scan counts toward the daily and monthly allowances once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan or an enhanced credit.
 
 **Example:**
 ```bash
@@ -265,6 +270,25 @@ curl -X POST https://bookshelfapi.buffingchi.com/scan \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -F "file=@/path/to/cover.jpg"
 ```
+
+### `GET /scan/usage` — the current user's scan allowance
+
+Auth required (`401` without a valid access token). Rate limit: `rate_limit_reads`. Read only; takes no parameters (any sent are ignored).
+
+**Response 200:**
+```json
+{
+  "used_today": 2,
+  "daily_limit": 5,
+  "used_month": 4,
+  "monthly_limit": 5,
+  "period_end": "2026-11-01"
+}
+```
+
+Counts cover all scans, standard and enhanced together, in the current UTC day and UTC calendar month: both share one allowance (quota key `scan`). Enhanced-scan credits are separate and not shown here. Limits are the caller's tier allowance from `ai_settings`. `period_end` is the UTC date the monthly count resets.
+
+**Errors:** `401` (no or invalid token), `429` (rate limit), `503 ai_unavailable` (AI settings cannot be read and none are cached).
 
 ---
 

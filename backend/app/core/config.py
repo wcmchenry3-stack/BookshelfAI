@@ -86,11 +86,24 @@ class Settings(BaseSettings):
     # scan.enhanced.enabled=false rejects only enhanced scans.
     scan_enabled: bool = True
     scan_enhanced_enabled: bool = True
-    # Daily caps (env): they count provider calls per UTC day (table
-    # scan_usage_daily); the per-user cap is exact, the global cap may
-    # overshoot slightly under concurrency.
+    # LEGACY (#509): read only by app/services/scan_quota.py, which /scan no
+    # longer calls since #528 (deleted in #540). The per-user allowances now
+    # come from the ai_settings quota.* keys seeded from SCAN_FREE_* and
+    # SCAN_PREMIUM_* below.
     scan_daily_limit_per_user: int = Field(default=20, ge=1, le=1000)
+    # INITIAL DEFAULT ONLY: seeds the ai_settings row scan.global_daily_limit
+    # (same bounds): scans per UTC day across all users, checked before any
+    # per-user reservation (503 scan_capacity). Approximate under concurrency.
     scan_global_daily_limit: int = Field(default=2000, ge=1, le=1_000_000)
+    # Per-user scan allowances by tier (#528). INITIAL DEFAULTS ONLY: they seed
+    # the ai_settings rows quota.<tier>.daily / quota.<tier>.monthly (same
+    # bounds), which are the source of truth after first boot. Daily windows
+    # are UTC days, monthly windows UTC calendar months. 0 refuses every scan
+    # for that tier. Launch values (OD-1): Free 5 a day and 5 a month.
+    scan_free_daily_limit: int = Field(default=5, ge=0, le=1000)
+    scan_free_monthly_limit: int = Field(default=5, ge=0, le=100_000)
+    scan_premium_daily_limit: int = Field(default=30, ge=0, le=1000)
+    scan_premium_monthly_limit: int = Field(default=300, ge=0, le=100_000)
     # Decompression-bomb guard for /scan uploads: an image whose decoded pixel
     # count (width x height) is above this is refused with 413
     # image_too_large_pixels before it is fully decoded. Bounded so a typo

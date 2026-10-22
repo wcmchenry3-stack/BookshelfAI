@@ -20,6 +20,7 @@ from starlette.responses import Response
 from app.ai.settings import seed_ai_settings_at_startup
 from app.api.auth import router as auth_router
 from app.api.books import router as books_router
+from app.api.scan import ScanLimitReachedError
 from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
 from app.core.config import settings
@@ -149,8 +150,16 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Re
     return _slowapi_429(request, exc)
 
 
+def _scan_limit_reached_handler(
+    request: Request, exc: ScanLimitReachedError
+) -> JSONResponse:
+    # 402 with the monthly allowance details next to the usual string detail.
+    return JSONResponse(status_code=exc.status_code, content=exc.body())
+
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(ScanLimitReachedError, _scan_limit_reached_handler)
 
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).

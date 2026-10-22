@@ -3,6 +3,7 @@
 import dataclasses
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import httpx
 import pytest
 
@@ -119,3 +120,88 @@ def test_openai_adapter_rejects_non_openai_spec():
     spec = MagicMock(provider="acme", name="x")
     with pytest.raises(ValueError):
         OpenAIVisionProvider(spec)
+
+
+def _fast(spec, timeout_s: float):
+    """A copy of ``spec`` with a timeout below the registry's 1 s floor, so a
+    test need not wait the real 45 s (bypasses the frozen dataclass)."""
+    fast = dataclasses.replace(spec)
+    object.__setattr__(fast, "timeout_s", timeout_s)
+    return fast
+
+
+class TestOverallDeadline:
+    """The gateway bounds the whole provider call by the feature's timeout_s
+    (#528), so the lease's timeout_s + 30 s really outlives the call."""
+
+    async def test_provider_slower_than_timeout_raises_scan_unavailable(
+        self, provider_cls
+    ):
+        started = []
+
+        async def slow(_image):
+            started.append(True)
+            await anyio.sleep(30)
+            return [CANDIDATE]
+
+        provider_cls.return_value.identify = slow
+        snapshot = MagicMock(spec_for=lambda s: _fast(s, 0.05))
+        with anyio.fail_after(5):  # the test itself never waits long
+            with pytest.raises(ScanUnavailableError) as exc_info:
+                await run_feature(
+                    "scan.standard",
+                    user=USER,
+                    db=DB,
+                    payload=PAYLOAD,
+                    settings_snapshot=snapshot,
+                )
+        assert started == [True]
+        assert "deadline" in str(exc_info.value)
+        # Not a kill switch: a plain unavailability, which /scan refunds.
+        assert not isinstance(exc_info.value, FeatureDisabledError)
+
+    async def test_provider_within_timeout_returns(self, provider_cls):
+        async def quick(_image):
+            await anyio.sleep(0.01)
+            return [CANDIDATE]
+
+        provider_cls.return_value.identify = quick
+        snapshot = MagicMock(spec_for=lambda s: _fast(s, 1.0))
+        result = await run_feature(
+            "scan.standard",
+            user=USER,
+            db=DB,
+            payload=PAYLOAD,
+            settings_snapshot=snapshot,
+        )
+        assert result.candidates == [CANDIDATE]
+
+    async def test_deadline_is_the_specs_timeout(self, provider_cls):
+        seen = []
+        real_move_on_after = gateway.anyio.move_on_after
+
+        def spy(delay, *args, **kwargs):
+            seen.append(delay)
+            return real_move_on_after(delay, *args, **kwargs)
+
+        with patch.object(gateway.anyio, "move_on_after", spy):
+            await run_feature("scan.enhanced", user=USER, db=DB, payload=PAYLOAD)
+        assert seen == [FEATURES["scan.enhanced"].timeout_s]
+
+    async def test_providers_own_timeout_error_is_not_the_deadline(self, provider_cls):
+        """Only the gateway's deadline maps to ScanUnavailableError (and a
+        refund); a TimeoutError raised by the provider itself propagates."""
+
+        async def raises(_image):
+            raise TimeoutError("from inside the provider")
+
+        provider_cls.return_value.identify = raises
+        snapshot = MagicMock(spec_for=lambda s: _fast(s, 5.0))
+        with pytest.raises(TimeoutError, match="inside the provider"):
+            await run_feature(
+                "scan.standard",
+                user=USER,
+                db=DB,
+                payload=PAYLOAD,
+                settings_snapshot=snapshot,
+            )
