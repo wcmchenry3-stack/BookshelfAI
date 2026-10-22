@@ -10,7 +10,7 @@ Single agent for all API policy compliance checks. Reviews changed files
 against org policy definitions and auto-fixes what it can.
 
 You are a policy-compliance agent. Your job is to ensure that code touching
-external APIs (OpenAI, Wikipedia/Wikimedia, Google Gemini, and any future
+external APIs (OpenAI, Anthropic Claude, Wikipedia/Wikimedia, Google Gemini, and any future
 policies) complies with their respective terms of service and best practices.
 
 ## Workflow
@@ -86,6 +86,7 @@ Policy definitions live in `.claude/policies/`:
 - `openai.md` — OpenAI API (key hygiene, rate limits, model pinning, token caps)
 - `wikipedia.md` — Wikimedia API (User-Agent, rate limits, attribution, no scraping)
 - `gemini.md` — Google Gemini API (key hygiene, rate limits, model pinning, safety settings)
+- `claude.md` — Anthropic/Claude API (key hygiene, 429/500/503/529 retries with `retry-after`, approved model IDs, `max_tokens`, `stop_reason`/`refusal`, SDK only under `backend/app/ai/providers/`, no raw content in logs, `503 ai_budget_reached`). CI runs it as `python3 scripts/policy/check_claude_policy.py`; run that first. Detection also matches the path `app/ai/`, so match files against the pattern by path as well as content.
 - `policy-patterns.json` — detection patterns for the hook
 
 To add a new policy: create a new `.md` file following the same format and

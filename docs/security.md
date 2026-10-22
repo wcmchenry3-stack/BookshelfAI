@@ -19,7 +19,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Request size limit | `RequestSizeLimitMiddleware` drops bodies > 10 MB with 413 before reading the stream |
 | DDoS / Bot protection | Cloudflare free tier (Bot Fight Mode, HTTP DDoS protection) |
 | Bot protection on /scan | Cloudflare Turnstile — opt-in via `TURNSTILE_SECRET_KEY` env var. Request must carry `cf-turnstile-response`; verified against Cloudflare siteverify with 5s timeout |
-| CORS | Explicit method/header allowlist; wildcard origins rejected at config validation |
+| CORS | Explicit method/header allowlist; wildcard origins rejected at config validation; only `Retry-After` is exposed to scripts (`expose_headers`), for the scan 429s |
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
 | Upload normalisation | Every `/scan` image is fully decoded, bomb-checked, stripped of metadata, downscaled and re-encoded as JPEG before any paid call. See [Upload pipeline](#upload-pipeline-post-scan) |
 | SQL injection | SQLAlchemy ORM throughout; no raw SQL |
@@ -124,6 +124,19 @@ Application logs are structured JSON on stdout (`backend/app/core/logging.py`).
 **Safety net:** a `RedactingFilter` replaces email addresses, `Bearer <token>` values, JWT-shaped strings (three base64url segments) and credential-looking URL query parameters (`key=`, `token=`, `api_key=`, …) with `[REDACTED*]` markers. It renders the full message once, so values nested in lists, dicts or objects are covered, and it also redacts exception tracebacks and stack info. The JSON formatter applies the same redaction to the message and traceback as a second layer. It uses precompiled regexes and never raises.
 
 **Scope:** the filter is attached to the root handler (all `app.*` loggers) and to the `uvicorn`, `uvicorn.error` and `uvicorn.access` handlers, which don't propagate to root. On those handlers it runs in `preserve_args` mode: string args are redacted in place so uvicorn's access formatter, which unpacks the args, keeps working. Sentry events are scrubbed separately (`app/core/sentry_context.py`). It is a backstop, not a licence to log such values: new log lines should not include them in the first place.
+
+## Claude API policy checks
+
+`.claude/policies/claude.md` is enforced in CI by the `claude-policy` job, which runs `scripts/policy/check_claude_policy.py` over the tracked source tree (files under `app/ai/` or that import the Anthropic SDK; tests, docs and `.env*` are skipped). Fixture tests: `backend/tests/unit/test_claude_policy.py`. Checks:
+
+1. No hardcoded `sk-ant-` key.
+2. (AST) Files with an SDK call retry 429, 500, 503 and 529 and respect `retry-after`.
+3. Model IDs are in `ALLOWED_MODELS["anthropic"]` (today `claude-haiku-5-5`, `claude-sonnet-5-5`, which are fixed IDs with no dated snapshot) or are dated snapshots. `*-latest` aliases and unlisted IDs fail.
+4. `max_tokens` on every `messages.create` / `messages.stream` call.
+5. `stop_reason` and `refusal` are handled.
+6. SDK calls (`messages.create`, `AsyncAnthropic`, `Anthropic(`) only under `backend/app/ai/providers/`.
+7. No raw content fields (text, content, output, image bytes) in `app/ai/` log calls; log a length or hash.
+8. The breaker's refusal is `503 ai_budget_reached`.
 
 ## Pre-commit Hook (gitleaks)
 

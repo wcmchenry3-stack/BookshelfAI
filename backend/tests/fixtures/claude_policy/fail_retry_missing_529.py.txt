@@ -1,0 +1,9 @@
+import anthropic
+
+RETRYABLE = {429, 500, 503}
+RETRY_HEADER = "retry-after"
+
+
+async def call(client):
+    message = await client.messages.create(model="claude-haiku-5-5", max_tokens=1)
+    return message.stop_reason == "refusal"

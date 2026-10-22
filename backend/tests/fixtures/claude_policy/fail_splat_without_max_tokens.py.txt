@@ -1,0 +1,12 @@
+RETRYABLE = {429, 500, 503, 529}
+RETRY_HEADER = "retry-after"
+
+
+def build():
+    return {"model": "claude-haiku-5-5"}
+
+
+async def call(client):
+    request = build()
+    message = await client.messages.create(**request)
+    return message.stop_reason == "refusal"

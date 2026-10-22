@@ -1,0 +1,7 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def handle(message):
+    logger.warning("Claude replied: %s", message.content)

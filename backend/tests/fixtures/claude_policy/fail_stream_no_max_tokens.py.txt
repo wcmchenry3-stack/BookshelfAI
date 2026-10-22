@@ -1,0 +1,9 @@
+import anthropic
+
+RETRYABLE = {429, 500, 503, 529}
+RETRY_HEADER = "retry-after"
+
+
+def call(client):
+    with client.messages.stream(model="claude-haiku-5-5", messages=[]) as s:
+        return s.stop_reason == "refusal"
