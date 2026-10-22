@@ -203,7 +203,7 @@ curl "https://bookshelfapi.buffingchi.com/books/search?q=dune+herbert" \
 
 ### `POST /scan` — identify book cover from image
 
-Multipart upload → optional Cloudflare Turnstile bot check → file validation (extension + MIME + size, read in chunks + magic bytes) → image normalisation (full decode, pixel cap, EXIF orientation, metadata stripped, long edge ≤ 1568 px, JPEG quality 85) → ChatGPT Vision identification (`gpt-4o-mini`) → Google Books + Open Library enrichment → per-user deduplication flagging. Returns a `ScanResponse` whose `books` holds up to 15 `EnrichedBook` entries (`SCAN_MAX_BOOKS`), one per distinct book found in the photo.
+Multipart upload → optional Cloudflare Turnstile bot check → file validation (extension + MIME + size, read in chunks + magic bytes) → image normalisation (full decode, pixel cap, EXIF orientation, metadata stripped, long edge ≤ 1568 px, JPEG quality 85) → vision identification through the AI gateway (`gpt-4o-mini` by default; Claude when a feature is switched to `anthropic`, #532) → Google Books + Open Library enrichment → per-user deduplication flagging. Returns a `ScanResponse` whose `books` holds up to 15 `EnrichedBook` entries (`SCAN_MAX_BOOKS`), one per distinct book found in the photo.
 
 **Auth:** required
 **Rate limit:** `rate_limit_scan` (10/min default)
