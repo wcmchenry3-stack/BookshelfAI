@@ -21,7 +21,7 @@ export type ScanUiState =
   | { kind: 'monthly_limit'; limit?: number; periodEnd?: string }
   | { kind: 'daily_limit'; retryAfterSeconds?: number }
   | { kind: 'in_progress'; retryAfterSeconds: number }
-  | { kind: 'paused' }
+  | { kind: 'paused'; enhancedOnly?: boolean }
   | { kind: 'no_enhanced_credits' }
   | { kind: 'generic' };
 
@@ -118,7 +118,10 @@ export function classifyScanError(err: unknown): ScanUiState {
     return { kind: 'generic' };
   }
   if (status === 503 && detail !== undefined && PAUSED_CODES.includes(detail)) {
-    return { kind: 'paused' };
+    // Only enhanced scans are switched off; standard scans still work.
+    return detail === 'enhanced_scan_disabled'
+      ? { kind: 'paused', enhancedOnly: true }
+      : { kind: 'paused' };
   }
   return { kind: 'generic' };
 }

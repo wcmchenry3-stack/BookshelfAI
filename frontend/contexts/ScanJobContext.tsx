@@ -94,8 +94,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   }, [jobs]);
 
   const drainingRef = useRef(false);
-  // Set when a scan is refused for a reason that applies to every queued job.
-  const stopDrainRef = useRef(false);
+  // Which photos the current drain stops sending after a refusal: all of
+  // them (limit, paused, busy) or only enhanced ones (enhanced switched off).
+  const stopDrainRef = useRef<'none' | 'enhanced' | 'images'>('none');
   // Ids of jobs being sent right now, so a drain can't send the same job twice.
   const inFlightRef = useRef<Set<string>>(new Set());
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
@@ -167,20 +168,23 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         (j) => j.status === 'queued' || j.status === 'pending'
       );
 
-      stopDrainRef.current = false;
+      stopDrainRef.current = 'none';
       for (const job of queuedJobs) {
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) break;
         // The list above is a snapshot: skip jobs dismissed, sent or being
         // sent (startScan/retryScan) since.
         const current = jobsRef.current.find((j) => j.id === job.id);
+        // Re-read: executeScan (via a refusal) sets it during the loop.
+        const stop = stopDrainRef.current as 'none' | 'enhanced' | 'images';
         if (
           !current ||
           (current.status !== 'queued' && current.status !== 'pending') ||
           inFlightRef.current.has(job.id) ||
           // A refusal (limit, paused) applies to photo uploads only (POST
           // /scan); queued text searches still go through.
-          (stopDrainRef.current && current.type === 'image')
+          (current.type === 'image' &&
+            (stop === 'images' || (stop === 'enhanced' && !!current.enhanced)))
         ) {
           continue;
         }
@@ -452,9 +456,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     function handleScanRefusal(job: ScanJob, state: ScanUiState) {
       const notice = toScanNotice(state, Date.now(), true);
       if (!notice) return;
-      // A refusal applies to every queued job (and a busy lease means the
-      // next one would be refused too), so stop draining.
-      stopDrainRef.current = true;
+      // A refusal applies to every queued photo (and a busy lease means the
+      // next one would be refused too), so stop sending photos; an
+      // enhanced-only switch-off stops enhanced photos only.
+      const scope = state.kind === 'paused' && state.enhancedOnly ? 'enhanced' : 'images';
+      if (stopDrainRef.current !== 'images') stopDrainRef.current = scope;
       Sentry.addBreadcrumb({
         category: 'scan',
         message: `Scan refused: ${state.kind}`,

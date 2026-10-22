@@ -337,6 +337,51 @@ describe('refusal follow-ups', () => {
     expect(statuses).toEqual(['queued', 'queued', 'queued']);
   });
 
+  it('an enhanced-only switch-off still lets queued standard photos through', async () => {
+    mockLoadJobs.mockResolvedValue([
+      {
+        id: 'q-enh',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 1,
+        imageUri: 'file:///e.jpg',
+        retryCount: 0,
+        enhanced: true,
+      },
+      {
+        id: 'q-enh-2',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 2,
+        imageUri: 'file:///e2.jpg',
+        retryCount: 0,
+        enhanced: true,
+      },
+      {
+        id: 'q-std',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 3,
+        imageUri: 'file:///s.jpg',
+        retryCount: 0,
+      },
+    ]);
+    mockPost.mockRejectedValueOnce(refusal(503, 'enhanced_scan_disabled')).mockResolvedValue(OK);
+    const { result } = await setup();
+    jest.useFakeTimers();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    // The refused enhanced photo, then the standard one; the second enhanced
+    // photo is skipped.
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    const byId = Object.fromEntries(result.current.jobs.map((j) => [j.id, j.status]));
+    expect(byId['q-enh']).toBe('queued');
+    expect(byId['q-enh-2']).toBe('queued');
+    expect(byId['q-std']).toBe('complete');
+  });
+
   it('a photo refusal still lets queued text searches through', async () => {
     const { api } = jest.requireMock('../../lib/api') as { api: { get: jest.Mock } };
     api.get.mockResolvedValue({ data: [] });
