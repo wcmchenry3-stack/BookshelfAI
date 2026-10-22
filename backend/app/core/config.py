@@ -101,15 +101,6 @@ class Settings(BaseSettings):
     # a paid tier.  0 disables enhanced scan entirely.
     enhanced_scan_free_credits: int = 5
 
-    # Origin auth — when set the API rejects any request that does not carry
-    # X-Origin-Auth: <secret>, forcing all traffic through Cloudflare.
-    # Leave empty during initial rollout; set after the Cloudflare Transform
-    # Rule is in place.  Rollback: clear the env var.
-    origin_auth_secret: str = ""
-    # Override with ORIGIN_AUTH_HEADER if you used a different header name in
-    # the Cloudflare Transform Rule.
-    origin_auth_header: str = "X-Origin-Auth"
-
     # Cloudflare Turnstile — bot protection on /scan.
     # turnstile_required=true (default) means every /scan request must supply a valid
     # cf-turnstile-response token.  If turnstile_secret_key is absent at startup the
