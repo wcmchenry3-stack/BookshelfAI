@@ -188,6 +188,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+    # Lets web clients read the scan 429s' Retry-After (daily_scan_limit,
+    # scan_in_progress) instead of falling back to approximations.
+    expose_headers=["Retry-After"],
 )
 # RequestSizeLimitMiddleware runs before CORS/headers to drop oversized bodies early.
 app.add_middleware(RequestSizeLimitMiddleware)

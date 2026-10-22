@@ -35,7 +35,7 @@ Common status codes:
 | 413 | Payload Too Large | request body > 10 MB (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload, or an image that cannot be decoded (`image_undecodable`) |
 | 402 | Payment Required | no enhanced credits (`no_enhanced_credits`), monthly scan allowance used (`scan_limit_reached`) |
-| 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), another scan still running (`scan_in_progress`) |
+| 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), another scan still running (`scan_in_progress`). `Retry-After` is listed in `Access-Control-Expose-Headers`, so browser clients can read it on cross-origin responses |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
 | 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity |
 
