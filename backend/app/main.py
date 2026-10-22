@@ -152,16 +152,20 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # becomes the outermost layer (first to run on incoming requests).
 #
 # Execution order (outermost → innermost):
-#   TrustedHostMiddleware → RequestSizeLimitMiddleware → OriginAuthMiddleware
-#   → CORSMiddleware → RequestIdMiddleware → SentryContextMiddleware
-#   → SecurityHeadersMiddleware
+#   TrustedHostMiddleware → RequestSizeLimitMiddleware → CORSMiddleware
+#   → RequestIdMiddleware → SentryContextMiddleware → SecurityHeadersMiddleware
+#   → OriginAuthMiddleware
 #
-# OriginAuthMiddleware must be outer to CORSMiddleware so that OPTIONS preflight
-# requests also reach the origin-auth check (CORSMiddleware short-circuits OPTIONS
-# before inner middleware runs).  Its 403 still passes back through CORS,
-# RequestId, Sentry and SecurityHeaders on the way out.
+# OriginAuthMiddleware is innermost so its 403 passes back through all outer
+# layers: SecurityHeadersMiddleware adds CSP/X-Frame-Options, CORSMiddleware
+# adds access-control headers so browsers can read the error body.
+# Known limitation: CORSMiddleware short-circuits OPTIONS preflights before
+# OriginAuthMiddleware runs, allowing endpoint enumeration via preflight from
+# a CORS-allowed origin without the origin-auth header. Actual GET/POST/etc.
+# are always checked; no data is exposed via the preflight path.
 # The client IP used for rate limiting is not set by a middleware: the
 # limiter's key function calls app.core.client_ip directly.
+app.add_middleware(OriginAuthMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SentryContextMiddleware)
 app.add_middleware(RequestIdMiddleware)
@@ -172,8 +176,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
 )
-app.add_middleware(OriginAuthMiddleware)
-# RequestSizeLimitMiddleware runs before CORS/origin-auth to drop oversized bodies early.
+# RequestSizeLimitMiddleware runs before CORS/headers to drop oversized bodies early.
 app.add_middleware(RequestSizeLimitMiddleware)
 
 
