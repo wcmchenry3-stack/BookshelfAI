@@ -8,7 +8,7 @@ RETRYABLE = {429, 500, 503, 529}
 
 
 async def call(client, request):
-    # retry-after is honoured by the caller.
+    retry_after = client.headers.get("retry-after")
     message = await client.messages.create(model=MODEL, max_tokens=1024, **request)
     if message.stop_reason == "refusal":
         logger.warning("declined")

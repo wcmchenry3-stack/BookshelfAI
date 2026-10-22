@@ -1,3 +1,5 @@
-import anthropic
+from fastapi import HTTPException
 
-DETAIL = "402 ai_budget_reached"
+
+def refuse():
+    raise HTTPException(status_code=402, detail="ai_budget_reached")

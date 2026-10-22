@@ -6,6 +6,7 @@ pytest ignore them; the checker is fed their text under a pretend path.
 """
 
 import importlib.util
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -103,8 +104,109 @@ def test_raw_content_logging_ignored_outside_ai():
     assert run("fail_log_raw_content.py.txt", "backend/app/api/x.py") == []
 
 
+APP = "backend/app/api/sample.py"
+
+
 def test_budget_refusal_must_be_503():
-    assert checks(run("fail_budget_status.py.txt")) == {"budget-status"}
+    assert checks(run("fail_budget_status.py.txt", APP)) == {"budget-status"}
+    assert checks(run("fail_budget_status_429.py.txt", APP)) == {"budget-status"}
+
+
+def test_budget_503_passes_in_any_app_file():
+    assert run("pass_budget_503.py.txt", APP) == []
+
+
+def test_real_scan_router_budget_refusal_passes():
+    rel = "backend/app/api/scan.py"
+    assert policy.check_file(rel, (REPO / rel).read_text(), ALLOWED) == []
+
+
+def test_comments_and_docstrings_do_not_satisfy_retry_or_refusal():
+    got = run("fail_retry_comments_only.py.txt")
+    assert {"retry", "stop-reason"} <= checks(got)
+    assert any("429" in v.message for v in got)
+
+
+REAL_PROVIDER = REPO / "backend/app/ai/providers/anthropic_vision.py"
+
+
+def test_real_provider_copy_passes():
+    assert policy.check_file(PROVIDER, REAL_PROVIDER.read_text(), ALLOWED) == []
+
+
+def test_real_provider_without_529_fails():
+    text = REAL_PROVIDER.read_text()
+    assert "{429, 500, 503, 529}" in text
+    mutated = text.replace("{429, 500, 503, 529}", "{429, 500, 503}")
+    got = policy.check_file(PROVIDER, mutated, ALLOWED)
+    assert any(v.check == "retry" and "529" in v.message for v in got)
+
+
+def test_real_provider_without_retry_after_fails():
+    mutated = (
+        REAL_PROVIDER.read_text()
+        .replace("retry_after", "ra")
+        .replace("retry-after", "x-ra")
+    )
+    got = policy.check_file(PROVIDER, mutated, ALLOWED)
+    assert any(v.check == "retry" and "retry-after" in v.message for v in got)
+
+
+def test_real_scan_router_with_402_budget_fails():
+    rel = "backend/app/api/scan.py"
+    text = (REPO / rel).read_text()
+    old = 'status_code=status.HTTP_503_SERVICE_UNAVAILABLE,\n            detail="ai_budget_reached"'
+    assert old in text
+    mutated = text.replace(
+        old, 'status_code=402,\n            detail="ai_budget_reached"'
+    )
+    assert "budget-status" in checks(policy.check_file(rel, mutated, ALLOWED))
+
+
+def test_stream_without_max_tokens_fails():
+    assert checks(run("fail_stream_no_max_tokens.py.txt")) == {"max-tokens"}
+
+
+def test_with_raw_response_create_without_max_tokens_fails():
+    assert checks(run("fail_raw_response_no_max_tokens.py.txt")) == {"max-tokens"}
+
+
+def test_raw_response_and_batches_are_sdk_calls_outside_providers():
+    for call in (
+        "client.messages.with_raw_response.create()",
+        "client.messages.batches.create()",
+        "client.beta.messages.create()",
+    ):
+        got = policy.check_file("backend/app/api/x.py", f"{call}\n", ALLOWED)
+        assert "sdk-location" in checks(got), call
+
+
+def test_syntax_error_fails_closed():
+    assert checks(run("fail_syntax_error.py.txt")) == {"parse"}
+
+
+@pytest.mark.parametrize(
+    "text", ["KEY = os.environ['ANTHROPIC_API_KEY']\n", "// @anthropic-ai/sdk\n"]
+)
+def test_detection_by_content(text):
+    assert policy.is_detected("a/b.py", text)
+    assert "model-pin" in checks(
+        policy.check_file(
+            "a/b.ts", text + 'const m = "claude-3-5-sonnet-latest"\n', ALLOWED
+        )
+    )
+
+
+def test_injected_client_call_is_detected():
+    assert policy.is_detected("backend/app/api/x.py", "self.client.messages.create(x)")
+
+
+def test_log_harmless_attributes_pass():
+    assert run("pass_log_harmless_attrs.py.txt", AI) == []
+
+
+def test_log_content_attribute_fails():
+    assert checks(run("fail_log_attr_content.py.txt", AI)) == {"log-content"}
 
 
 def test_detection_covers_app_ai_path_and_skips_env():
@@ -142,3 +244,114 @@ def test_cli_exits_nonzero_on_violation(tmp_path):
     )
     assert result.returncode == 1
     assert "model-pin" in result.stdout
+
+
+def _allowlist_root(tmp_path, source: str) -> Path:
+    d = tmp_path / "backend/app/ai"
+    d.mkdir(parents=True)
+    (d / "models_allowlist.py").write_text(source)
+    return tmp_path
+
+
+def _run_cli(root: Path):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_allowlist_without_anthropic_key_exits_nonzero(tmp_path):
+    root = _allowlist_root(
+        tmp_path, (FIXTURES / "fail_allowlist_no_anthropic.py.txt").read_text()
+    )
+    result = _run_cli(root)
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "anthropic" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["x = (\n", "OTHER = {}\n", "ALLOWED_MODELS = {'anthropic': 'claude-opus-9-9'}\n"],
+)
+def test_allowlist_unreadable_fails_closed(tmp_path, source):
+    result = _run_cli(_allowlist_root(tmp_path, source))
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+
+
+def test_missing_allowlist_fails_closed(tmp_path):
+    result = _run_cli(tmp_path)
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+
+
+def test_decoy_dict_does_not_widen_the_allowlist(tmp_path):
+    root = _allowlist_root(tmp_path, (FIXTURES / "decoy_allowlist.py.txt").read_text())
+    allowed = policy.load_allowed_models(root)
+    assert allowed == frozenset({"claude-haiku-5-5"})
+    bad = policy.check_file(
+        PROVIDER, 'import anthropic\nM = "claude-opus-9-9"\n', allowed
+    )
+    ok = policy.check_file(
+        PROVIDER, 'import anthropic\nM = "claude-haiku-5-5"\n', allowed
+    )
+    assert checks(bad) == {"model-pin"} and ok == []
+
+
+def test_fallback_walk_skips_virtualenvs(tmp_path, monkeypatch):
+    for d in (".venv", "venv", "site-packages", "node_modules", "src"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "m.py").write_text("x = 1\n")
+    monkeypatch.setattr(
+        policy.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError())
+    )
+    assert policy._tracked_files(tmp_path) == ["src/m.py"]
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="policy-gate.sh needs jq")
+class TestPolicyGateHook:
+    """Run the real hook in a throwaway git repo."""
+
+    def _repo(self, tmp_path, rel: str, content: str) -> Path:
+        git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+        (tmp_path / ".claude/hooks").mkdir(parents=True)
+        for f in (
+            ".claude/hooks/policy-gate.sh",
+            ".claude/policies/policy-patterns.json",
+        ):
+            (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / f, tmp_path / f)
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / "README.txt").write_text("base\n")
+        subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+        subprocess.run([*git, "commit", "-qm", "base"], cwd=tmp_path, check=True)
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+        subprocess.run([*git, "commit", "-qm", "change"], cwd=tmp_path, check=True)
+        return tmp_path
+
+    def _gate(self, repo: Path):
+        payload = '{"tool_input": {"command": "gh pr create"}}'
+        return subprocess.run(
+            ["bash", ".claude/hooks/policy-gate.sh"],
+            cwd=repo,
+            input=payload,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_path_only_match_under_app_ai_blocks(self, tmp_path):
+        repo = self._repo(tmp_path, "backend/app/ai/registry.py", "X = 1\n")
+        result = self._gate(repo)
+        assert result.returncode == 2
+        assert "claude" in result.stderr
+
+    def test_unrelated_path_and_content_passes(self, tmp_path):
+        repo = self._repo(tmp_path, "backend/app/other/x.py", "X = 1\n")
+        assert self._gate(repo).returncode == 0

@@ -1,7 +1,7 @@
 import anthropic
 
 RETRYABLE = {429, 500, 503}
-# retry-after is honoured.
+RETRY_HEADER = "retry-after"
 
 
 async def call(client):

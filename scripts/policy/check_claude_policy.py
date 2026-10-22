@@ -6,6 +6,9 @@ the Anthropic SDK or live under ``app/ai/`` and exits non-zero on any
 violation. Run from anywhere: ``python3 scripts/policy/check_claude_policy.py``
 (optionally ``--root DIR`` and explicit file paths relative to the root).
 
+Checks 2, 4, 5, 7 and 8 are AST checks on Python code: comments, docstrings
+and bare string statements never satisfy a requirement.
+
 ``check_file(relpath, text, allowed_models)`` is the pure entry point the tests
 use; it never touches the disk.
 """
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import re
 import subprocess
 import sys
@@ -22,10 +26,12 @@ from pathlib import Path
 
 DETECT = re.compile(
     r"from anthropic|import anthropic|@anthropic-ai/sdk|Anthropic\(|"
-    r"ANTHROPIC_API_KEY|claude_agent_sdk"
+    r"ANTHROPIC_API_KEY|claude_agent_sdk|"
+    r"\.messages\.(\w+\.)*(create|stream)\("
 )
 AI_DIR = re.compile(r"(^|/)app/ai/")
 PROVIDERS_DIR = re.compile(r"(^|/)app/ai/providers/")
+BACKEND_APP = re.compile(r"(^|/)backend/app/")
 ENV_FILE = re.compile(r"(^|/)\.env")
 
 SCAN_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs")
@@ -34,12 +40,15 @@ EXCLUDE = re.compile(
     r"(^|/)(node_modules|tests|__tests__|docs|\.claude|\.github|scripts/policy)/"
     r"|\.(test|spec)\.[jt]sx?$"
 )
+WALK_SKIP = frozenset({".git", ".venv", "venv", "site-packages", "node_modules"})
 
 KEY = re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}")
 MODEL_ID = re.compile(r"""["'](claude-[A-Za-z0-9._-]+)["']""")
 DATED = re.compile(r"-\d{8}$")
-SDK_TEXT = re.compile(r"\.messages\.(create|stream)\(|\bAsyncAnthropic\(|\bAnthropic\(")
-BUDGET = re.compile(r"\b(\d{3})\b[\s`'\"]*ai_budget_reached")
+SDK_TEXT = re.compile(
+    r"\.messages\.(?:\w+\.)*(?:create|stream)\(|\bAsyncAnthropic\(|\bAnthropic\("
+)
+RETRY_STATUSES = (429, 500, 503, 529)
 RAW_FIELDS = frozenset(
     {
         "text",
@@ -72,20 +81,54 @@ class Violation:
         return f"{self.path}: [{self.check}] {self.message}"
 
 
+def _fail_closed(msg: str) -> SystemExit:
+    return SystemExit(f"claude-policy: {msg}")
+
+
+def _unwrap(node: ast.expr) -> ast.expr:
+    """``MappingProxyType({...})`` / ``frozenset({...})`` -> the literal."""
+    while isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        node = node.args[0]
+    return node
+
+
 def load_allowed_models(root: Path) -> frozenset[str]:
     """The approved Claude IDs: ``ALLOWED_MODELS["anthropic"]`` in
-    ``backend/app/ai/models_allowlist.py``, read without importing the app."""
-    src = (root / "backend/app/ai/models_allowlist.py").read_text()
-    for node in ast.walk(ast.parse(src)):
-        if isinstance(node, ast.Dict):
-            for k, v in zip(node.keys, node.values):
-                if isinstance(k, ast.Constant) and k.value == "anthropic":
-                    return frozenset(
-                        c.value
-                        for c in ast.walk(v)
-                        if isinstance(c, ast.Constant) and isinstance(c.value, str)
-                    )
-    raise SystemExit("models_allowlist.py has no ALLOWED_MODELS['anthropic']")
+    ``backend/app/ai/models_allowlist.py``, read without importing the app.
+    Only the module-level ``ALLOWED_MODELS`` assignment is read; anything
+    unexpected fails closed with a one-line error."""
+    path = root / "backend/app/ai/models_allowlist.py"
+    try:
+        tree = ast.parse(path.read_text())
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise _fail_closed(f"cannot read {path.name}: {type(exc).__name__}") from None
+    value = None
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            targets, val = stmt.targets, stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            targets, val = [stmt.target], stmt.value
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == "ALLOWED_MODELS" for t in targets):
+            value = val
+    if value is None:
+        raise _fail_closed("ALLOWED_MODELS is not assigned in models_allowlist.py")
+    table = _unwrap(value)
+    if not isinstance(table, ast.Dict):
+        raise _fail_closed("ALLOWED_MODELS is not a dict literal")
+    for k, v in zip(table.keys, table.values):
+        if isinstance(k, ast.Constant) and k.value == "anthropic":
+            items = _unwrap(v)
+            if isinstance(items, (ast.Set, ast.List, ast.Tuple)) and all(
+                isinstance(e, ast.Constant) and isinstance(e.value, str)
+                for e in items.elts
+            ):
+                return frozenset(e.value for e in items.elts)
+            raise _fail_closed(
+                "ALLOWED_MODELS['anthropic'] is not a literal set of strings"
+            )
+    raise _fail_closed("ALLOWED_MODELS has no 'anthropic' key")
 
 
 def is_detected(relpath: str, text: str) -> bool:
@@ -109,15 +152,19 @@ def _chain(func: ast.expr) -> list[str]:
 
 
 def _is_sdk_call(node: ast.Call) -> str | None:
+    """ "messages" for calls that take max_tokens, "other" for the rest of the
+    SDK surface (client constructors, batches), None for non-SDK calls."""
     chain = _chain(node.func)
     if (
         len(chain) >= 2
-        and chain[-2] == "messages"
         and chain[-1] in ("create", "stream")
+        and "messages" in chain[:-1]
     ):
-        return "messages"
+        if chain[-2] in ("messages", "with_raw_response"):
+            return "messages"
+        return "other"
     if chain and chain[-1] in ("AsyncAnthropic", "Anthropic"):
-        return "client"
+        return "other"
     return None
 
 
@@ -131,19 +178,61 @@ def _py_sdk_calls(tree: ast.AST) -> list[tuple[ast.Call, str]]:
     return out
 
 
+@dataclass
+class CodeFacts:
+    ints: set[int]
+    strings: set[str]
+    names: set[str]  # identifiers, attributes, function/arg/keyword names (lowercased)
+
+
+def code_facts(tree: ast.AST) -> CodeFacts:
+    """Facts from executable code only: docstrings and bare string statements
+    are dropped, so a comment or docstring can never satisfy a check."""
+    ignored: set[int] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant):
+            ignored.add(id(n.value))
+    facts = CodeFacts(set(), set(), set())
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and id(n) not in ignored:
+            if isinstance(n.value, bool):
+                continue
+            if isinstance(n.value, int):
+                facts.ints.add(n.value)
+            elif isinstance(n.value, str):
+                facts.strings.add(n.value)
+        elif isinstance(n, ast.Name):
+            facts.names.add(n.id.lower())
+        elif isinstance(n, ast.Attribute):
+            facts.names.add(n.attr.lower())
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            facts.names.add(n.name.lower())
+        elif isinstance(n, (ast.arg, ast.keyword)) and n.arg:
+            facts.names.add(n.arg.lower())
+    return facts
+
+
 def _raw_refs(node: ast.AST) -> list[str]:
-    """Raw content names referenced by a logging argument, ignoring anything
-    wrapped in len()/sha256()/hexdigest()."""
+    """Raw content a logging argument would emit: a bare raw-field name, an
+    attribute whose own name is a raw field (``response.content``), or a
+    raw-field subscript. ``image.width`` and ``raw.status_code`` are fine;
+    anything wrapped in len()/sha256()/hexdigest() is fine."""
     found: list[str] = []
 
     def visit(n: ast.AST) -> None:
         if isinstance(n, ast.Call) and _call_name(n.func) in SAFE_WRAPPERS:
             return
-        if isinstance(n, ast.Name) and n.id in RAW_FIELDS:
-            found.append(n.id)
-        elif isinstance(n, ast.Attribute) and n.attr in RAW_FIELDS:
-            found.append(n.attr)
-        elif (
+        if isinstance(n, ast.Attribute):
+            if n.attr in RAW_FIELDS:
+                found.append(n.attr)
+            if not isinstance(n.value, ast.Name):
+                visit(n.value)
+            return
+        if isinstance(n, ast.Name):
+            if n.id in RAW_FIELDS:
+                found.append(n.id)
+            return
+        if (
             isinstance(n, ast.Subscript)
             and isinstance(n.slice, ast.Constant)
             and n.slice.value in RAW_FIELDS
@@ -156,17 +245,51 @@ def _raw_refs(node: ast.AST) -> list[str]:
     return found
 
 
+def _is_503(node: ast.expr | None) -> bool:
+    if isinstance(node, ast.Constant):
+        return node.value == 503
+    if isinstance(node, ast.Attribute):
+        return node.attr.endswith("HTTP_503_SERVICE_UNAVAILABLE")
+    if isinstance(node, ast.Name):
+        return node.id.endswith("HTTP_503_SERVICE_UNAVAILABLE")
+    return False
+
+
+def _budget_violations(tree: ast.AST) -> list[int]:
+    """Lines of HTTPException-style calls with detail "ai_budget_reached"
+    whose status is not 503."""
+    bad = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        kws = {k.arg: k.value for k in n.keywords if k.arg}
+        status, detail = kws.get("status_code"), kws.get("detail")
+        if _call_name(n.func).endswith("HTTPException") and len(n.args) >= 2:
+            status = status or n.args[0]
+            detail = detail or n.args[1]
+        is_budget = (
+            isinstance(detail, ast.Constant) and detail.value == "ai_budget_reached"
+        )
+        if is_budget and not _is_503(status):
+            bad.append(n.lineno)
+    return bad
+
+
 def check_file(
     relpath: str, text: str, allowed_models: frozenset[str]
 ) -> list[Violation]:
-    if not is_detected(relpath, text):
+    is_py = relpath.endswith(".py")
+    detected = is_detected(relpath, text)
+    in_app = (
+        is_py and bool(BACKEND_APP.search(relpath)) and not ENV_FILE.search(relpath)
+    )
+    if not detected and not in_app:
         return []
     v: list[Violation] = []
 
     def fail(check: str, msg: str) -> None:
         v.append(Violation(relpath, check, msg))
 
-    is_py = relpath.endswith(".py")
     tree: ast.AST | None = None
     if is_py:
         try:
@@ -174,6 +297,17 @@ def check_file(
         except SyntaxError:
             fail("parse", "file does not parse; the policy cannot be verified")
             return v
+
+    # 8. Budget breaker refusal is 503 (checked on all of backend/app).
+    if in_app and tree is not None:
+        for line in _budget_violations(tree):
+            fail(
+                "budget-status",
+                f"line {line}: ai_budget_reached must be refused with 503.",
+            )
+
+    if not detected:
+        return v
 
     # 1. No hardcoded key.
     if KEY.search(text):
@@ -191,19 +325,13 @@ def check_file(
                 f"{model!r} is not in ALLOWED_MODELS['anthropic'] and is not a dated snapshot.",
             )
 
-    # 8. Budget breaker refusal is 503.
-    for m in BUDGET.finditer(text):
-        if m.group(1) != "503":
-            fail("budget-status", f"ai_budget_reached must be 503, found {m.group(1)}.")
-
     # SDK calls.
     if tree is not None:
         calls = _py_sdk_calls(tree)
+        facts = code_facts(tree)
     else:
-        calls = [
-            (None, "messages" if m.group(1) else "client")
-            for m in SDK_TEXT.finditer(text)
-        ]
+        calls = [(None, "other") for _ in SDK_TEXT.finditer(text)]
+        facts = None
     has_sdk = bool(calls)
 
     # 6. SDK only under app/ai/providers/.
@@ -215,12 +343,19 @@ def check_file(
 
     if has_sdk:
         # 2. Retry on 429/500/503/529 with retry-after.
-        missing = [
-            s for s in ("429", "500", "503", "529") if not re.search(rf"\b{s}\b", text)
-        ]
+        if facts is not None:
+            missing = [str(s) for s in RETRY_STATUSES if s not in facts.ints]
+            retry_after = any("retry-after" in s.lower() for s in facts.strings) or any(
+                "retry_after" in n for n in facts.names
+            )
+        else:
+            missing = [
+                str(s) for s in RETRY_STATUSES if not re.search(rf"\b{s}\b", text)
+            ]
+            retry_after = bool(re.search(r"retry[-_]after", text, re.IGNORECASE))
         if missing:
             fail("retry", f"No retry handling for status {', '.join(missing)}.")
-        if not re.search(r"retry[-_]after", text, re.IGNORECASE):
+        if not retry_after:
             fail("retry", "retry-after header is not respected.")
 
         # 4. max_tokens on every messages call.
@@ -231,8 +366,8 @@ def check_file(
                 kws = {k.arg for k in call.keywords}
                 if "max_tokens" in kws:
                     continue
-                if None in kws and re.search(
-                    r"""["']max_tokens["']|\bmax_tokens\s*=""", text
+                if None in kws and (
+                    "max_tokens" in facts.strings or "max_tokens" in facts.names
                 ):
                     continue
                 fail(
@@ -243,7 +378,15 @@ def check_file(
             fail("max-tokens", "No max_tokens found for the SDK call.")
 
         # 5. stop_reason / refusal handled.
-        if "stop_reason" not in text or "refusal" not in text:
+        if facts is not None:
+            handled = (
+                "stop_reason" in facts.names
+                or "stop_reason" in facts.strings
+                or ("refusal" in facts.strings)
+            )
+        else:
+            handled = "stop_reason" in text or "refusal" in text
+        if not handled:
             fail("stop-reason", "stop_reason / refusal is not handled.")
 
     # 7. No raw content in logs under app/ai/.
@@ -251,11 +394,8 @@ def check_file(
         for n in ast.walk(tree):
             if not isinstance(n, ast.Call) or not isinstance(n.func, ast.Attribute):
                 continue
-            if (
-                n.func.attr not in LOG_METHODS
-                or not _chain(n.func)[:1]
-                or (_chain(n.func)[0] not in LOG_NAMES)
-            ):
+            chain = _chain(n.func)
+            if n.func.attr not in LOG_METHODS or chain[0] not in LOG_NAMES:
                 continue
             refs = [
                 r
@@ -277,7 +417,10 @@ def _tracked_files(root: Path) -> list[str]:
             ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
         ).stdout.splitlines()
     except (OSError, subprocess.CalledProcessError):
-        out = [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()]
+        out = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in WALK_SKIP]
+            out += [str((Path(dirpath) / f).relative_to(root)) for f in filenames]
     return [p for p in out if p.endswith(SCAN_EXT) and not EXCLUDE.search(p)]
 
 
@@ -300,19 +443,15 @@ def main(argv: list[str] | None = None) -> int:
         if not p.is_file():
             continue
         text = p.read_text(errors="replace")
-        if is_detected(rel, text):
+        found = check_file(rel, text, allowed)
+        if is_detected(rel, text) or found:
             checked += 1
-        violations += check_file(rel, text, allowed)
+        violations += found
+    in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     for item in violations:
-        print(f"::error file={item.path}::{item}" if _in_actions() else item)
+        print(f"::error file={item.path}::{item}" if in_actions else item)
     print(f"claude-policy: {checked} file(s) checked, {len(violations)} violation(s)")
     return 1 if violations else 0
-
-
-def _in_actions() -> bool:
-    import os
-
-    return os.environ.get("GITHUB_ACTIONS") == "true"
 
 
 if __name__ == "__main__":

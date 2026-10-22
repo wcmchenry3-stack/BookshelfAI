@@ -11,7 +11,7 @@ def request():
 
 
 async def call(client):
-    # Retry-After is respected between attempts.
+    retry_after = client.headers.get("retry-after")
     message = await client.messages.create(**request())
     if message.stop_reason == "refusal":
         return None

@@ -1,3 +1,11 @@
-import anthropic
+from fastapi import HTTPException, status
 
-DETAIL = "503 ai_budget_reached"
+
+def refuse():
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ai_budget_reached"
+    )
+
+
+def refuse_literal():
+    raise HTTPException(status_code=503, detail="ai_budget_reached")
