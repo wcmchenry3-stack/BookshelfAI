@@ -146,14 +146,17 @@ def no_books(*, outcome: str = "ok") -> ProviderResult:
 
 # What the provider does, by name. Every outcome the gateway and /scan tell
 # apart today: an answer (with or without books, and the ledger outcomes
-# ok / refused / truncated), a timeout, unavailability (an HTTP error, or the
-# connection never made: OpenAI's httpx.ConnectError, Claude's
+# ok / refused / truncated / malformed), a timeout, unavailability (an HTTP
+# error, or the connection never made: OpenAI's httpx.ConnectError, Claude's
 # ProviderConnectError) and any other error.
 OUTCOMES: dict[str, Callable[[], ProviderResult]] = {
     "books": books,
     "no_books": no_books,
     "refused": lambda: no_books(outcome="refused"),
     "truncated": lambda: books(outcome="truncated"),
+    # Answered (HTTP 200, billed) but unusable (#572): missing, not JSON, the
+    # wrong shape or an unexpected stop reason.
+    "malformed": lambda: no_books(outcome="malformed"),
 }
 ERRORS: dict[str, Callable[[], BaseException]] = {
     "timeout": lambda: ProviderTimeoutError("slow"),

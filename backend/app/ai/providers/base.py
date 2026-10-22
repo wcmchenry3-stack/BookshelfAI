@@ -7,7 +7,15 @@ from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 # How a provider call that returned a response ended (#530). Calls that raised
 # never produce a ProviderResult; the caller records those (timeout, error...).
-ProviderOutcome = Literal["ok", "refused", "truncated"]
+#
+# ``malformed`` (#572): the provider answered (HTTP 200, billed) but the reply
+# is not a usable answer: no content, not JSON, JSON of the wrong shape, a
+# non-empty book list in which no item validates, or an unexpected stop
+# reason. It is never "no books found": ``/scan`` treats it like the provider
+# being unavailable for the user (503 ``scan_unavailable``, every unit
+# refunded) while the billed cost is still settled. A genuine, well-formed
+# ``{"books": []}`` stays ``ok`` with no candidates.
+ProviderOutcome = Literal["ok", "refused", "truncated", "malformed"]
 
 
 class ProviderTimeoutError(ScanUnavailableError):

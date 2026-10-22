@@ -5,9 +5,18 @@ Moved with no behaviour change from ``app/services/chatgpt_vision.py``
 the feature's ``FeatureSpec`` instead of being picked here from ``settings``;
 the values are the same.
 
-Since #530 ``identify`` returns a ``ProviderResult``: the candidates (parsed
-exactly as before) plus the billed usage and the outcome (``ok``, ``refused``
-or ``truncated``) for the usage ledger.
+Since #530 ``identify`` returns a ``ProviderResult``: the candidates plus the
+billed usage and the outcome (``ok``, ``refused``, ``truncated`` or
+``malformed``) for the usage ledger.
+
+``malformed`` (#572): a 200 whose reply is not a usable answer: no message
+content (and no refusal), content that is not JSON, JSON that is not a
+``{"books": [...]}`` object (a bare list is still accepted, as before), a
+non-empty list in which no item validates (a title and an author that are
+non-empty strings), or an unexpected ``finish_reason`` (anything but
+``stop``, ``length`` or ``content_filter``; a missing one is judged on the
+content alone). A list where at least one item validates is ``ok`` with the
+valid items. A genuine ``{"books": []}`` is ``ok`` with no candidates.
 """
 
 import base64
@@ -110,15 +119,22 @@ def _has_refusal(body: object) -> bool:
     return isinstance(refusal, str) and bool(refusal)
 
 
+# The finish reason of a finished answer (None: not reported; the content
+# decides).
+NORMAL_FINISH_REASONS = frozenset({"stop", None})
+
+
 def _outcome(body: object, finish_reason: str | None) -> ProviderOutcome:
     """``refused`` only when the model declined (a ``refusal`` field or a
-    ``content_filter`` stop), ``truncated`` when it hit ``max_tokens``, else
-    ``ok``: a 200 with missing, malformed or shapeless content is still an
-    answered (and billed) call, just with no books."""
+    ``content_filter`` stop), ``truncated`` when it hit ``max_tokens``,
+    ``malformed`` for any other unexpected finish reason (#572), else ``ok``
+    (the content may still make it ``malformed``, see ``identify``)."""
     if finish_reason == "content_filter" or _has_refusal(body):
         return "refused"
     if finish_reason == "length":
         return "truncated"
+    if finish_reason not in NORMAL_FINISH_REASONS:
+        return "malformed"
     return "ok"
 
 
@@ -132,6 +148,11 @@ def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None
         digest,
         finish_reason or "unknown",
     )
+
+
+def _is_text(value: object) -> bool:
+    """A title or author: a string with something in it."""
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _dedupe_key(candidate: BookCandidate) -> tuple[str, str]:
@@ -209,60 +230,91 @@ class OpenAIVisionProvider:
             body = None
         content, finish_reason = _message_content(body)
         input_tokens, output_tokens, cache_read = _usage(body)
+        outcome = _outcome(body, finish_reason)
+        candidates: list[BookCandidate] = []
+        if outcome == "malformed":
+            logger.warning("GPT returned an unexpected finish_reason=%s", finish_reason)
+        else:
+            # A refusal is parsed as before (out of scope for #572).
+            parsed = self._parse_reply(content, finish_reason, max_books)
+            if parsed is None and outcome == "ok":
+                # Missing, non-JSON or schema-invalid content (#572). A
+                # truncated reply stays ``truncated`` (out of scope).
+                outcome = "malformed"
+            candidates = parsed or []
         return ProviderResult(
-            candidates=self._parse(content, finish_reason, max_books),
+            candidates=candidates,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read,
             cache_write_tokens=0,
-            outcome=_outcome(body, finish_reason),
+            outcome=outcome,
         )
 
     def _parse(
         self, content: str | None, finish_reason: str | None, max_books: int
     ) -> list[BookCandidate]:
-        """The candidates in the model's reply (empty when unparseable)."""
+        """The candidates in the model's reply (empty when malformed)."""
+        return self._parse_reply(content, finish_reason, max_books) or []
+
+    def _parse_reply(
+        self, content: str | None, finish_reason: str | None, max_books: int
+    ) -> list[BookCandidate] | None:
+        """The candidates in the model's reply, or None when the reply is
+        malformed (#572): no content, not JSON, the wrong shape, or a
+        non-empty list in which no item validates."""
         if content is None:
-            # No text to parse (refusal or unexpected body). Treated as an empty
-            # result; the response itself is not logged.
+            # No text to parse (an unexpected body). The response itself is
+            # not logged.
             logger.warning(
                 "GPT response had no message content: finish_reason=%s",
                 finish_reason or "unknown",
             )
-            return []
+            return None
         content = content.strip()
 
         try:
             raw = json.loads(content)
         except json.JSONDecodeError:
             _log_unparseable("non-JSON", content, finish_reason)
-            return []
+            return None
 
         # JSON mode yields {"books": [...]}; tolerate a bare array too.
-        items = raw.get("books", []) if isinstance(raw, dict) else raw
+        items = raw.get("books") if isinstance(raw, dict) else raw
         if not isinstance(items, list):
             _log_unparseable("unexpected JSON shape", content, finish_reason)
-            return []
+            return None
 
         candidates: list[BookCandidate] = []
         seen: set[tuple[str, str]] = set()
+        valid = 0
         for item in items:
             if len(candidates) >= max_books:
                 break
             try:
+                title, author = item["title"], item["author"]
+                if not _is_text(title) or not _is_text(author):
+                    continue
                 candidate = BookCandidate(
-                    title=item["title"],
-                    author=item["author"],
+                    title=title,
+                    author=author,
                     confidence=float(item.get("confidence", 0.5)),
                     isbn_13=item.get("isbn_13"),
                     isbn_10=item.get("isbn_10"),
                 )
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
+            valid += 1
             key = _dedupe_key(candidate)
             if key in seen:
                 continue
             seen.add(key)
             candidates.append(candidate)
 
+        if items and not valid and finish_reason != "length":
+            # A list of books none of which is a book: not a "no books" answer.
+            _log_unparseable(
+                "no valid book in a non-empty list", content, finish_reason
+            )
+            return None
         return candidates

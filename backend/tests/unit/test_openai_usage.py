@@ -167,11 +167,12 @@ class TestOutcome:
             {"choices": [{"message": {"content": None, "refusal": ""}}]},
         ],
     )
-    async def test_no_or_unusable_content_without_refusal_is_ok(self, body):
+    async def test_no_or_unusable_content_without_refusal_is_malformed(self, body):
         """Only a refusal field or a content filter is a refusal; a 200 with
-        no usable content is an answered call with no books."""
+        no usable content is ``malformed`` (#572), not an answer with no
+        books."""
         result = await _identify(body)
-        assert result.outcome == "ok"
+        assert result.outcome == "malformed"
         assert result.candidates == []
 
     async def test_no_content_keeps_the_real_usage(self):
@@ -181,7 +182,7 @@ class TestOutcome:
         }
         result = await _identify(body)
         assert (result.outcome, result.input_tokens, result.output_tokens) == (
-            "ok",
+            "malformed",
             1_500,
             3,
         )

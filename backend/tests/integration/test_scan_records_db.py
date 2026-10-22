@@ -473,18 +473,45 @@ class TestNotSaved:
         assert provider.calls == 2
         assert await _rows(factory, user_id) == []
 
-    async def test_empty_list(self, sessions, downstream):
-        """Not saved until the adapters tell a genuine no-match from an
-        unparseable reply (#572)."""
+    async def test_malformed(self, sessions, downstream):
+        """A malformed reply (#572) is a 503 and is never saved; the
+        re-upload is a normal, charged scan."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        provider = _Provider(books=False, outcome="malformed")
+        with provider.patch(), pytest.raises(HTTPException) as exc_info:
+            await _scan(factory, user_id)
+        assert (exc_info.value.status_code, exc_info.value.detail) == (
+            503,
+            "scan_unavailable",
+        )
+        assert await _rows(factory, user_id) == []
+        assert (await _usage(factory, user_id)).used_today == 0
+        good = _Provider()
+        with good.patch():
+            resp = await _scan(factory, user_id)
+        assert good.calls == 1 and resp.repeat is False
+        assert (await _usage(factory, user_id)).used_today == 1
+
+
+class TestNoMatchSaved:
+    async def test_empty_list_is_saved_and_repeated_free(self, sessions, downstream):
+        """A genuine no-match (an empty ok list, #572) is saved as a finished
+        record; the re-upload is a free repeat (owner decision on #573)."""
         factory, make_user = sessions
         user_id = await make_user()
         provider = _Provider(books=False)
         with provider.patch():
-            await _scan(factory, user_id)
+            first = await _scan(factory, user_id)
+            used = (await _usage(factory, user_id)).used_today
             resp = await _scan(factory, user_id)
-        assert provider.calls == 2
-        assert resp.repeat is False
-        assert await _rows(factory, user_id) == []
+        assert first.books == [] and first.repeat is False
+        assert provider.calls == 1
+        assert resp.repeat is True and resp.books == []
+        assert (await _usage(factory, user_id)).used_today == used == 1
+        (row,) = await _rows(factory, user_id)
+        assert row.ai_done and row.enrich_done
+        assert row.candidates == [] and row.enrichment == []
 
     async def test_disabled_calls_the_provider_every_time(self, sessions, downstream):
         factory, make_user = sessions

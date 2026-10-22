@@ -32,6 +32,7 @@ from app.core.limiter import limiter
 from app.models.ai_usage import (
     STATUS_CACHE_HIT,
     STATUS_ERROR,
+    STATUS_MALFORMED,
     STATUS_OK,
     STATUS_REFUNDED,
     STATUS_TIMEOUT,
@@ -324,18 +325,18 @@ async def _save_ai_step(
     ai: AISettings,
 ) -> datetime | None:
     """Save the provider's answer as the record's AI step; the step's time,
-    or None when not saved. Only outcome ``ok`` with at least one book is
-    saved: never a refusal, a truncated reply or an error (those never reach
-    here), and not an empty list either: both adapters return ``ok`` with
-    no books for a reply that was missing, malformed or unparseable as well
-    as for a genuine ``{"books": []}``, and cannot tell them apart today
-    (#572), so a no-match is not saved yet. Never raises."""
+    or None when not saved. Only outcome ``ok`` is saved, with books or
+    without: since #572 the adapters report a missing, malformed or
+    unparseable reply as ``malformed`` (a 503 that never reaches here), so an
+    empty ``ok`` list is a genuine ``{"books": []}``, and a re-upload of that
+    photo is a free repeat of the no-match (owner decision on #573). Never a
+    refusal or a truncated reply (logged as ``not_saved``), nor an error.
+    Never raises."""
     if fingerprint is None:
         return None
-    if result.outcome != STATUS_OK or not result.candidates:
-        reason = "no_match" if result.outcome == STATUS_OK else result.outcome
+    if result.outcome != STATUS_OK:
         scan_records.log_event(
-            "not_saved", ai_done=False, enrich_done=False, reason=reason
+            "not_saved", ai_done=False, enrich_done=False, reason=result.outcome
         )
         return None
     tier = reservation.tier.value if isinstance(reservation.tier, Tier) else "unknown"
@@ -557,7 +558,8 @@ def _usage_row(
     """The ledger insert for this scan's provider call (#530), or None.
 
     With ``result`` (the provider answered) the status is its outcome
-    (``ok``/``refused``/``truncated``) and the tokens are its usage; otherwise
+    (``ok``/``refused``/``truncated``/``malformed``) and the tokens are its
+    usage; otherwise
     ``status`` is given and the tokens are 0. Never raises: a ledger problem
     (e.g. a model with no price) is logged and the row skipped, so it cannot
     turn a scan into an error or mask the original exception.
@@ -745,6 +747,14 @@ async def scan(
     # been paid. An empty result also counts. The lease is always released
     # once the provider call is over (settle), even on cancellation.
     #
+    # A malformed reply (#572: the provider answered HTTP 200, billed, but the
+    # reply was missing, not JSON, of the wrong shape or ended on an
+    # unexpected stop reason) is treated like unavailability for the user:
+    # 503 scan_unavailable and every unit refunded (daily, monthly and the
+    # enhanced unit), never a zero-result and never saved as a scan record.
+    # Its real token usage is still recorded (ledger status ``malformed``)
+    # and its priced cost settled, because the provider billed it.
+    #
     # Enhanced charge decision (#533): the enhanced unit follows the shared
     # units on refund and is kept on errors. When the provider answered but
     # returned no books (no candidates), the settle decides in its own
@@ -813,6 +823,18 @@ async def scan(
         ledger_row = row(result=result)
         settlement = spend(result=result)
         ledger_decided = True
+        if result.outcome == STATUS_MALFORMED:
+            # Billed but unusable (#572): refunded like unavailability; the
+            # finally below settles the priced cost with the ledger row.
+            await _refund_scan_quota(db, reservation)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="scan_unavailable",
+            )
+        # A refusal (and a truncated reply with no books) is still a
+        # zero-book answer here: refusals are out of scope for #572, see the
+        # comment on #572 about the limits-matrix row
+        # premium/enhanced/provider_refused_below_threshold.
         if enhanced and not result.candidates:
             # The provider answered with no books: the settle decides.
             zero_result = quota.ZeroResult(

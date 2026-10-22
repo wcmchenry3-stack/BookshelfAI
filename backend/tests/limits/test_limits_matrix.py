@@ -28,6 +28,10 @@ Done:
 
 - #585 scan records (decision #573 points 1, 2, 5-7): ``REPEATS`` (a repeat
   of a saved answer is free and is looked up before the allowance)
+- #572 malformed replies: the ``malformed`` provider outcome (503
+  ``scan_unavailable``, every unit refunded, the priced cost settled, ledger
+  status ``malformed``), and a genuine no-match saved, so its re-upload is a
+  free repeat (``REPEATS``)
 
 Rules that do not exist yet get their rows from their own stories:
 
@@ -36,8 +40,6 @@ Rules that do not exist yet get their rows from their own stories:
 - #582 removing the monthly window (the monthly rows here change then)
 - #583 Premium escalation
 - #574 retries
-- #572 malformed replies (and a saved no-match: flip the ``REPEATS`` row
-  ``free-standard-repeat_after_no_match-charged_until_572`` to a free repeat)
 - #581 adds a drift test of the limits overview against the settings registry
 
 Write a row as ``Case(...)`` with a readable ``id``
@@ -136,6 +138,8 @@ class Case:
     spend: str
     start: Start = field(default_factory=Start)
     settings: dict[str, Any] = field(default_factory=dict)
+    # The ai_usage status of the call's ledger row, when the row checks it.
+    ledger: str | None = None
 
 
 # fmt: off
@@ -162,6 +166,10 @@ CASES: list[Case] = [
     # stays as spend.
     Case("free-standard-timeout-refunded_estimate_spent", FREE, False, "timeout",
          503, "scan_unavailable", NOTHING, ESTIMATE),
+    # A malformed reply (#572): billed but unusable. Refunded like
+    # unavailability; the priced cost is settled and the ledger says so.
+    Case("free-standard-malformed-refunded_cost_spent", FREE, False,
+         "malformed", 503, "scan_unavailable", NOTHING, COST, ledger="malformed"),
     # Any other error after the reservation keeps it (may have been paid).
     Case("free-standard-other_error-kept", FREE, False, "error",
          500, "RuntimeError", CHARGED, ESTIMATE),
@@ -211,6 +219,8 @@ CASES: list[Case] = [
          503, "scan_unavailable", NOTHING, NO_SPEND),
     Case("premium-standard-timeout-refunded_estimate_spent", PREMIUM, False,
          "timeout", 503, "scan_unavailable", NOTHING, ESTIMATE),
+    Case("premium-standard-malformed-refunded_cost_spent", PREMIUM, False,
+         "malformed", 503, "scan_unavailable", NOTHING, COST, ledger="malformed"),
     Case("premium-standard-other_error-kept", PREMIUM, False, "error",
          500, "RuntimeError", CHARGED, ESTIMATE),
     Case("premium-standard-daily_limit-refused", PREMIUM, False, None,
@@ -238,7 +248,8 @@ CASES: list[Case] = [
     Case("premium-enhanced-zero_books_below_threshold-enhanced_given_back",
          PREMIUM, True, "no_books", ALLOWED, None,
          Delta(daily=1, monthly=1, zero_results=1), COST, Start(zero_results=2)),
-    # A refusal by the model is a zero-book answer today (#572 may change).
+    # A refusal by the model is a zero-book answer: refusals are out of scope
+    # for #572 (see the comment on #572 about this row).
     Case("premium-enhanced-provider_refused_below_threshold-enhanced_given_back",
          PREMIUM, True, "refused", ALLOWED, None,
          Delta(daily=1, monthly=1, zero_results=1), COST),
@@ -261,6 +272,13 @@ CASES: list[Case] = [
          "connect_error", 503, "scan_unavailable", NOTHING, NO_SPEND),
     Case("premium-enhanced-timeout-all_refunded_estimate_spent", PREMIUM, True,
          "timeout", 503, "scan_unavailable", NOTHING, ESTIMATE),
+    # A malformed reply (#572) refunds every unit, the enhanced one too, and
+    # is never a zero-result (no row, even at the threshold).
+    Case("premium-enhanced-malformed-all_refunded_cost_spent", PREMIUM, True,
+         "malformed", 503, "scan_unavailable", NOTHING, COST, ledger="malformed"),
+    Case("premium-enhanced-malformed_at_zero_result_threshold-all_refunded",
+         PREMIUM, True, "malformed", 503, "scan_unavailable", NOTHING, COST,
+         Start(zero_results=3), ledger="malformed"),
     Case("premium-enhanced-other_error-kept", PREMIUM, True, "error",
          500, "RuntimeError", CHARGED_ENHANCED, ESTIMATE),
     Case("premium-enhanced-enhanced_limit-refused", PREMIUM, True, None,
@@ -384,6 +402,10 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     }[case.spend]
     assert await db.spend(day) == (0, spend_start + settled)
 
+    # -- the ledger -----------------------------------------------------------
+    if case.ledger is not None:
+        assert [status for status, _ in await db.usage(user_id)] == [case.ledger]
+
     # -- the lease: released, and another request's lease untouched ---------
     assert await db.lease(user_id) == held
 
@@ -446,10 +468,11 @@ def test_expected_standard_scan_cost_is_anchored_to_a_literal():
 # breaker or global-cap check, and before the in-flight lease; only the kill
 # switches and the Premium-only gate still apply to a repeat.
 #
-# Only an answer with outcome ``ok`` and at least one book is saved. A
-# no-match is not saved today (#572 must flip the ``..._until_572`` rows to a
-# free repeat, as #585 requirement 5 intends), nor a refusal, a truncated
-# reply or any error.
+# Only an answer with outcome ``ok`` is saved, with books or without: since
+# #572 an empty ``ok`` list is a genuine no-match (a malformed reply is its
+# own outcome), so a re-upload after "no book found" is a free repeat (#585
+# requirement 5, owner decision on #573). A refusal, a truncated or malformed
+# reply and any error are never saved.
 
 
 @dataclass(frozen=True)
@@ -523,10 +546,13 @@ REPEATS: list[Repeat] = [
            (False, "books"), False, None, 503, "scan_disabled", repeat=False,
            delta=NOTHING, spend=NO_SPEND,
            settings_after={"scan.standard.enabled": False}),
+    # A genuine no-match is saved (#572): its re-upload is a free repeat.
+    Repeat("free-standard-repeat_after_no_match-free", FREE,
+           (False, "no_books"), False, None, ALLOWED, None, **FREE_REPEAT),
     # ---- Free, standard: nothing saved, so the re-upload is charged ------
-    # #572 flips this row: a no-match becomes a saved, free repeat.
-    Repeat("free-standard-repeat_after_no_match-charged_until_572", FREE,
-           (False, "no_books"), False, "no_books", ALLOWED, None, repeat=False,
+    # A malformed reply (#572) is never saved.
+    Repeat("free-standard-reupload_after_malformed-charged", FREE,
+           (False, "malformed"), False, "books", ALLOWED, None, repeat=False,
            delta=CHARGED, spend=COST),
     Repeat("free-standard-reupload_after_unavailable-charged", FREE,
            (False, "unavailable"), False, "books", ALLOWED, None, repeat=False,
@@ -561,6 +587,10 @@ REPEATS: list[Repeat] = [
            delta=CHARGED_ENHANCED, spend=COST),
     Repeat("premium-enhanced-repeat_enhanced_record-free", PREMIUM,
            (True, "books"), True, None, ALLOWED, None, **FREE_REPEAT),
+    # An enhanced no-match (#572) is saved too: its repeat takes no unit and
+    # writes no zero-result row.
+    Repeat("premium-enhanced-repeat_after_no_match-free", PREMIUM,
+           (True, "no_books"), True, None, ALLOWED, None, **FREE_REPEAT),
     Repeat("premium-standard-repeat_enhanced_record-free", PREMIUM,
            (True, "books"), False, None, ALLOWED, None, **FREE_REPEAT),
     Repeat("premium-enhanced-repeat_at_enhanced_limit-free", PREMIUM,
