@@ -102,9 +102,9 @@ def build_registry(specs: list[FeatureSpec]) -> MappingProxyType[str, FeatureSpe
     return MappingProxyType(registry)
 
 
-# New fields not yet enforced by the scan path: max_image_long_edge_px,
-# max_images, effort and est_cost_ceiling_micros are declared here so later
-# stories (resizing, ledger, usage) have one source of truth.
+# max_image_long_edge_px is enforced by the scan path (app.ai.images, #529).
+# Not yet enforced: max_images, effort and est_cost_ceiling_micros are declared
+# here so later stories (ledger, usage) have one source of truth.
 # est_cost_ceiling_micros is a rough upper estimate of one call at list prices
 # (image tokens at "high" detail plus a full max_tokens reply).
 FEATURES: MappingProxyType[str, FeatureSpec] = build_registry(

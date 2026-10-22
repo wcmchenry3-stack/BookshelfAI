@@ -85,6 +85,15 @@ class Settings(BaseSettings):
     scan_enhanced_enabled: bool = True
     scan_daily_limit_per_user: int = Field(default=20, ge=1, le=1000)
     scan_global_daily_limit: int = Field(default=2000, ge=1, le=1_000_000)
+    # Decompression-bomb guard for /scan uploads: an image whose decoded pixel
+    # count (width x height) is above this is refused with 413
+    # image_too_large_pixels before it is fully decoded. Bounded so a typo
+    # cannot disable the guard. Moves to ai_settings in #526.
+    scan_max_image_pixels: int = Field(default=40_000_000, ge=1_000_000, le=100_000_000)
+    # How many /scan image normalisations (decode + resize) may run at once in
+    # worker threads, per process. Each can hold a few hundred MB for a
+    # full-size image, so this bounds peak memory; extra requests wait.
+    scan_normalise_concurrency: int = Field(default=1, ge=1, le=8)
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 

@@ -1,12 +1,16 @@
 import logging
 from datetime import date
+from functools import partial
 
+import anyio
+import anyio.to_thread
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.gateway import VisionPayload, run_feature
+from app.ai.registry import get_feature
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -25,8 +29,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["scan"])
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB
+# Upload read size; the handler never holds more than MAX_IMAGE_BYTES + 1 bytes.
+READ_CHUNK_BYTES = 64 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+# Image normalisation is CPU- and memory-heavy (a 40 MP image decodes to
+# hundreds of MB), so it runs in a worker thread to keep the event loop free,
+# and at most SCAN_NORMALISE_CONCURRENCY run at once per process to bound
+# peak memory. Requests over the limit wait for a slot.
+_NORMALISE_LIMITER = anyio.CapacityLimiter(settings.scan_normalise_concurrency)
 
 
 async def _verify_turnstile(token: str) -> bool:
@@ -48,6 +60,25 @@ async def _verify_turnstile(token: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Turnstile verification failed: %s", exc)
         return False
+
+
+async def _read_upload_capped(file: UploadFile, limit: int) -> bytes:
+    """Read ``file`` in chunks; 413 as soon as more than ``limit`` bytes arrive.
+
+    Each read asks for at most the bytes still allowed plus one, so no more
+    than ``limit + 1`` bytes are ever read into memory.
+    """
+    buf = bytearray()
+    while True:
+        chunk = await file.read(min(READ_CHUNK_BYTES, limit + 1 - len(buf)))
+        if not chunk:
+            return bytes(buf)
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Image must be 5MB or smaller",
+            )
 
 
 def _dedupe_enriched(books: list[EnrichedBook]) -> list[EnrichedBook]:
@@ -184,17 +215,13 @@ async def scan(
             detail="File must be an image",
         )
 
-    image_bytes = await file.read()
-
-    if len(image_bytes) > MAX_IMAGE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Image must be 5MB or smaller",
-        )
+    # Streaming cap: stop reading as soon as the upload passes 5MB.
+    image_bytes = await _read_upload_capped(file, MAX_IMAGE_BYTES)
 
     # Verify actual file content matches the declared extension.
     # Extension and Content-Type are both client-supplied and can be spoofed;
-    # magic bytes confirm the payload is a real image before forwarding to OpenAI.
+    # magic bytes confirm the payload looks like the declared format before
+    # anything tries to decode it.
     if not validate_magic_bytes(ext, image_bytes):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -205,9 +232,26 @@ async def scan(
     # Runs on the original bytes before any re-encoding.
     scan_for_malware(image_bytes)
 
-    # Strip all metadata (EXIF/XMP/IPTC) and neutralise polyglot payloads by
-    # re-encoding to JPEG.  Consistent with the data:image/jpeg type sent to OpenAI.
-    image_bytes = sanitize_image(image_bytes)
+    # The client only chooses standard vs enhanced; the gateway's registry
+    # decides the provider, model, token cap, timeout and image size for that
+    # feature.
+    feature = "scan.enhanced" if enhanced else "scan.standard"
+
+    # Normalise before any credit or quota check, so a bad image never uses a
+    # scan: full decode (415 image_undecodable), pixel cap (413
+    # image_too_large_pixels), EXIF orientation, all metadata stripped, long
+    # edge capped for the feature, re-encoded as JPEG quality 85. Only these
+    # bytes reach the provider.
+    # Off the event loop; the 413/415 HTTPException raised in the thread
+    # propagates out of run_sync unchanged.
+    image_bytes = await anyio.to_thread.run_sync(
+        partial(
+            sanitize_image,
+            image_bytes,
+            max_long_edge_px=get_feature(feature).max_image_long_edge_px,
+        ),
+        limiter=_NORMALISE_LIMITER,
+    )
 
     credits = current_user.enhanced_scan_credits or 0
     if enhanced and credits <= 0:
@@ -220,9 +264,6 @@ async def scan(
     usage_day = scan_quota.utc_today()
     await _reserve_daily_scan(db, current_user, usage_day)
 
-    # The client only chooses standard vs enhanced; the gateway's registry
-    # decides the provider, model, token cap and timeout for that feature.
-    feature = "scan.enhanced" if enhanced else "scan.standard"
     # The reservation is given back only when the provider reports itself
     # unavailable or was never reached (connection not established). Any other
     # failure (or a cancelled request) keeps it: the provider may already have

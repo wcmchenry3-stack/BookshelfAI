@@ -6,9 +6,9 @@ catching polyglot files and content/extension mismatches before bytes are
 forwarded to downstream services (e.g. OpenAI Vision API).
 
 Note on EXIF/metadata: images from mobile cameras may embed GPS coordinates and
-other metadata. Since uploaded bytes are forwarded directly to OpenAI and never
-stored on disk, this is a user privacy consideration rather than a server
-vulnerability. Strip EXIF via pillow if the app ever persists images.
+other metadata. Uploads are never forwarded as-is: after this check,
+app.ai.images re-encodes every image and drops all metadata before any provider
+call.
 """
 
 # Maps file extension to one or more recognised byte signatures.

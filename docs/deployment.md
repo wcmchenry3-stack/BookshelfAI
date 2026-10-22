@@ -57,6 +57,8 @@ Scan dials (optional; defaults shown; change in the dashboard and restart, no re
 - `SCAN_ENHANCED_ENABLED` (`true`) — `false` turns off enhanced scans only
 - `SCAN_DAILY_LIMIT_PER_USER` (`20`, range 1–1000) — scans per user per UTC day
 - `SCAN_GLOBAL_DAILY_LIMIT` (`2000`, range 1–1,000,000) — scans per UTC day across all users
+- `SCAN_MAX_IMAGE_PIXELS` (`40000000`, range 1,000,000–100,000,000) — decompression-bomb guard: an upload whose width × height is above this gets `413 image_too_large_pixels` before it is decoded. Moves to `ai_settings` in #526
+- `SCAN_NORMALISE_CONCURRENCY` (`1`, range 1–8) — how many scan images are normalised (decoded and resized, in worker threads) at once per process. Each can briefly hold a few hundred MB for a 40 MP image, so this bounds peak memory; requests over the limit wait for a slot. Peak is roughly 160–350 MB per 40 MP image, times this value, times the uvicorn worker count; keep it at 1 on a 512 MB instance and raise it only with more memory
 - `SCAN_MAX_TOKENS` (`2048`, range 1–16384) and `SCAN_TIMEOUT_SECONDS` (`45`, range 1–120) — reply cap and timeout for the vision call
 - `SCAN_MODEL` (`gpt-4o-mini`) and `SCAN_ENHANCED_MODEL` (`gpt-4o`) — must be an allowed OpenAI model (list in `backend/app/ai/models_allowlist.py`); the app names the env var and refuses to boot otherwise. This is deliberate (#552): a bad value stops the whole API, not just scans. Before removing a model from the allowlist, check that no environment (prod, dev, preview) still sets it
 

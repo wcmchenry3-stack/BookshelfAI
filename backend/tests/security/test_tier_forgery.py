@@ -10,6 +10,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.ai import entitlements
 from app.ai.entitlements import Tier
@@ -20,7 +21,17 @@ from app.models.user import User
 pytestmark = pytest.mark.security
 
 USER = User(id=uuid.UUID("00000000-0000-0000-0000-000000000528"), email="f@example.com")
-_JPEG = b"\xff\xd8\xff\xe0" + b"x" * 96
+
+
+def _real_jpeg() -> bytes:
+    # A real, decodable JPEG: since #529 an undecodable upload is rejected
+    # with 415 image_undecodable instead of being passed through.
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 24), (200, 30, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+_JPEG = _real_jpeg()
 
 
 @pytest.fixture(scope="module")

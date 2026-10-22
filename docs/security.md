@@ -21,6 +21,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Bot protection on /scan | Cloudflare Turnstile — opt-in via `TURNSTILE_SECRET_KEY` env var. Request must carry `cf-turnstile-response`; verified against Cloudflare siteverify with 5s timeout |
 | CORS | Explicit method/header allowlist; wildcard origins rejected at config validation |
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
+| Upload normalisation | Every `/scan` image is fully decoded, bomb-checked, stripped of metadata, downscaled and re-encoded as JPEG before any paid call. See [Upload pipeline](#upload-pipeline-post-scan) |
 | SQL injection | SQLAlchemy ORM throughout; no raw SQL |
 | HTTPS | Render TLS termination; HSTS header (hardened — staging + production); Cloudflare Full-strict TLS |
 | Secret scanning | `gitleaks` pre-commit hook + GitHub Secret Scanning |
@@ -32,6 +33,30 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Security headers | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Permissions-Policy |
 | Error disclosure | Exception messages stripped from HTTP error responses; logged server-side only |
 | Error-report PII | Three layers in `app/core/sentry_context.py` (`sentry_privacy_options()`): (1) `include_local_variables=False` — frame locals are never sent, because auth frames hold ID/refresh tokens inside model reprs that no key-name list can see; (2) `before_send` / `before_send_transaction` / `before_breadcrumb` strip URL query strings (the Google Books key travels as `?key=`); (3) a recursive `EventScrubber` for request bodies, headers and extras — request token names plus every secret-looking `Settings` field, derived from `Settings.model_fields` so it cannot drift, plus the configured origin-lockdown header name (`ORIGIN_AUTH_HEADER`). `send_default_pii=False`. Deployed events carry `release=bookshelf-api@<RENDER_GIT_COMMIT>` and the `environment` tag |
+
+## Upload pipeline (`POST /scan`)
+
+Every step runs before the enhanced-credit check and the daily-cap reservation, so a rejected image never uses a scan. Order:
+
+1. Kill switches (`SCAN_ENABLED`, `SCAN_ENHANCED_ENABLED`) → Turnstile.
+2. Extension and `Content-Type` → `415`.
+3. **Streaming read with cap.** The handler reads the upload in 64 KB chunks and stops as soon as it has more than 5 MB (`MAX_IMAGE_BYTES`) → `413 "Image must be 5MB or smaller"`. The handler reads and holds at most 5 MB + 1 byte, but the framework has already received the whole multipart body before the handler runs (spooled to a temp file past 1 MB). `RequestSizeLimitMiddleware` rejects a request whose `Content-Length` is above 10 MB, but it checks only that header, so a chunked body (no `Content-Length`) is not capped yet — see #557.
+4. **Magic bytes** (`app/core/file_validation.py`) must match the declared extension → `415`. This runs before anything decodes the bytes.
+5. **ClamAV** (optional, `CLAMAV_ENABLED`) on the original bytes.
+6. **Normalisation** (`app/ai/images.py`, called through `sanitize_image` in `app/core/file_security.py`):
+   - Only the JPEG, PNG, WebP and HEIF decoders are tried (`pillow-heif` is registered for HEIC/HEIF at import). Other Pillow plugins (TIFF, GIF, EPS, PDF, ...) are unreachable from an upload.
+   - **Decompression-bomb guard:** the pixel count declared in the header is checked before any pixel data is decoded. Above `SCAN_MAX_IMAGE_PIXELS` (default 40 MP, range 1–100 MP) → `413 image_too_large_pixels`. Pillow's own `DecompressionBombError` maps to the same response.
+   - **Decode or reject:** the image is fully decoded; anything Pillow cannot decode (truncated, corrupt, wrong format behind valid magic bytes) → `415 image_undecodable`. There is no raw-bytes fallback: undecodable bytes never reach the provider.
+   - EXIF orientation is applied, then a fresh image is built so all metadata (EXIF including GPS, XMP, IPTC, ICC profiles, comments) is dropped. Re-encoding also removes polyglot payloads (scripts in comment segments, archives after the end-of-image marker).
+   - It runs in a worker thread, at most `SCAN_NORMALISE_CONCURRENCY` (default 1, range 1–8) at once per process, so a burst of large images cannot block the event loop or multiply peak memory.
+   - The long edge is shrunk to the feature's `max_image_long_edge_px` (registry, 1568 px for `scan.standard` and `scan.enhanced`); smaller images are never upscaled. Shrinking happens before alpha is flattened onto white; every mode is converted to RGB, with 16-bit greyscale scaled to 8-bit rather than clipped.
+   - Output is always JPEG, quality 85. Only these bytes are sent to the provider, which caps the input cost per image (about 3,000 tokens at 1568 px).
+   - The log line carries numbers only (output width × height and byte counts), never the image, a filename or any metadata value.
+
+Library pins: `Pillow` and `pillow-heif` are pinned exactly in `backend/requirements.txt`.
+
+- **Bundled native decoders:** the `pillow-heif` wheel bundles native libheif (1.23.4 in `pillow-heif` 1.8.0) and libde265 (1.1.3). CVEs in those C libraries are not visible to `pip-audit` or Trivy through PyPI advisories, so when updating `pillow-heif`, read each release's changelog for libheif/libde265 bumps (and check their upstream advisories) rather than relying on CI to flag them.
+- **Licences:** the `pillow-heif` wheel bundles libheif/libde265 (LGPL-3.0) and x265 (GPL-2.0+); they are used server-side only and not distributed.
 
 ## Client IP and origin lockdown
 
@@ -240,13 +265,15 @@ for i in range(10):
 
 | Test | Expected result |
 |------|----------------|
-| JPEG magic + PHP body (polyglot) | Passes magic bytes; forwarded to OpenAI — bytes never executed server-side |
+| JPEG magic + PHP body (polyglot) | Passes magic bytes; fails full decode → `415 image_undecodable` (never forwarded) |
+| Valid JPEG + `<script>` comment / zip after EOI | Re-encoded; payload absent from the bytes sent to the provider |
+| PNG header declaring 9000×9000 px (tiny file) | `413 image_too_large_pixels`, no full decode |
 | `Content-Type: image/gif` with valid JPEG body | Passes MIME check, fails magic bytes → 415 |
 | `Content-Type: application/octet-stream` | Fails MIME check immediately → 415 |
 | Filename `../../../../etc/passwd.jpg` | Extension `"jpg"` extracted via `rsplit(".", 1)[-1]`; magic bytes validated |
 | No extension: `filename: "file"` | `"." in filename` is False → 415 |
 | File exactly 5 MB | Should pass |
-| File 5 MB + 1 byte | 413 |
+| File 5 MB + 1 byte | 413 (handler stops reading at 5 MB + 1 byte) |
 
 ---
 

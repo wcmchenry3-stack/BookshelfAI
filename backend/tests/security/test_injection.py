@@ -167,9 +167,13 @@ class TestScanUploadValidation:
         from unittest.mock import AsyncMock, patch
 
         client = _authed_client()
-        # Minimal JPEG: SOI marker + valid magic prefix
-        jpeg_magic = b"\xff\xd8\xff\xe0" + b"\x00" * 100
-        data = io.BytesIO(jpeg_magic)
+        # A real, decodable JPEG: since #529 bytes that only carry the magic
+        # prefix are rejected with 415 image_undecodable.
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (16, 16), (0, 0, 0)).save(buf, format="JPEG")
+        data = io.BytesIO(buf.getvalue())
 
         with (
             patch(

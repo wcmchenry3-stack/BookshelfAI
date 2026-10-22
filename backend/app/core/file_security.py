@@ -1,14 +1,14 @@
 """File upload hardening: malware scanning and image sanitization.
 
-Scan order (called from POST /scan):
+Scan order (called from POST /scan, after the magic-byte check):
   1. ClamAV antivirus scan   — optional, controlled by CLAMAV_ENABLED setting
-  2. Pillow re-encode        — always on; strips EXIF/XMP/IPTC and neutralises
-                               polyglot payloads by re-encoding to JPEG
+  2. Image normalisation     — always on (app.ai.images): full decode or 415,
+                               pixel cap or 413, EXIF orientation, all metadata
+                               stripped, long edge capped, re-encoded as JPEG
 
-Both steps operate on raw bytes before they reach OpenAI.  The sanitizer
-also normalises all accepted formats (JPEG/PNG/WebP/HEIC) to JPEG, which
-is consistent with the hardcoded data:image/jpeg MIME type already sent to
-the Vision API.
+Both steps operate on the upload before it reaches the AI provider. Every
+accepted format (JPEG/PNG/WebP/HEIC) leaves as JPEG, consistent with the
+data:image/jpeg MIME type sent to the Vision API.
 """
 
 import io
@@ -16,6 +16,13 @@ import logging
 
 from fastapi import HTTPException, status
 
+# Importing app.ai.images registers the HEIC/HEIF opener before any decode.
+from app.ai.images import (
+    ImageTooLargePixelsError,
+    ImageUndecodableError,
+    normalise_image,
+)
+from app.ai.registry import get_feature
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -76,59 +83,46 @@ def scan_for_malware(raw_bytes: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pillow image sanitization (always on)
+# Image normalisation (always on)
 # ---------------------------------------------------------------------------
 
 
-def sanitize_image(raw_bytes: bytes) -> bytes:
-    """Re-encode *raw_bytes* as JPEG using Pillow.
+def sanitize_image(
+    raw_bytes: bytes,
+    *,
+    max_long_edge_px: int | None = None,
+    max_pixels: int | None = None,
+) -> bytes:
+    """Normalise *raw_bytes* with :func:`app.ai.images.normalise_image`.
 
-    Strips all embedded metadata (EXIF, XMP, IPTC, ICC profiles, comments)
-    and neutralises polyglot payloads by forcing a clean re-encode.
+    Decodes the image fully (HEIC/HEIF via pillow-heif), applies EXIF
+    orientation, strips all metadata, shrinks the long edge to
+    ``max_long_edge_px`` and re-encodes as JPEG (quality 85). There is no
+    raw-bytes fallback: an image that cannot be decoded is rejected.
 
-    Outputs JPEG regardless of input format so the bytes are consistent with
-    the ``data:image/jpeg`` MIME type already sent to the OpenAI Vision API.
+    ``max_long_edge_px`` defaults to the ``scan.standard`` registry value and
+    ``max_pixels`` to ``SCAN_MAX_IMAGE_PIXELS``.
 
-    Falls back to the original bytes if Pillow cannot decode the image (e.g.
-    HEIC without the pillow-heif plugin installed).  Magic-bytes validation
-    has already confirmed the file is a genuine image at this point.
-
-    Returns:
-        Sanitized JPEG bytes, or *raw_bytes* unchanged if Pillow decoding fails.
+    Raises:
+        HTTPException 415 ``image_undecodable``    — not a decodable image
+        HTTPException 413 ``image_too_large_pixels`` — pixel count above the cap
     """
+    if max_long_edge_px is None:
+        max_long_edge_px = get_feature("scan.standard").max_image_long_edge_px
+    if max_pixels is None:
+        max_pixels = settings.scan_max_image_pixels
+
     try:
-        from PIL import Image, UnidentifiedImageError  # type: ignore[import-untyped]
-
-        buf = io.BytesIO(raw_bytes)
-        try:
-            img = Image.open(buf)
-            img.load()  # fully decode — catches truncated files
-        except (UnidentifiedImageError, OSError):
-            # UnidentifiedImageError: Pillow cannot handle this format (e.g. HEIC
-            #   without pillow-heif installed).
-            # OSError: image file is truncated or otherwise unreadable by Pillow.
-            # In both cases the file has already passed magic-bytes validation so
-            # it is a genuine image; pass through the original bytes unchanged.
-            logger.debug("Pillow could not decode image; skipping sanitization")
-            return raw_bytes
-
-        # Convert to RGB — required for JPEG output (no alpha channel support).
-        # PNG/WebP may carry RGBA or P (palette) modes.
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-
-        out = io.BytesIO()
-        # quality=85 is visually lossless for book-cover thumbnails and keeps
-        # file size reasonable for the OpenAI Vision API payload limit.
-        img.save(out, format="JPEG", quality=85, optimize=True)
-        sanitized = out.getvalue()
-
-        logger.debug(
-            "Image sanitized: %d bytes → %d bytes JPEG", len(raw_bytes), len(sanitized)
+        return normalise_image(
+            raw_bytes, max_long_edge_px=max_long_edge_px, max_pixels=max_pixels
         )
-        return sanitized
-
-    except ImportError:
-        # Pillow is not installed.  Log loudly — requirements.txt should include it.
-        logger.error("Pillow is not installed; image sanitization skipped")
-        return raw_bytes
+    except ImageTooLargePixelsError:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=ImageTooLargePixelsError.code,
+        ) from None
+    except ImageUndecodableError:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=ImageUndecodableError.code,
+        ) from None
