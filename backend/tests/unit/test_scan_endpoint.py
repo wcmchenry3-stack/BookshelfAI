@@ -283,8 +283,9 @@ class TestEnhancedScan:
         calls["provider_cls"].assert_called_once_with(FEATURES["scan.enhanced"])
         # Books to hand back: no zero-result decision (the unit is kept).
         assert self._zero_result(calls["release"]) is None
-        # Enriched under the lease, before the settle.
-        assert calls["order"] == ["enrich", "settle"]
+        # Enriched after the settle, like a standard scan: the lease covers
+        # only the provider call.
+        assert calls["order"] == ["settle", "enrich"]
 
     def test_enhanced_scan_finding_nothing_settles_a_zero_result(self, client, calls):
         calls["provider_cls"].return_value.identify = AsyncMock(
@@ -297,7 +298,10 @@ class TestEnhancedScan:
         assert isinstance(zero, quota.ZeroResult)
         assert zero.ledger_id is not None  # the usage row's call_id
 
-    def test_enrichment_yielding_nothing_is_a_zero_result(self, client, calls):
+    def test_decision_is_on_the_providers_candidates(self, client, calls):
+        """The provider returned books, so it is charged even if enrichment
+        then yields nothing (the decision is made at the settle, before
+        enrichment)."""
         calls["provider_cls"].return_value.identify = AsyncMock(
             return_value=ProviderResult([_DUNE])
         )
@@ -306,8 +310,8 @@ class TestEnhancedScan:
         )
         resp = self._post(client)
         assert resp.json()["books"] == []
-        assert isinstance(self._zero_result(calls["release"]), quota.ZeroResult)
-        assert calls["order"] == ["enrich", "settle"]
+        assert self._zero_result(calls["release"]) is None
+        assert calls["order"] == ["settle", "enrich"]
 
     def test_standard_scan_never_settles_a_zero_result(self, client, calls):
         calls["provider_cls"].return_value.identify = AsyncMock(

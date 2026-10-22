@@ -479,15 +479,15 @@ async def scan(
     #
     # Enhanced charge decision (#533): the enhanced unit follows the shared
     # units on refund and is kept on errors. When the provider answered but
-    # there are no books to hand back, the settle decides in its own
+    # returned no books (no candidates), the settle decides in its own
     # transaction (quota.release with a ZeroResult): below the user's
     # zero-result threshold the unit is given back and one
     # ai_enhanced_zero_results row written; at or above it the unit is kept.
-    # So that "no books" means the books handed back, an enhanced scan is
-    # enriched before the settle (under the lease); a standard scan after it,
-    # as before. A provider error, timeout or unavailability is never a
-    # zero-result. A future result-cache hit (#534) makes no provider call
-    # and must not record one.
+    # The decision is on the provider's candidates, so enrichment stays after
+    # the settle (the lease covers only the provider call); enrichment returns
+    # a book for every candidate it does not crash on. A provider error,
+    # timeout or unavailability is never a zero-result. A future result-cache
+    # hit (#534) makes no provider call and must not record one.
     #
     # Usage ledger (#530): every outcome of the provider call writes one
     # ai_usage row, committed with the lease release. call_id is generated
@@ -507,7 +507,6 @@ async def scan(
     settlement: breaker.Settlement | None = None
     ledger_decided = False
     zero_result: quota.ZeroResult | None = None
-    books: list[EnrichedBook] | None = None
     try:
         try:
             result = await run_feature(
@@ -545,14 +544,11 @@ async def scan(
         ledger_row = row(result=result)
         settlement = spend(result=result)
         ledger_decided = True
-        if enhanced:
-            # An enrichment error propagates with the unit kept (an error,
-            # not a zero-result).
-            books = await _books_for(db, user_id, result.candidates)
-            if not books:
-                zero_result = quota.ZeroResult(
-                    ledger_id=call_id if ledger_row is not None else None
-                )
+        if enhanced and not result.candidates:
+            # The provider answered with no books: the settle decides.
+            zero_result = quota.ZeroResult(
+                ledger_id=call_id if ledger_row is not None else None
+            )
     finally:
         if not ledger_decided:
             # The call did not complete: the request was cancelled (or a
@@ -562,8 +558,7 @@ async def scan(
             settlement = spend(status=STATUS_ERROR)
         await _release_scan_lease(db, reservation, ledger_row, settlement, zero_result)
 
-    if books is None:
-        books = await _books_for(db, user_id, result.candidates)
+    books = await _books_for(db, user_id, result.candidates)
 
     return ScanResponse(
         books=books,
