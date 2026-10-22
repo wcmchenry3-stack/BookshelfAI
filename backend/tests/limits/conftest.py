@@ -37,5 +37,5 @@ async def ai_settings_table(limits_db):
 
 @pytest.fixture
 def downstream():
-    with h.downstream():
-        yield
+    with h.downstream() as enrichment:
+        yield enrichment
