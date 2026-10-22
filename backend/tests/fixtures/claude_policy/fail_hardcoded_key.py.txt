@@ -1,0 +1,3 @@
+import anthropic
+
+client = anthropic.Anthropic(api_key="sk-ant-FAKEFAKEFAKEFAKEFAKEFAKE")

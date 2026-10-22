@@ -1,0 +1,19 @@
+import logging
+
+import anthropic
+
+logger = logging.getLogger(__name__)
+RETRYABLE = {429, 500, 503, 529}
+
+
+def request():
+    return {"model": "claude-sonnet-5-5", "max_tokens": 2048}
+
+
+async def call(client):
+    retry_after = client.headers.get("retry-after")
+    message = await client.messages.create(**request())
+    if message.stop_reason == "refusal":
+        return None
+    logger.info("length=%d", len(message.content))
+    return message

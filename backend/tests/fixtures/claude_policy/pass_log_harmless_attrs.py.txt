@@ -1,0 +1,9 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def handle(image, output, raw, response):
+    logger.info("%dx%d", image.width, image.height)
+    logger.info("%d %d %d", output.nbytes, raw.status_code, response.usage.output_tokens)
+    logger.info("%d", len(response.content))

@@ -124,6 +124,19 @@ Application logs are structured JSON on stdout (`backend/app/core/logging.py`).
 
 **Scope:** the filter is attached to the root handler (all `app.*` loggers) and to the `uvicorn`, `uvicorn.error` and `uvicorn.access` handlers, which don't propagate to root. On those handlers it runs in `preserve_args` mode: string args are redacted in place so uvicorn's access formatter, which unpacks the args, keeps working. Sentry events are scrubbed separately (`app/core/sentry_context.py`). It is a backstop, not a licence to log such values: new log lines should not include them in the first place.
 
+## Claude API policy checks
+
+`.claude/policies/claude.md` is enforced in CI by the `claude-policy` job, which runs `scripts/policy/check_claude_policy.py` over the tracked source tree (files under `app/ai/` or that import the Anthropic SDK; tests, docs and `.env*` are skipped). Fixture tests: `backend/tests/unit/test_claude_policy.py`. Checks:
+
+1. No hardcoded `sk-ant-` key.
+2. (AST) Files with an SDK call retry 429, 500, 503 and 529 and respect `retry-after`.
+3. Model IDs are in `ALLOWED_MODELS["anthropic"]` (today `claude-haiku-5-5`, `claude-sonnet-5-5`, which are fixed IDs with no dated snapshot) or are dated snapshots. `*-latest` aliases and unlisted IDs fail.
+4. `max_tokens` on every `messages.create` / `messages.stream` call.
+5. `stop_reason` and `refusal` are handled.
+6. SDK calls (`messages.create`, `AsyncAnthropic`, `Anthropic(`) only under `backend/app/ai/providers/`.
+7. No raw content fields (text, content, output, image bytes) in `app/ai/` log calls; log a length or hash.
+8. The breaker's refusal is `503 ai_budget_reached`.
+
 ## Pre-commit Hook (gitleaks)
 
 Install: `brew install gitleaks` (or via pip on Windows)

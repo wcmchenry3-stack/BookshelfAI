@@ -1,0 +1,3 @@
+import anthropic
+
+MODEL = "claude-opus-9-9"

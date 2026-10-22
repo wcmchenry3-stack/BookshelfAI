@@ -1,0 +1,7 @@
+from fastapi import HTTPException, status
+
+
+def refuse():
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="ai_budget_reached"
+    )

@@ -1,0 +1,5 @@
+from fastapi import HTTPException
+
+
+def refuse():
+    raise HTTPException(402, "ai_budget_reached")

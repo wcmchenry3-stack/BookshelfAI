@@ -12,6 +12,8 @@
   # itself must stay scanned.
   regexes = [
     '''postgresql\+asyncpg://test:test@localhost/test''',
+    # Obviously fake key in the claude-policy hardcoded-key fixture (#537).
+    '''sk-ant-FAKEFAKEFAKEFAKEFAKEFAKE''',
   ]
   # CocoaPods spec checksums (40-hex SHA-1s next to pod names) read as
   # generic-api-key hits; the lockfile never holds credentials.
