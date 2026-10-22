@@ -14,6 +14,7 @@ from PIL import Image
 
 from app.ai import entitlements
 from app.ai.entitlements import Tier
+from app.ai.providers.base import ProviderResult
 from app.auth.jwt import create_access_token
 from app.main import app
 from app.models.user import User
@@ -115,7 +116,7 @@ def _scan(client, token, **kwargs):
         patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
         patch("app.api.scan._release_scan_lease", new=AsyncMock()),
     ):
-        cls.return_value.identify = AsyncMock(return_value=[])
+        cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         enrich.return_value.enrich = AsyncMock(return_value=[])
         dedup.return_value.check = AsyncMock(return_value=[])
         headers = {"Authorization": f"Bearer {token}", **kwargs.pop("headers", {})}

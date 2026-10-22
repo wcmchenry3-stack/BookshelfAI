@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from app.ai.providers.base import ProviderResult
 from app.ai.registry import FEATURES
 from app.main import app
 from app.models.user import User
@@ -104,7 +105,9 @@ class TestScanEndpoint:
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
-            mock_id_cls.return_value.identify = AsyncMock(return_value=[])
+            mock_id_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult([])
+            )
             resp = client.post("/scan", files={"file": _image_file()})
 
         assert resp.status_code == 200
@@ -122,7 +125,9 @@ class TestScanEndpoint:
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
-            mock_id_cls.return_value.identify = AsyncMock(return_value=[candidate])
+            mock_id_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult([candidate])
+            )
             mock_enrich_cls.return_value.enrich = AsyncMock(
                 return_value=[ENRICHED_BOOK]
             )
@@ -158,7 +163,9 @@ class TestScanEndpoint:
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
-            mock_id_cls.return_value.identify = AsyncMock(return_value=candidates)
+            mock_id_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult(candidates)
+            )
             mock_enrich_cls.return_value.enrich = AsyncMock(return_value=books)
             mock_dedup_cls.return_value.check = AsyncMock(
                 side_effect=lambda _db, _u, b: b
@@ -186,9 +193,13 @@ class TestScanEndpoint:
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
             mock_id_cls.return_value.identify = AsyncMock(
-                return_value=[
-                    BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
-                ]
+                return_value=ProviderResult(
+                    [
+                        BookCandidate(
+                            title="Dune", author="Frank Herbert", confidence=0.9
+                        )
+                    ]
+                )
             )
             mock_enrich_cls.return_value.enrich = AsyncMock(
                 return_value=[ENRICHED_BOOK, dup]
@@ -251,9 +262,13 @@ class TestEnhancedScan:
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
             mock_id_cls.return_value.identify = AsyncMock(
-                return_value=[
-                    BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
-                ]
+                return_value=ProviderResult(
+                    [
+                        BookCandidate(
+                            title="Dune", author="Frank Herbert", confidence=0.9
+                        )
+                    ]
+                )
             )
             mock_enrich_cls.return_value.enrich = AsyncMock(
                 return_value=[ENRICHED_BOOK]
@@ -273,7 +288,9 @@ class TestEnhancedScan:
     def test_enhanced_scan_finding_nothing_is_free(self, make_client):
         client, db = make_client(_user_with_credits(3))
         with patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls:
-            mock_id_cls.return_value.identify = AsyncMock(return_value=[])
+            mock_id_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult([])
+            )
             resp = client.post(
                 "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
             )
@@ -291,9 +308,13 @@ class TestEnhancedScan:
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
             mock_id_cls.return_value.identify = AsyncMock(
-                return_value=[
-                    BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
-                ]
+                return_value=ProviderResult(
+                    [
+                        BookCandidate(
+                            title="Dune", author="Frank Herbert", confidence=0.9
+                        )
+                    ]
+                )
             )
             # Every Open Library / Google Books lookup failed.
             mock_enrich_cls.return_value.enrich = AsyncMock(return_value=[])
@@ -316,9 +337,13 @@ class TestEnhancedScan:
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
             mock_id_cls.return_value.identify = AsyncMock(
-                return_value=[
-                    BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
-                ]
+                return_value=ProviderResult(
+                    [
+                        BookCandidate(
+                            title="Dune", author="Frank Herbert", confidence=0.9
+                        )
+                    ]
+                )
             )
             mock_enrich_cls.return_value.enrich = AsyncMock(
                 return_value=[ENRICHED_BOOK]
@@ -380,7 +405,9 @@ class TestTurnstileProtection:
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
-            mock_id_cls.return_value.identify = AsyncMock(return_value=[])
+            mock_id_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult([])
+            )
             resp = client.post(
                 "/scan",
                 files={"file": _image_file()},
@@ -408,7 +435,9 @@ class TestTurnstileProtection:
             mock_settings.rate_limit_scan = "10/minute"
             mock_settings.turnstile_required = False  # explicitly disabled
             mock_settings.clamav_enabled = False
-            mock_id_cls.return_value.identify = AsyncMock(return_value=[])
+            mock_id_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult([])
+            )
             client = TestClient(app)
             resp = client.post("/scan", files={"file": _image_file()})
 
@@ -495,7 +524,9 @@ class TestImageNormalisationOnScan:
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
-            provider_cls.return_value.identify = AsyncMock(return_value=[])
+            provider_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult([])
+            )
             resp = client.post(
                 "/scan",
                 files={"file": ("s.png", io.BytesIO(original), "image/png")},
@@ -537,7 +568,9 @@ class TestImageNormalisationOnScan:
                 patch("app.api.scan.get_feature", side_effect=specs.__getitem__),
                 patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
             ):
-                provider_cls.return_value.identify = AsyncMock(return_value=[])
+                provider_cls.return_value.identify = AsyncMock(
+                    return_value=ProviderResult([])
+                )
                 resp = TestClient(app).post(
                     "/scan",
                     files={"file": ("s.jpg", io.BytesIO(buf.getvalue()), "image/jpeg")},
@@ -560,7 +593,9 @@ class TestNormalisationRunsOffTheEventLoop:
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
-            provider_cls.return_value.identify = AsyncMock(return_value=[])
+            provider_cls.return_value.identify = AsyncMock(
+                return_value=ProviderResult([])
+            )
             yield provider_cls
 
     def test_sanitize_image_goes_through_run_sync_with_the_limiter(

@@ -15,6 +15,7 @@ from app.ai.gateway import (
     VisionPayload,
     run_feature,
 )
+from app.ai.providers.base import ProviderResult
 from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FEATURES, UnknownFeatureError
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
@@ -28,7 +29,7 @@ CANDIDATE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 @pytest.fixture
 def provider_cls():
     with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
-        cls.return_value.identify = AsyncMock(return_value=[CANDIDATE])
+        cls.return_value.identify = AsyncMock(return_value=ProviderResult([CANDIDATE]))
         yield cls
 
 
@@ -142,7 +143,7 @@ class TestOverallDeadline:
         async def slow(_image):
             started.append(True)
             await anyio.sleep(30)
-            return [CANDIDATE]
+            return ProviderResult([CANDIDATE])
 
         provider_cls.return_value.identify = slow
         snapshot = MagicMock(spec_for=lambda s: _fast(s, 0.05))
@@ -163,7 +164,7 @@ class TestOverallDeadline:
     async def test_provider_within_timeout_returns(self, provider_cls):
         async def quick(_image):
             await anyio.sleep(0.01)
-            return [CANDIDATE]
+            return ProviderResult([CANDIDATE])
 
         provider_cls.return_value.identify = quick
         snapshot = MagicMock(spec_for=lambda s: _fast(s, 1.0))

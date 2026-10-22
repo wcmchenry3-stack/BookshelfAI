@@ -15,6 +15,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.ai import settings as ai_settings
 from app.ai.gateway import FeatureDisabledError, VisionPayload, run_feature
+from app.ai.providers.base import ProviderResult
 from app.ai.registry import FEATURES
 from app.core.config import Settings
 from app.main import app
@@ -92,7 +93,7 @@ def provider():
         patch("app.api.scan._refund_scan_quota", new=AsyncMock()),
         patch("app.api.scan._release_scan_lease", new=AsyncMock()),
     ):
-        provider_cls.return_value.identify = AsyncMock(return_value=[])
+        provider_cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         yield provider_cls
 
 

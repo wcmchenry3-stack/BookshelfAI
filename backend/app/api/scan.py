@@ -9,9 +9,16 @@ import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Executable
 
-from app.ai import quota
-from app.ai.gateway import VisionPayload, run_feature
+from app.ai import ledger, quota
+from app.ai.gateway import (
+    AIResult,
+    ProviderTimeoutError,
+    VisionPayload,
+    resolve_spec,
+    run_feature,
+)
 from app.ai.registry import get_feature
 from app.ai.settings import AISettings, AISettingsUnavailableError, get_ai_settings
 from app.auth.dependencies import get_current_user
@@ -20,6 +27,11 @@ from app.core.database import get_db
 from app.core.file_security import sanitize_image, scan_for_malware
 from app.core.file_validation import validate_magic_bytes
 from app.core.limiter import limiter
+from app.models.ai_usage import (
+    STATUS_ERROR,
+    STATUS_REFUNDED,
+    STATUS_TIMEOUT,
+)
 from app.models.user import User
 from app.schemas.book import EnrichedBook, ScanResponse
 from app.schemas.scan import ScanUsageResponse
@@ -197,9 +209,56 @@ async def _refund_scan_quota(db: AsyncSession, reservation: quota.Reservation) -
     await quota.refund(db, reservation)
 
 
-async def _release_scan_lease(db: AsyncSession, reservation: quota.Reservation) -> None:
-    """Release the in-flight lease (settle); never raises, shielded."""
-    await quota.release(db, reservation)
+async def _release_scan_lease(
+    db: AsyncSession,
+    reservation: quota.Reservation,
+    ledger_row: Executable | None = None,
+) -> None:
+    """Release the in-flight lease (settle) and commit the call's usage-ledger
+    row in the same transaction; never raises, shielded."""
+    await quota.release(db, reservation, ledger_row)
+
+
+def _usage_row(
+    *,
+    user_id: uuid.UUID,
+    feature: str,
+    ai: AISettings,
+    status: str | None = None,
+    result: AIResult | None = None,
+) -> Executable | None:
+    """The ledger insert for this scan's provider call (#530), or None.
+
+    With ``result`` (the provider answered) the status is its outcome
+    (``ok``/``refused``/``truncated``) and the tokens are its usage; otherwise
+    ``status`` is given and the tokens are 0. Never raises: a ledger problem
+    (e.g. a model with no price) is logged and the row skipped, so it cannot
+    turn a scan into an error or mask the original exception.
+    """
+    try:
+        if result is not None:
+            return ledger.usage_insert(
+                user_id=user_id,
+                feature=result.feature,
+                model=result.model,
+                status=result.outcome,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                cache_read_tokens=result.cache_read_tokens,
+                cache_write_tokens=result.cache_write_tokens,
+                request_id=ledger.current_request_id(),
+            )
+        return ledger.usage_insert(
+            user_id=user_id,
+            feature=feature,
+            # The same resolution run_feature used (same settings snapshot).
+            model=resolve_spec(feature, ai).model,
+            status=status,
+            request_id=ledger.current_request_id(),
+        )
+    except Exception:
+        logger.exception("scan: could not build the usage ledger row")
+        return None
 
 
 @router.post("/scan", response_model=ScanResponse)
@@ -328,6 +387,12 @@ async def scan(
     # failure (or a cancelled request) keeps it: the provider may already have
     # been paid. An empty result also counts. The lease is always released
     # once the provider call is over (settle), even on cancellation.
+    #
+    # Usage ledger (#530): every outcome of the provider call writes one
+    # ai_usage row, committed with the lease release. A cancelled request
+    # (CancelledError is not an Exception) writes none: the shielded lease
+    # release stays its only cleanup.
+    ledger_row: Executable | None = None
     try:
         try:
             result = await run_feature(
@@ -338,17 +403,34 @@ async def scan(
                 # The settings read above, so one request uses one view of them.
                 settings_snapshot=ai,
             )
-        except (ScanUnavailableError, httpx.ConnectError):
+        except (ScanUnavailableError, httpx.ConnectError) as exc:
             # ConnectError: the connection to the provider was never
             # established, so nothing was billed; treat it like any other
             # unavailability.
+            ledger_row = _usage_row(
+                user_id=user_id,
+                feature=feature,
+                ai=ai,
+                status=(
+                    STATUS_TIMEOUT
+                    if isinstance(exc, ProviderTimeoutError)
+                    else STATUS_REFUNDED
+                ),
+            )
             await _refund_scan_quota(db, reservation)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="scan_unavailable",
             ) from None
+        except Exception:
+            # The reservation is kept (the provider may have been paid).
+            ledger_row = _usage_row(
+                user_id=user_id, feature=feature, ai=ai, status=STATUS_ERROR
+            )
+            raise
+        ledger_row = _usage_row(user_id=user_id, feature=feature, ai=ai, result=result)
     finally:
-        await _release_scan_lease(db, reservation)
+        await _release_scan_lease(db, reservation, ledger_row)
     candidates = result.candidates
 
     if not candidates:

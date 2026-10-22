@@ -41,7 +41,9 @@ error at any step gives back what was already taken (the daily reservation,
 the lease) before it propagates.
 
 After the provider call the caller must always :func:`release` the lease (in a
-``finally``, even on cancellation; the release is shielded). On
+``finally``, even on cancellation; the release is shielded). The caller passes
+the usage-ledger row for the call (#530), which is committed together with the
+lease delete. On
 ``ScanUnavailableError`` / ``httpx.ConnectError`` it first calls
 :func:`refund`, which gives back the daily and monthly units, never below
 zero. Any other outcome (success, an empty result, another error, a cancelled
@@ -69,6 +71,7 @@ import anyio
 from sqlalchemy import DateTime, and_, delete, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Executable
 
 from app.ai import entitlements
 from app.ai.entitlements import Tier
@@ -374,7 +377,7 @@ async def global_units_today(db: AsyncSession, day: date) -> int:
 
 async def _give_back(
     db: AsyncSession, what: str, op: Callable[[], Awaitable[object]]
-) -> None:
+) -> bool:
     """Run a give-back so that it cannot mask the original outcome.
 
     Shielded so it still runs while the request is being cancelled (anyio
@@ -388,12 +391,14 @@ async def _give_back(
     session's connection and every later query on the request session would
     raise ``PendingRollbackError``. So after a timeout the session is rolled
     back (also shielded and bounded; a failure there is logged and swallowed).
+
+    Returns True when ``op`` succeeded, False when it was given up on.
     """
     with anyio.move_on_after(CLEANUP_TIMEOUT_SECONDS, shield=True) as scope:
         for attempt in (1, 2):
             try:
                 await op()
-                return
+                return True
             except Exception:
                 logger.exception("ai_quota: %s failed (attempt %d)", what, attempt)
                 try:
@@ -409,10 +414,38 @@ async def _give_back(
                 logger.exception("ai_quota: rollback after timed-out %s", what)
         if rb_scope.cancelled_caught:
             logger.error("ai_quota: rollback after timed-out %s timed out", what)
+    return False
 
 
-async def release(db: AsyncSession, reservation: Reservation) -> None:
-    """Release the lease held by ``reservation`` (settle). Never raises."""
+async def release(
+    db: AsyncSession,
+    reservation: Reservation,
+    ledger_row: Executable | None = None,
+) -> None:
+    """Release the lease held by ``reservation`` (settle). Never raises.
+
+    ``ledger_row`` (#530) is the usage-ledger insert for the provider call
+    (``app.ai.ledger.usage_insert``). It is executed on the same session just
+    before the lease delete, so :func:`release_lease`'s commit writes both:
+    the ledger row and the settle land in one transaction. The pair is
+    bounded, shielded and retried like any give-back. If it still fails (for
+    example the row itself is rejected), the ledger row is dropped and the
+    lease is released on its own, so a ledger problem can never keep the
+    lease held or mask the scan's outcome; the failure is logged (no
+    content).
+    """
+
+    async def settle() -> None:
+        if ledger_row is not None:
+            await db.execute(ledger_row)
+        await release_lease(db, reservation.user_id, reservation.lease_id)
+
+    if ledger_row is None:
+        await _give_back(db, "lease release", settle)
+        return
+    if await _give_back(db, "lease release with usage row", settle):
+        return
+    logger.error("ai_quota: usage row dropped; releasing the lease without it")
     await _give_back(
         db,
         "lease release",

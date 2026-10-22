@@ -13,6 +13,11 @@ import logging
 
 import httpx
 
+from app.ai.providers.base import (
+    ProviderOutcome,
+    ProviderResult,
+    ProviderTimeoutError,
+)
 from app.ai.registry import FeatureSpec
 from app.core.config import settings
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
@@ -60,6 +65,55 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     return content, finish_reason
 
 
+def _token_count(value: object) -> int:
+    """A token count from the usage block: a non-negative int, else 0."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _usage(body: object) -> tuple[int, int, int]:
+    """Return ``(input, output, cache_read)`` billed tokens from ``usage``.
+
+    OpenAI's ``prompt_tokens`` includes the cached prompt tokens
+    (``prompt_tokens_details.cached_tokens``), which are billed at the cached
+    input price. The ledger's counts are disjoint, so ``input`` is the
+    uncached part only. A missing or garbled usage block gives zeros.
+    """
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(usage, dict):
+        return 0, 0, 0
+    prompt = _token_count(usage.get("prompt_tokens"))
+    output = _token_count(usage.get("completion_tokens"))
+    details = usage.get("prompt_tokens_details")
+    cached = (
+        _token_count(details.get("cached_tokens")) if isinstance(details, dict) else 0
+    )
+    cached = min(cached, prompt)
+    return prompt - cached, output, cached
+
+
+def _has_refusal(body: object) -> bool:
+    try:
+        refusal = body["choices"][0]["message"].get("refusal")  # type: ignore[index]
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return False
+    return isinstance(refusal, str) and bool(refusal)
+
+
+def _outcome(
+    body: object, content: str | None, finish_reason: str | None
+) -> ProviderOutcome:
+    """``refused`` when the model declined (a ``refusal``, a content filter
+    stop, or no text at all), ``truncated`` when it hit ``max_tokens``,
+    else ``ok``."""
+    if content is None or finish_reason == "content_filter" or _has_refusal(body):
+        return "refused"
+    if finish_reason == "length":
+        return "truncated"
+    return "ok"
+
+
 def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None:
     """Log a model-output parse failure without logging the content itself."""
     digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()[:12]
@@ -82,7 +136,7 @@ class OpenAIVisionProvider:
             raise ValueError(f"{spec.name} is not an OpenAI feature")
         self.spec = spec
 
-    async def identify(self, image_bytes: bytes) -> list[BookCandidate]:
+    async def identify(self, image_bytes: bytes) -> ProviderResult:
         b64 = base64.standard_b64encode(image_bytes).decode()
         max_books = settings.scan_max_books
 
@@ -123,7 +177,7 @@ class OpenAIVisionProvider:
                 resp.raise_for_status()
         except httpx.TimeoutException as exc:
             logger.warning("OpenAI vision request timed out: %s", exc)
-            raise ScanUnavailableError("Vision API timed out") from exc
+            raise ProviderTimeoutError("Vision API timed out") from exc
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429:
                 logger.warning("OpenAI rate limit exceeded (429)")
@@ -139,6 +193,21 @@ class OpenAIVisionProvider:
         except ValueError:
             body = None
         content, finish_reason = _message_content(body)
+        input_tokens, output_tokens, cache_read = _usage(body)
+        return ProviderResult(
+            candidates=self._parse(content, finish_reason),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=0,
+            outcome=_outcome(body, content, finish_reason),
+        )
+
+    def _parse(
+        self, content: str | None, finish_reason: str | None
+    ) -> list[BookCandidate]:
+        """The candidates in the model's reply (empty when unparseable)."""
+        max_books = settings.scan_max_books
         if content is None:
             # No text to parse (refusal or unexpected body). Treated as an empty
             # result; the response itself is not logged.

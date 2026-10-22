@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.ai.providers.base import ProviderResult
 from app.core.url_validator import validate_safe_url
 from app.main import app
 from app.schemas.user_book import UserBookUpdate, WishlistRequest
@@ -179,7 +180,7 @@ class TestScanUploadValidation:
             patch(
                 "app.ai.providers.openai_vision.OpenAIVisionProvider.identify",
                 new_callable=AsyncMock,
-                return_value=[],
+                return_value=ProviderResult([]),
             ),
             # No database here: stub the daily-cap reservation.
             patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
