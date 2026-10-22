@@ -4,6 +4,10 @@ Moved with no behaviour change from ``app/services/chatgpt_vision.py``
 (``ChatGPTVisionIdentifier``). The model, token cap and timeout now come from
 the feature's ``FeatureSpec`` instead of being picked here from ``settings``;
 the values are the same.
+
+Since #530 ``identify`` returns a ``ProviderResult``: the candidates (parsed
+exactly as before) plus the billed usage and the outcome (``ok``, ``refused``
+or ``truncated``) for the usage ledger.
 """
 
 import base64

@@ -84,8 +84,9 @@ async def run_feature(
 ) -> AIResult:
     """Run one AI feature and return its result.
 
-    ``user`` and ``db`` are accepted now so later stories (usage ledger,
-    per-user limits) can use them without changing callers.
+    ``user`` and ``db`` are accepted so later stories (per-user limits) can
+    use them without changing callers. The usage ledger row is written by the
+    caller from the returned :class:`AIResult` (``/scan``, #530).
 
     The spec used is per request: the registry default with the validated
     ``ai_settings`` provider/model override and kill switch applied
