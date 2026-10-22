@@ -57,6 +57,11 @@ class Settings(BaseSettings):
 
     # External APIs
     openai_api_key: str = ""
+    # Claude provider (#532). Only needed when a feature's ai_settings
+    # provider is "anthropic" (the registry default is "openai"). Without it
+    # such a feature answers 503 scan_unavailable (refunded); boot never
+    # fails over it. A secret: never logged, scrubbed from Sentry events.
+    anthropic_api_key: str = ""
     openai_max_tokens: int = 512
     # Multi-book scan: one photo can hold up to scan_max_books covers or spines.
     # The JSON for 15 books needs far more room than openai_max_tokens allows,

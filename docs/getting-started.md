@@ -118,6 +118,7 @@ Comma-separated list of emails permitted to authenticate. Single-user lockdown b
 ### External APIs
 ```bash
 OPENAI_API_KEY=sk-...                    # https://platform.openai.com/api-keys
+# ANTHROPIC_API_KEY=sk-ant-...           # only once a scan feature is switched to anthropic (#532)
 GOOGLE_BOOKS_API_KEY=AIza...             # Google Cloud → Books API → credentials
 OPEN_LIBRARY_BASE_URL=https://openlibrary.org  # leave as-is
 ```

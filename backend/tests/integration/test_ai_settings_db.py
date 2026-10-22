@@ -244,6 +244,42 @@ def _migration_cycle(connection) -> None:
         assert diffs() == []
 
 
+async def test_switch_provider_writes_the_pair_and_is_read_back(factory):
+    """#532: switching to anthropic and back through the real table."""
+    async with factory() as db:
+        await ai_settings.seed_ai_settings(db)
+        await ai_settings.switch_provider(
+            db, "scan.standard", "anthropic", updated_by="ops"
+        )
+    rows = await _rows(factory)
+    assert rows["scan.standard.provider"].value == "anthropic"
+    assert rows["scan.standard.model"].value == "claude-haiku-5-5"
+    assert rows["scan.standard.model"].updated_by == "ops"
+    # The enhanced pair is untouched.
+    assert rows["scan.enhanced.provider"].value == "openai"
+
+    ai_settings.reset_cache()
+    async with factory() as db:
+        current = await ai_settings.get_ai_settings(db)
+    spec = current.spec_for(ai_settings.get_feature("scan.standard"))
+    assert (spec.provider, spec.model) == ("anthropic", "claude-haiku-5-5")
+
+    async with factory() as db:
+        # A provider alone cannot be switched while the model is Claude's.
+        with pytest.raises(ai_settings.AISettingValueError):
+            await ai_settings.set_setting(
+                db, "scan.standard.provider", "openai", updated_by="ops"
+            )
+    async with factory() as db:
+        await ai_settings.switch_provider(
+            db, "scan.standard", "openai", updated_by="ops"
+        )
+    rows = await _rows(factory)
+    assert rows["scan.standard.provider"].value == "openai"
+    assert rows["scan.standard.model"].value == settings.scan_model
+    ai_settings.reset_cache()
+
+
 async def test_migration_upgrade_check_downgrade_cycle(factory):
     """Runs 0006 in a transaction that is rolled back (Postgres DDL is
     transactional), so the shared test database is left as it was."""

@@ -10,7 +10,7 @@ Values that existed before the gateway still come from ``settings`` for now
 ``SCAN_TIMEOUT_SECONDS``), so behaviour is unchanged.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from app.ai.models_allowlist import (
@@ -118,7 +118,10 @@ FEATURES: MappingProxyType[str, FeatureSpec] = build_registry(
             name="scan.standard",
             provider="openai",
             model=settings.scan_model,
-            effort="medium",
+            # Used by the Claude adapter (output_config.effort); the OpenAI
+            # adapter ignores it. "low": a standard scan is a high-volume
+            # extraction; the enhanced scan keeps "medium" (#532).
+            effort="low",
             max_tokens=settings.scan_max_tokens,
             max_image_long_edge_px=1568,
             max_images=1,
@@ -138,6 +141,51 @@ FEATURES: MappingProxyType[str, FeatureSpec] = build_registry(
         ),
     ]
 )
+
+
+# The model each feature uses on each provider. The registry spec above holds
+# the default provider (openai until #536/#538); when ai_settings switches a
+# feature's provider (``python -m app.ai.settings switch``) the model is taken
+# from here unless one is named. Anthropic IDs are fixed IDs, never aliases
+# (#548): Haiku 5.5 for standard scans, Sonnet 5.5 for enhanced (#547).
+PROVIDER_MODELS: MappingProxyType[str, MappingProxyType[str, str]] = MappingProxyType(
+    {
+        "scan.standard": MappingProxyType(
+            {"openai": settings.scan_model, "anthropic": "claude-haiku-5-5"}
+        ),
+        "scan.enhanced": MappingProxyType(
+            {"openai": settings.scan_enhanced_model, "anthropic": "claude-sonnet-5-5"}
+        ),
+    }
+)
+
+
+def _validate_provider_models() -> None:
+    """Every per-provider model must build a valid spec (allow-list check),
+    and the registry default must agree with it. Run at import."""
+    for name, models in PROVIDER_MODELS.items():
+        spec = FEATURES[name]
+        if models.get(spec.provider) != spec.model:
+            raise FeatureSpecError(
+                f"{name}: PROVIDER_MODELS disagrees with the registry default"
+            )
+        for provider, model in models.items():
+            replace(spec, provider=provider, model=model)
+
+
+_validate_provider_models()
+
+
+def default_model(feature: str, provider: str) -> str:
+    """The model ``feature`` uses on ``provider`` when none is named.
+
+    Raises ``FeatureSpecError`` when the feature has no model for it."""
+    try:
+        return PROVIDER_MODELS[feature][provider]
+    except KeyError:
+        raise FeatureSpecError(
+            f"{feature}: no default model for provider {provider!r}"
+        ) from None
 
 
 def get_feature(name: str) -> FeatureSpec:

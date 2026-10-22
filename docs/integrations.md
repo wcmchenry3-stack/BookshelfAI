@@ -49,6 +49,33 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Cost note:** gpt-4o-mini is the cheapest vision-capable model. Scan cost is approximately $0.001 per image at current pricing. The `rate_limit_scan` bucket (10/min per client) caps abuse at the HTTP layer.
 
+## Anthropic Claude (vision, #532)
+
+**Role:** the same book identification as OpenAI, behind a per-feature setting. OpenAI stays listed above and stays the default until the labelled eval (#536) and the OpenAI removal (#538). Production enablement waits on the data-handling answer (#549) and the owner actions in #542.
+
+**SDK:** official `anthropic` Python SDK, pinned in `backend/requirements.txt` (1.x, built on `httpx2`); `client.messages.create` only
+**Endpoint:** `https://api.anthropic.com` (pinned in the adapter, so `ANTHROPIC_BASE_URL` cannot redirect it)
+**Operator environment:** the base URL and the API key are passed explicitly, so `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and saved profiles are not used. Some environment settings do still apply to the SDK client, for example: the HTTP library's proxy and TLS variables (`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, `SSL_CERT_FILE` / `SSL_CERT_DIR`), `ANTHROPIC_CUSTOM_HEADERS` (extra request headers) and `ANTHROPIC_LOG`. **Keep `ANTHROPIC_LOG` unset in production** (and the `anthropic` / `httpx2` loggers above DEBUG): at `debug` the SDK logs the full request options, including the base64 image, which breaks the rule that logs carry only lengths and hashes. Keep the others unset on the API service unless a proxy or custom CA is intended.
+**Models:** `claude-haiku-5-5` (`scan.standard`), `claude-sonnet-5-5` (`scan.enhanced`): fixed IDs (Anthropic publishes no dated snapshot for them, #548), from `registry.PROVIDER_MODELS`
+**Key env var:** `ANTHROPIC_API_KEY` (only needed once a feature is switched to `anthropic`)
+**Timeout / max tokens / effort:** the feature spec's (`SCAN_TIMEOUT_SECONDS`, `SCAN_MAX_TOKENS`; effort `low` standard, `medium` enhanced)
+**Source:** `backend/app/ai/providers/anthropic_vision.py`, called only through the AI gateway
+**Switch:** `python -m app.ai.settings switch scan.standard anthropic` (and back with `... switch scan.standard openai`); see [deployment.md](deployment.md)
+
+**Request:** the OpenAI adapter's system prompt (unchanged wording) with a `cache_control` breakpoint (the prompt is about 300 tokens, under the 512-token cache minimum, so it most likely does not cache; confirm on staging from the ledger's cache token columns); structured output (`output_config.format`) for `{books: [{title, author, confidence, isbn_13, isbn_10}]}`; the normalised JPEG as a base64 image block. No sampling parameters and no prefill.
+
+**Error handling:**
+- `stop_reason: refusal` → empty result, ledger `refused`, reservation kept
+- `stop_reason: max_tokens` → complete books parsed, ledger `truncated`
+- 429 / 500 / 503 / 529 → up to 2 retries (jittered backoff, honours `retry-after`, bounded by the timeout), then `ScanUnavailableError` → 503, refunded
+- Other 4xx / 502 / 504 → `ScanUnavailableError` → 503, refunded (4xx also logged at error level)
+- Timeout → `ProviderTimeoutError` → 503, refunded, ledger `timeout`
+- Connection never established → `ProviderConnectError` → 503, refunded
+- `ANTHROPIC_API_KEY` missing → 503, refunded, error log; the app still boots
+- Invalid ISBN (digit count or checksum) → dropped; title and author kept
+
+**Cost note:** list prices per 1M tokens (in `backend/app/ai/prices.py`): Haiku 5.5 $0.10 input / $0.50 output / $0.01 cache read / $0.125 cache write, for prompts up to 100K tokens (above that $0.50 / $2.50; scans are about 3K tokens, and a longer prompt logs a warning); Sonnet 5.5 $2.00 / $10.00 / $0.20 / $2.50. The Haiku cache-read price follows Anthropic's 0.1×-input rule and must be checked on the live pricing page before production enablement. The usage ledger records the real cost per call.
+
 ## Google Books API
 
 **Role:** metadata enrichment — covers, descriptions, page counts, ISBNs.
@@ -158,6 +185,7 @@ With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client I
 - `JWT_PRIVATE_KEY` + `JWT_PUBLIC_KEY`
 - `ALLOWED_EMAILS`
 - `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY` (only once a feature is switched to `anthropic`)
 - `GOOGLE_BOOKS_API_KEY`
 - `SENTRY_DSN`
 - `TURNSTILE_SECRET_KEY`

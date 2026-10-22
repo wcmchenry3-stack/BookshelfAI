@@ -19,6 +19,16 @@ ALLOWED_MODELS: MappingProxyType[str, frozenset[str]] = MappingProxyType(
                 "gpt-4o-2024-11-20",
             }
         ),
+        # Fixed model IDs (#548, option a): Anthropic publishes no dated
+        # snapshot for these models; the IDs below are the pinned versions,
+        # not moving aliases. Never add a ``-latest`` or other moving name.
+        # tests/unit/test_anthropic_vision.py checks this set exactly.
+        "anthropic": frozenset(
+            {
+                "claude-haiku-5-5",
+                "claude-sonnet-5-5",
+            }
+        ),
     }
 )
 
