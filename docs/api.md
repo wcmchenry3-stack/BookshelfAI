@@ -32,8 +32,8 @@ Common status codes:
 | 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
-| 413 | Payload Too Large | request body > 10 MB (middleware) or image > 5 MB (endpoint) |
-| 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload |
+| 413 | Payload Too Large | request body > 10 MB (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
+| 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload, or an image that cannot be decoded (`image_undecodable`) |
 | 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`) |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
 | 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity |
@@ -202,7 +202,7 @@ curl "https://bookshelfapi.buffingchi.com/books/search?q=dune+herbert" \
 
 ### `POST /scan` — identify book cover from image
 
-Multipart upload → optional Cloudflare Turnstile bot check → file validation (extension + MIME + magic bytes) → ChatGPT Vision identification (`gpt-4o-mini`) → Google Books + Open Library enrichment → per-user deduplication flagging. Returns up to 3 `EnrichedBook` candidates.
+Multipart upload → optional Cloudflare Turnstile bot check → file validation (extension + MIME + size, read in chunks + magic bytes) → image normalisation (full decode, pixel cap, EXIF orientation, metadata stripped, long edge ≤ 1568 px, JPEG quality 85) → ChatGPT Vision identification (`gpt-4o-mini`) → Google Books + Open Library enrichment → per-user deduplication flagging. Returns up to 3 `EnrichedBook` candidates.
 
 **Auth:** required
 **Rate limit:** `rate_limit_scan` (10/min default)
@@ -238,8 +238,10 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 **Errors:**
 - `400` — Turnstile token missing (when configured)
 - `403` — Turnstile verification failed
-- `413` — image > 5 MB
+- `413` — image > 5 MB (`detail: "Image must be 5MB or smaller"`); the upload is read in chunks and reading stops as soon as it passes 5 MB
+- `413` — the image's pixel count (width × height, read from its header before decoding) is above `SCAN_MAX_IMAGE_PIXELS` (default 40,000,000) (`detail: "image_too_large_pixels"`)
 - `415` — bad extension / MIME / magic bytes
+- `415` — the image cannot be fully decoded as JPEG, PNG, WebP or HEIC/HEIF (`detail: "image_undecodable"`)
 - `402` — enhanced scan requested with no enhanced credits left (`detail: "no_enhanced_credits"`)
 - `429` — the user's daily scan limit is reached (`detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets. Limit: `SCAN_DAILY_LIMIT_PER_USER` (default 20).
 - `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily limit
@@ -247,7 +249,7 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `503` — enhanced scanning switched off (`detail: "enhanced_scan_disabled"`, `SCAN_ENHANCED_ENABLED=false`); standard scans still work
 - `503` — the service-wide daily scan capacity is used up (`detail: "scan_capacity"`, `SCAN_GLOBAL_DAILY_LIMIT`, default 2000)
 
-Check order: kill switches → Turnstile → file validation → enhanced-credit check → global daily capacity → per-user daily limit → vision provider. A scan counts toward the daily limits once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`).
+Check order: kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → enhanced-credit check → global daily capacity → per-user daily limit → vision provider. A scan counts toward the daily limits once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan or an enhanced credit.
 
 **Example:**
 ```bash
