@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.ai import gateway
+from app.ai.entitlements import Tier
 from app.ai.gateway import (
     AIResult,
     FeatureDisabledError,
@@ -41,7 +42,11 @@ async def test_feature_routes_to_registry_model(provider_cls, feature, model):
     assert provider_cls.call_args.args[0].model == model
     provider_cls.return_value.identify.assert_awaited_once_with(b"img")
     assert result == AIResult(
-        feature=feature, provider="openai", model=model, candidates=[CANDIDATE]
+        feature=feature,
+        provider="openai",
+        model=model,
+        candidates=[CANDIDATE],
+        tier=Tier.FREE,
     )
 
 
