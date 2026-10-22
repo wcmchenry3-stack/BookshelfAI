@@ -139,7 +139,8 @@ async def record(db: AsyncSession, **fields) -> None:
     ``quota.release`` instead, so the row commits with the lease release.
     A ``call_id`` is generated when none is given.
     """
-    fields.setdefault("call_id", uuid.uuid4())
+    if fields.get("call_id") is None:
+        fields["call_id"] = uuid.uuid4()
     await db.execute(usage_insert(**fields))
     await db.commit()
 

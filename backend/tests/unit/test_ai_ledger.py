@@ -146,6 +146,19 @@ class TestUsageInsert:
         params = _params(db.execute.await_args.args[0])
         assert isinstance(params["call_id"], uuid.UUID)
 
+    async def test_record_replaces_an_explicit_none_call_id(self):
+        db = AsyncMock()
+        await ledger.record(
+            db,
+            user_id=None,
+            feature="scan.standard",
+            model="gpt-4o",
+            status="error",
+            call_id=None,
+        )
+        params = _params(db.execute.await_args.args[0])
+        assert isinstance(params["call_id"], uuid.UUID)
+
     def test_request_id_is_the_servers_or_none(self):
         assert ledger.current_request_id() is None  # outside a request: "-"
         token = request_id_var.set("abc-123")

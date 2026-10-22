@@ -245,9 +245,10 @@ class TestSingleCommitSettle:
     async def test_failed_settle_rolls_back_the_row_with_the_release(
         self, sessions, downstream
     ):
-        """The first settle attempt fails after the row and the lease delete
-        were executed but before the commit: both roll back together, and the
-        retry writes exactly one row and releases the lease."""
+        """Rollback-and-retry: the first settle attempt fails after the row
+        and the lease delete were executed but before the commit; the retry
+        writes exactly one row and releases the lease. (Single-commit itself
+        is proven by test_row_and_lease_release_commit_together.)"""
         factory, make_user, _ = sessions
         user_id = await make_user()
         real_release = quota.release_lease
