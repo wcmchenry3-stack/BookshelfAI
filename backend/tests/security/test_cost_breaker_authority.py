@@ -302,7 +302,7 @@ class TestAlertContent:
         assert resp.status_code == 200
         alert, later = events
         assert alert["fingerprint"][0] == "ai-breaker"
-        for key in ("request", "user", "breadcrumbs"):
+        for key in ("request", "user", "breadcrumbs", "transaction"):
             assert key not in alert, key
         assert set(alert.get("contexts", {})) <= {"trace", "runtime", "os"}
         text = json.dumps(alert)

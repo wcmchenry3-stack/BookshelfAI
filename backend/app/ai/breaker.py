@@ -329,9 +329,10 @@ def send_alert(
 
 def _strip_request_data(event: dict, _hint: dict) -> dict:
     """Event processor for spend alerts: drop everything that came from the
-    request (the HTTP ``request`` block, ``user``, breadcrumbs, and any
+    request (the HTTP ``request`` block, ``user``, breadcrumbs, the route
+    ``transaction`` name, and any
     context other than the trace/runtime ones the SDK adds)."""
-    for key in ("request", "user", "breadcrumbs"):
+    for key in ("request", "user", "breadcrumbs", "transaction"):
         event.pop(key, None)
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
