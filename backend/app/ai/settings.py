@@ -26,24 +26,34 @@ only. A key with no row (deleted by hand, or seeding failed while the DB was
 down) falls back to that same env/registry default.
 
 **Validation.** Writes (the CLI below) are validated against the same rules
-and refused when invalid. On read, an invalid row is ignored with a warning
-(log + Sentry) and the default is used, so a bad hand edit can never widen what
-the registry allows: a model must be in the allow-list of the provider it is
-paired with, and the registry still re-validates the per-request spec.
+and refused when invalid. On read, an invalid provider, model or pixel cap is
+ignored with a warning (log + Sentry) and the default is used, so a bad hand
+edit can never widen what the registry allows: a model must be in the
+allow-list of the provider it is paired with, and the registry still
+re-validates the per-request spec. An invalid ``*.enabled`` row (anything but
+a JSON boolean, e.g. ``"false"``, ``0`` or ``null``) fails closed instead: it
+is treated as ``false`` (disabled), with the same warning. A MISSING
+``*.enabled`` row still falls back to ``SCAN_ENABLED`` /
+``SCAN_ENHANCED_ENABLED``, so deleting the row re-enables per the env; use
+``set <key> false`` to disable.
 
 **Cache.** Reads go through a process-local cache that is reused for
-``AI_SETTINGS_CACHE_TTL_SECONDS`` (default 30). Each instance has its own
-cache, so after a change two instances can disagree for up to the TTL.
-Concurrent misses may each read the table (a few tiny rows); no lock is used.
+``AI_SETTINGS_CACHE_TTL_SECONDS`` (default 30). The cache is per process (per
+uvicorn worker), so after a change two processes can disagree for up to the
+TTL. Concurrent misses may each read the table (a few tiny rows); no lock is
+used.
 
 **Failure.** If the table cannot be read:
 
 - and nothing was ever read in this process, :class:`AISettingsUnavailableError`
   is raised and ``/scan`` answers 503 ``ai_unavailable`` (fail closed);
-- otherwise the last value read is used, however old, and a warning is logged.
-  Serving a stale value during a database blip is preferred to both failing
-  open (ignoring a kill switch) and refusing every scan. Every request retries
-  the read, so the first success refreshes the cache.
+- otherwise the last value read is used while it is at most
+  ``AI_SETTINGS_MAX_STALE_SECONDS`` old (default 300, never below the TTL),
+  and a warning is logged. Serving a recent value during a database blip is
+  preferred to both failing open (ignoring a kill switch) and refusing every
+  scan. Past that age an error is logged and
+  :class:`AISettingsUnavailableError` is raised (fail closed). Every request
+  retries the read, so the first success refreshes the cache.
 
 **CLI.** ``python -m app.ai.settings list | get <key> | set <key> <value>
 [--by NAME]``. It uses the app's ``DATABASE_URL``. ``set`` validates exactly
@@ -102,7 +112,8 @@ class AISettingValueError(ValueError):
 
 
 class AISettingsUnavailableError(ScanUnavailableError):
-    """ai_settings could not be read and nothing is cached: fail closed.
+    """ai_settings could not be read and nothing usable is cached (never
+    read, or older than ``AI_SETTINGS_MAX_STALE_SECONDS``): fail closed.
 
     A ``ScanUnavailableError`` so that, if it surfaces inside ``run_feature``,
     the scan endpoint treats it like any provider outage (no provider was
@@ -258,8 +269,28 @@ def _warn_ignored(key: str, reason: str) -> None:
     )
 
 
+def _is_switch(key: str) -> bool:
+    return key.endswith(".enabled")
+
+
+def _warn_switch_disabled(key: str, reason: str) -> None:
+    # The stored value is not echoed: it came from outside the code.
+    logger.warning(
+        "ai_settings: invalid value for %s (%s); treated as disabled", key, reason
+    )
+    sentry_sdk.capture_message(
+        f"ai_settings: invalid value for {key}; treated as disabled",
+        level="warning",
+    )
+
+
 def _sanitise_rows(raw: Mapping[str, Any]) -> dict[str, Any]:
-    """Drop unknown keys and invalid values from rows read from the table."""
+    """Validate rows read from the table.
+
+    Unknown keys are dropped. An invalid ``*.enabled`` value becomes ``False``
+    (fail closed); any other invalid value is dropped, so the env/registry
+    default is used.
+    """
     valid: dict[str, Any] = {}
     for key, value in raw.items():
         definition = DEFINITIONS.get(key)
@@ -269,7 +300,11 @@ def _sanitise_rows(raw: Mapping[str, Any]) -> dict[str, Any]:
         try:
             valid[key] = definition.validate(value)
         except AISettingValueError as exc:
-            _warn_ignored(key, str(exc))
+            if _is_switch(key):
+                valid[key] = False
+                _warn_switch_disabled(key, str(exc))
+            else:
+                _warn_ignored(key, str(exc))
     for feature, message in _pair_problems(valid):
         model_key, provider_key = f"{feature}.model", f"{feature}.provider"
         if model_key in valid:
@@ -355,11 +390,18 @@ def reset_cache(rows: Mapping[str, Any] | None = None) -> None:
 
 
 async def _load_rows(db: AsyncSession) -> dict[str, Any]:
-    # A SAVEPOINT, so a failed read rolls back only itself: the request's
-    # session stays usable and objects it already loaded (the current user)
-    # are not expired.
+    query = select(AISetting.key, AISetting.value)
+    if not db.in_transaction() and not (db.new or db.dirty or db.deleted):
+        # No transaction open and nothing pending: a short transaction of its
+        # own, so no connection is left idle in a transaction afterwards.
+        async with db.begin():
+            result = await db.execute(query)
+            return {key: value for key, value in result.all()}
+    # Inside the request's transaction: a SAVEPOINT, so a failed read rolls
+    # back only itself; the session stays usable and objects it already
+    # loaded (the current user) are not expired.
     async with db.begin_nested():
-        result = await db.execute(select(AISetting.key, AISetting.value))
+        result = await db.execute(query)
         return {key: value for key, value in result.all()}
 
 
@@ -367,7 +409,8 @@ async def get_ai_settings(db: AsyncSession) -> AISettings:
     """Return the current settings, from the cache when it is fresh.
 
     Raises :class:`AISettingsUnavailableError` when the table cannot be read
-    and nothing has been read before in this process.
+    and nothing has been read before in this process, or the last value read
+    is older than ``AI_SETTINGS_MAX_STALE_SECONDS``.
     """
     global _cache
     now = _clock()
@@ -380,12 +423,22 @@ async def get_ai_settings(db: AsyncSession) -> AISettings:
         raw = await _load_rows(db)
     except Exception as exc:  # noqa: BLE001 - any read failure is handled alike
         if entry is not None:
-            logger.warning(
-                "ai_settings: read failed (%s); using the value read %.0fs ago",
+            age = now - entry.loaded_at
+            if age <= settings.ai_settings_max_stale_seconds:
+                logger.warning(
+                    "ai_settings: read failed (%s); using the value read %.0fs ago",
+                    type(exc).__name__,
+                    age,
+                )
+                return AISettings(entry.rows)
+            logger.error(
+                "ai_settings: read failed (%s) and the cached value is %.0fs old "
+                "(max %ds); failing closed",
                 type(exc).__name__,
-                now - entry.loaded_at,
+                age,
+                settings.ai_settings_max_stale_seconds,
             )
-            return AISettings(entry.rows)
+            raise AISettingsUnavailableError("ai_settings unavailable") from None
         logger.error(
             "ai_settings: read failed (%s) and nothing is cached; failing closed",
             type(exc).__name__,
@@ -478,7 +531,7 @@ async def set_setting(
 ) -> Any:
     """Validate and upsert one key. Returns the stored (typed) value.
 
-    Takes effect in each instance within the cache TTL.
+    Takes effect in each process within the cache TTL.
     """
     updated_by = _validate_actor(updated_by)
     validate_value(key, value)
@@ -512,6 +565,13 @@ def parse_cli_value(text: str) -> Any:
         return text
 
 
+def _printable(text: str) -> str:
+    """``text`` with every non-printable character (escape sequences,
+    newlines) replaced by ``?``, so a hand-edited row cannot drive the
+    operator's terminal."""
+    return "".join(c if c.isprintable() else "?" for c in text)
+
+
 def _describe(key: str, stored: Mapping[str, AISetting]) -> str:
     row = stored.get(key)
     if row is None:
@@ -524,9 +584,15 @@ def _describe(key: str, stored: Mapping[str, AISetting]) -> str:
             f"{key} = {json.dumps(value)}  (stored value is INVALID and ignored; "
             "env/registry default in use)"
         )
+    # json.dumps escapes control characters, so values print safely.
+    try:
+        DEFINITIONS[key].validate(row.value)
+    except AISettingValueError:
+        return f"{key} = false  (stored value is INVALID; treated as disabled)"
+    updated_by = _printable(row.updated_by or "?")
     return (
         f"{key} = {json.dumps(row.value)}  "
-        f"(updated {row.updated_at:%Y-%m-%d %H:%M:%S %Z} by {row.updated_by or '?'})"
+        f"(updated {row.updated_at:%Y-%m-%d %H:%M:%S %Z} by {updated_by})"
     )
 
 
@@ -539,7 +605,7 @@ async def _run(args: argparse.Namespace) -> int:
             )
             print(
                 f"{args.key} = {json.dumps(typed)}  (takes effect within "
-                f"{settings.ai_settings_cache_ttl_seconds}s on every instance)"
+                f"{settings.ai_settings_cache_ttl_seconds}s in every process)"
             )
             return 0
         stored = await read_rows(db)

@@ -150,6 +150,41 @@ class TestCacheTTL:
         assert s.ai_settings_cache_ttl_seconds == value
 
 
+class TestMaxStaleSetting:
+    def test_default_is_300(self):
+        assert Settings(database_url=_DB).ai_settings_max_stale_seconds == 300
+
+    def test_read_from_env(self, monkeypatch):
+        monkeypatch.setenv("AI_SETTINGS_MAX_STALE_SECONDS", "900")
+        assert Settings(database_url=_DB).ai_settings_max_stale_seconds == 900
+
+    @pytest.mark.parametrize("value", [0, -1, 3601])
+    def test_out_of_bounds_rejected(self, value):
+        with pytest.raises(ValidationError):
+            Settings(
+                database_url=_DB,
+                ai_settings_cache_ttl_seconds=1,
+                ai_settings_max_stale_seconds=value,
+            )
+
+    @pytest.mark.parametrize("ttl,max_stale", [(1, 1), (30, 30), (300, 3600)])
+    def test_bounds_inclusive_and_equal_to_ttl_allowed(self, ttl, max_stale):
+        s = Settings(
+            database_url=_DB,
+            ai_settings_cache_ttl_seconds=ttl,
+            ai_settings_max_stale_seconds=max_stale,
+        )
+        assert s.ai_settings_max_stale_seconds == max_stale
+
+    def test_below_ttl_rejected(self):
+        with pytest.raises(ValidationError, match="AI_SETTINGS_MAX_STALE_SECONDS"):
+            Settings(
+                database_url=_DB,
+                ai_settings_cache_ttl_seconds=60,
+                ai_settings_max_stale_seconds=59,
+            )
+
+
 _DB = "postgresql+asyncpg://u:p@localhost/db"
 
 
@@ -219,14 +254,14 @@ class TestStaleOnError:
         assert "read failed (OSError)" in caplog.text
         assert "db down" not in caplog.text
 
-    async def test_stale_value_used_long_after_ttl_and_refreshed_on_recovery(
+    async def test_stale_value_used_after_ttl_and_refreshed_on_recovery(
         self, clock, empty_cache
     ):
         rows_a = {"scan.max_image_pixels": 2_000_000}
         rows_b = {"scan.max_image_pixels": 5_000_000}
         with _loader(rows_a, OSError("x"), OSError("x"), rows_b) as load:
             await ai_settings.get_ai_settings(MagicMock())
-            clock.t += 600
+            clock.t += 200  # past the TTL, within AI_SETTINGS_MAX_STALE_SECONDS
             assert (await ai_settings.get_ai_settings(MagicMock())).max_image_pixels
             stale = await ai_settings.get_ai_settings(MagicMock())
             fresh = await ai_settings.get_ai_settings(MagicMock())
@@ -234,6 +269,76 @@ class TestStaleOnError:
         assert load.await_count == 4
         assert stale.max_image_pixels == 2_000_000
         assert fresh.max_image_pixels == 5_000_000
+
+    async def test_stale_value_served_up_to_max_stale_inclusive(
+        self, clock, empty_cache
+    ):
+        rows = {"scan.max_image_pixels": 2_000_000}
+        with (
+            patch.object(ai_settings.settings, "ai_settings_max_stale_seconds", 120),
+            _loader(rows, OSError("x"), OSError("x")) as load,
+        ):
+            await ai_settings.get_ai_settings(MagicMock())
+            clock.t += 119
+            a = await ai_settings.get_ai_settings(MagicMock())
+            clock.t += 1  # exactly max_stale old
+            b = await ai_settings.get_ai_settings(MagicMock())
+        assert load.await_count == 3
+        assert a.max_image_pixels == b.max_image_pixels == 2_000_000
+
+    async def test_past_max_stale_fails_closed(self, clock, empty_cache, caplog):
+        with (
+            patch.object(ai_settings.settings, "ai_settings_max_stale_seconds", 120),
+            _loader({"scan.standard.enabled": False}, OSError("db down")),
+        ):
+            await ai_settings.get_ai_settings(MagicMock())
+            clock.t += 120.5
+            with (
+                caplog.at_level(logging.WARNING, logger="app.ai.settings"),
+                pytest.raises(ai_settings.AISettingsUnavailableError),
+            ):
+                await ai_settings.get_ai_settings(MagicMock())
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert "failing closed" in errors[0].getMessage()
+        assert "db down" not in caplog.text
+
+    async def test_default_max_stale_is_used(self, clock, empty_cache):
+        with _loader({}, OSError("x"), OSError("x")):
+            await ai_settings.get_ai_settings(MagicMock())
+            clock.t += 300
+            await ai_settings.get_ai_settings(MagicMock())
+            clock.t += 1
+            with pytest.raises(ai_settings.AISettingsUnavailableError):
+                await ai_settings.get_ai_settings(MagicMock())
+
+    async def test_recovers_after_failing_closed(self, clock, empty_cache):
+        rows_b = {"scan.max_image_pixels": 5_000_000}
+        with _loader({}, OSError("x"), rows_b):
+            await ai_settings.get_ai_settings(MagicMock())
+            clock.t += 1000
+            with pytest.raises(ai_settings.AISettingsUnavailableError):
+                await ai_settings.get_ai_settings(MagicMock())
+            fresh = await ai_settings.get_ai_settings(MagicMock())
+        assert fresh.max_image_pixels == 5_000_000
+
+    def test_scan_past_max_stale_returns_503_before_upload_is_read(
+        self, client, provider, clock, empty_cache
+    ):
+        with _loader({}, OSError("db down")):
+            assert client.post("/scan", files=_file()).status_code == 200
+            provider.reset_mock()
+            clock.t += 301
+            with (
+                patch.object(StarletteUploadFile, "read", new=AsyncMock()) as read,
+                patch("app.api.scan.sanitize_image") as sanitize,
+            ):
+                resp = client.post("/scan", files=_file())
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "ai_unavailable"}
+        read.assert_not_awaited()
+        sanitize.assert_not_called()
+        provider.assert_not_called()
 
     def test_scan_uses_stale_kill_switch_when_read_fails(
         self, client, provider, clock, empty_cache
@@ -291,6 +396,40 @@ class TestKillSwitchesFromTable:
             resp = client.post("/scan", files=_file())
         assert resp.status_code == 200
         provider.assert_called_once_with(FEATURES["scan.standard"])
+
+    @pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
+    def test_invalid_master_switch_fails_closed(
+        self, client, provider, empty_cache, value
+    ):
+        with (
+            _loader({"scan.standard.enabled": value}),
+            patch.object(ai_settings.settings, "scan_enabled", True),
+            patch.object(StarletteUploadFile, "read", new=AsyncMock()) as read,
+        ):
+            resp = client.post("/scan", files=_file())
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "scan_disabled"}
+        read.assert_not_awaited()
+        provider.assert_not_called()
+
+    @pytest.mark.parametrize("value", [0, "false", None])
+    def test_invalid_enhanced_switch_fails_closed(
+        self, client, provider, empty_cache, value
+    ):
+        with (
+            _loader({"scan.enhanced.enabled": value}),
+            patch.object(ai_settings.settings, "scan_enhanced_enabled", True),
+        ):
+            enhanced = client.post("/scan", files=_file(), data={"enhanced": "true"})
+        assert enhanced.status_code == 503
+        assert enhanced.json() == {"detail": "enhanced_scan_disabled"}
+        provider.assert_not_called()
+
+    def test_valid_true_switches_still_enable(self, client, provider, empty_cache):
+        with _loader({"scan.standard.enabled": True, "scan.enhanced.enabled": True}):
+            resp = client.post("/scan", files=_file(), data={"enhanced": "true"})
+        assert resp.status_code == 200
+        assert provider.call_args.args[0].name == "scan.enhanced"
 
     def test_row_wins_over_env(self, client, provider):
         """After seeding the row is the source of truth, not SCAN_ENABLED."""
@@ -367,6 +506,58 @@ class TestOverridesReachRunFeature:
         provider.assert_called_once_with(FEATURES["scan.enhanced"])
 
 
+class TestReadOncePerScan:
+    def test_cold_cache_scan_reads_settings_once(
+        self, client, provider, clock, empty_cache
+    ):
+        # TTL 0 so the cache cannot hide a second read.
+        with (
+            patch.object(ai_settings.settings, "ai_settings_cache_ttl_seconds", 0),
+            _loader({"scan.standard.model": "gpt-4o"}, {}) as load,
+        ):
+            resp = client.post("/scan", files=_file())
+        assert resp.status_code == 200
+        assert load.await_count == 1
+        assert provider.call_args.args[0].model == "gpt-4o"
+
+    async def test_run_feature_with_snapshot_skips_the_read(
+        self, provider, empty_cache
+    ):
+        snapshot = ai_settings.AISettings({"scan.standard.model": "gpt-4o"})
+        with _loader({}) as load:
+            result = await run_feature(
+                "scan.standard",
+                user=USER,
+                db=MagicMock(),
+                payload=VisionPayload(image_bytes=b"x"),
+                settings_snapshot=snapshot,
+            )
+        load.assert_not_awaited()
+        assert result.model == "gpt-4o"
+
+    async def test_run_feature_snapshot_kill_switch_enforced(self, provider):
+        snapshot = ai_settings.AISettings({"scan.enhanced.enabled": False})
+        with pytest.raises(FeatureDisabledError):
+            await run_feature(
+                "scan.enhanced",
+                user=USER,
+                db=MagicMock(),
+                payload=VisionPayload(image_bytes=b"x"),
+                settings_snapshot=snapshot,
+            )
+        provider.assert_not_called()
+
+    async def test_run_feature_without_snapshot_reads(self, provider, empty_cache):
+        with _loader({}) as load:
+            await run_feature(
+                "scan.standard",
+                user=USER,
+                db=MagicMock(),
+                payload=VisionPayload(image_bytes=b"x"),
+            )
+        load.assert_awaited_once()
+
+
 class TestMaxImagePixelsFeedsSanitize:
     def test_pixel_cap_from_table(self, client, provider):
         ai_settings.reset_cache({"scan.max_image_pixels": 1_000_000})
@@ -434,7 +625,8 @@ class TestBounds:
             ai_settings.validate_write(key, value, {})
 
     @pytest.mark.parametrize(
-        "key,value", [(k, v) for k, vs in _INVALID.items() for v in vs]
+        "key,value",
+        [(k, v) for k, vs in _INVALID.items() for v in vs if not k.endswith("enabled")],
     )
     def test_invalid_ignored_on_read(self, key, value):
         with patch.object(ai_settings.sentry_sdk, "capture_message") as capture:
@@ -444,6 +636,24 @@ class TestBounds:
         assert current.get(key) == ai_settings.DEFINITIONS[key].default()
         capture.assert_called_once()
         assert capture.call_args.kwargs == {"level": "warning"}
+
+    @pytest.mark.parametrize(
+        "key,value",
+        [(k, v) for k, vs in _INVALID.items() for v in vs if k.endswith("enabled")],
+    )
+    def test_invalid_switch_treated_as_disabled_on_read(self, key, value, caplog):
+        with (
+            patch.object(ai_settings.sentry_sdk, "capture_message") as capture,
+            caplog.at_level(logging.WARNING, logger="app.ai.settings"),
+        ):
+            ai_settings.reset_cache({key: value})
+        assert ai_settings._cache.rows[key] is False
+        capture.assert_called_once()
+        assert capture.call_args.kwargs == {"level": "warning"}
+        assert "treated as disabled" in capture.call_args.args[0]
+        assert "treated as disabled" in caplog.text
+        # The stored value is not echoed.
+        assert repr(value) not in capture.call_args.args[0]
 
     def test_unknown_key_rejected_on_write(self):
         with pytest.raises(ai_settings.AISettingValueError, match="unknown key"):
@@ -726,6 +936,27 @@ class TestCLI:
         joined = "\n".join(lines)
         assert "scan.max_image_pixels = 40000000  (stored value is INVALID" in joined
         assert "scan.standard.enabled = true  (no row" in joined
+
+    def test_invalid_switch_described_as_disabled(self, cli_db, capsys):
+        cli_db.stored = {
+            "scan.enhanced.enabled": FakeRow("scan.enhanced.enabled", "false"),
+        }
+        assert ai_settings.main(["get", "scan.enhanced.enabled"]) == 0
+        out = capsys.readouterr().out
+        assert (
+            "scan.enhanced.enabled = false  (stored value is INVALID; treated as"
+            in (out)
+        )
+
+    def test_updated_by_control_characters_are_replaced(self, cli_db, capsys):
+        row = FakeRow("scan.enhanced.model", "gpt-4o")
+        row.updated_by = "ev\x1b[2Jil\nx"
+        cli_db.stored = {"scan.enhanced.model": row}
+        assert ai_settings.main(["get", "scan.enhanced.model"]) == 0
+        out = capsys.readouterr().out
+        assert "\x1b" not in out
+        assert "by ev?[2Jil?x" in out
+        assert out.count("\n") == 1
 
     def test_parse_cli_value(self):
         assert ai_settings.parse_cli_value("true") is True

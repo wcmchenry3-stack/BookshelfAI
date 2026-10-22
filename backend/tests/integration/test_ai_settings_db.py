@@ -131,6 +131,35 @@ async def test_read_inside_an_open_transaction_keeps_the_session_usable(factory)
     )
 
 
+async def test_read_with_no_open_transaction_leaves_none_open(factory):
+    """Outside a transaction the read uses a short one of its own, so the
+    connection is not left idle in a transaction."""
+    ai_settings.reset_cache()
+    async with factory() as db:
+        await ai_settings.set_setting(
+            db, "scan.enhanced.enabled", False, updated_by="ops"
+        )
+    async with factory() as db:
+        assert not db.in_transaction()
+        current = await ai_settings.get_ai_settings(db)
+        assert not db.in_transaction()
+        # The session is still usable afterwards.
+        assert (await db.execute(select(AISetting.key))).all()
+    assert current.enhanced_scan_enabled is False
+
+
+async def test_invalid_switch_row_is_disabled_and_missing_row_uses_env(factory):
+    ai_settings.reset_cache()
+    async with factory() as db:
+        db.add(AISetting(key="scan.standard.enabled", value="false"))
+        await db.commit()
+    with patch.object(settings, "scan_enhanced_enabled", True):
+        async with factory() as db:
+            current = await ai_settings.get_ai_settings(db)
+        assert current.scan_enabled is False  # invalid row: fail closed
+        assert current.enhanced_scan_enabled is True  # no row: env default
+
+
 async def test_set_writes_actor_and_rejects_invalid(factory):
     async with factory() as db:
         await ai_settings.set_setting(

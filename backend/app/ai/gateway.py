@@ -52,7 +52,12 @@ def _build_provider(spec: FeatureSpec) -> VisionProvider:
 
 
 async def run_feature(
-    feature: str, *, user: User, db: AsyncSession, payload: VisionPayload
+    feature: str,
+    *,
+    user: User,
+    db: AsyncSession,
+    payload: VisionPayload,
+    settings_snapshot: ai_settings.AISettings | None = None,
 ) -> AIResult:
     """Run one AI feature and return its result.
 
@@ -62,15 +67,24 @@ async def run_feature(
     The spec used is per request: the registry default with the validated
     ``ai_settings`` provider/model override and kill switch applied
     (``dataclasses.replace``, which re-runs the registry's validation).
+    ``settings_snapshot`` is the ``AISettings`` the caller already read for
+    this request (``/scan`` reads them first, for its kill-switch checks);
+    passing it avoids a second read and makes the whole request use one
+    view. Without it the settings are read here. Either way the kill switch
+    and overrides are applied here, so this stays the choke point.
 
     Raises ``UnknownFeatureError`` for a name not in the registry,
     ``FeatureDisabledError`` when the feature is switched off (in the registry
     or in ``ai_settings``), ``AISettingsUnavailableError`` when the settings
-    cannot be read and nothing is cached, and whatever the provider raises
+    cannot be read and nothing recent enough is cached, and whatever the provider raises
     (``ScanUnavailableError``, ``httpx.ConnectError``).
     """
     spec = get_feature(feature)
-    current = await ai_settings.get_ai_settings(db)
+    current = (
+        settings_snapshot
+        if settings_snapshot is not None
+        else await ai_settings.get_ai_settings(db)
+    )
     spec = current.spec_for(spec)
     if not spec.enabled:
         raise FeatureDisabledError(f"AI feature {feature!r} is disabled")

@@ -38,7 +38,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 
 Every step runs before the enhanced-credit check and the daily-cap reservation, so a rejected image never uses a scan. Order:
 
-1. Kill switches (`ai_settings` keys `scan.standard.enabled`, `scan.enhanced.enabled`; `503 ai_unavailable` if the table cannot be read and nothing is cached) → Turnstile. No request field, header or query can set an `ai_settings` key; they change only through the CLI or the database (`tests/security/test_ai_settings_authority.py`).
+1. Kill switches (`ai_settings` keys `scan.standard.enabled`, `scan.enhanced.enabled`; `503 ai_unavailable` if the table cannot be read and nothing is cached, or the cached value is older than `AI_SETTINGS_MAX_STALE_SECONDS`; an invalid `*.enabled` value counts as disabled) → Turnstile. No request field, header or query can set an `ai_settings` key; they change only through the CLI or the database (`tests/security/test_ai_settings_authority.py`).
 2. Extension and `Content-Type` → `415`.
 3. **Streaming read with cap.** The handler reads the upload in 64 KB chunks and stops as soon as it has more than 5 MB (`MAX_IMAGE_BYTES`) → `413 "Image must be 5MB or smaller"`. The handler reads and holds at most 5 MB + 1 byte, but the framework has already received the whole multipart body before the handler runs (spooled to a temp file past 1 MB). `RequestSizeLimitMiddleware` rejects a request whose `Content-Length` is above 10 MB, but it checks only that header, so a chunked body (no `Content-Length`) is not capped yet — see #557.
 4. **Magic bytes** (`app/core/file_validation.py`) must match the declared extension → `415`. This runs before anything decodes the bytes.

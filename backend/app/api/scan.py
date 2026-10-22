@@ -284,6 +284,8 @@ async def scan(
             user=current_user,
             db=db,
             payload=VisionPayload(image_bytes=image_bytes),
+            # The settings read above, so one request uses one view of them.
+            settings_snapshot=ai,
         )
     except (ScanUnavailableError, httpx.ConnectError):
         # ConnectError: the connection to the provider was never established,

@@ -105,9 +105,14 @@ class Settings(BaseSettings):
     # created at import, so a DB change could not take effect without a restart.
     scan_normalise_concurrency: int = Field(default=1, ge=1, le=8)
     # How long a process reuses the ai_settings rows it last read (seconds).
-    # A change made with the CLI reaches every instance within this time, so
-    # two instances may disagree for up to this long.
+    # The cache is per process (per uvicorn worker): a change made with the
+    # CLI reaches every process within this time, so two processes (or two
+    # instances during a deploy) may disagree for up to this long.
     ai_settings_cache_ttl_seconds: int = Field(default=30, ge=1, le=300)
+    # How old the cached ai_settings rows may be and still be served when a
+    # read fails. Past this, scans fail closed (503 ai_unavailable). Must be
+    # at least the cache TTL (checked at boot).
+    ai_settings_max_stale_seconds: int = Field(default=300, ge=1, le=3600)
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 
@@ -214,6 +219,15 @@ class Settings(BaseSettings):
                 f"{_ORIGIN_AUTH_SECRET_MIN_LENGTH} characters"
             )
         return v
+
+    @model_validator(mode="after")
+    def _max_stale_not_below_ttl(self) -> "Settings":
+        if self.ai_settings_max_stale_seconds < self.ai_settings_cache_ttl_seconds:
+            raise ValueError(
+                "AI_SETTINGS_MAX_STALE_SECONDS must be at least "
+                "AI_SETTINGS_CACHE_TTL_SECONDS"
+            )
+        return self
 
     @model_validator(mode="after")
     def _default_trusted_proxy_mode(self) -> "Settings":
