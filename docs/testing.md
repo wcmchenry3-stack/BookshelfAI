@@ -5,7 +5,7 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 ## Philosophy
 
 - **Unit tests mock the DB** — they're fast and run on every PR.
-- **Integration tests hit a real Postgres** and are auto-skipped when `DATABASE_URL` points at the dummy URL used by CI's default config.
+- **Integration tests hit a real Postgres** and are auto-skipped when `DATABASE_URL` points at the dummy URL used by CI's default config. CI runs them in the `test-migrations` job, which has a Postgres 16 service.
 - **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own CI job.
 - **Accuracy and performance suites** live beside the core tests but run opt-in (benchmarks are skipped by default).
 - **Don't mock what you can rollback** — when testing DB interactions, prefer the savepoint-based `db_session` fixture over mock sessions. Feedback memory flagged a real production incident where mocked DB tests passed and the actual migration broke prod.
@@ -216,7 +216,7 @@ Each job is a reusable workflow from `wcmchenry3-stack/.github`:
 |---|---|
 | `test-python` | `pytest` with coverage (default, no integration) |
 | `test-frontend` | `npx jest` with coverage |
-| `test-migrations` | Verifies `alembic upgrade head` applies cleanly against a fresh DB |
+| `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests/integration` (the real-DB integration suite) |
 | `pytest -m security` | Separate security-suite run (on every PR) |
 | `lint-python` | `black --check` + `ruff` |
 | `lint-frontend` | `eslint` + `prettier --check` |
