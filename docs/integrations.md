@@ -55,13 +55,14 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **SDK:** official `anthropic` Python SDK, pinned in `backend/requirements.txt` (1.x, built on `httpx2`); `client.messages.create` only
 **Endpoint:** `https://api.anthropic.com` (pinned in the adapter, so `ANTHROPIC_BASE_URL` cannot redirect it)
+**Operator environment:** the base URL and the API key are passed explicitly, so `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and saved profiles are not used. Two environment settings do still apply to the SDK client: `HTTP_PROXY` / `HTTPS_PROXY` (the HTTP library honours them) and `ANTHROPIC_CUSTOM_HEADERS` (extra request headers). Keep both unset on the API service unless a proxy is intended.
 **Models:** `claude-haiku-5-5` (`scan.standard`), `claude-sonnet-5-5` (`scan.enhanced`): fixed IDs (Anthropic publishes no dated snapshot for them, #548), from `registry.PROVIDER_MODELS`
 **Key env var:** `ANTHROPIC_API_KEY` (only needed once a feature is switched to `anthropic`)
 **Timeout / max tokens / effort:** the feature spec's (`SCAN_TIMEOUT_SECONDS`, `SCAN_MAX_TOKENS`; effort `low` standard, `medium` enhanced)
 **Source:** `backend/app/ai/providers/anthropic_vision.py`, called only through the AI gateway
 **Switch:** `python -m app.ai.settings switch scan.standard anthropic` (and back with `... switch scan.standard openai`); see [deployment.md](deployment.md)
 
-**Request:** the OpenAI adapter's system prompt (unchanged wording) with a `cache_control` breakpoint; structured output (`output_config.format`) for `{books: [{title, author, confidence, isbn_13, isbn_10}]}`; the normalised JPEG as a base64 image block. No sampling parameters and no prefill.
+**Request:** the OpenAI adapter's system prompt (unchanged wording) with a `cache_control` breakpoint (the prompt is about 300 tokens, under the 512-token cache minimum, so it most likely does not cache; confirm on staging from the ledger's cache token columns); structured output (`output_config.format`) for `{books: [{title, author, confidence, isbn_13, isbn_10}]}`; the normalised JPEG as a base64 image block. No sampling parameters and no prefill.
 
 **Error handling:**
 - `stop_reason: refusal` → empty result, ledger `refused`, reservation kept

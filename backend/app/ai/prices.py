@@ -71,8 +71,9 @@ _GPT_4O = ModelPrice(
 #                      cache write $0.125. These are the rates for prompts of
 #                      100K tokens or fewer; longer prompts are billed at
 #                      $0.50 / $2.50 (see LONG_PROMPT_THRESHOLDS). The cache
-#                      read price is the skill's stated 0.1x-input rule, not a
-#                      listed figure: verify on the live pricing page before
+#                      rates are the skill's stated Haiku 5.5 rates ("cache
+#                      reads are 0.1x the input rate, 5-minute cache writes
+#                      1.25x"); verify on the live pricing page before
 #                      enabling in production.
 #   claude-sonnet-5-5: input $2.00, output $10.00, cache read $0.20,
 #                      cache write $2.50.

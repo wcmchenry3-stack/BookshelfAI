@@ -9,8 +9,11 @@ The request:
 
 - the system prompt is the OpenAI adapter's ``SYSTEM_PROMPT``, word for word,
   so accuracy comparisons between providers stay meaningful; it carries a
-  ``cache_control`` breakpoint (5-minute TTL) so repeated scans read it from
-  the prompt cache;
+  ``cache_control`` breakpoint (5-minute TTL). The prompt is about 300
+  tokens, under these models' 512-token minimum cacheable prefix, so the
+  breakpoint is most likely a no-op (no error; ``cache_creation_input_tokens``
+  stays 0). Confirm on staging from the ledger's cache token columns before
+  counting on cache savings;
 - structured output (``output_config.format``, a JSON schema for
   ``{"books": [{title, author, confidence, isbn_13, isbn_10}]}``). The schema
   states ``maxItems = scan_max_books``; the API does not enforce array-size
@@ -375,7 +378,12 @@ class AnthropicVisionProvider:
         self.spec = spec
 
     def request(self, image_bytes: bytes) -> dict[str, Any]:
-        """The ``messages.create`` arguments: all from the spec and settings."""
+        """The ``messages.create`` arguments: all from the spec and settings.
+
+        Server-side ``fallbacks`` are deliberately not used: the usage ledger
+        prices each call by ``spec.model``, and a fallback would be billed at
+        another model's rates, so the recorded cost would be wrong.
+        """
         max_books = settings.scan_max_books
         b64 = base64.standard_b64encode(image_bytes).decode()
         return {
