@@ -1,3 +1,5 @@
 {
-  "heading": "הגדרות"
+  "heading": "הגדרות",
+  "scanUsageLabel": "שימוש בסריקות",
+  "scanUsageMonth": "{{used}} מתוך {{limit}} סריקות נוצלו החודש"
 }

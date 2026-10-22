@@ -131,6 +131,10 @@ node scripts/translate.js --all
 Arabic (`ar`) and Hebrew (`he`) are RTL. String translations are complete.
 Layout mirroring (`I18nManager.forceRTL()` + app restart) is a follow-up task.
 
+### Scan quota states
+
+`lib/scanErrors.ts` is the only place that knows the `POST /scan` refusal codes. `classifyScanError(err)` maps an axios error to exactly one UI state (`monthly_limit`, `daily_limit`, `in_progress`, `paused`, `no_enhanced_credits`, `generic`; the table is in the file header); it distinguishes by `response.data.detail`, not status alone (402 is both `scan_limit_reached` and `no_enhanced_credits`). `toScanNotice` / `scanNoticeMessage` turn a state into the notice the scan screen shows. `ScanJobContext` owns the `scanNotice`, the silent `scan_in_progress` retry (max 3, honouring `Retry-After`) and `usageRefreshKey`; `hooks/useScanUsage.ts` fetches `GET /scan/usage` for `components/ScanStatusPanel.tsx` (scan screen) and the Settings row, and returns `null` offline or on failure so the counter just hides. Add new backend codes in `scanErrors.ts` and its table-driven test, never inline in a component.
+
 ## Commands
 
 ```bash
