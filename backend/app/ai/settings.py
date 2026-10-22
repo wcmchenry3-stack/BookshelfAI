@@ -391,9 +391,15 @@ def reset_cache(rows: Mapping[str, Any] | None = None) -> None:
 
 async def _load_rows(db: AsyncSession) -> dict[str, Any]:
     query = select(AISetting.key, AISetting.value)
-    if not db.in_transaction() and not (db.new or db.dirty or db.deleted):
-        # No transaction open and nothing pending: a short transaction of its
-        # own, so no connection is left idle in a transaction afterwards.
+    if (
+        not db.in_transaction()
+        and not db.identity_map
+        and not (db.new or db.dirty or db.deleted)
+    ):
+        # No transaction open and the session holds nothing: a short
+        # transaction of its own, so no connection is left idle in a
+        # transaction afterwards. Restricted to an empty session because a
+        # failed outermost rollback would expire every loaded object.
         async with db.begin():
             result = await db.execute(query)
             return {key: value for key, value in result.all()}
@@ -423,7 +429,9 @@ async def get_ai_settings(db: AsyncSession) -> AISettings:
         raw = await _load_rows(db)
     except Exception as exc:  # noqa: BLE001 - any read failure is handled alike
         if entry is not None:
-            age = now - entry.loaded_at
+            # Measured after the failed read, so a slow failure cannot stretch
+            # the stale window past the limit.
+            age = _clock() - entry.loaded_at
             if age <= settings.ai_settings_max_stale_seconds:
                 logger.warning(
                     "ai_settings: read failed (%s); using the value read %.0fs ago",

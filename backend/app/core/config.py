@@ -224,8 +224,10 @@ class Settings(BaseSettings):
     def _max_stale_not_below_ttl(self) -> "Settings":
         if self.ai_settings_max_stale_seconds < self.ai_settings_cache_ttl_seconds:
             raise ValueError(
-                "AI_SETTINGS_MAX_STALE_SECONDS must be at least "
-                "AI_SETTINGS_CACHE_TTL_SECONDS"
+                "AI_SETTINGS_MAX_STALE_SECONDS "
+                f"({self.ai_settings_max_stale_seconds}) must be at least "
+                "AI_SETTINGS_CACHE_TTL_SECONDS "
+                f"({self.ai_settings_cache_ttl_seconds})"
             )
         return self
 

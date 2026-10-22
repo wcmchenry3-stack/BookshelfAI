@@ -286,6 +286,28 @@ class TestStaleOnError:
         assert load.await_count == 3
         assert a.max_image_pixels == b.max_image_pixels == 2_000_000
 
+    async def test_stale_age_is_measured_after_a_slow_failed_read(
+        self, clock, empty_cache
+    ):
+        """A read that hangs before failing must not stretch the stale window."""
+
+        async def slow_failure(_db):
+            clock.t += 30  # the failing read itself takes 30s
+            raise OSError("pool timeout")
+
+        with (
+            patch.object(ai_settings.settings, "ai_settings_max_stale_seconds", 120),
+            _loader({"scan.standard.enabled": False}),
+        ):
+            await ai_settings.get_ai_settings(MagicMock())
+        clock.t += 100  # 100s old before the read, 130s old after it
+        with (
+            patch.object(ai_settings.settings, "ai_settings_max_stale_seconds", 120),
+            patch.object(ai_settings, "_load_rows", slow_failure),
+            pytest.raises(ai_settings.AISettingsUnavailableError),
+        ):
+            await ai_settings.get_ai_settings(MagicMock())
+
     async def test_past_max_stale_fails_closed(self, clock, empty_cache, caplog):
         with (
             patch.object(ai_settings.settings, "ai_settings_max_stale_seconds", 120),
@@ -963,3 +985,46 @@ class TestCLI:
         assert ai_settings.parse_cli_value("40000000") == 40_000_000
         assert ai_settings.parse_cli_value("gpt-4o") == "gpt-4o"
         assert ai_settings.parse_cli_value('"gpt-4o"') == "gpt-4o"
+
+
+class TestLoadRowsTransactionChoice:
+    """The short-transaction path is only for an empty session: a failed
+    outermost rollback would expire every object the session holds."""
+
+    def _session(self, *, in_tx, identity_map, pending=False):
+        db = MagicMock()
+        db.in_transaction.return_value = in_tx
+        db.identity_map = identity_map
+        db.new = [object()] if pending else []
+        db.dirty = []
+        db.deleted = []
+        result = MagicMock()
+        result.all.return_value = [("scan.standard.enabled", True)]
+        db.execute = AsyncMock(return_value=result)
+        db.begin = MagicMock(return_value=AsyncMock())
+        db.begin_nested = MagicMock(return_value=AsyncMock())
+        return db
+
+    async def test_empty_session_uses_a_short_transaction(self):
+        db = self._session(in_tx=False, identity_map={})
+        await ai_settings._load_rows(db)
+        db.begin.assert_called_once()
+        db.begin_nested.assert_not_called()
+
+    async def test_session_holding_objects_uses_a_savepoint(self):
+        db = self._session(in_tx=False, identity_map={"k": object()})
+        await ai_settings._load_rows(db)
+        db.begin_nested.assert_called_once()
+        db.begin.assert_not_called()
+
+    async def test_open_transaction_uses_a_savepoint(self):
+        db = self._session(in_tx=True, identity_map={})
+        await ai_settings._load_rows(db)
+        db.begin_nested.assert_called_once()
+        db.begin.assert_not_called()
+
+    async def test_pending_changes_use_a_savepoint(self):
+        db = self._session(in_tx=False, identity_map={}, pending=True)
+        await ai_settings._load_rows(db)
+        db.begin_nested.assert_called_once()
+        db.begin.assert_not_called()

@@ -148,6 +148,28 @@ async def test_read_with_no_open_transaction_leaves_none_open(factory):
     assert current.enhanced_scan_enabled is False
 
 
+async def test_failed_read_does_not_expire_loaded_objects(factory):
+    """A session that already holds objects reads through a SAVEPOINT, so a
+    failed read does not expire them (no transaction open at the time)."""
+    ai_settings.reset_cache()
+    async with factory() as db:
+        await ai_settings.set_setting(
+            db, "scan.enhanced.enabled", True, updated_by="ops"
+        )
+    async with factory() as db:
+        await ai_settings.get_ai_settings(db)  # warm the cache
+        row = await db.get(AISetting, "scan.enhanced.enabled")
+        await db.commit()
+        assert not db.in_transaction()
+        with (
+            patch.object(ai_settings, "_clock", lambda: 10**9),
+            patch.object(db, "execute", side_effect=OSError("db down")),
+            pytest.raises(ai_settings.AISettingsUnavailableError),
+        ):
+            await ai_settings.get_ai_settings(db)
+        assert not inspect(row).expired
+
+
 async def test_invalid_switch_row_is_disabled_and_missing_row_uses_env(factory):
     ai_settings.reset_cache()
     async with factory() as db:
