@@ -221,7 +221,8 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
           alembic upgrade head
-          pytest -m integration tests/integration -q
+          # tests/limits: the scan limits matrix (#584), every row on every PR.
+          pytest -m integration tests/integration tests/limits -q
 
   # --- Podfile.lock staleness check -------------------------------------------
   # If Podfile was modified but Podfile.lock was not, the developer forgot to
