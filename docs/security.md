@@ -129,7 +129,7 @@ Application logs are structured JSON on stdout (`backend/app/core/logging.py`).
 `.claude/policies/claude.md` is enforced in CI by the `claude-policy` job, which runs `scripts/policy/check_claude_policy.py` over the tracked source tree (files under `app/ai/` or that import the Anthropic SDK; tests, docs and `.env*` are skipped). Fixture tests: `backend/tests/unit/test_claude_policy.py`. Checks:
 
 1. No hardcoded `sk-ant-` key.
-2. Files with an SDK call retry 429, 500, 503 and 529 and respect `retry-after`.
+2. (AST) Files with an SDK call retry 429, 500, 503 and 529 and respect `retry-after`.
 3. Model IDs are in `ALLOWED_MODELS["anthropic"]` (today `claude-haiku-5-5`, `claude-sonnet-5-5`, which are fixed IDs with no dated snapshot) or are dated snapshots. `*-latest` aliases and unlisted IDs fail.
 4. `max_tokens` on every `messages.create` / `messages.stream` call.
 5. `stop_reason` and `refusal` are handled.

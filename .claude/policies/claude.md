@@ -17,13 +17,16 @@ job in `.github/workflows/ci.yml`). Fixture tests:
 Files trigger this policy when ANY of these is true:
 
 - the path is under `app/ai/` (the AI gateway and its providers);
-- the content matches `from anthropic|import anthropic|@anthropic-ai/sdk|Anthropic\(|ANTHROPIC_API_KEY|claude_agent_sdk`.
+- the content matches `from anthropic|import anthropic|@anthropic-ai/sdk|Anthropic\(|ANTHROPIC_API_KEY|claude_agent_sdk|\.messages\.(\w+\.)*(create|stream)\(` (the last one catches an injected client calling the SDK outside `app/ai/`).
+
+The policy-gate hook tests the detect pattern against the file path as well as its contents.
 
 Skip `.env` / `.env.*` files (variable declarations, not logic). Tests, docs and
 `.claude/` are not scanned.
 
-"SDK call" below means `messages.create(`, `messages.stream(`, `AsyncAnthropic(`
-or `Anthropic(`.
+"SDK call" below means any `...messages...create(` / `...stream(` chain (including
+`messages.with_raw_response.create`, `messages.batches.create`, `beta.messages.create`),
+`AsyncAnthropic(` or `Anthropic(`.
 
 ## Checks
 
@@ -35,6 +38,8 @@ or `Anthropic(`.
 **Reference**: https://docs.anthropic.com/en/api/getting-started
 
 ### Check 2: Retry on 429, 500, 503, 529, honouring retry-after [error]
+
+Code-level (AST) check: comments and docstrings never count.
 
 **Applies to**: files containing an SDK call
 **Pattern**: each of `429`, `500`, `503`, `529` (overloaded) must be handled, and `retry-after` must be respected
@@ -64,6 +69,8 @@ means adding it to `ALLOWED_MODELS` (and the registry) first.
 
 ### Check 5: stop_reason / refusal handled [error]
 
+Code-level (AST) check: a `stop_reason` identifier/attribute or the string `"refusal"` in executable code.
+
 **Applies to**: files containing an SDK call
 **Presence**: required (`stop_reason` is read and `refusal` is handled)
 **Message**: A reply can end in `refusal` or `max_tokens`. Treat a refusal as an empty result, not as text to parse.
@@ -76,14 +83,23 @@ means adding it to `ALLOWED_MODELS` (and the registry) first.
 
 ### Check 7: No raw content in logs under `app/ai/` [error]
 
+Code-level (AST) check. A bare raw-field name or an attribute named like one (`response.content`) is flagged; `image.width`, `raw.status_code`, `*_tokens` are not.
+
 **Applies to**: Python logging calls (`logger.*`, `log.*`, `logging.*`) in `app/ai/`
 **Forbidden arguments**: raw content fields (`text`, `content`, `raw`, `output`, `completion`, `reply`, image bytes, ...). Wrap in `len()` or a hash to log size or identity.
 **Message**: Never log raw model output, prompts or uploaded image bytes.
 
 ### Check 8: Budget-breaker refusal is 503 `ai_budget_reached` [error]
 
-**Pattern**: a status code next to `ai_budget_reached` must be `503`
+**Check**: code-level (AST) over all of `backend/app/**/*.py`: an `HTTPException` whose `detail` is `"ai_budget_reached"` must have `status_code` 503 or `status.HTTP_503_SERVICE_UNAVAILABLE`
 **Message**: The cost breaker refuses with `503 ai_budget_reached`.
+
+## Known limits
+
+The checker does not see aliased log methods (`warn = logger.warning`), model IDs built by
+concatenation or kept in non-code files (JSON, YAML, env), or SDK use in non-Python files beyond a
+text match. The runtime `ALLOWED_MODELS` validation (settings load and registry build) is the real
+gate for model IDs; this check is a second line of defence.
 
 ## Auto-Fix Guidance
 

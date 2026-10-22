@@ -60,8 +60,9 @@ for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' 
       continue
     fi
 
-    # Check if file exists and matches detection pattern
-    if [ -f "$file" ] && grep -qE "$DETECT" "$file" 2>/dev/null; then
+    # Check if file exists and matches the detection pattern, in its path
+    # (e.g. backend/app/ai/...) or in its contents
+    if [ -f "$file" ] && { echo "$file" | grep -qE "$DETECT" || grep -qE "$DETECT" "$file" 2>/dev/null; }; then
       TRIGGERED+="  - $POLICY → $file\n"
       break  # One match per policy is enough to trigger
     fi
