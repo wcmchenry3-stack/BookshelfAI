@@ -8,6 +8,10 @@ import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useBanner } from '../../hooks/useBanner';
+import { useScanUsage } from '../../hooks/useScanUsage';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { hasRefusedJobs } from '../../lib/scanErrors';
+import { ScanStatusPanel } from '../../components/ScanStatusPanel';
 
 type InputMode = 'camera' | 'search';
 type CameraFacing = 'back' | 'front';
@@ -18,7 +22,41 @@ export default function ScanScreen() {
   // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
   const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
   const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
-  const { startScan, isQueueFull, pendingCount } = useScanJobs();
+  const {
+    jobs,
+    startScan,
+    resumeQueue,
+    isQueueFull,
+    pendingCount,
+    scanNotice,
+    dismissScanNotice,
+    usageRefreshKey,
+  } = useScanJobs();
+  const usage = useScanUsage(usageRefreshKey ?? 0);
+  const { isConnected } = useNetworkStatus();
+  // While scanning is limited or paused, a full queue is not "wait for uploads":
+  // the saved photos go out once scanning is available again.
+  function queueFullMessage(): string {
+    const limited =
+      (scanNotice &&
+        (scanNotice.kind === 'monthly_limit' ||
+          scanNotice.kind === 'daily_limit' ||
+          scanNotice.kind === 'paused')) ||
+      hasRefusedJobs(jobs ?? []);
+    return t(limited ? 'queueFullLimited' : 'queueFull');
+  }
+  function handleRetryNotice() {
+    // Offline: keep the notice and say why nothing was sent.
+    if (!isConnected) {
+      showBanner({
+        message: t('requiresConnection', { ns: 'common' }),
+        type: 'error',
+        duration: 4000,
+      });
+      return;
+    }
+    resumeQueue?.();
+  }
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
   const [inputMode, setInputMode] = useState<InputMode>('camera');
@@ -37,7 +75,7 @@ export default function ScanScreen() {
     if (!file) return;
     if (webInputRef.current) webInputRef.current.value = '';
     if (isQueueFull) {
-      showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
       return;
     }
 
@@ -56,7 +94,7 @@ export default function ScanScreen() {
     if (!cameraRef.current || capturing) return;
     // Check before copying to scan-queue/ so a rejected capture leaves no file behind.
     if (isQueueFull) {
-      showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
       return;
     }
     setCapturing(true);
@@ -152,7 +190,7 @@ export default function ScanScreen() {
     const q = query.trim();
     if (!q) return;
     if (isQueueFull) {
-      showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
       return;
     }
     startScan('text', undefined, q);
@@ -206,8 +244,27 @@ export default function ScanScreen() {
         <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
           {t('pendingUploads', { count: pendingCount })}
         </Text>
+        {isConnected ? (
+          <Pressable
+            onPress={handleRetryNotice}
+            style={styles.sendNow}
+            accessibilityRole="button"
+            accessibilityLabel={t('sendPendingNow')}
+          >
+            <Text style={[styles.sendNowText, { color: activeColor }]}>{t('sendPendingNow')}</Text>
+          </Pressable>
+        ) : null}
       </View>
     ) : null;
+
+  const statusPanel = (
+    <ScanStatusPanel
+      usage={usage}
+      notice={scanNotice ?? null}
+      onDismissNotice={dismissScanNotice ?? (() => {})}
+      onRetryNotice={pendingCount > 0 ? handleRetryNotice : undefined}
+    />
+  );
 
   // ── Search mode ──────────────────────────────────────────────────────────
   if (inputMode === 'search') {
@@ -215,6 +272,7 @@ export default function ScanScreen() {
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         {modeToggle}
         {pendingBadge}
+        {statusPanel}
         <View style={styles.searchContainer}>
           <TextInput
             style={[
@@ -264,6 +322,7 @@ export default function ScanScreen() {
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
           {modeToggle}
           {pendingBadge}
+          {statusPanel}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
             onPress={() => webInputRef.current?.click()}
@@ -332,6 +391,7 @@ export default function ScanScreen() {
         <View style={styles.topGroup}>
           {modeToggle}
           {pendingBadge}
+          {statusPanel}
         </View>
 
         {/* Viewfinder: corner-bracket markers + scanning line */}
@@ -416,7 +476,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     marginBottom: 8,
+    alignItems: 'center',
   },
+  sendNow: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  sendNowText: { fontWeight: '600', fontSize: 13 },
   pendingBadgeText: {
     fontWeight: '600',
     fontSize: 12,

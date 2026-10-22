@@ -9,6 +9,14 @@ import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { Sentry } from '../lib/sentry';
 import {
+  classifyScanError,
+  hasRefusedJobs,
+  MAX_IN_PROGRESS_RETRIES,
+  toScanNotice,
+  type ScanNotice,
+  type ScanUiState,
+} from '../lib/scanErrors';
+import {
   isPendingUpload,
   MAX_QUEUE_SIZE,
   type ScanJob,
@@ -29,6 +37,13 @@ export interface ScanJobContextValue {
   reviewingJob: ScanJob | null;
   /** Enhanced-scan credits left, as last reported by the server; null until a scan reports it. */
   enhancedCredits: number | null;
+  /** Why the last scan was refused (limit reached, paused, ...); null when there is nothing to show. */
+  scanNotice: ScanNotice | null;
+  dismissScanNotice: () => void;
+  /** "Try again": clear the notice and send the queued scans in order (stops at the next refusal). */
+  resumeQueue: () => void;
+  /** Changes whenever a scan reached the server; usage counters refetch on change. */
+  usageRefreshKey: number;
   startScan: (type: ScanJobType, imageUri?: string, query?: string) => void;
   retryScan: (jobId: string) => void;
   queueForLater: (jobId: string) => void;
@@ -47,6 +62,10 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   isQueueFull: false,
   reviewingJob: null,
   enhancedCredits: null,
+  scanNotice: null,
+  dismissScanNotice: () => {},
+  resumeQueue: () => {},
+  usageRefreshKey: 0,
   startScan: () => {},
   retryScan: () => {},
   queueForLater: () => {},
@@ -57,10 +76,8 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   handleAddBooks: async () => {},
 });
 
-/** True when the request failed because the user has no enhanced-scan credits. */
-function isOutOfCredits(err: unknown): boolean {
-  const response = (err as { response?: { status?: number } } | null)?.response;
-  return response?.status === 402;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function ScanJobProvider({ children }: { children: React.ReactNode }) {
@@ -68,7 +85,20 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [reviewingJobId, setReviewingJobId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [enhancedCredits, setEnhancedCredits] = useState<number | null>(null);
+  const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
+  const [usageRefreshKey, setUsageRefreshKey] = useState(0);
+  // Keep jobs in a ref so callbacks can read the latest state synchronously.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
   const drainingRef = useRef(false);
+  // Which photos the current drain stops sending after a refusal: all of
+  // them (limit, paused, busy) or only enhanced ones (enhanced switched off).
+  const stopDrainRef = useRef<'none' | 'enhanced' | 'images'>('none');
+  // Ids of jobs being sent right now, so a drain can't send the same job twice.
+  const inFlightRef = useRef<Set<string>>(new Set());
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
   // Set when the initial load fails, so the persist effect below doesn't
   // immediately overwrite storage with the empty `jobs` state it starts
@@ -76,6 +106,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const skipNextPersistRef = useRef(false);
   const { showBanner } = useBanner();
   const { t } = useTranslation('scan');
+
+  const dismissScanNotice = useCallback(() => setScanNotice(null), []);
+  const bumpUsage = useCallback(() => setUsageRefreshKey((k) => k + 1), []);
 
   // Persist jobs whenever they change (after initial load).
   useEffect(() => {
@@ -129,17 +162,33 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const drainQueue = useCallback(async () => {
     drainingRef.current = true;
     try {
-      // Read the latest jobs from state via a callback to avoid stale closures.
-      let queuedJobs: ScanJob[] = [];
-      setJobs((prev) => {
-        queuedJobs = prev.filter((j) => j.status === 'queued' || j.status === 'pending');
-        return prev;
-      });
+      // Read the latest jobs from the ref: a setJobs updater is run lazily by
+      // React, so it can't be used to read state synchronously.
+      const queuedJobs = jobsRef.current.filter(
+        (j) => j.status === 'queued' || j.status === 'pending'
+      );
 
+      stopDrainRef.current = 'none';
       for (const job of queuedJobs) {
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) break;
-        await executeScanRef.current(job);
+        // The list above is a snapshot: skip jobs dismissed, sent or being
+        // sent (startScan/retryScan) since.
+        const current = jobsRef.current.find((j) => j.id === job.id);
+        // Re-read: executeScan (via a refusal) sets it during the loop.
+        const stop = stopDrainRef.current as 'none' | 'enhanced' | 'images';
+        if (
+          !current ||
+          (current.status !== 'queued' && current.status !== 'pending') ||
+          inFlightRef.current.has(job.id) ||
+          // A refusal (limit, paused) applies to photo uploads only (POST
+          // /scan); queued text searches still go through.
+          (current.type === 'image' &&
+            (stop === 'images' || (stop === 'enhanced' && !!current.enhanced)))
+        ) {
+          continue;
+        }
+        await executeScanRef.current(current);
         // Delay between jobs to avoid API burst.
         if (queuedJobs.indexOf(job) < queuedJobs.length - 1) {
           await new Promise((r) => setTimeout(r, QUEUE_DRAIN_DELAY));
@@ -149,6 +198,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       drainingRef.current = false;
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const resumeQueue = useCallback(() => {
+    setScanNotice(null);
+    if (!drainingRef.current) void drainQueue();
+  }, [drainQueue]);
 
   // Listen for connectivity changes and drain queued jobs.
   useEffect(() => {
@@ -161,23 +215,22 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
-  // Keep jobs in a ref so callbacks can read the latest state synchronously.
-  const jobsRef = useRef(jobs);
-  useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
-
   const pendingCount = useMemo(() => jobs.filter(isPendingUpload).length, [jobs]);
   const isQueueFull = pendingCount >= MAX_QUEUE_SIZE;
 
   const startScan = useCallback(
     async (type: ScanJobType, imageUri?: string, query?: string) => {
+      let startedId: string | null = null;
       try {
         // Backstop for the cap — the scan screen checks isQueueFull before
         // persisting a capture, but a stale render could still get here.
         if (jobsRef.current.filter(isPendingUpload).length >= MAX_QUEUE_SIZE) {
           if (imageUri) deleteScanImage(imageUri);
-          showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+          showBanner({
+            message: t(hasRefusedJobs(jobsRef.current) ? 'queueFullLimited' : 'queueFull'),
+            type: 'error',
+            duration: 4000,
+          });
           return;
         }
 
@@ -200,6 +253,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         });
 
         setJobs((prev) => [job, ...prev]);
+        // Held across the connectivity check below, where the job is already
+        // 'pending' but not yet sent: a reconnect drain must skip it.
+        startedId = job.id;
+        inFlightRef.current.add(job.id);
 
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) {
@@ -220,6 +277,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           type: 'error',
           duration: 4000,
         });
+      } finally {
+        if (startedId) inFlightRef.current.delete(startedId);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -383,15 +442,57 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     function restorePriorResults(
       job: ScanJob,
       updates: Partial<ScanJob>,
-      message: string,
+      message: string | null,
       type: 'info' | 'error'
     ) {
       updateJob(job.id, { status: 'complete', error: undefined, ...updates });
       setReviewingJobId(job.id);
-      showBanner({ message, type, duration: 6000 });
+      if (message) showBanner({ message, type, duration: 6000 });
+    }
+
+    // A refusal from POST /scan (limit, busy, paused). Not a failure worth a
+    // Sentry event or a retry prompt: the screen shows a notice and the job
+    // stops (the drain halts at the first refusal, so it can't spam the API).
+    function handleScanRefusal(job: ScanJob, state: ScanUiState) {
+      const notice = toScanNotice(state, Date.now(), true);
+      if (!notice) return;
+      // A refusal applies to every queued photo (and a busy lease means the
+      // next one would be refused too), so stop sending photos; an
+      // enhanced-only switch-off stops enhanced photos only.
+      const scope = state.kind === 'paused' && state.enhancedOnly ? 'enhanced' : 'images';
+      if (stopDrainRef.current !== 'images') stopDrainRef.current = scope;
+      Sentry.addBreadcrumb({
+        category: 'scan',
+        message: `Scan refused: ${state.kind}`,
+        level: 'info',
+        data: { jobId: job.id },
+      });
+      // A refused enhanced re-scan must not strand the standard scan's books.
+      // The notice card speaks, so no banner with the same text.
+      if (job.enhanced && job.results?.length) {
+        setScanNotice(notice);
+        restorePriorResults(job, { enhanced: false }, null, 'info');
+        return;
+      }
+      setScanNotice(notice);
+      // A refusal isn't a failure: the photo goes back in the queue (so it is
+      // counted by the pending-uploads badge, survives a restart and is sent
+      // by the next drain or by "Try again"). It is not retried within this
+      // drain, which stops here, so a refusal costs at most one request.
+      updateJob(job.id, { status: 'queued', error: state.kind, retryCount: 0 });
     }
 
     executeScanRef.current = async function executeScan(job: ScanJob) {
+      // Synchronous (before any await) so a drain can't start the same job.
+      inFlightRef.current.add(job.id);
+      try {
+        await runScan(job);
+      } finally {
+        inFlightRef.current.delete(job.id);
+      }
+    };
+
+    async function runScan(job: ScanJob) {
       updateJob(job.id, { status: 'searching' });
       // Credits reported by this response (the state update lands next render).
       let reportedCredits: number | null = enhancedCredits;
@@ -416,19 +517,50 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               type: 'image/jpeg',
             } as unknown as Blob);
           }
-          const response = await api.post<ScanResponse>('/scan', formData, {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            transformRequest: [
-              (data: FormData, headers: any) => {
-                if (Platform.OS === 'web') {
-                  headers.delete('Content-Type');
-                } else {
-                  headers.set('Content-Type', 'multipart/form-data');
-                }
-                return data;
-              },
-            ],
-          });
+          const postScan = () =>
+            api.post<ScanResponse>('/scan', formData, {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              transformRequest: [
+                (data: FormData, headers: any) => {
+                  if (Platform.OS === 'web') {
+                    headers.delete('Content-Type');
+                  } else {
+                    headers.set('Content-Type', 'multipart/form-data');
+                  }
+                  return data;
+                },
+              ],
+            });
+          // 429 scan_in_progress means another scan holds the user's lease:
+          // wait Retry-After and retry silently, at most MAX_IN_PROGRESS_RETRIES
+          // times. If it persists the error propagates and the catch below
+          // shows the neutral "Still processing" notice.
+          let response!: Awaited<ReturnType<typeof postScan>>;
+          for (let attempt = 0, done = false; !done; attempt++) {
+            try {
+              response = await postScan();
+              done = true;
+            } catch (postErr) {
+              const state = classifyScanError(postErr);
+              if (state.kind !== 'in_progress' || attempt >= MAX_IN_PROGRESS_RETRIES) {
+                throw postErr;
+              }
+              await sleep(state.retryAfterSeconds * 1000);
+            }
+          }
+          // A scan reached the server, so the usage counters are stale.
+          bumpUsage();
+          setScanNotice(null);
+          // The service evidently accepts scans again: send any scans that were
+          // refused earlier. Never re-entrant (drainingRef), and a drain sends
+          // each job once and stops at the first refusal, so this can't loop.
+          const waiting = jobsRef.current.some(
+            (j) =>
+              j.id !== job.id &&
+              (j.status === 'queued' || j.status === 'pending') &&
+              !inFlightRef.current.has(j.id)
+          );
+          if (waiting && !drainingRef.current) void drainQueue();
           results = response.data?.books ?? [];
           const credits = response.data?.enhanced_scan_credits;
           if (typeof credits === 'number') {
@@ -500,7 +632,32 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (job.enhanced && isOutOfCredits(err)) {
+        const uiState =
+          job.type === 'image' ? classifyScanError(err) : { kind: 'generic' as const };
+
+        // The server answered, so a scan may have been counted (or refunded):
+        // refresh the counters. Not for paused/in_progress (nothing reserved),
+        // and not for network errors, which returned above.
+        if (
+          job.type === 'image' &&
+          (err as { response?: unknown } | null)?.response != null &&
+          uiState.kind !== 'paused' &&
+          uiState.kind !== 'in_progress'
+        ) {
+          bumpUsage();
+        }
+
+        if (
+          uiState.kind === 'monthly_limit' ||
+          uiState.kind === 'daily_limit' ||
+          uiState.kind === 'in_progress' ||
+          uiState.kind === 'paused'
+        ) {
+          handleScanRefusal(job, uiState);
+          return;
+        }
+
+        if (job.enhanced && uiState.kind === 'no_enhanced_credits') {
           setEnhancedCredits(0);
           // Fall back to whatever the standard scan found, if anything.
           if (job.results?.length) {
@@ -533,8 +690,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           duration: 8000,
         });
       }
-    };
-  }, [showBanner, t, retryScan, queueForLater, requestEnhancedScan, enhancedCredits]); // eslint-disable-line react-hooks/exhaustive-deps
+    }
+  }, [showBanner, t, bumpUsage, retryScan, queueForLater, requestEnhancedScan, enhancedCredits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reviewingJob = useMemo(
     () => (reviewingJobId ? (jobs.find((j) => j.id === reviewingJobId) ?? null) : null),
@@ -548,6 +705,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       isQueueFull,
       reviewingJob,
       enhancedCredits,
+      scanNotice,
+      dismissScanNotice,
+      resumeQueue,
+      usageRefreshKey,
       startScan,
       retryScan,
       queueForLater,
@@ -563,6 +724,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       isQueueFull,
       reviewingJob,
       enhancedCredits,
+      scanNotice,
+      dismissScanNotice,
+      resumeQueue,
+      usageRefreshKey,
       startScan,
       retryScan,
       queueForLater,

@@ -66,6 +66,24 @@ sequenceDiagram
 - Scan job IDs are minted with `Crypto.randomUUID()` from `expo-crypto` (native-backed, Hermes-safe — see the uuid regression in `frontend/.eslintrc.js`).
 - Text search (`/books/search`) uses the same `ScanJob` pipeline with `type='text'` — different input path, same state machine.
 
+### Scan limits — what users see
+
+Every user has a monthly and a daily scan allowance (standard and enhanced scans share it). The numbers come from `GET /scan/usage`; no copy hardcodes them. The month is the UTC calendar month and the reset date shown is the API's `period_end`, formatted for the user's locale.
+
+- **Counter (scan screen):** "Scans used this month: X of Y" and "Scans left today: N" (the tighter of the daily and the monthly remainder). Refetched after every scan that reaches the server. Hidden while offline or if the request fails; it never shows an error.
+- **Settings:** a "Scan usage" row with the same used / limit figure for the month. No plan label, renewal date or upgrade button.
+- **Monthly limit (402 `scan_limit_reached`):** "You've used your N scans for this month. Your scans reset on <date>." No upgrade CTA.
+- **Daily limit (429 `daily_scan_limit`):** "Daily limit reached. Scanning resets at midnight UTC (<local time> your time)."
+- **Scan already running (429 `scan_in_progress`):** the app waits `Retry-After` (default 2 s, capped at 10 s) and retries silently, up to 3 times. If it is still busy: "Still processing. Please try again in a moment." (3 retries is about 6 s, long enough to ride out a normal overlap without leaving the user waiting on a stuck lease.)
+- **Scanning off (503 `scan_disabled`, `enhanced_scan_disabled`, `scan_capacity`, `ai_unavailable`, `scan_unavailable`):** "Scanning is paused. Please try again later."
+- 402 `no_enhanced_credits` is unchanged (enhanced re-scan falls back to the standard results).
+- **Refused scans wait in the queue.** A scan refused for a monthly or daily limit, a paused service or "still processing" is not lost or marked failed: it goes back to `queued`, so it shows in the "Pending uploads" badge, survives an app restart and is sent by the next queue drain (reconnect or app launch). After the first refusal the drain sends no more photos, so a refusal costs at most one request and the remaining photos stay queued; queued text searches (which don't use the scan allowance) are still sent, and when only enhanced scans are switched off (`enhanced_scan_disabled`) standard photos are still sent.
+- **Try again:** the notice has a "Try again" button next to "Dismiss" whenever scans are waiting. It clears the notice and sends all queued scans in order, stopping at the next refusal. It is not shown when a refused enhanced re-scan has put the earlier results back on screen (those results are restored, nothing is queued).
+- **Send now:** the "Pending uploads: N" badge has a "Send now" button (online only) that does the same as "Try again", whether or not a notice is showing. Offline, "Try again" keeps the notice and shows the "requires an internet connection" message.
+- **Automatic resume:** when a new scan succeeds, any scans that were refused earlier are sent right after (the service is evidently accepting scans again).
+- **Queue full during a limit:** if the 50-photo queue is full while scanning is limited or paused, the capture-blocked message reads "You've reached your scan limit. Your saved photos will be sent when scanning is available again." instead of "Wait for pending scans to upload".
+- Offline capture and the upload queue otherwise behave as before.
+
 ### Auth flow — Google SSO → rotating refresh tokens
 
 ```mermaid
@@ -142,6 +160,7 @@ pending ─▶ searching ─▶ complete
              │             │
              │             └─▶ (user confirms) ─▶ deleted
              │
+             ├─▶ queued (refused: limit / paused / busy; next drain or "Try again")
              └─▶ failed ─▶ queued (manual)
                     │
                     └─▶ (user taps retry, if retries < 3) ─▶ pending

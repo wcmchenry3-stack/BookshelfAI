@@ -154,5 +154,65 @@
     "description": "Badge on the scan screen showing how many scans are waiting to upload; {{count}} is a number",
     "tone": "neutral",
     "characterLimit": 30
+  },
+  "usageMonth": {
+    "description": "Counter on the scan screen: scans used this month out of the monthly limit. Limits come from the server; do not hardcode numbers.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "usageToday": {
+    "description": "Counter on the scan screen: scans left today (daily allowance). {{count}} is a number.",
+    "tone": "neutral",
+    "characterLimit": 45
+  },
+  "monthlyLimit": {
+    "description": "Plural forms. Shown when the monthly scan allowance is used up. {{count}} is the monthly limit; reads 'You've used your N scans for this month'. No upsell, neutral tone.",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "monthlyLimitAny": {
+    "description": "Fallback when the server did not report the monthly limit number.",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "monthlyResets": {
+    "description": "Follows the monthly-limit message. {{date}} is a locale-formatted calendar date (UTC month boundary).",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "dailyLimit": {
+    "description": "Shown when the daily scan limit is reached. Keep 'UTC' and keep {{time}}, the reset time in the user's local time.",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
+  "stillProcessing": {
+    "description": "Neutral message when the server is still working on the user's previous scan after silent retries.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "scanPaused": {
+    "description": "Neutral message when scanning is temporarily unavailable server-side. Not an error the user caused.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "dismissNotice": {
+    "description": "Button that dismisses the scan notice card",
+    "tone": "neutral",
+    "characterLimit": 12
+  },
+  "tryAgainNotice": {
+    "description": "Button on the scan notice card that retries the refused scan",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "queueFullLimited": {
+    "description": "Error banner when the offline queue is full while scanning is limited or paused; saved photos are sent later. No upsell.",
+    "tone": "neutral",
+    "characterLimit": 120
+  },
+  "sendPendingNow": {
+    "description": "Button next to the pending-uploads badge that sends the waiting scans now",
+    "tone": "neutral",
+    "characterLimit": 20
   }
 }

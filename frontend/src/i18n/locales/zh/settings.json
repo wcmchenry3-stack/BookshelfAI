@@ -1,3 +1,5 @@
 {
-  "heading": "设置"
+  "heading": "设置",
+  "scanUsageLabel": "扫描用量",
+  "scanUsageMonth": "本月已用 {{used}} / {{limit}} 次扫描"
 }
