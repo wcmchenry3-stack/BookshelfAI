@@ -98,6 +98,8 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 - Tags attached to every event: `request_id`, `endpoint`, `method`
 - User identity via `set_sentry_user(user_id)` — ID only, no email/name (PII)
 
+**Spend alerts (#531):** the cost breaker (`backend/app/ai/breaker.py`) sends one `warning` event per day at 50, 75 and 90 % of the Free daily AI budget, fingerprint `ai-breaker:<day>:<pct>` (sent as `["ai-breaker", "<day>", "<pct>"]`), with tags `feature`, `model`, `status` and the day's totals as extras. They carry no user and no request data (an isolated scope plus an event processor strips the request block, user, breadcrumbs and request contexts). Sentry only stores them: an alert rule on these events (e.g. fingerprint/message starts with `ai-breaker`) must route them to the owner before they can be relied on.
+
 ### Frontend
 
 **Init:** `frontend/lib/sentry.ts`. Imported as the **first import in `app/_layout.tsx`** (rule #13) — the module self-initializes so the native crash reporter is up before any other module can throw.
