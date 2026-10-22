@@ -28,6 +28,7 @@ backend/
 ├── app/                   Application package
 │   ├── main.py            FastAPI app, middleware stack, /health endpoint
 │   ├── ai/                AI gateway — the only place paid model calls happen
+│   │   ├── entitlements.py    tier_for(): server-side Free/Premium tier (Free for everyone for now)
 │   │   ├── gateway.py         run_feature(): single entry point for AI features
 │   │   ├── models_allowlist.py Allowed models and token/timeout bounds (shared by config and registry)
 │   │   ├── registry.py        Server-controlled FeatureSpec registry (validated at import)
