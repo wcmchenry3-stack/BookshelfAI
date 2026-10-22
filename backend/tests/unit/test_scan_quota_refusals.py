@@ -2,11 +2,13 @@
 ai_quota / ai_inflight faked in memory."""
 
 import asyncio
+import dataclasses
 import io
 import uuid
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -167,6 +169,32 @@ class TestOrderAndSettle:
     ):
         provider.return_value.identify = AsyncMock(side_effect=ScanUnavailableError())
         resp = client.post("/scan", files=_file())
+        assert resp.json() == {"detail": "scan_unavailable"}
+        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.leases == {}
+
+    @pytest.mark.parametrize("enhanced", [False, True])
+    def test_provider_past_its_deadline_refunds_and_503s(
+        self, client, store, provider, enhanced
+    ):
+        """The gateway's overall deadline (spec timeout_s, here 0.05 s instead
+        of 45 s) turns a hung provider into scan_unavailable, which refunds."""
+
+        async def hung(_image):
+            await anyio.sleep(2)  # far past 0.05 s; short if the bound is missing
+            return []
+
+        def fast_spec(self, spec):
+            fast = dataclasses.replace(spec)
+            object.__setattr__(fast, "timeout_s", 0.05)
+            return fast
+
+        provider.return_value.identify = hung
+        with patch.object(ai_settings.AISettings, "spec_for", fast_spec):
+            resp = client.post(
+                "/scan", files=_file(), data={"enhanced": "true"} if enhanced else {}
+            )
+        assert resp.status_code == 503
         assert resp.json() == {"detail": "scan_unavailable"}
         assert store.count() == 0 and store.count(kind="month") == 0
         assert store.leases == {}
