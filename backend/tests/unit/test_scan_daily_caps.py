@@ -16,6 +16,7 @@ from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.ai import quota
+from app.ai.providers.base import ProviderResult
 from app.ai.registry import FEATURES
 from app.api import scan as scan_module
 from app.core.config import Settings
@@ -76,7 +77,7 @@ def provider():
         patch("app.api.scan.EnrichmentService") as enrich_cls,
         patch("app.api.scan.DeduplicationService") as dedup_cls,
     ):
-        id_cls.return_value.identify = AsyncMock(return_value=[])
+        id_cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         enrich_cls.return_value.enrich = AsyncMock(return_value=[])
         dedup_cls.return_value.check = AsyncMock(return_value=[])
         yield id_cls
@@ -159,7 +160,7 @@ class TestPerUserDailyLimit:
         assert store.count() == 3
 
     def test_empty_result_still_counts(self, client, store, provider):
-        provider.return_value.identify = AsyncMock(return_value=[])
+        provider.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         resp = client.post("/scan", files=_file())
         assert resp.status_code == 200
         assert resp.json()["books"] == []
@@ -268,7 +269,9 @@ class TestRefund:
 
     def test_successful_scan_is_not_refunded(self, client, store, provider):
         provider.return_value.identify = AsyncMock(
-            return_value=[BookCandidate(title="Dune", author="F", confidence=0.9)]
+            return_value=ProviderResult(
+                [BookCandidate(title="Dune", author="F", confidence=0.9)]
+            )
         )
         client.post("/scan", files=_file())
         assert store.count() == 1

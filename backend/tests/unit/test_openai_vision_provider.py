@@ -63,7 +63,7 @@ class TestIdentifySuccess:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert len(candidates) == 2
         assert candidates[0].title == "Dune"
@@ -97,7 +97,7 @@ class TestIdentifySuccess:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert len(candidates) == 15
 
@@ -124,7 +124,7 @@ class TestIdentifySuccess:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert len(candidates) == 1
         assert candidates[0].title == "Good Book"
@@ -143,7 +143,7 @@ class TestIdentifySuccess:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert candidates[0].confidence == 0.5
 
@@ -160,7 +160,7 @@ class TestIdentifyFailures:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert candidates == []
 
@@ -284,7 +284,7 @@ class TestMultiBook:
         )
         with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert [c.title for c in candidates] == ["Dune", "Emma"]
 
@@ -299,7 +299,7 @@ class TestMultiBook:
         )
         with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert len(candidates) == 1
 
@@ -307,7 +307,7 @@ class TestMultiBook:
         body = json.dumps({"books": "none"})
         with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert candidates == []
 
@@ -315,7 +315,7 @@ class TestMultiBook:
         body = json.dumps({"books": ["Dune", {"title": "Emma", "author": "Austen"}]})
         with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_make_mock_response(body))
-            candidates = await identifier.identify(IMAGE_BYTES)
+            candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert [c.title for c in candidates] == ["Emma"]
 
@@ -384,7 +384,7 @@ class TestMissingContent:
         with patch("app.ai.providers.openai_vision.httpx.AsyncClient") as cls:
             cls.return_value = _patched_client(_raw_body_response(body))
             with caplog.at_level("WARNING", logger="app.ai.providers.openai_vision"):
-                candidates = await identifier.identify(IMAGE_BYTES)
+                candidates = (await identifier.identify(IMAGE_BYTES)).candidates
 
         assert candidates == []
         assert "no message content" in caplog.text

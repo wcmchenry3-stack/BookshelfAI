@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai import entitlements
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
-from app.ai.providers.base import VisionProvider
+from app.ai.providers.base import (
+    ProviderOutcome,
+    ProviderTimeoutError,
+    VisionProvider,
+)
 from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FeatureSpec, get_feature
 from app.models.user import User
@@ -34,13 +38,23 @@ class VisionPayload:
 
 @dataclass(frozen=True)
 class AIResult:
-    """What a feature call returns. Later stories add usage and cost here."""
+    """What a feature call returns, with the provider's billed usage (#530).
+
+    The token counts and ``outcome`` are the provider's
+    (:class:`~app.ai.providers.base.ProviderResult`); the caller records them
+    in the usage ledger (``app.ai.ledger``), which prices them.
+    """
 
     feature: str
     provider: str
     model: str
     candidates: list[BookCandidate]
     tier: Tier
+    outcome: ProviderOutcome = "ok"
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 def _build_provider(spec: FeatureSpec) -> VisionProvider:
@@ -50,6 +64,14 @@ def _build_provider(spec: FeatureSpec) -> VisionProvider:
         return OpenAIVisionProvider(spec)
     # Unreachable while the registry validates providers; fail closed anyway.
     raise ValueError(f"no provider adapter for {spec.provider!r}")
+
+
+def resolve_spec(feature: str, current: ai_settings.AISettings) -> FeatureSpec:
+    """The spec a call of ``feature`` uses under the ``current`` settings: the
+    registry default with the validated provider/model override and kill
+    switch applied. ``/scan`` uses it to name the model in the usage ledger
+    when the call raised and no :class:`AIResult` exists."""
+    return current.spec_for(get_feature(feature))
 
 
 async def run_feature(
@@ -62,8 +84,9 @@ async def run_feature(
 ) -> AIResult:
     """Run one AI feature and return its result.
 
-    ``user`` and ``db`` are accepted now so later stories (usage ledger,
-    per-user limits) can use them without changing callers.
+    ``user`` and ``db`` are accepted so later stories (per-user limits) can
+    use them without changing callers. The usage ledger row is written by the
+    caller from the returned :class:`AIResult` (``/scan``, #530).
 
     The spec used is per request: the registry default with the validated
     ``ai_settings`` provider/model override and kill switch applied
@@ -82,8 +105,8 @@ async def run_feature(
 
     The whole provider call is bounded by the spec's ``timeout_s`` (an
     overall deadline, on top of the provider client's own per-phase HTTP
-    timeouts). Past it the call is cancelled and ``ScanUnavailableError`` is
-    raised, so callers treat it like any other unavailability (``/scan``
+    timeouts). Past it the call is cancelled and ``ProviderTimeoutError`` (a
+    ``ScanUnavailableError``) is raised, so callers treat it like any other unavailability (``/scan``
     refunds the reservation), and the quota lease (``timeout_s`` + 30 s)
     always outlives the call. It lives here, not in a provider, so every
     adapter gets it.
@@ -108,15 +131,20 @@ async def run_feature(
     # move_on_after rather than fail_after, so only this deadline (not a
     # TimeoutError raised inside the provider) becomes ScanUnavailableError.
     with anyio.move_on_after(spec.timeout_s) as deadline:
-        candidates = await provider.identify(payload.image_bytes)
+        provided = await provider.identify(payload.image_bytes)
     if deadline.cancelled_caught:
-        raise ScanUnavailableError(
+        raise ProviderTimeoutError(
             f"AI feature {spec.name!r} exceeded its {spec.timeout_s}s deadline"
         )
     return AIResult(
         feature=spec.name,
         provider=spec.provider,
         model=spec.model,
-        candidates=candidates,
+        candidates=provided.candidates,
         tier=tier,
+        outcome=provided.outcome,
+        input_tokens=provided.input_tokens,
+        output_tokens=provided.output_tokens,
+        cache_read_tokens=provided.cache_read_tokens,
+        cache_write_tokens=provided.cache_write_tokens,
     )

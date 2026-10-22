@@ -159,7 +159,7 @@ class TestVisionParseFailureLogs:
             result = await openai_vision.OpenAIVisionProvider(
                 FEATURES["scan.standard"]
             ).identify(b"img")
-        assert result == []
+        assert result.candidates == []
         assert "SECRET-BOOK-TEXT" not in caplog.text
         assert hashlib.sha256(content.encode()).hexdigest()[:12] in caplog.text
         assert f"length={len(content)}" in caplog.text

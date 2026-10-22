@@ -11,6 +11,8 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
+from app.ai.providers.base import ProviderResult
+
 # ---------------------------------------------------------------------------
 # Helpers — build minimal valid image bytes in memory
 # ---------------------------------------------------------------------------
@@ -166,7 +168,7 @@ def scan_client():
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),
     ):
-        provider_cls.return_value.identify = AsyncMock(return_value=[])
+        provider_cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         yield TestClient(app), provider_cls, reserve
     app.dependency_overrides.clear()
 

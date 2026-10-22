@@ -16,6 +16,7 @@ from PIL import Image
 from app.ai import entitlements, gateway
 from app.ai.entitlements import Tier, tier_for
 from app.ai.gateway import VisionPayload, run_feature
+from app.ai.providers.base import ProviderResult
 from app.main import app
 from app.models.user import User
 
@@ -52,7 +53,7 @@ async def test_override_returns_premium(monkeypatch):
 
     monkeypatch.setattr(entitlements, "tier_for", premium)
     with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
-        cls.return_value.identify = AsyncMock(return_value=[])
+        cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         result = await run_feature(
             "scan.standard",
             user=USER,
@@ -64,7 +65,7 @@ async def test_override_returns_premium(monkeypatch):
 
 async def test_gateway_result_is_free_by_default():
     with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
-        cls.return_value.identify = AsyncMock(return_value=[])
+        cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         result = await run_feature(
             "scan.standard",
             user=USER,
@@ -105,7 +106,7 @@ def test_scan_ignores_forged_client_tier(client):
         patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
         patch("app.api.scan._release_scan_lease", new=AsyncMock()),
     ):
-        cls.return_value.identify = AsyncMock(return_value=[])
+        cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         enrich.return_value.enrich = AsyncMock(return_value=[])
         dedup.return_value.check = AsyncMock(return_value=[])
         resp = client.post(

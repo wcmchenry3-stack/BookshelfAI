@@ -129,7 +129,7 @@ class TestIsbnExtractionAccuracy:
             "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=mock_client
         ):
             identifier = OpenAIVisionProvider(FEATURES["scan.standard"])
-            results = await identifier.identify(b"fake_image_bytes")
+            results = (await identifier.identify(b"fake_image_bytes")).candidates
 
         assert len(results) >= 1
         isbns = [r.isbn_13 for r in results if r.isbn_13]

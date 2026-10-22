@@ -17,6 +17,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.ai import quota
 from app.ai import settings as ai_settings
+from app.ai.providers.base import ProviderResult
 from app.api import scan as scan_module
 from app.main import app
 from app.models.user import User
@@ -71,7 +72,7 @@ def provider():
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
     ):
-        cls.return_value.identify = AsyncMock(return_value=[])
+        cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         enrich.return_value.enrich = AsyncMock(return_value=[])
         dedup.return_value.check = AsyncMock(return_value=[])
         yield cls
@@ -182,7 +183,7 @@ class TestOrderAndSettle:
 
         async def hung(_image):
             await anyio.sleep(2)  # far past 0.05 s; short if the bound is missing
-            return []
+            return ProviderResult([])
 
         def fast_spec(self, spec):
             fast = dataclasses.replace(spec)

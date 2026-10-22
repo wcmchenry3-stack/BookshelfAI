@@ -28,6 +28,7 @@ from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.ai import quota
+from app.ai.providers.base import ProviderResult
 from app.ai.settings import AISettings
 from app.api import scan as scan_api
 from app.core.config import settings
@@ -166,7 +167,9 @@ class _CountingProvider:
             await asyncio.sleep(self.delay)
             if self.error is not None:
                 raise self.error
-            return [BookCandidate(title="Dune", author="F", confidence=0.9)]
+            return ProviderResult(
+                [BookCandidate(title="Dune", author="F", confidence=0.9)]
+            )
         finally:
             self.in_flight -= 1
 

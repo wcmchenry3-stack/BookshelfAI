@@ -9,7 +9,10 @@ The same daily run also purges, in bounded batches:
 - the legacy scan usage counters (``scan_usage_daily``) older than 90 days
   (app/services/scan_quota.py, removed in #540);
 - AI quota counters (``ai_quota``): day rows older than 90 days and month rows
-  older than 13 months (app/ai/quota.py).
+  older than 13 months (app/ai/quota.py);
+- the AI usage ledger (``ai_usage``): raw rows older than 30 days are rolled
+  up into ``ai_usage_daily`` and deleted, and daily rows older than 400 days
+  are deleted (app/ai/ledger.py).
 
 The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
@@ -21,6 +24,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import delete
 
+from app.ai.ledger import rollup_and_purge
 from app.ai.quota import purge_old_quota
 from app.core.database import AsyncSessionLocal
 from app.models.refresh_token import RefreshToken
@@ -51,6 +55,18 @@ async def cleanup_expired_tokens() -> None:
                 logger.info("token_cleanup: purged %d old ai_quota row(s)", purged)
         except Exception:
             logger.exception("token_cleanup: error during cleanup run (ai quota)")
+
+        try:
+            async with AsyncSessionLocal() as db:
+                rolled, purged = await rollup_and_purge(db)
+                logger.info(
+                    "token_cleanup: rolled up %d ai_usage row(s), "
+                    "purged %d ai_usage_daily row(s)",
+                    rolled,
+                    purged,
+                )
+        except Exception:
+            logger.exception("token_cleanup: error during cleanup run (ai usage)")
 
         try:
             async with AsyncSessionLocal() as db:

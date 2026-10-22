@@ -4,6 +4,10 @@ Moved with no behaviour change from ``app/services/chatgpt_vision.py``
 (``ChatGPTVisionIdentifier``). The model, token cap and timeout now come from
 the feature's ``FeatureSpec`` instead of being picked here from ``settings``;
 the values are the same.
+
+Since #530 ``identify`` returns a ``ProviderResult``: the candidates (parsed
+exactly as before) plus the billed usage and the outcome (``ok``, ``refused``
+or ``truncated``) for the usage ledger.
 """
 
 import base64
@@ -13,6 +17,11 @@ import logging
 
 import httpx
 
+from app.ai.providers.base import (
+    ProviderOutcome,
+    ProviderResult,
+    ProviderTimeoutError,
+)
 from app.ai.registry import FeatureSpec
 from app.core.config import settings
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
@@ -60,6 +69,59 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     return content, finish_reason
 
 
+# The ledger's token columns are Postgres INTEGER.
+MAX_TOKEN_COUNT = 2_147_483_647
+
+
+def _token_count(value: object) -> int:
+    """A token count from the usage block: an int clamped to
+    ``[0, MAX_TOKEN_COUNT]``; anything else is 0."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return min(max(value, 0), MAX_TOKEN_COUNT)
+
+
+def _usage(body: object) -> tuple[int, int, int]:
+    """Return ``(input, output, cache_read)`` billed tokens from ``usage``.
+
+    OpenAI's ``prompt_tokens`` includes the cached prompt tokens
+    (``prompt_tokens_details.cached_tokens``), which are billed at the cached
+    input price. The ledger's counts are disjoint, so ``input`` is the
+    uncached part only. A missing or garbled usage block gives zeros.
+    """
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(usage, dict):
+        return 0, 0, 0
+    prompt = _token_count(usage.get("prompt_tokens"))
+    output = _token_count(usage.get("completion_tokens"))
+    details = usage.get("prompt_tokens_details")
+    cached = (
+        _token_count(details.get("cached_tokens")) if isinstance(details, dict) else 0
+    )
+    cached = min(cached, prompt)
+    return prompt - cached, output, cached
+
+
+def _has_refusal(body: object) -> bool:
+    try:
+        refusal = body["choices"][0]["message"].get("refusal")  # type: ignore[index]
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return False
+    return isinstance(refusal, str) and bool(refusal)
+
+
+def _outcome(body: object, finish_reason: str | None) -> ProviderOutcome:
+    """``refused`` only when the model declined (a ``refusal`` field or a
+    ``content_filter`` stop), ``truncated`` when it hit ``max_tokens``, else
+    ``ok``: a 200 with missing, malformed or shapeless content is still an
+    answered (and billed) call, just with no books."""
+    if finish_reason == "content_filter" or _has_refusal(body):
+        return "refused"
+    if finish_reason == "length":
+        return "truncated"
+    return "ok"
+
+
 def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None:
     """Log a model-output parse failure without logging the content itself."""
     digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()[:12]
@@ -82,7 +144,7 @@ class OpenAIVisionProvider:
             raise ValueError(f"{spec.name} is not an OpenAI feature")
         self.spec = spec
 
-    async def identify(self, image_bytes: bytes) -> list[BookCandidate]:
+    async def identify(self, image_bytes: bytes) -> ProviderResult:
         b64 = base64.standard_b64encode(image_bytes).decode()
         max_books = settings.scan_max_books
 
@@ -123,7 +185,7 @@ class OpenAIVisionProvider:
                 resp.raise_for_status()
         except httpx.TimeoutException as exc:
             logger.warning("OpenAI vision request timed out: %s", exc)
-            raise ScanUnavailableError("Vision API timed out") from exc
+            raise ProviderTimeoutError("Vision API timed out") from exc
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429:
                 logger.warning("OpenAI rate limit exceeded (429)")
@@ -139,6 +201,20 @@ class OpenAIVisionProvider:
         except ValueError:
             body = None
         content, finish_reason = _message_content(body)
+        input_tokens, output_tokens, cache_read = _usage(body)
+        return ProviderResult(
+            candidates=self._parse(content, finish_reason, max_books),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=0,
+            outcome=_outcome(body, finish_reason),
+        )
+
+    def _parse(
+        self, content: str | None, finish_reason: str | None, max_books: int
+    ) -> list[BookCandidate]:
+        """The candidates in the model's reply (empty when unparseable)."""
         if content is None:
             # No text to parse (refusal or unexpected body). Treated as an empty
             # result; the response itself is not logged.
