@@ -118,9 +118,7 @@
   "addedMessage": {
     "description": "Alert message confirming which book was added. {{title}} is the book title.",
     "tone": "friendly",
-    "placeholders": [
-      "{{title}}"
-    ]
+    "placeholders": ["{{title}}"]
   },
   "couldNotSaveTitle": {
     "description": "Alert title when saving to wishlist fails",
