@@ -73,6 +73,15 @@ as above, then upserts the row with ``updated_at`` and ``updated_by`` (``--by``,
 else ``$USER``, else ``cli``). Values are parsed as JSON when possible
 (``true``, ``40000000``) and as a plain string otherwise (``gpt-4o``).
 
+**Switching provider.** A provider and its model are a pair, so ``set`` of a
+provider alone is refused while the stored model belongs to the other
+provider. ``python -m app.ai.settings switch <feature> <provider> [--model M]
+[--by NAME]`` writes both rows in one transaction; without ``--model`` the
+model is the registry's per-provider default (``registry.PROVIDER_MODELS``:
+Haiku 5.5 for ``scan.standard``, Sonnet 5.5 for ``scan.enhanced`` on
+``anthropic``). Switching back to ``openai`` the same way restores the OpenAI
+model.
+
 Nothing in a request (form field, header, query, JWT claim) can reach these
 values: there is no endpoint that writes them, and readers take only a DB
 session. This module never calls a provider and must not import
@@ -98,7 +107,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.models_allowlist import ALLOWED_MODELS
-from app.ai.registry import FeatureSpec, FeatureSpecError, get_feature
+from app.ai.registry import (
+    FeatureSpec,
+    FeatureSpecError,
+    default_model,
+    get_feature,
+)
 from app.core import database
 from app.core.config import settings
 from app.models.ai_settings import AISetting
@@ -598,6 +612,18 @@ def _validate_actor(updated_by: str) -> str:
     return updated_by
 
 
+def _upsert(key: str, typed: Any, updated_by: str):
+    stmt = insert(AISetting).values(key=key, value=typed, updated_by=updated_by)
+    return stmt.on_conflict_do_update(
+        index_elements=[AISetting.key],
+        set_={
+            "value": stmt.excluded.value,
+            "updated_by": stmt.excluded.updated_by,
+            "updated_at": func.now(),
+        },
+    )
+
+
 async def set_setting(
     db: AsyncSession, key: str, value: Any, *, updated_by: str
 ) -> Any:
@@ -610,18 +636,55 @@ async def set_setting(
     stored = await read_rows(db)
     current = _sanitise_rows({k: row.value for k, row in stored.items()})
     typed = validate_write(key, value, current)
-    stmt = insert(AISetting).values(key=key, value=typed, updated_by=updated_by)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[AISetting.key],
-        set_={
-            "value": stmt.excluded.value,
-            "updated_by": stmt.excluded.updated_by,
-            "updated_at": func.now(),
-        },
-    )
-    await db.execute(stmt)
+    await db.execute(_upsert(key, typed, updated_by))
     await db.commit()
     return typed
+
+
+def validate_switch(
+    feature: str, provider: Any, model: Any | None = None
+) -> tuple[str, str]:
+    """Validate switching ``feature`` to ``provider`` (and ``model``, else the
+    registry's default model for that provider). Returns the typed pair."""
+    if feature not in SCAN_FEATURES:
+        raise AISettingValueError(
+            f"unknown feature {feature!r}; known: {', '.join(SCAN_FEATURES)}"
+        )
+    provider = validate_value(f"{feature}.provider", provider)
+    if model is None:
+        try:
+            model = default_model(feature, provider)
+        except FeatureSpecError as exc:
+            raise AISettingValueError(str(exc)) from None
+    model = validate_value(f"{feature}.model", model)
+    pair = {f"{feature}.provider": provider, f"{feature}.model": model}
+    for _feature, message in _pair_problems(pair):
+        raise AISettingValueError(f"{feature}: {message}")
+    return provider, model
+
+
+async def switch_provider(
+    db: AsyncSession,
+    feature: str,
+    provider: Any,
+    model: Any | None = None,
+    *,
+    updated_by: str,
+) -> tuple[str, str]:
+    """Write ``<feature>.provider`` and ``<feature>.model`` together (one
+    commit), so the pair is never half-switched. Returns the stored pair.
+
+    Takes effect in each process within the cache TTL. The provider's API key
+    is not checked here (the CLI may run with a different environment than the
+    app); a feature switched to a provider whose key is missing answers 503
+    ``scan_unavailable`` (refunded) until the key is set.
+    """
+    updated_by = _validate_actor(updated_by)
+    provider, model = validate_switch(feature, provider, model)
+    await db.execute(_upsert(f"{feature}.provider", provider, updated_by))
+    await db.execute(_upsert(f"{feature}.model", model, updated_by))
+    await db.commit()
+    return provider, model
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +743,17 @@ async def _run(args: argparse.Namespace) -> int:
                 f"{settings.ai_settings_cache_ttl_seconds}s in every process)"
             )
             return 0
+        if args.command == "switch":
+            updated_by = args.by or os.environ.get("USER") or DEFAULT_CLI_ACTOR
+            provider, model = await switch_provider(
+                db, args.feature, args.provider, args.model, updated_by=updated_by
+            )
+            print(
+                f"{args.feature}.provider = {json.dumps(provider)}, "
+                f"{args.feature}.model = {json.dumps(model)}  (takes effect "
+                f"within {settings.ai_settings_cache_ttl_seconds}s in every process)"
+            )
+            return 0
         stored = await read_rows(db)
         keys = KNOWN_KEYS if args.command == "list" else (args.key,)
         for key in keys:
@@ -700,15 +774,26 @@ def main(argv: list[str] | None = None) -> int:
     get_cmd = sub.add_parser("get", help="show one key")
     get_cmd.add_argument("key", choices=KNOWN_KEYS)
     sub.add_parser("list", help="show every key")
+    switch_cmd = sub.add_parser(
+        "switch", help="set a feature's provider and model together"
+    )
+    switch_cmd.add_argument("feature", choices=SCAN_FEATURES)
+    switch_cmd.add_argument("provider", choices=sorted(ALLOWED_MODELS))
+    switch_cmd.add_argument(
+        "--model", help="default: the registry's model for that provider"
+    )
+    switch_cmd.add_argument("--by", help="who made the change (default: $USER)")
     args = parser.parse_args(argv)
 
-    if args.command == "set":
-        # Fail fast on a bad value before touching the database.
-        try:
+    # Fail fast on a bad value before touching the database.
+    try:
+        if args.command == "set":
             validate_value(args.key, parse_cli_value(args.value))
-        except AISettingValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
+        elif args.command == "switch":
+            validate_switch(args.feature, args.provider, args.model)
+    except AISettingValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     async def _run_and_dispose() -> int:
         try:
@@ -720,6 +805,12 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_and_dispose())
     except AISettingValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if args.command == "set" and args.key.endswith(".provider"):
+            print(
+                "hint: use `switch <feature> <provider>` to change a "
+                "provider and its model together",
+                file=sys.stderr,
+            )
         return 2
     except (SQLAlchemyError, OSError) as exc:
         print(

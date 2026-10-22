@@ -10,6 +10,8 @@ pydantic-settings==2.16.0
 authlib==1.9.1
 PyJWT[cryptography]==2.15.1
 httpx==0.28.1
+# Claude provider (#532). Pinned exactly; 1.x is built on httpx2.
+anthropic==1.12.1
 slowapi==0.1.10
 python-multipart==0.0.32
 cryptography>=50.0.1

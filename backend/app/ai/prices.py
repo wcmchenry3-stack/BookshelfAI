@@ -17,10 +17,13 @@ An unknown ``(model, price_version)`` raises :class:`UnknownPriceError`: a
 call is never silently priced at zero.
 """
 
+import logging
 from dataclasses import dataclass
 from types import MappingProxyType
 
 from app.ai.models_allowlist import ALLOWED_MODELS
+
+logger = logging.getLogger(__name__)
 
 
 class UnknownPriceError(LookupError):
@@ -60,6 +63,26 @@ _GPT_4O = ModelPrice(
     input=2_500_000, output=10_000_000, cache_read=1_250_000, cache_write=0
 )
 
+# Source: Anthropic list prices as given by the claude-api skill (models table
+# cached 2026-10-06), first-party API, per 1M tokens. Cache writes are the
+# 5-minute TTL rate (1.25x input), the only TTL the adapter uses; cache reads
+# are 0.1x input. Prices are Anthropic's, verified for #532.
+#   claude-haiku-5-5:  input $0.10, output $0.50, cache read $0.01,
+#                      cache write $0.125. These are the rates for prompts of
+#                      100K tokens or fewer; longer prompts are billed at
+#                      $0.50 / $2.50 (see LONG_PROMPT_THRESHOLDS). The cache
+#                      read price is the skill's stated 0.1x-input rule, not a
+#                      listed figure: verify on the live pricing page before
+#                      enabling in production.
+#   claude-sonnet-5-5: input $2.00, output $10.00, cache read $0.20,
+#                      cache write $2.50.
+_CLAUDE_HAIKU_5_5 = ModelPrice(
+    input=100_000, output=500_000, cache_read=10_000, cache_write=125_000
+)
+_CLAUDE_SONNET_5_5 = ModelPrice(
+    input=2_000_000, output=10_000_000, cache_read=200_000, cache_write=2_500_000
+)
+
 PRICES: MappingProxyType[tuple[str, str], ModelPrice] = MappingProxyType(
     {
         ("gpt-4o-mini", "2026-10"): _GPT_4O_MINI,
@@ -67,7 +90,18 @@ PRICES: MappingProxyType[tuple[str, str], ModelPrice] = MappingProxyType(
         ("gpt-4o", "2026-10"): _GPT_4O,
         ("gpt-4o-2024-08-06", "2026-10"): _GPT_4O,
         ("gpt-4o-2024-11-20", "2026-10"): _GPT_4O,
+        ("claude-haiku-5-5", "2026-10"): _CLAUDE_HAIKU_5_5,
+        ("claude-sonnet-5-5", "2026-10"): _CLAUDE_SONNET_5_5,
     }
+)
+
+# Models with a second, higher rate card above a prompt size (input + cache
+# read + cache write tokens). The table above holds only the lower card: scan
+# prompts are about 3K tokens, far below the threshold. A call above it is
+# still priced at the lower card, so cost_micros logs a warning (the ledger
+# row under-counts that call) instead of guessing.
+LONG_PROMPT_THRESHOLDS: MappingProxyType[str, int] = MappingProxyType(
+    {"claude-haiku-5-5": 100_000}
 )
 
 
@@ -120,6 +154,21 @@ def cost_micros(
     model or version, and ``ValueError`` for a negative or non-int count.
     """
     price = price_for(model, price_version)
+    threshold = LONG_PROMPT_THRESHOLDS.get(model)
+    if threshold is not None:
+        prompt = (
+            _count("input_tokens", input_tokens)
+            + _count("cache_read_tokens", cache_read_tokens)
+            + _count("cache_write_tokens", cache_write_tokens)
+        )
+        if prompt > threshold:
+            logger.warning(
+                "prompt of %d tokens is above %s's %d-token rate card; "
+                "priced at the lower card, so this cost is under-counted",
+                prompt,
+                model,
+                threshold,
+            )
     scaled = (
         _count("input_tokens", input_tokens) * price.input
         + _count("output_tokens", output_tokens) * price.output

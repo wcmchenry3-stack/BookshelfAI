@@ -16,6 +16,12 @@ class ProviderTimeoutError(ScanUnavailableError):
     still refunds it; the subclass only lets the ledger record ``timeout``."""
 
 
+class ProviderConnectError(ScanUnavailableError):
+    """The connection to the provider was never established, so nothing was
+    billed. A ``ScanUnavailableError``, so ``/scan`` refunds it exactly as it
+    does ``httpx.ConnectError`` from the OpenAI adapter (#532)."""
+
+
 @dataclass(frozen=True)
 class ProviderResult:
     """What one provider call returned: the books and the billed usage.
@@ -50,7 +56,9 @@ class VisionProvider(Protocol):
 
     Raises ``ProviderTimeoutError`` (a ``ScanUnavailableError``) when the
     provider times out and ``ScanUnavailableError`` when it returns an HTTP
-    error. ``httpx.ConnectError`` (never connected) propagates as-is.
+    error. A connection that was never established raises
+    ``httpx.ConnectError`` (OpenAI, propagated as-is) or
+    ``ProviderConnectError`` (Claude); both are refunded.
     """
 
     async def identify(self, image_bytes: bytes) -> ProviderResult: ...
