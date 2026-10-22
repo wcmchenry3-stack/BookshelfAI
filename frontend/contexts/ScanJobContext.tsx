@@ -39,6 +39,8 @@ export interface ScanJobContextValue {
   /** Why the last scan was refused (limit reached, paused, ...); null when there is nothing to show. */
   scanNotice: ScanNotice | null;
   dismissScanNotice: () => void;
+  /** "Try again": clear the notice and send the queued scans in order (stops at the next refusal). */
+  resumeQueue: () => void;
   /** Changes whenever a scan reached the server; usage counters refetch on change. */
   usageRefreshKey: number;
   startScan: (type: ScanJobType, imageUri?: string, query?: string) => void;
@@ -61,6 +63,7 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   enhancedCredits: null,
   scanNotice: null,
   dismissScanNotice: () => {},
+  resumeQueue: () => {},
   usageRefreshKey: 0,
   startScan: () => {},
   retryScan: () => {},
@@ -190,6 +193,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const resumeQueue = useCallback(() => {
+    setScanNotice(null);
+    if (!drainingRef.current) void drainQueue();
+  }, [drainQueue]);
+
   // Listen for connectivity changes and drain queued jobs.
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
@@ -314,8 +322,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     (jobId: string) => {
       setJobs((prev) => prev.filter((j) => j.id !== jobId));
       if (reviewingJobId === jobId) setReviewingJobId(null);
-      // A notice that offers "Try again" for this job has nothing to retry now.
-      setScanNotice((n) => (n?.jobId === jobId ? null : n));
 
       // Clean up persisted image if it exists.
       const job = jobs.find((j) => j.id === jobId);
@@ -436,12 +442,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
     // A refusal from POST /scan (limit, busy, paused). Not a failure worth a
     // Sentry event or a retry prompt: the screen shows a notice and the job
-    // stops (a 'failed' job is never auto-drained, so it can't spam the API).
+    // stops (the drain halts at the first refusal, so it can't spam the API).
     function handleScanRefusal(job: ScanJob, state: ScanUiState) {
       const notice = toScanNotice(state, Date.now(), true);
       if (!notice) return;
-      // Limits and "paused" apply to every queued job, so stop draining.
-      if (state.kind !== 'in_progress') stopDrainRef.current = true;
+      // A refusal applies to every queued job (and a busy lease means the
+      // next one would be refused too), so stop draining.
+      stopDrainRef.current = true;
       Sentry.addBreadcrumb({
         category: 'scan',
         message: `Scan refused: ${state.kind}`,
@@ -455,12 +462,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         restorePriorResults(job, { enhanced: false }, null, 'info');
         return;
       }
-      // Remember the job so the notice can offer "Try again" instead of
-      // stranding the photo.
-      setScanNotice({ ...notice, jobId: job.id });
-      // A refusal isn't a failure: reset the retry budget so "Try again" always
-      // re-sends instead of hitting MAX_RETRIES and silently re-queueing.
-      updateJob(job.id, { status: 'failed', error: state.kind, retryCount: 0 });
+      setScanNotice(notice);
+      // A refusal isn't a failure: the photo goes back in the queue (so it is
+      // counted by the pending-uploads badge, survives a restart and is sent
+      // by the next drain or by "Try again"). It is not retried within this
+      // drain, which stops here, so a refusal costs at most one request.
+      updateJob(job.id, { status: 'queued', error: state.kind, retryCount: 0 });
     }
 
     executeScanRef.current = async function executeScan(job: ScanJob) {
@@ -677,6 +684,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       enhancedCredits,
       scanNotice,
       dismissScanNotice,
+      resumeQueue,
       usageRefreshKey,
       startScan,
       retryScan,
@@ -695,6 +703,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       enhancedCredits,
       scanNotice,
       dismissScanNotice,
+      resumeQueue,
       usageRefreshKey,
       startScan,
       retryScan,

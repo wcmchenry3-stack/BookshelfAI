@@ -22,7 +22,7 @@ export default function ScanScreen() {
   const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
   const {
     startScan,
-    retryScan,
+    resumeQueue,
     isQueueFull,
     pendingCount,
     scanNotice,
@@ -225,15 +225,7 @@ export default function ScanScreen() {
       usage={usage}
       notice={scanNotice ?? null}
       onDismissNotice={dismissScanNotice ?? (() => {})}
-      onRetryNotice={
-        scanNotice?.jobId && retryScan
-          ? () => {
-              const jobId = scanNotice.jobId as string;
-              dismissScanNotice?.();
-              retryScan(jobId);
-            }
-          : undefined
-      }
+      onRetryNotice={pendingCount > 0 ? () => resumeQueue?.() : undefined}
     />
   );
 

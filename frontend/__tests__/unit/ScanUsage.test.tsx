@@ -8,16 +8,17 @@ const mockGet = jest.fn();
 jest.mock('../../lib/api', () => ({ api: { get: (...a: unknown[]) => mockGet(...a) } }));
 
 let mockNotice: unknown = null;
-const mockRetryScan = jest.fn();
+const mockResume = jest.fn();
+let mockPending = 0;
 const mockDismiss = jest.fn();
 let mockRefreshKey = 0;
 jest.mock('../../hooks/useScanJobs', () => ({
   useScanJobs: () => ({
     jobs: [],
-    pendingCount: 0,
+    pendingCount: mockPending,
     isQueueFull: false,
     startScan: jest.fn(),
-    retryScan: mockRetryScan,
+    resumeQueue: mockResume,
     scanNotice: mockNotice,
     dismissScanNotice: mockDismiss,
     usageRefreshKey: mockRefreshKey,
@@ -48,6 +49,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   mockNotice = null;
   mockRefreshKey = 0;
+  mockPending = 0;
   mockConnected = true;
 });
 
@@ -132,16 +134,16 @@ describe('settings usage row', () => {
 });
 
 describe('notice actions and refresh', () => {
-  it('Try again retries the refused job and dismisses the notice', async () => {
+  it('Try again resumes the queue when scans are waiting', async () => {
     mockGet.mockResolvedValue({ data: USAGE });
-    mockNotice = { kind: 'paused', jobId: 'job-7' };
+    mockNotice = { kind: 'paused' };
+    mockPending = 2;
     const { findByText } = await render(<ScanScreen />);
     fireEvent.press(await findByText('Try again'));
-    expect(mockDismiss).toHaveBeenCalled();
-    expect(mockRetryScan).toHaveBeenCalledWith('job-7');
+    expect(mockResume).toHaveBeenCalledTimes(1);
   });
 
-  it('no Try again without a job id, Dismiss still shown', async () => {
+  it('no Try again when nothing is waiting, Dismiss still shown', async () => {
     mockGet.mockResolvedValue({ data: USAGE });
     mockNotice = { kind: 'paused' };
     const { findByText, queryByText } = await render(<ScanScreen />);

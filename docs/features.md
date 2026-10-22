@@ -77,8 +77,9 @@ Every user has a monthly and a daily scan allowance (standard and enhanced scans
 - **Scan already running (429 `scan_in_progress`):** the app waits `Retry-After` (default 2 s, capped at 10 s) and retries silently, up to 3 times. If it is still busy: "Still processing. Please try again in a moment." (3 retries is about 6 s, long enough to ride out a normal overlap without leaving the user waiting on a stuck lease.)
 - **Scanning off (503 `scan_disabled`, `enhanced_scan_disabled`, `scan_capacity`, `ai_unavailable`, `scan_unavailable`):** "Scanning is paused. Please try again later."
 - 402 `no_enhanced_credits` is unchanged (enhanced re-scan falls back to the standard results).
-- **Try again:** the notice for a refused scan (monthly, daily, paused, still processing) has a "Try again" button next to "Dismiss". The user decides when to retry, so the photo is not lost. The button is not shown when a refused enhanced re-scan has put the earlier results back on screen.
-- Offline capture and the upload queue are unchanged, except that a monthly limit, daily limit or paused service stops the queue drain: the refused scan is marked failed (retry it with "Try again") and the rest stay queued for later.
+- **Refused scans wait in the queue.** A scan refused for a monthly or daily limit, a paused service or "still processing" is not lost or marked failed: it goes back to `queued`, so it shows in the "Pending uploads" badge, survives an app restart and is sent by the next queue drain (reconnect or app launch). The drain stops at the first refusal, so a refusal costs at most one request and the remaining scans stay queued.
+- **Try again:** the notice has a "Try again" button next to "Dismiss" whenever scans are waiting. It clears the notice and sends all queued scans in order, stopping at the next refusal. It is not shown when a refused enhanced re-scan has put the earlier results back on screen (those results are restored, nothing is queued).
+- Offline capture and the upload queue otherwise behave as before.
 
 ### Auth flow — Google SSO → rotating refresh tokens
 
@@ -156,6 +157,7 @@ pending ─▶ searching ─▶ complete
              │             │
              │             └─▶ (user confirms) ─▶ deleted
              │
+             ├─▶ queued (refused: limit / paused / busy; next drain or "Try again")
              └─▶ failed ─▶ queued (manual)
                     │
                     └─▶ (user taps retry, if retries < 3) ─▶ pending
