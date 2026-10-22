@@ -17,3 +17,7 @@ class ScanUsageResponse(BaseModel):
     used_month: int
     monthly_limit: int
     period_end: date
+    # Enhanced scans reserved this UTC month and the Premium enhanced monthly
+    # allowance (#533); the limit is 0 for every other tier.
+    enhanced_used_month: int = 0
+    enhanced_monthly_limit: int = 0

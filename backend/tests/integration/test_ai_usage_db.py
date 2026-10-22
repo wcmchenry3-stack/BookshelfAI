@@ -29,7 +29,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from app.ai import ledger, quota
+from app.ai import entitlements, ledger, quota
+from app.ai.entitlements import Tier
 from app.ai.prices import CURRENT_PRICE_VERSION
 from app.ai.providers.base import ProviderResult, ProviderTimeoutError
 from app.api import scan as scan_api
@@ -215,7 +216,13 @@ class TestScanWritesOneRow:
     ):
         factory, make_user, _ = sessions
         user_id = await make_user()
-        with _provider(return_value=ProviderResult([], **_USAGE)):
+        # Enhanced scans are Premium-only (#533).
+        with (
+            _provider(return_value=ProviderResult([], **_USAGE)),
+            patch.object(
+                entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM)
+            ),
+        ):
             await _call_scan(factory, user_id, enhanced=True)
         (row,) = await _rows(factory, user_id=user_id)
         assert (row.feature, row.model, row.cost_micros) == (

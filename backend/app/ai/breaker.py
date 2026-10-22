@@ -94,11 +94,12 @@ import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-import sentry_sdk
+import sentry_sdk  # noqa: F401 - kept importable for tests that patch it
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import alerts
 from app.models.ai_spend import AISpendDaily
 
 logger = logging.getLogger(__name__)
@@ -288,40 +289,25 @@ def send_alert(
 ) -> None:
     """One Sentry warning for ``pct`` on ``day``. Never raises."""
     try:
-        # The request's scopes carry the user id (set_sentry_user in
-        # get_current_user), tags and breadcrumbs. The alert is about the
-        # service, not a user: fork both scopes, empty them, and capture there,
-        # so nothing of the request leaks in and nothing of the alert leaks
-        # into later events of the same request.
-        with sentry_sdk.isolation_scope() as scope:
-            scope.clear()
-            current = sentry_sdk.get_current_scope()
-            current.clear()
-            # clear() keeps the scopes' event processors, and the
-            # Starlette/FastAPI integration's processor would still attach
-            # the HTTP request (url, headers incl. client IP, body). Added
-            # last, so it runs after the integration's.
-            current.add_event_processor(_strip_request_data)
-            for key, value in {
+        # Captured in emptied, stripped scopes: never a user id or anything
+        # of the request (app/ai/alerts.py).
+        alerts.capture_service_warning(
+            f"ai-breaker: AI spend reached {pct}% of the Free daily ceiling",
+            fingerprint=["ai-breaker", day.isoformat(), str(pct)],
+            tags={
                 "feature": settlement.feature,
                 "model": settlement.model,
                 "status": settlement.status,
                 "breaker_threshold_pct": str(pct),
-            }.items():
-                current.set_tag(key, value)
-            for key, value in {
+            },
+            extras={
                 "day": day.isoformat(),
                 "threshold_pct": pct,
                 "settled_micros": settled_micros,
                 "reserved_micros": reserved_micros,
                 "ceiling_micros": ceiling_micros,
-            }.items():
-                current.set_extra(key, value)
-            current.fingerprint = ["ai-breaker", day.isoformat(), str(pct)]
-            sentry_sdk.capture_message(
-                f"ai-breaker: AI spend reached {pct}% of the Free daily ceiling",
-                level="warning",
-            )
+            },
+        )
         logger.warning(
             "ai_breaker: spend reached %d%% of the Free daily ceiling (%s)",
             pct,
@@ -329,25 +315,6 @@ def send_alert(
         )
     except Exception:  # an alert must never fail a request
         logger.exception("ai_breaker: could not send the %d%% alert", pct)
-
-
-def _strip_request_data(event: dict, _hint: dict) -> dict:
-    """Event processor for spend alerts: drop everything that came from the
-    request (the HTTP ``request`` block, ``user``, breadcrumbs, the route
-    ``transaction`` name, and any
-    context other than the trace/runtime ones the SDK adds)."""
-    for key in ("request", "user", "breadcrumbs", "transaction"):
-        event.pop(key, None)
-    contexts = event.get("contexts")
-    if isinstance(contexts, dict):
-        event["contexts"] = {
-            k: v for k, v in contexts.items() if k in _KEPT_ALERT_CONTEXTS
-        }
-    return event
-
-
-# SDK-generated contexts that say nothing about the request or the user.
-_KEPT_ALERT_CONTEXTS = frozenset({"trace", "runtime", "os"})
 
 
 # ---------------------------------------------------------------------------

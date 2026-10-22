@@ -23,6 +23,9 @@ class FakeQuotaStore:
         # ai_spend_daily (#531): day -> [reserved, settled, alerted_mask]
         self.spend: dict[date, list[int]] = {}
         self.cost_refusals = 0
+        # ai_enhanced_zero_results (#533): user_id -> rows' ledger ids, all
+        # treated as inside the window.
+        self.zero_results: dict[uuid.UUID, list[uuid.UUID | None]] = {}
 
     async def global_units_today(self, _db, day: date) -> int:
         return self.extra_global + sum(
@@ -66,6 +69,29 @@ class FakeQuotaStore:
 
     async def units_used(self, _db, user_id, feature, kind, start) -> int:
         return self.rows.get((user_id, feature, kind, start), 0)
+
+    # --- zero-result enhanced scans (#533), same decisions as app/ai/quota.py
+
+    async def zero_result_throttle(self, _db, user_id, threshold, window_hours):
+        count = len(self.zero_results.get(user_id, []))
+        if count < threshold:
+            return None
+        return quota.retry_after_seconds(None, window_hours)
+
+    async def record_zero_result(self, _db, reservation, ledger_id):
+        rows = self.zero_results.setdefault(reservation.user_id, [])
+        if quota.zero_result_charged(len(rows), reservation.zero_result_threshold):
+            return None
+        key = (
+            reservation.user_id,
+            quota.ENHANCED_QUOTA_FEATURE,
+            "month",
+            reservation.month,
+        )
+        if key in self.rows:
+            self.rows[key] = max(0, self.rows[key] - 1)
+        rows.append(ledger_id)
+        return len(rows)
 
     # --- cost breaker (#531), same semantics as app/ai/breaker.py ---
 
@@ -119,6 +145,8 @@ class FakeQuotaStore:
             "reserve_unit",
             "refund_unit",
             "units_used",
+            "zero_result_throttle",
+            "record_zero_result",
         )
         spend = {
             "reserve": self.spend_reserve,

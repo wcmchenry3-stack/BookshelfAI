@@ -76,11 +76,11 @@ class Settings(BaseSettings):
     # SCAN_MODEL / SCAN_ENHANCED_MODEL are the registry defaults and seed the
     # ai_settings rows scan.standard.model / scan.enhanced.model.
     scan_model: str = "gpt-4o-mini"
-    # "Enhanced" scan — a stronger model the user can opt into when the standard
-    # scan misses books. Each successful enhanced scan costs one credit; new
-    # users start with enhanced_scan_free_credits.
+    # "Enhanced" scan — a stronger model a Premium user can opt into when the
+    # standard scan misses books. Premium-only, with its own monthly allowance
+    # (quota.premium.enhanced_monthly, seeded from
+    # SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT below; #533).
     scan_enhanced_model: str = "gpt-4o"
-    enhanced_scan_free_credits: int = 5
     # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
     # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
     # boot, and after that the DB row is the source of truth (change it with
@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     scan_free_monthly_limit: int = Field(default=5, ge=0, le=100_000)
     scan_premium_daily_limit: int = Field(default=30, ge=0, le=1000)
     scan_premium_monthly_limit: int = Field(default=300, ge=0, le=100_000)
+    # Enhanced scans per Premium user per UTC calendar month (#533), on top of
+    # the shared allowance above. INITIAL DEFAULT ONLY: seeds the ai_settings
+    # row quota.premium.enhanced_monthly (same bounds). Enhanced scans are
+    # Premium-only, so there is no Free equivalent. 0 refuses every enhanced
+    # scan (402 enhanced_limit_reached).
+    scan_premium_enhanced_monthly_limit: int = Field(default=20, ge=0, le=10_000)
     # Cost circuit breaker (#531). INITIAL DEFAULT ONLY: seeds the ai_settings
     # row breaker.free_daily_ceiling_micros (same bounds): the service-wide
     # spend per UTC day, in micro-dollars (1,000,000 = $1), above which

@@ -7,7 +7,6 @@ import anyio
 import anyio.to_thread
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
@@ -119,25 +118,10 @@ def _dedupe_enriched(books: list[EnrichedBook]) -> list[EnrichedBook]:
     return unique
 
 
-async def _spend_enhanced_credit(db: AsyncSession, user_id: uuid.UUID) -> int:
-    """Atomically decrement the user's enhanced-scan credits; return the balance.
-
-    The ``> 0`` guard makes two concurrent enhanced scans unable to drive the
-    balance negative — the loser simply isn't charged.
-    """
-    result = await db.execute(
-        update(User)
-        .where(User.id == user_id, User.enhanced_scan_credits > 0)
-        .values(enhanced_scan_credits=User.enhanced_scan_credits - 1)
-        .returning(User.enhanced_scan_credits)
-    )
-    remaining = result.scalar_one_or_none()
-    await db.commit()
-    return int(remaining) if remaining is not None else 0
-
-
 class ScanLimitReachedError(HTTPException):
-    """402 ``scan_limit_reached``: the monthly allowance is used.
+    """402 ``scan_limit_reached``: the monthly allowance is used (or, with
+    ``code="enhanced_limit_reached"``, the Premium enhanced monthly allowance,
+    #533).
 
     Rendered by the handler in ``app.main`` as
     ``{"detail": "scan_limit_reached", "limit": N, "used": N,
@@ -145,10 +129,14 @@ class ScanLimitReachedError(HTTPException):
     every other scan error uses.
     """
 
-    def __init__(self, limit: int, used: int, period_end: date) -> None:
-        super().__init__(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="scan_limit_reached"
-        )
+    def __init__(
+        self,
+        limit: int,
+        used: int,
+        period_end: date,
+        code: str = "scan_limit_reached",
+    ) -> None:
+        super().__init__(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=code)
         self.limit = limit
         self.used = used
         self.period_end = period_end
@@ -163,11 +151,13 @@ class ScanLimitReachedError(HTTPException):
 
 
 async def _reserve_scan_quota(
-    db: AsyncSession, user: User, feature: str, ai: AISettings
+    db: AsyncSession, user: User, feature: str, ai: AISettings, enhanced: bool
 ) -> quota.Reservation:
     """Global count cap, then the daily cost ceiling, then the in-flight
     lease, then the daily and monthly reservations (``app/ai/quota.py``),
-    mapped to HTTP refusals.
+    mapped to HTTP refusals. For ``enhanced`` (#533), first the Premium-only
+    refusal (before anything is taken), then after the lease the zero-result
+    throttle, and after the shared units the enhanced monthly unit.
 
     ``feature`` (the gateway feature) sets the lease length from its timeout
     and the cost estimate from its ``est_cost_ceiling_micros``; the units are reserved under ``quota.SCAN_QUOTA_FEATURE``, the
@@ -186,7 +176,23 @@ async def _reserve_scan_quota(
             timeout_s=spec.timeout_s,
             ai=ai,
             est_cost_micros=spec.est_cost_ceiling_micros,
+            enhanced=enhanced,
         )
+    except quota.EnhancedRequiresPremium:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="enhanced_requires_premium",
+        ) from None
+    except quota.EnhancedThrottled as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="enhanced_throttled",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    except quota.EnhancedLimitReached as exc:
+        raise ScanLimitReachedError(
+            exc.limit, exc.used, exc.period_end, code="enhanced_limit_reached"
+        ) from None
     except quota.CostCeilingReached:
         # Free tier paused for the rest of the UTC day (#531, #544).
         logger.warning("scan: daily AI cost ceiling reached; free tier paused")
@@ -226,10 +232,42 @@ async def _release_scan_lease(
     reservation: quota.Reservation,
     ledger_row: Executable | None = None,
     settlement: breaker.Settlement | None = None,
+    zero_result: quota.ZeroResult | None = None,
 ) -> None:
     """Release the in-flight lease (settle) and commit the call's usage-ledger
-    row and cost settle in the same transaction; never raises, shielded."""
-    await quota.release(db, reservation, ledger_row, settlement)
+    row, cost settle and (an enhanced scan with no books, #533) the charge
+    decision in the same transaction; never raises, shielded."""
+    await quota.release(db, reservation, ledger_row, settlement, zero_result)
+
+
+async def _books_for(
+    db: AsyncSession, user_id: uuid.UUID, candidates: list
+) -> list[EnrichedBook]:
+    """Enrich, dedupe and mark the provider's candidates: the books handed
+    back."""
+    if not candidates:
+        return []
+    enrichment = EnrichmentService()
+    enriched = await enrichment.enrich(candidates, limit=settings.scan_max_books)
+    enriched = _dedupe_enriched(enriched)
+    dedup = DeduplicationService()
+    return await dedup.check(db, str(user_id), enriched)
+
+
+async def _enhanced_remaining(
+    db: AsyncSession, reservation: quota.Reservation
+) -> int | None:
+    """The remaining enhanced allowance for the response; None for
+    non-Premium, or if it cannot be read (never fails the scan)."""
+    try:
+        return await quota.enhanced_remaining(db, reservation)
+    except Exception:
+        logger.exception("scan: could not read the remaining enhanced allowance")
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("scan: rollback after the allowance read failed")
+        return None
 
 
 def _settlement(
@@ -417,30 +455,39 @@ async def scan(
         limiter=_NORMALISE_LIMITER,
     )
 
-    # --- Entitlement: enhanced credits (#533 replaces this with its quota) ---
-    credits = current_user.enhanced_scan_credits or 0
-    if enhanced and credits <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="no_enhanced_credits",
-        )
-
-    # --- Tier allowance, global count cap, daily cost ceiling (#531),
-    # in-flight lease, daily, monthly ---
-    # One allowance for standard and enhanced scans (quota.SCAN_QUOTA_FEATURE).
-    # At the cost ceiling Free gets 503 ai_budget_reached; Premium continues.
-    # The tier is resolved server-side inside quota.reserve; every refusal
-    # here happens before the provider and gives back what it took.
+    # --- Enhanced entitlement (#533), tier allowance, global count cap,
+    # daily cost ceiling (#531), in-flight lease, zero-result throttle,
+    # daily, monthly, enhanced monthly ---
+    # Enhanced scans are Premium-only: a non-Premium user gets 403
+    # enhanced_requires_premium inside quota.reserve before anything is
+    # reserved (the tier is resolved server-side there, never from the
+    # request). Standard and enhanced scans share one daily and monthly
+    # allowance (quota.SCAN_QUOTA_FEATURE); an enhanced scan also takes one
+    # unit of the Premium enhanced monthly allowance. At the cost ceiling
+    # Free gets 503 ai_budget_reached; Premium continues. Every refusal here
+    # happens before the provider and gives back what it took.
     # Read before anything can roll the session back: a failed give-back
     # (refund or lease release) rolls back, which expires current_user.
     user_id = current_user.id
-    reservation = await _reserve_scan_quota(db, current_user, feature, ai)
+    reservation = await _reserve_scan_quota(db, current_user, feature, ai, enhanced)
 
     # The reservation is given back only when the provider reports itself
     # unavailable or was never reached (connection not established). Any other
     # failure (or a cancelled request) keeps it: the provider may already have
     # been paid. An empty result also counts. The lease is always released
     # once the provider call is over (settle), even on cancellation.
+    #
+    # Enhanced charge decision (#533): the enhanced unit follows the shared
+    # units on refund and is kept on errors. When the provider answered but
+    # there are no books to hand back, the settle decides in its own
+    # transaction (quota.release with a ZeroResult): below the user's
+    # zero-result threshold the unit is given back and one
+    # ai_enhanced_zero_results row written; at or above it the unit is kept.
+    # So that "no books" means the books handed back, an enhanced scan is
+    # enriched before the settle (under the lease); a standard scan after it,
+    # as before. A provider error, timeout or unavailability is never a
+    # zero-result. A future result-cache hit (#534) makes no provider call
+    # and must not record one.
     #
     # Usage ledger (#530): every outcome of the provider call writes one
     # ai_usage row, committed with the lease release. call_id is generated
@@ -459,6 +506,8 @@ async def scan(
     spend = partial(_settlement, reservation=reservation, feature=feature, ai=ai)
     settlement: breaker.Settlement | None = None
     ledger_decided = False
+    zero_result: quota.ZeroResult | None = None
+    books: list[EnrichedBook] | None = None
     try:
         try:
             result = await run_feature(
@@ -496,6 +545,14 @@ async def scan(
         ledger_row = row(result=result)
         settlement = spend(result=result)
         ledger_decided = True
+        if enhanced:
+            # An enrichment error propagates with the unit kept (an error,
+            # not a zero-result).
+            books = await _books_for(db, user_id, result.candidates)
+            if not books:
+                zero_result = quota.ZeroResult(
+                    ledger_id=call_id if ledger_row is not None else None
+                )
     finally:
         if not ledger_decided:
             # The call did not complete: the request was cancelled (or a
@@ -503,26 +560,15 @@ async def scan(
             # as an error with 0 tokens; the shielded settle writes it.
             ledger_row = row(status=STATUS_ERROR)
             settlement = spend(status=STATUS_ERROR)
-        await _release_scan_lease(db, reservation, ledger_row, settlement)
-    candidates = result.candidates
+        await _release_scan_lease(db, reservation, ledger_row, settlement, zero_result)
 
-    if not candidates:
-        return ScanResponse(books=[], enhanced=enhanced, enhanced_scan_credits=credits)
-
-    enrichment = EnrichmentService()
-    enriched = await enrichment.enrich(candidates, limit=settings.scan_max_books)
-    enriched = _dedupe_enriched(enriched)
-
-    dedup = DeduplicationService()
-    enriched = await dedup.check(db, str(user_id), enriched)
-
-    # Charge only once there are books to hand back: an enhanced scan that
-    # yields nothing — no candidates, or every lookup failed — is free.
-    if enhanced and enriched:
-        credits = await _spend_enhanced_credit(db, user_id)
+    if books is None:
+        books = await _books_for(db, user_id, result.candidates)
 
     return ScanResponse(
-        books=enriched, enhanced=enhanced, enhanced_scan_credits=credits
+        books=books,
+        enhanced=enhanced,
+        enhanced_scans_remaining=await _enhanced_remaining(db, reservation),
     )
 
 
@@ -534,7 +580,9 @@ async def scan_usage(
     db: AsyncSession = Depends(get_db),
 ) -> ScanUsageResponse:
     """The current user's scan usage and allowance (read only). Standard and
-    enhanced scans count against the same allowance."""
+    enhanced scans count against the same allowance; enhanced scans also
+    count against the Premium enhanced monthly allowance (0 for other
+    tiers)."""
     try:
         ai = await get_ai_settings(db)
     except AISettingsUnavailableError:
@@ -551,4 +599,6 @@ async def scan_usage(
         used_month=usage.used_month,
         monthly_limit=usage.monthly_limit,
         period_end=usage.period_end,
+        enhanced_used_month=usage.enhanced_used_month,
+        enhanced_monthly_limit=usage.enhanced_monthly_limit,
     )

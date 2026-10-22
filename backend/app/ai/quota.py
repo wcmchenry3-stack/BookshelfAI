@@ -42,6 +42,39 @@ In order (#528):
    :data:`SCAN_QUOTA_FEATURE`. The ``feature`` column stays so later AI
    features can have their own allowance.
 
+**Enhanced scans (#533).** ``reserve(..., enhanced=True)`` adds three steps:
+
+- right after the tier is resolved, a non-Premium tier is refused
+  (:class:`EnhancedRequiresPremium`, 403 ``enhanced_requires_premium``) before
+  anything is taken (no cost estimate, lease or unit);
+- after the lease, with ``scan.enhanced.zero_result_action`` = ``throttle``,
+  the user's uncharged zero-result enhanced scans inside the sliding window
+  (``ai_enhanced_zero_results``) are counted; at or above
+  ``scan.enhanced.zero_result_threshold`` the scan is refused
+  (:class:`EnhancedThrottled`, 429 ``enhanced_throttled``) with a Retry-After
+  of the seconds until enough rows leave the window. Counting under the lease
+  serialises it with the user's own settle;
+- after the shared daily and monthly units, one unit of the Premium enhanced
+  monthly allowance (``quota.premium.enhanced_monthly``) under
+  :data:`ENHANCED_QUOTA_FEATURE` (:class:`EnhancedLimitReached`, 402
+  ``enhanced_limit_reached``).
+
+Each refusal gives back everything taken before it, like the others. The
+enhanced unit follows the shared units on refund (:func:`refund`) and is kept
+otherwise, except for the charge decision: when the provider answered but the
+scan has no books to hand back, the caller passes a :class:`ZeroResult` to
+:func:`release`, and in the settle transaction (gated exactly like the cost
+settle, so a retried settle cannot apply it twice) the user's in-window count
+is read: below the threshold the enhanced unit is given back and one
+``ai_enhanced_zero_results`` row is written (not charged); at or above it the
+unit is kept (charged) and no row is written. The write runs in a SAVEPOINT,
+so a failure there keeps the unit (charged) and never drops the usage row.
+When a row brings the count to exactly the threshold, one Sentry warning is
+sent after the commit (:func:`send_zero_result_warning`). Threshold 0: with
+``charge`` every zero-result enhanced scan is charged (no rows, no warning);
+with ``throttle`` every enhanced scan is refused. A future result-cache hit
+(#534) makes no provider call and must not pass a :class:`ZeroResult`.
+
 Every step commits straight away, on the request's own session: the
 reservation is visible to concurrent requests and the connection goes back to
 the pool before the provider is called (as in #509/#519). A refusal or an
@@ -64,8 +97,9 @@ the 1st of the UTC calendar month (OD-10). ``period_end`` is the first day of
 the next month, the date the monthly count resets.
 
 Retention: :func:`purge_old_quota` deletes day rows older than 90 days and
-month rows older than 13 months, in bounded batches, from the daily cleanup
-task.
+month rows older than 13 months, and :func:`purge_old_zero_results` deletes
+``ai_enhanced_zero_results`` rows older than 30 days, in bounded batches, from
+the daily cleanup task.
 
 This module never calls a provider and must not import ``app.ai.providers``.
 """
@@ -78,14 +112,24 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 
 import anyio
-from sqlalchemy import DateTime, and_, delete, func, or_, select, tuple_, update
+from sqlalchemy import (
+    DateTime,
+    and_,
+    delete,
+    func,
+    or_,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
-from app.ai import breaker, entitlements
+from app.ai import alerts, breaker, entitlements
 from app.ai.entitlements import Tier
-from app.ai.settings import AISettings
+from app.ai.settings import ZERO_RESULT_ACTION_THROTTLE, AISettings
+from app.models.ai_enhanced_zero_result import AIEnhancedZeroResult
 from app.models.ai_quota import WINDOW_DAY, WINDOW_MONTH, AIInflight, AIQuota
 from app.models.user import User
 
@@ -94,6 +138,11 @@ logger = logging.getLogger(__name__)
 # The ai_quota counter key for every scan, standard or enhanced: one shared
 # daily and monthly allowance per user (OD-1). Not a gateway feature name.
 SCAN_QUOTA_FEATURE = "scan"
+# The ai_quota counter key for the Premium enhanced monthly allowance (#533),
+# reserved on top of the shared SCAN_QUOTA_FEATURE units.
+ENHANCED_QUOTA_FEATURE = "scan.enhanced"
+# The Sentry tag for the zero-result warning (the gateway feature name).
+ENHANCED_FEATURE_TAG = "scan.enhanced"
 
 # The lease outlives the provider timeout by this much (AC: timeout_s + 30).
 LEASE_GRACE_SECONDS = 30
@@ -108,6 +157,7 @@ MONTHLY_RETENTION_MONTHS = 13
 PURGE_BATCH_SIZE = 5_000
 # Upper bound on batches per window kind per cleanup run.
 PURGE_MAX_BATCHES = 20
+ZERO_RESULT_RETENTION_DAYS = 30
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +264,39 @@ class MonthlyLimitReached(QuotaRefusal):
         self.period_end = period_end
 
 
+class EnhancedRequiresPremium(QuotaRefusal):
+    """Enhanced scans are Premium-only (403 ``enhanced_requires_premium``)."""
+
+
+class EnhancedThrottled(QuotaRefusal):
+    """Too many uncharged zero-result enhanced scans in the window, with
+    action ``throttle`` (429 ``enhanced_throttled``)."""
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("enhanced_throttled")
+        self.retry_after = retry_after
+
+
+class EnhancedLimitReached(QuotaRefusal):
+    """The Premium enhanced monthly allowance is used (402
+    ``enhanced_limit_reached``)."""
+
+    def __init__(self, limit: int, used: int, period_end: date) -> None:
+        super().__init__("enhanced_limit_reached")
+        self.limit = limit
+        self.used = used
+        self.period_end = period_end
+
+
+@dataclass(frozen=True)
+class ZeroResult:
+    """Passed to :func:`release` when an enhanced scan's provider answered but
+    there are no books to hand back (#533). ``ledger_id`` is the usage-ledger
+    ``call_id`` (None when the settle has no ledger row)."""
+
+    ledger_id: uuid.UUID | None = None
+
+
 @dataclass(frozen=True)
 class Reservation:
     """What :func:`reserve` took; hand it to :func:`refund` and :func:`release`."""
@@ -229,6 +312,14 @@ class Reservation:
     # Free ceiling read for this request (for the alert percentages).
     est_cost_micros: int = 0
     ceiling_micros: int = 0
+    # Enhanced scans (#533): whether a ENHANCED_QUOTA_FEATURE month unit was
+    # taken, the allowance read for this request, and the zero-result
+    # settings read for this request (one view of ai_settings per request).
+    enhanced: bool = False
+    enhanced_allowance: int = 0
+    zero_result_threshold: int = 0
+    zero_result_window_hours: int = 24
+    zero_result_action: str = "charge"
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +480,157 @@ async def global_units_today(db: AsyncSession, day: date) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Zero-result enhanced scans (#533)
+# ---------------------------------------------------------------------------
+
+
+def _in_window(user_id: uuid.UUID, window_hours: int):
+    # The window is sliding and measured on the database clock, the same
+    # clock that stamps the rows (record_zero_result).
+    return and_(
+        AIEnhancedZeroResult.user_id == user_id,
+        AIEnhancedZeroResult.created_at
+        > _clock_timestamp() - timedelta(hours=window_hours),
+    )
+
+
+async def zero_result_count(
+    db: AsyncSession, user_id: uuid.UUID, window_hours: int
+) -> int:
+    """The user's uncharged zero-result enhanced scans inside the window (no
+    commit)."""
+    result = await db.execute(
+        select(func.count())
+        .select_from(AIEnhancedZeroResult)
+        .where(_in_window(user_id, window_hours))
+    )
+    return int(result.scalar_one())
+
+
+def retry_after_seconds(
+    leaves_at: datetime | None, window_hours: int, now: datetime | None = None
+) -> int:
+    """Whole seconds until ``leaves_at`` (when the row that must leave the
+    window does), at least 1. Without a row (threshold 0: every enhanced scan
+    is refused) the whole window."""
+    if leaves_at is None:
+        return max(1, window_hours * 3600)
+    now = (now or utc_now()).astimezone(UTC)
+    return max(1, math.ceil((leaves_at - now).total_seconds()))
+
+
+async def zero_result_throttle(
+    db: AsyncSession, user_id: uuid.UUID, threshold: int, window_hours: int
+) -> int | None:
+    """``None`` while the user's in-window count is below ``threshold``;
+    otherwise the Retry-After seconds: until the row whose leaving brings the
+    count back below the threshold (the ``count - threshold + 1``-th oldest)
+    leaves the window. Ends its read transaction."""
+    try:
+        count = await zero_result_count(db, user_id, window_hours)
+        if count < threshold:
+            return None
+        leaves_at = None
+        if count:
+            result = await db.execute(
+                select(AIEnhancedZeroResult.created_at)
+                .where(_in_window(user_id, window_hours))
+                .order_by(AIEnhancedZeroResult.created_at)
+                .offset(count - threshold)
+                .limit(1)
+            )
+            oldest = result.scalar_one_or_none()
+            if oldest is not None:
+                leaves_at = oldest + timedelta(hours=window_hours)
+        return retry_after_seconds(leaves_at, window_hours)
+    finally:
+        # Read only; do not leave the connection idle in a transaction.
+        await db.commit()
+
+
+def zero_result_charged(count: int, threshold: int) -> bool:
+    """The charge decision for a zero-result enhanced scan, given the user's
+    in-window count before it: charged at or above the threshold (threshold 0
+    charges every one)."""
+    return count >= threshold
+
+
+async def record_zero_result(
+    db: AsyncSession, reservation: "Reservation", ledger_id: uuid.UUID | None
+) -> int | None:
+    """The charge decision, inside the caller's settle transaction (no
+    commit). Returns the user's new in-window count when the scan is not
+    charged (the enhanced month unit is given back and one row written), or
+    ``None`` when it is charged (nothing written).
+
+    Runs in a SAVEPOINT: if it fails, only it is rolled back (the unit stays
+    charged, no row) and the settle still commits the usage row, the cost and
+    the lease delete.
+    """
+    try:
+        async with db.begin_nested():
+            count = await zero_result_count(
+                db, reservation.user_id, reservation.zero_result_window_hours
+            )
+            if zero_result_charged(count, reservation.zero_result_threshold):
+                return None
+            await db.execute(
+                update(AIQuota)
+                .where(
+                    AIQuota.user_id == reservation.user_id,
+                    AIQuota.feature == ENHANCED_QUOTA_FEATURE,
+                    AIQuota.window_kind == WINDOW_MONTH,
+                    AIQuota.window_start == reservation.month,
+                    AIQuota.units_used > 0,
+                )
+                .values(units_used=AIQuota.units_used - 1)
+            )
+            await db.execute(
+                insert(AIEnhancedZeroResult).values(
+                    id=uuid.uuid4(),
+                    user_id=reservation.user_id,
+                    created_at=_clock_timestamp(),
+                    ledger_id=ledger_id,
+                )
+            )
+            return count + 1
+    except Exception:
+        logger.exception(
+            "ai_quota: zero-result record failed; the enhanced scan stays charged"
+        )
+        return None
+
+
+def send_zero_result_warning(
+    *, count: int, threshold: int, window_hours: int, action: str
+) -> None:
+    """One Sentry warning: a user's uncharged zero-result enhanced scans
+    reached the threshold. No user id, image, hash or content: the event is
+    captured in emptied, stripped scopes (:mod:`app.ai.alerts`). Never
+    raises."""
+    try:
+        alerts.capture_service_warning(
+            "ai-enhanced: zero-result enhanced scans reached the threshold",
+            fingerprint=["ai-enhanced-zero-results", action],
+            tags={"feature": ENHANCED_FEATURE_TAG, "action": action},
+            extras={
+                "count": count,
+                "threshold": threshold,
+                "window_hours": window_hours,
+            },
+        )
+        logger.warning(
+            "ai_quota: zero-result enhanced scans reached the threshold "
+            "(count=%d, window=%dh, action=%s)",
+            count,
+            window_hours,
+            action,
+        )
+    except Exception:  # a warning must never fail a request
+        logger.exception("ai_quota: could not send the zero-result warning")
+
+
+# ---------------------------------------------------------------------------
 # Give-backs: never raise, bounded, shielded from cancellation
 # ---------------------------------------------------------------------------
 
@@ -455,8 +697,14 @@ async def release(
     reservation: Reservation,
     ledger_row: Executable | None = None,
     settlement: breaker.Settlement | None = None,
+    zero_result: ZeroResult | None = None,
 ) -> None:
     """Release the lease held by ``reservation`` (settle). Never raises.
+
+    ``zero_result`` (#533, enhanced reservations only): the scan found no
+    books, so the charge decision (:func:`record_zero_result`) runs in the
+    same transaction as the cost settle and under the same gate, and a
+    warning is sent after the commit when the count reaches the threshold.
 
     ``ledger_row`` (#530) is the usage-ledger insert for the provider call
     (``app.ai.ledger.usage_insert``). It is executed on the same session just
@@ -493,17 +741,25 @@ async def release(
     est = reservation.est_cost_micros
     cost = settlement.cost_micros if settlement is not None else 0
     settled: list[tuple[int, int, int] | None] = []
+    recorded: list[int] = []
     attempts = 0
+    decide = zero_result is not None and reservation.enhanced
 
     async def settle_spend() -> None:
         settled.clear()
+        recorded.clear()
         if est or cost:
             settled.append(await breaker.settle(db, reservation.day, est, cost))
+        if decide:
+            count = await record_zero_result(db, reservation, zero_result.ledger_id)
+            if count is not None:
+                recorded.append(count)
 
     async def settle_after_lease() -> None:
         # The lease delete commits on its own here, then the spend. If the
         # spend then fails, the estimate stays reserved (fails safe).
         settled.clear()
+        recorded.clear()
         if await release_lease(db, reservation.user_id, reservation.lease_id):
             await settle_spend()
             await db.commit()
@@ -519,7 +775,7 @@ async def release(
         inserted = True
         if ledger_row is not None:
             result = await db.execute(ledger_row)
-            if est or cost:
+            if est or cost or decide:
                 # ON CONFLICT (call_id) DO NOTHING RETURNING call_id: no row
                 # back means an earlier attempt already committed this call's
                 # row, and with it the spend settle and the lease delete (a
@@ -529,6 +785,7 @@ async def release(
             await settle_spend()
         else:
             settled.clear()
+            recorded.clear()
         await release_lease(db, reservation.user_id, reservation.lease_id)
 
     if ledger_row is None:
@@ -546,6 +803,19 @@ async def release(
             outcome = await _give_back(db, "lease release", settle_after_lease)
     if outcome == GIVE_BACK_DONE and settlement is not None and settled:
         await _alert(db, reservation, settlement, settled[0])
+    if (
+        outcome == GIVE_BACK_DONE
+        and recorded
+        and recorded[0] == reservation.zero_result_threshold
+    ):
+        # The per-user lease serialises a user's settles, so only the row
+        # that brings the count to exactly the threshold sends it.
+        send_zero_result_warning(
+            count=recorded[0],
+            threshold=reservation.zero_result_threshold,
+            window_hours=reservation.zero_result_window_hours,
+            action=reservation.zero_result_action,
+        )
 
 
 async def _alert(
@@ -582,22 +852,30 @@ async def _alert(
 
 
 async def _refund_window(
-    db: AsyncSession, reservation: Reservation, window_kind: str, start: date
+    db: AsyncSession,
+    reservation: Reservation,
+    window_kind: str,
+    start: date,
+    feature: str | None = None,
 ) -> None:
+    feature = feature or reservation.feature
     await _give_back(
         db,
         f"{window_kind} refund",
-        lambda: refund_unit(
-            db, reservation.user_id, reservation.feature, window_kind, start
-        ),
+        lambda: refund_unit(db, reservation.user_id, feature, window_kind, start),
     )
 
 
 async def refund(db: AsyncSession, reservation: Reservation) -> None:
-    """Give back the daily and monthly units (provider unavailable or never
-    reached). Never raises; does not release the lease (call :func:`release`)."""
+    """Give back the daily and monthly units, and the enhanced month unit of
+    an enhanced reservation (provider unavailable or never reached). Never
+    raises; does not release the lease (call :func:`release`)."""
     await _refund_window(db, reservation, WINDOW_DAY, reservation.day)
     await _refund_window(db, reservation, WINDOW_MONTH, reservation.month)
+    if reservation.enhanced:
+        await _refund_window(
+            db, reservation, WINDOW_MONTH, reservation.month, ENHANCED_QUOTA_FEATURE
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -614,9 +892,10 @@ async def reserve(
     ai: AISettings,
     est_cost_micros: int,
     now: datetime | None = None,
+    enhanced: bool = False,
 ) -> Reservation:
     """Check the allowances and take the cost estimate, the lease, a daily
-    and a monthly unit.
+    and a monthly unit, and for ``enhanced`` an enhanced month unit (#533).
 
     ``est_cost_micros`` is the gateway feature's
     ``FeatureSpec.est_cost_ceiling_micros`` (server-side registry value).
@@ -627,6 +906,9 @@ async def reserve(
     must :func:`release` it after the provider call.
     """
     tier = await entitlements.tier_for(db, user)
+    if enhanced and tier is not Tier.PREMIUM:
+        # Before anything is taken (#533).
+        raise EnhancedRequiresPremium("enhanced_requires_premium")
     allowance = allowance_for(ai, tier)
     today = utc_today(now)
     month = month_start(today)
@@ -673,10 +955,24 @@ async def reserve(
         allowance=allowance,
         est_cost_micros=est_cost_micros,
         ceiling_micros=ceiling,
+        enhanced=enhanced,
+        enhanced_allowance=ai.enhanced_monthly_allowance(tier.value),
+        zero_result_threshold=ai.zero_result_threshold,
+        zero_result_window_hours=ai.zero_result_window_hours,
+        zero_result_action=ai.zero_result_action,
     )
 
-    daily_taken = monthly_taken = False
+    daily_taken = monthly_taken = enhanced_taken = False
     try:
+        if enhanced and reservation.zero_result_action == ZERO_RESULT_ACTION_THROTTLE:
+            retry_after = await zero_result_throttle(
+                db,
+                user.id,
+                reservation.zero_result_threshold,
+                reservation.zero_result_window_hours,
+            )
+            if retry_after is not None:
+                raise EnhancedThrottled(retry_after)
         if (
             await reserve_unit(db, user.id, feature, WINDOW_DAY, today, allowance.daily)
             is None
@@ -694,6 +990,27 @@ async def reserve(
                 limit=allowance.monthly, used=used, period_end=period_end(today)
             )
         monthly_taken = True
+        if enhanced:
+            if (
+                await reserve_unit(
+                    db,
+                    user.id,
+                    ENHANCED_QUOTA_FEATURE,
+                    WINDOW_MONTH,
+                    month,
+                    reservation.enhanced_allowance,
+                )
+                is None
+            ):
+                used = await units_used(
+                    db, user.id, ENHANCED_QUOTA_FEATURE, WINDOW_MONTH, month
+                )
+                raise EnhancedLimitReached(
+                    limit=reservation.enhanced_allowance,
+                    used=used,
+                    period_end=period_end(today),
+                )
+            enhanced_taken = True
         # The upserts above are unbounded, and the lease aged while they ran.
         # Restart its clock so the whole timeout_s + 30 s covers the provider
         # call, and stop if a stall let it expire and another request take it.
@@ -701,6 +1018,10 @@ async def reserve(
             raise ScanInProgress("scan_in_progress")
     except BaseException:
         # Includes CancelledError: give back what was taken, then propagate.
+        if enhanced_taken:
+            await _refund_window(
+                db, reservation, WINDOW_MONTH, month, ENHANCED_QUOTA_FEATURE
+            )
         if monthly_taken:
             await _refund_window(db, reservation, WINDOW_MONTH, month)
         if daily_taken:
@@ -723,6 +1044,10 @@ class Usage:
     used_month: int
     monthly_limit: int
     period_end: date
+    # Enhanced scans this UTC month and the enhanced allowance (0 for every
+    # tier but Premium, #533).
+    enhanced_used_month: int = 0
+    enhanced_monthly_limit: int = 0
 
 
 async def usage_for(
@@ -738,26 +1063,51 @@ async def usage_for(
     today = utc_today(now)
     month = month_start(today)
     result = await db.execute(
-        select(AIQuota.window_kind, AIQuota.units_used).where(
+        select(AIQuota.feature, AIQuota.window_kind, AIQuota.units_used).where(
             AIQuota.user_id == user.id,
-            AIQuota.feature == feature,
             or_(
-                and_(AIQuota.window_kind == WINDOW_DAY, AIQuota.window_start == today),
                 and_(
+                    AIQuota.feature == feature,
+                    AIQuota.window_kind == WINDOW_DAY,
+                    AIQuota.window_start == today,
+                ),
+                and_(
+                    AIQuota.feature.in_((feature, ENHANCED_QUOTA_FEATURE)),
                     AIQuota.window_kind == WINDOW_MONTH,
                     AIQuota.window_start == month,
                 ),
             ),
         )
     )
-    used = {kind: int(n) for kind, n in result.all()}
+    used = {(feat, kind): int(n) for feat, kind, n in result.all()}
     return Usage(
-        used_today=used.get(WINDOW_DAY, 0),
+        used_today=used.get((feature, WINDOW_DAY), 0),
         daily_limit=allowance.daily,
-        used_month=used.get(WINDOW_MONTH, 0),
+        used_month=used.get((feature, WINDOW_MONTH), 0),
         monthly_limit=allowance.monthly,
         period_end=period_end(today),
+        enhanced_used_month=used.get((ENHANCED_QUOTA_FEATURE, WINDOW_MONTH), 0),
+        enhanced_monthly_limit=ai.enhanced_monthly_allowance(tier.value),
     )
+
+
+async def enhanced_remaining(db: AsyncSession, reservation: Reservation) -> int | None:
+    """The user's remaining enhanced allowance this month after the scan
+    (#533): ``None`` for every tier but Premium. Ends its read
+    transaction."""
+    if reservation.tier is not Tier.PREMIUM:
+        return None
+    try:
+        used = await units_used(
+            db,
+            reservation.user_id,
+            ENHANCED_QUOTA_FEATURE,
+            WINDOW_MONTH,
+            reservation.month,
+        )
+    finally:
+        await db.commit()
+    return max(0, reservation.enhanced_allowance - used)
 
 
 # ---------------------------------------------------------------------------
@@ -812,3 +1162,25 @@ async def purge_old_quota(db: AsyncSession, today: date | None = None) -> int:
     deleted = await _purge_kind(db, WINDOW_DAY, day_cutoff)
     deleted += await _purge_kind(db, WINDOW_MONTH, month_cutoff)
     return deleted
+
+
+async def purge_old_zero_results(db: AsyncSession, now: datetime | None = None) -> int:
+    """Delete ``ai_enhanced_zero_results`` rows older than 30 days in bounded
+    batches; return the count."""
+    cutoff = (now or utc_now()) - timedelta(days=ZERO_RESULT_RETENTION_DAYS)
+    total = 0
+    for _ in range(PURGE_MAX_BATCHES):
+        batch = (
+            select(AIEnhancedZeroResult.id)
+            .where(AIEnhancedZeroResult.created_at < cutoff)
+            .limit(PURGE_BATCH_SIZE)
+        )
+        result = await db.execute(
+            delete(AIEnhancedZeroResult).where(AIEnhancedZeroResult.id.in_(batch))
+        )
+        await db.commit()
+        deleted = result.rowcount or 0
+        total += deleted
+        if deleted < PURGE_BATCH_SIZE:
+            break
+    return total

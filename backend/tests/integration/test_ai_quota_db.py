@@ -27,7 +27,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from app.ai import quota
+from app.ai import entitlements, quota
+from app.ai.entitlements import Tier
 from app.ai.providers.base import ProviderResult
 from app.ai.settings import AISettings
 from app.api import scan as scan_api
@@ -41,6 +42,7 @@ pytestmark = pytest.mark.integration
 
 # Every scan, standard or enhanced, reserves under this one key (OD-1).
 FEATURE = quota.SCAN_QUOTA_FEATURE
+PREMIUM = Tier.PREMIUM  # enhanced scans are Premium-only (#533)
 EST = 10_000  # a scan.standard-sized cost estimate (#531)
 # Another feature's counter (the column allows later AI features their own).
 OTHER_FEATURE = "other.feature"
@@ -624,7 +626,8 @@ class TestScanEndpoint:
     ):
         """A lease release that fails rolls the request session back (which
         expires the loaded user); the rest of the request must not touch the
-        expired user, and the credit is still spent."""
+        expired user, and the enhanced unit is still charged (#533: books were
+        found)."""
         factory, make_user = sessions
         user_id = await make_user()
         real_release = quota.release_lease
@@ -645,12 +648,13 @@ class TestScanEndpoint:
             patch("app.api.scan.DeduplicationService") as dedup,
             patch("app.api.scan._dedupe_enriched", lambda books: books),
             patch("app.api.scan.ScanResponse", lambda **kw: kw),
+            patch.object(entitlements, "tier_for", AsyncMock(return_value=PREMIUM)),
+            patch.object(settings, "scan_premium_enhanced_monthly_limit", 7),
         ):
             enrich.return_value.enrich = AsyncMock(return_value=[book])
             dedup.return_value.check = AsyncMock(return_value=[book])
             async with factory() as db:
                 user = await db.get(User, user_id)
-                credits_before = user.enhanced_scan_credits
                 resp = await scan_api.scan.__wrapped__(
                     request=MagicMock(),
                     file=_upload(),
@@ -660,7 +664,7 @@ class TestScanEndpoint:
                     enhanced=True,
                 )
         assert len(calls) == 2  # retried after the rollback
-        assert resp["enhanced_scan_credits"] == credits_before - 1
+        assert resp["enhanced_scans_remaining"] == 6
         assert dedup.return_value.check.await_args.args[1] == str(user_id)
         assert await _lease(factory, user_id) is None
 
@@ -668,16 +672,19 @@ class TestScanEndpoint:
         self, sessions, downstream
     ):
         """OD-1: 3 standard + 2 enhanced scans use a daily limit of 5; the 6th
-        scan of either kind is refused before the provider."""
+        scan of either kind is refused before the provider. (#533: enhanced
+        scans are Premium-only, so the user is Premium; they also take an
+        enhanced unit, under their own key.)"""
         factory, make_user = sessions
         user_id = await make_user()
         today = quota.utc_today()
         provider = _CountingProvider(delay=0)
         with (
             provider.patch(),
-            patch.object(settings, "scan_free_daily_limit", 5),
-            patch.object(settings, "scan_free_monthly_limit", 100),
-            patch.object(settings, "enhanced_scan_free_credits", 10),
+            patch.object(settings, "scan_premium_daily_limit", 5),
+            patch.object(settings, "scan_premium_monthly_limit", 100),
+            patch.object(settings, "scan_premium_enhanced_monthly_limit", 10),
+            patch.object(entitlements, "tier_for", AsyncMock(return_value=PREMIUM)),
         ):
             for enhanced in (False, False, False, True, True):
                 await _call_scan(factory, user_id, enhanced=enhanced)
@@ -697,7 +704,7 @@ class TestScanEndpoint:
                     select(AIQuota.feature).where(AIQuota.user_id == user_id)
                 )
             ).scalars()
-            assert set(features) == {FEATURE}
+            assert set(features) == {FEATURE, quota.ENHANCED_QUOTA_FEATURE}
 
     async def test_release_timeout_mid_query_leaves_session_usable(
         self, sessions, downstream

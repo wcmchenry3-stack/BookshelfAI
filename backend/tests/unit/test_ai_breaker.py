@@ -729,8 +729,12 @@ class TestScanEndpoint:
 
         with patch.object(breaker, "reserve", spy):
             client.post("/scan", files=_file())
-            client.post("/scan", files=_file(), data={"enhanced": "true"})
-        assert seen == [(STANDARD_EST, True), (ENHANCED_EST, True)]
+            # Enhanced scans are Premium-only (#533); Premium is not gated.
+            with patch.object(
+                entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM)
+            ):
+                client.post("/scan", files=_file(), data={"enhanced": "true"})
+        assert seen == [(STANDARD_EST, True), (ENHANCED_EST, False)]
 
     def test_answered_call_settles_its_priced_cost(self, client, store, provider):
         provider.return_value.identify = AsyncMock(
