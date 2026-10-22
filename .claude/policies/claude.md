@@ -101,6 +101,11 @@ concatenation or kept in non-code files (JSON, YAML, env), or SDK use in non-Pyt
 text match. The runtime `ALLOWED_MODELS` validation (settings load and registry build) is the real
 gate for model IDs; this check is a second line of defence.
 
+The budget check (8) covers `HTTPException`-style calls with a literal `detail`; `JSONResponse`,
+custom exception handlers and f-string or variable details are not seen. For `**request`
+splats, check 4 resolves the dict bound to the name in the same file (a dict literal, `dict(...)`,
+or the return value of a same-file function); anything it cannot resolve fails closed.
+
 ## Auto-Fix Guidance
 
 - **Model pinning**: Replace a moving alias or unlisted ID with an ID from `ALLOWED_MODELS["anthropic"]`. Do not invent IDs and do not edit the allowlist to make a check pass; that is an owner decision.
