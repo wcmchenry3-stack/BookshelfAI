@@ -101,16 +101,17 @@ def usage_insert(
     """
     if status not in USAGE_STATUSES:
         raise ValueError(f"unknown usage status {status!r}")
-    cost = cost_micros(
-        model,
-        price_version,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cache_read_tokens=cache_read_tokens,
-        cache_write_tokens=cache_write_tokens,
-    )
     if status == STATUS_CACHE_HIT:
-        cost = 0  # nothing was billed
+        cost = 0  # nothing was billed; never price (the model may be retired)
+    else:
+        cost = cost_micros(
+            model,
+            price_version,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
     return (
         insert(AIUsage)
         .values(

@@ -116,6 +116,19 @@ class TestUsageInsert:
         )
         assert (params["status"], params["cost_micros"]) == ("cache_hit", 0)
 
+    def test_cache_hit_with_an_unpriced_model_costs_zero(self):
+        params = _params(
+            ledger.usage_insert(
+                call_id=CALL_ID,
+                user_id=USER.id,
+                feature="scan.standard",
+                model="retired-model-not-in-price-table",
+                status="cache_hit",
+                **USAGE,
+            )
+        )
+        assert (params["status"], params["cost_micros"]) == ("cache_hit", 0)
+
     def test_unknown_status_rejected(self):
         with pytest.raises(ValueError):
             ledger.usage_insert(

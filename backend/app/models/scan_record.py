@@ -20,7 +20,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
 # JSONB on Postgres, plain JSON elsewhere so the model still loads on SQLite.
-_JSON = JSON().with_variant(JSONB(), "postgresql")
+# ``none_as_null`` makes Python ``None`` a SQL NULL (the default would store
+# JSON ``null``, which ``IS NOT NULL`` and ck_scan_records_steps treat as a value).
+_JSON = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
 
 
 class ScanRecord(Base):

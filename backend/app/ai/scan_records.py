@@ -57,7 +57,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -250,6 +250,9 @@ async def lookup(
     )
 
 
+ENHANCED_FEATURE = "scan.enhanced"
+
+
 async def save_ai_step(
     db: AsyncSession,
     *,
@@ -264,7 +267,10 @@ async def save_ai_step(
 ) -> datetime:
     """Upsert the AI step (clearing any enrichment), then evict the user's
     oldest rows beyond ``max_per_user`` (at most :data:`EVICT_BATCH_SIZE`);
-    one commit. Returns the step's ``created_at``, which
+    one commit. An existing enhanced record is never replaced by a standard
+    one (a concurrent standard scan of the same new photo that commits last);
+    the later enrichment save for that standard scan then matches nothing,
+    because the row's ``created_at`` differs. Returns the step's ``created_at``, which
     :func:`save_enrichment_step` matches on. Idempotent by (user,
     fingerprint)."""
     created = now or utc_now()
@@ -285,6 +291,10 @@ async def save_ai_step(
     stmt = insert(ScanRecord).values(**values)
     stmt = stmt.on_conflict_do_update(
         constraint="uq_scan_records_user_fingerprint",
+        where=or_(
+            ScanRecord.feature != ENHANCED_FEATURE,
+            stmt.excluded.feature == ENHANCED_FEATURE,
+        ),
         set_={
             key: stmt.excluded[key]
             for key in (

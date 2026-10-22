@@ -539,13 +539,22 @@ def _fp(n: int) -> str:
     return f"{n:064x}"
 
 
-async def _save(factory, user_id, n=0, *, now=None, max_per_user=500, model="m"):
+async def _save(
+    factory,
+    user_id,
+    n=0,
+    *,
+    now=None,
+    max_per_user=500,
+    model="m",
+    feature="scan.standard",
+):
     async with factory() as db:
         return await scan_records.save_ai_step(
             db,
             user_id=user_id,
             fingerprint=_fp(n),
-            feature="scan.standard",
+            feature=feature,
             tier="free",
             model=model,
             candidates=[DUNE],
@@ -608,16 +617,30 @@ class TestModule:
     async def test_cap_evicts_oldest_first(self, sessions):
         factory, make_user = sessions
         user_id, other = await make_user(), await make_user()
-        await _save(factory, other, 0)
         now = scan_records.utc_now()
         for n in range(5):
             await _save(
                 factory, user_id, n, now=now + timedelta(seconds=n), max_per_user=3
             )
+        # The other user's rows are NEWER than every row of this user, so an
+        # eviction that ignored the user would delete this user's rows.
+        for n in range(4):
+            await _save(
+                factory,
+                other,
+                n,
+                now=now + timedelta(minutes=5, seconds=n),
+                max_per_user=3,
+            )
+        await _save(
+            factory, user_id, 9, now=now + timedelta(seconds=10), max_per_user=3
+        )
         remaining = [r.fingerprint for r in await _rows(factory, user_id)]
-        assert remaining == [_fp(2), _fp(3), _fp(4)]
-        # Another user's rows are never evicted.
-        assert len(await _rows(factory, other)) == 1
+        assert sorted(remaining) == sorted([_fp(3), _fp(4), _fp(9)])
+        # The other user keeps exactly its own cap, untouched by this user's saves.
+        assert sorted(r.fingerprint for r in await _rows(factory, other)) == sorted(
+            [_fp(1), _fp(2), _fp(3)]
+        )
 
     async def test_lookup_filters_on_the_user(self, sessions):
         factory, make_user = sessions
@@ -719,6 +742,95 @@ class TestModule:
             )
             with pytest.raises(IntegrityError):
                 await db.commit()
+
+    async def test_ai_step_stores_sql_null_enrichment(self, sessions):
+        factory, make_user = sessions
+        user_id = await make_user()
+        await _save(factory, user_id, 13)
+        async with factory() as db:
+            is_null = await db.scalar(
+                select(ScanRecord.enrichment.is_(None)).where(
+                    ScanRecord.user_id == user_id
+                )
+            )
+        assert is_null is True
+
+    async def test_enrich_done_with_null_enrichment_violates_the_check(self, sessions):
+        factory, make_user = sessions
+        user_id = await make_user()
+        async with factory() as db:
+            db.add(
+                ScanRecord(
+                    user_id=user_id,
+                    fingerprint=_fp(14),
+                    feature="scan.standard",
+                    tier="free",
+                    model="m",
+                    candidates=[],
+                    ai_done=True,
+                    enrich_done=True,
+                    enrichment=None,
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await db.commit()
+
+    async def test_standard_never_replaces_enhanced(self, sessions):
+        factory, make_user = sessions
+        user_id = await make_user()
+        now = scan_records.utc_now()
+        enhanced_at = await _save(
+            factory, user_id, 15, now=now, feature="scan.enhanced", model="big"
+        )
+        standard_at = await _save(
+            factory, user_id, 15, now=now + timedelta(seconds=1), model="small"
+        )
+        (row,) = await _rows(factory, user_id)
+        assert row.feature == "scan.enhanced" and row.model == "big"
+        assert row.created_at == enhanced_at
+        # The standard scan's enrichment save does not land on the enhanced row.
+        async with factory() as db:
+            assert not await scan_records.save_enrichment_step(
+                db,
+                user_id=user_id,
+                fingerprint=_fp(15),
+                ai_created_at=standard_at,
+                books=[BOOK],
+            )
+        (row,) = await _rows(factory, user_id)
+        assert not row.enrich_done and row.enrichment is None
+
+    async def test_enhanced_replaces_standard_and_same_replaces_same(self, sessions):
+        factory, make_user = sessions
+        user_id = await make_user()
+        now = scan_records.utc_now()
+        await _save(factory, user_id, 16, now=now, model="small")
+        await _save(
+            factory,
+            user_id,
+            16,
+            now=now + timedelta(seconds=1),
+            feature="scan.enhanced",
+            model="big",
+        )
+        (row,) = await _rows(factory, user_id)
+        assert row.feature == "scan.enhanced" and row.model == "big"
+        await _save(
+            factory,
+            user_id,
+            16,
+            now=now + timedelta(seconds=2),
+            feature="scan.enhanced",
+            model="big2",
+        )
+        (row,) = await _rows(factory, user_id)
+        assert row.model == "big2"
+        await _save(factory, user_id, 17, now=now, model="a")
+        await _save(factory, user_id, 17, now=now + timedelta(seconds=1), model="b")
+        models = [
+            r.model for r in await _rows(factory, user_id) if r.fingerprint == _fp(17)
+        ]
+        assert models == ["b"]
 
     async def test_deleting_the_user_removes_the_records(self, sessions):
         factory, make_user = sessions
