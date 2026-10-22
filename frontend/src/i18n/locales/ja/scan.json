@@ -35,5 +35,6 @@
   "dailyLimit": "1日の上限に達しました。スキャンはUTCの午前0時にリセットされます（お住まいの地域では {{time}}）。",
   "stillProcessing": "処理中です。しばらくしてからもう一度お試しください。",
   "scanPaused": "スキャンは一時停止中です。しばらくしてからもう一度お試しください。",
-  "dismissNotice": "閉じる"
+  "dismissNotice": "閉じる",
+  "tryAgainNotice": "もう一度試す"
 }

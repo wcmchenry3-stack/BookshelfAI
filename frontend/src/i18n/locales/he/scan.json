@@ -37,5 +37,6 @@
   "dailyLimit": "הגעת למגבלה היומית. הסריקה תתחדש בחצות UTC ({{time}} לפי השעון שלך).",
   "stillProcessing": "עדיין בעיבוד. נסה שוב בעוד רגע.",
   "scanPaused": "הסריקה מושהית. נסה שוב מאוחר יותר.",
-  "dismissNotice": "סגור"
+  "dismissNotice": "סגור",
+  "tryAgainNotice": "נסה שוב"
 }

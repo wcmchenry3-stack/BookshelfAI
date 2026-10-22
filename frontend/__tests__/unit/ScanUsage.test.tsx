@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import ScanScreen from '../../app/(tabs)/scan';
 import SettingsScreen from '../../app/(tabs)/settings';
@@ -8,15 +8,19 @@ const mockGet = jest.fn();
 jest.mock('../../lib/api', () => ({ api: { get: (...a: unknown[]) => mockGet(...a) } }));
 
 let mockNotice: unknown = null;
+const mockRetryScan = jest.fn();
+const mockDismiss = jest.fn();
+let mockRefreshKey = 0;
 jest.mock('../../hooks/useScanJobs', () => ({
   useScanJobs: () => ({
     jobs: [],
     pendingCount: 0,
     isQueueFull: false,
     startScan: jest.fn(),
+    retryScan: mockRetryScan,
     scanNotice: mockNotice,
-    dismissScanNotice: jest.fn(),
-    usageRefreshKey: 0,
+    dismissScanNotice: mockDismiss,
+    usageRefreshKey: mockRefreshKey,
   }),
 }));
 
@@ -43,6 +47,7 @@ const USAGE = {
 beforeEach(() => {
   jest.resetAllMocks();
   mockNotice = null;
+  mockRefreshKey = 0;
   mockConnected = true;
 });
 
@@ -123,5 +128,44 @@ describe('settings usage row', () => {
     const { queryByTestId } = await render(<SettingsScreen />);
     await act(async () => {});
     expect(queryByTestId('settings-scan-usage')).toBeNull();
+  });
+});
+
+describe('notice actions and refresh', () => {
+  it('Try again retries the refused job and dismisses the notice', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    mockNotice = { kind: 'paused', jobId: 'job-7' };
+    const { findByText } = await render(<ScanScreen />);
+    fireEvent.press(await findByText('Try again'));
+    expect(mockDismiss).toHaveBeenCalled();
+    expect(mockRetryScan).toHaveBeenCalledWith('job-7');
+  });
+
+  it('no Try again without a job id, Dismiss still shown', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    mockNotice = { kind: 'paused' };
+    const { findByText, queryByText } = await render(<ScanScreen />);
+    expect(await findByText('Dismiss')).toBeTruthy();
+    expect(queryByText('Try again')).toBeNull();
+  });
+
+  it('keeps the last usage when a refetch fails', async () => {
+    mockGet.mockResolvedValueOnce({ data: USAGE });
+    const view = await render(<SettingsScreen />);
+    expect(await view.findByText('3 of 5 scans used this month')).toBeTruthy();
+    mockGet.mockRejectedValueOnce(new Error('blip'));
+    mockRefreshKey = 1;
+    await view.rerender(<SettingsScreen />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+    expect(view.getByText('3 of 5 scans used this month')).toBeTruthy();
+  });
+
+  it('settings refetches when the usage refresh key changes', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    const view = await render(<SettingsScreen />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+    mockRefreshKey = 1;
+    await view.rerender(<SettingsScreen />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
   });
 });

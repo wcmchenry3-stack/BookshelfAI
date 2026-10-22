@@ -25,8 +25,9 @@ function isScanUsage(v: unknown): v is ScanUsage {
 }
 
 /**
- * Current user's scan usage, or null while loading, offline, or if the request
- * fails (callers hide the counter then; failure is deliberately silent).
+ * Current user's scan usage, or null while offline or before the first
+ * successful load (callers hide the counter then). A failed refetch keeps the
+ * previous value; failure is deliberately silent.
  * Bump `refreshKey` to refetch, e.g. after a scan completes.
  */
 export function useScanUsage(refreshKey = 0): ScanUsage | null {
@@ -39,10 +40,10 @@ export function useScanUsage(refreshKey = 0): ScanUsage | null {
     api
       .get('/scan/usage')
       .then((res) => {
-        if (!cancelled) setUsage(isScanUsage(res?.data) ? res.data : null);
+        if (!cancelled && isScanUsage(res?.data)) setUsage(res.data);
       })
       .catch(() => {
-        if (!cancelled) setUsage(null);
+        // Transient failure: keep showing the last known value.
       });
     return () => {
       cancelled = true;

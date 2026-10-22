@@ -2,13 +2,15 @@ import { View, Text, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
+import { useScanJobs } from '../../hooks/useScanJobs';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation('settings');
-  const usage = useScanUsage();
+  const { usageRefreshKey } = useScanJobs();
+  const usage = useScanUsage(usageRefreshKey ?? 0);
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <Text style={{ color: theme.colors.text, marginBottom: theme.spacing.md }}>

@@ -11,8 +11,10 @@ jest.mock('../../lib/api', () => ({
 }));
 
 const mockSaveJobs = jest.fn();
+const mockLoadJobs = jest.fn();
+let mockNetListener: ((s: { isConnected: boolean }) => void) | null = null;
 jest.mock('../../lib/scanJobStorage', () => ({
-  loadJobs: () => Promise.resolve([]),
+  loadJobs: () => mockLoadJobs(),
   saveJobs: (...a: unknown[]) => mockSaveJobs(...a),
   clearJobs: jest.fn(),
   sweepOrphanedScanFiles: () => Promise.resolve(0),
@@ -23,7 +25,10 @@ jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: {
     fetch: () => Promise.resolve({ isConnected: true }),
-    addEventListener: () => () => {},
+    addEventListener: (cb: (s: { isConnected: boolean }) => void) => {
+      mockNetListener = cb;
+      return () => {};
+    },
   },
 }));
 
@@ -60,6 +65,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   mockUuid = 0;
   mockSaveJobs.mockResolvedValue(undefined);
+  mockLoadJobs.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -79,6 +85,7 @@ describe('scan refusals', () => {
       kind: 'monthly_limit',
       limit: 5,
       periodEnd: '2026-11-01',
+      jobId: result.current.jobs[0].id,
     });
     expect(result.current.jobs[0].status).toBe('failed');
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -91,6 +98,8 @@ describe('scan refusals', () => {
       await result.current.startScan('image', 'file:///a.jpg');
     });
     expect(result.current.scanNotice?.kind).toBe('daily_limit');
+    const n = result.current.scanNotice as { resetsAt: number };
+    expect(Math.abs(n.resetsAt - (Date.now() + 3_600_000))).toBeLessThan(5000);
   });
 
   it.each(['scan_disabled', 'scan_capacity', 'ai_unavailable', 'scan_unavailable'])(
@@ -101,7 +110,10 @@ describe('scan refusals', () => {
       await act(async () => {
         await result.current.startScan('image', 'file:///a.jpg');
       });
-      expect(result.current.scanNotice).toEqual({ kind: 'paused' });
+      expect(result.current.scanNotice).toEqual({
+        kind: 'paused',
+        jobId: result.current.jobs[0].id,
+      });
     }
   );
 
@@ -187,7 +199,125 @@ describe('429 scan_in_progress', () => {
     });
     // 1 initial attempt + 3 retries, then give up.
     expect(mockPost).toHaveBeenCalledTimes(4);
-    expect(result.current.scanNotice).toEqual({ kind: 'still_processing' });
+    expect(result.current.scanNotice).toEqual({
+      kind: 'still_processing',
+      jobId: result.current.jobs[0].id,
+    });
     expect(result.current.jobs[0].status).toBe('failed');
+  });
+});
+
+describe('refusal follow-ups', () => {
+  it('bumps usage after a generic 500 from /scan, not after a network error', async () => {
+    const { result } = await setup();
+    const k0 = result.current.usageRefreshKey;
+    mockPost.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    const k1 = result.current.usageRefreshKey;
+    expect(k1).toBeGreaterThan(k0);
+    mockPost.mockRejectedValueOnce({ message: 'Network Error', response: undefined });
+    await act(async () => {
+      await result.current.startScan('image', 'file:///b.jpg');
+    });
+    expect(result.current.usageRefreshKey).toBe(k1);
+  });
+
+  it('does not bump usage for paused refusals', async () => {
+    const { result } = await setup();
+    const k0 = result.current.usageRefreshKey;
+    mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    expect(result.current.usageRefreshKey).toBe(k0);
+  });
+
+  it('the notice carries the refused job id so it can be retried', async () => {
+    const { result } = await setup();
+    mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    const jobId = result.current.jobs[0].id;
+    expect((result.current.scanNotice as { jobId?: string }).jobId).toBe(jobId);
+    mockPost.mockResolvedValueOnce(OK);
+    await act(async () => {
+      await result.current.retryScan(jobId);
+    });
+    expect(result.current.jobs[0].status).toBe('complete');
+  });
+
+  it('a refused enhanced re-scan restores earlier results silently and shows the notice', async () => {
+    const { result } = await setup();
+    mockPost.mockResolvedValueOnce(OK);
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    mockPost.mockRejectedValueOnce(refusal(402, 'scan_limit_reached', { limit: 5 }));
+    await act(async () => {
+      await result.current.requestEnhancedScan(result.current.jobs[0].id);
+    });
+    expect(result.current.jobs[0]).toEqual(
+      expect.objectContaining({ status: 'complete', enhanced: false })
+    );
+    expect(result.current.jobs[0].results).toHaveLength(1);
+    expect(result.current.reviewingJob?.id).toBe(result.current.jobs[0].id);
+    expect(result.current.scanNotice?.kind).toBe('monthly_limit');
+    // Restored jobs are not retryable from the notice.
+    expect(result.current.scanNotice?.jobId).toBeUndefined();
+  });
+
+  it('daily limit without Retry-After resets at the next UTC midnight', async () => {
+    const { result } = await setup();
+    mockPost.mockRejectedValueOnce(refusal(429, 'daily_scan_limit'));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    const n = result.current.scanNotice as { resetsAt: number };
+    const d = new Date();
+    expect(n.resetsAt).toBe(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1));
+  });
+
+  it('waits the 2 s default when scan_in_progress has no Retry-After header', async () => {
+    const { result } = await setup();
+    jest.useFakeTimers();
+    mockPost.mockRejectedValueOnce(refusal(429, 'scan_in_progress')).mockResolvedValueOnce(OK);
+    let started: Promise<void> | void;
+    await act(async () => {
+      started = result.current.startScan('image', 'file:///a.jpg');
+      await jest.advanceTimersByTimeAsync(1999);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1);
+      await started;
+    });
+    expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops draining on a monthly limit and leaves the rest queued', async () => {
+    const queued = [1, 2, 3].map((i) => ({
+      id: `q-${i}`,
+      type: 'image' as const,
+      status: 'queued' as const,
+      createdAt: i,
+      imageUri: `file:///q${i}.jpg`,
+      retryCount: 0,
+    }));
+    mockLoadJobs.mockResolvedValue(queued);
+    mockPost.mockRejectedValue(refusal(402, 'scan_limit_reached', { limit: 5 }));
+    const { result } = await setup();
+    jest.useFakeTimers();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      // Well past the 2 s delay between drained jobs.
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    expect(result.current.scanNotice?.kind).toBe('monthly_limit');
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    const statuses = result.current.jobs.map((j) => j.status).sort();
+    expect(statuses).toEqual(['failed', 'queued', 'queued']);
   });
 });

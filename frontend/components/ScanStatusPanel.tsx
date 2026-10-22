@@ -18,6 +18,8 @@ interface Props {
   usage: ScanUsage | null;
   notice: ScanNotice | null;
   onDismissNotice: () => void;
+  /** Present when the refused scan can be retried; shows "Try again". */
+  onRetryNotice?: () => void;
 }
 
 /**
@@ -26,7 +28,7 @@ interface Props {
  * renders only when it has data, so an offline or failed usage request just
  * hides the counter.
  */
-export function ScanStatusPanel({ usage, notice, onDismissNotice }: Props) {
+export function ScanStatusPanel({ usage, notice, onDismissNotice, onRetryNotice }: Props) {
   const { theme } = useTheme();
   const { t, i18n } = useTranslation('scan');
   if (!usage && !notice) return null;
@@ -43,16 +45,30 @@ export function ScanStatusPanel({ usage, notice, onDismissNotice }: Props) {
           <Text style={[styles.noticeText, { color: theme.colors.onSurface }]}>
             {scanNoticeMessage(notice, t, i18n.language)}
           </Text>
-          <Pressable
-            onPress={onDismissNotice}
-            style={styles.dismiss}
-            accessibilityRole="button"
-            accessibilityLabel={t('dismissNotice')}
-          >
-            <Text style={[styles.dismissText, { color: theme.colors.primary }]}>
-              {t('dismissNotice')}
-            </Text>
-          </Pressable>
+          <View style={styles.actions}>
+            {onRetryNotice ? (
+              <Pressable
+                onPress={onRetryNotice}
+                style={styles.dismiss}
+                accessibilityRole="button"
+                accessibilityLabel={t('tryAgainNotice')}
+              >
+                <Text style={[styles.dismissText, { color: theme.colors.primary }]}>
+                  {t('tryAgainNotice')}
+                </Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={onDismissNotice}
+              style={styles.dismiss}
+              accessibilityRole="button"
+              accessibilityLabel={t('dismissNotice')}
+            >
+              <Text style={[styles.dismissText, { color: theme.colors.primary }]}>
+                {t('dismissNotice')}
+              </Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
       {usage ? (
@@ -84,6 +100,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   noticeText: { fontSize: 14, fontWeight: '500', textAlign: 'center' },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 16 },
   dismiss: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   dismissText: { fontSize: 14, fontWeight: '600' },
   usageText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },

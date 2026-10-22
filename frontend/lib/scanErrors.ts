@@ -26,11 +26,15 @@ export type ScanUiState =
   | { kind: 'generic' };
 
 /** What the scan screen shows. `in_progress` becomes `still_processing` once retries run out. */
-export type ScanNotice =
+export type ScanNotice = (
   | { kind: 'monthly_limit'; limit?: number; periodEnd?: string }
   | { kind: 'daily_limit'; resetsAt: number }
   | { kind: 'still_processing' }
-  | { kind: 'paused' };
+  | { kind: 'paused' }
+) & {
+  /** The refused job, when it can be retried from the notice ("Try again"). */
+  jobId?: string;
+};
 
 /** Silent retries for 429 scan_in_progress before showing "Still processing". */
 export const MAX_IN_PROGRESS_RETRIES = 3;

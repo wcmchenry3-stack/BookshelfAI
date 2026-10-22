@@ -77,7 +77,8 @@ Every user has a monthly and a daily scan allowance (standard and enhanced scans
 - **Scan already running (429 `scan_in_progress`):** the app waits `Retry-After` (default 2 s, capped at 10 s) and retries silently, up to 3 times. If it is still busy: "Still processing. Please try again in a moment." (3 retries is about 6 s, long enough to ride out a normal overlap without leaving the user waiting on a stuck lease.)
 - **Scanning off (503 `scan_disabled`, `enhanced_scan_disabled`, `scan_capacity`, `ai_unavailable`, `scan_unavailable`):** "Scanning is paused. Please try again later."
 - 402 `no_enhanced_credits` is unchanged (enhanced re-scan falls back to the standard results).
-- Offline capture and the upload queue are unchanged; a refused scan is marked failed (not queued) so it is not retried automatically.
+- **Try again:** the notice for a refused scan (monthly, daily, paused, still processing) has a "Try again" button next to "Dismiss". The user decides when to retry, so the photo is not lost. The button is not shown when a refused enhanced re-scan has put the earlier results back on screen.
+- Offline capture and the upload queue are unchanged, except that a monthly limit, daily limit or paused service stops the queue drain: the refused scan is marked failed (retry it with "Try again") and the rest stay queued for later.
 
 ### Auth flow — Google SSO → rotating refresh tokens
 

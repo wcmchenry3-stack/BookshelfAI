@@ -59,5 +59,6 @@
   "dailyLimit": "Daily limit reached. Scanning resets at midnight UTC ({{time}} your time).",
   "stillProcessing": "Still processing. Please try again in a moment.",
   "scanPaused": "Scanning is paused. Please try again later.",
-  "dismissNotice": "Dismiss"
+  "dismissNotice": "Dismiss",
+  "tryAgainNotice": "Try again"
 }

@@ -35,5 +35,6 @@
   "dailyLimit": "일일 한도에 도달했습니다. 스캔은 UTC 자정에 초기화됩니다(현지 시간 {{time}}).",
   "stillProcessing": "아직 처리 중입니다. 잠시 후 다시 시도해 주세요.",
   "scanPaused": "스캔이 일시 중지되었습니다. 나중에 다시 시도해 주세요.",
-  "dismissNotice": "닫기"
+  "dismissNotice": "닫기",
+  "tryAgainNotice": "다시 시도"
 }

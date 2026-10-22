@@ -35,5 +35,6 @@
   "dailyLimit": "已达每日上限。扫描将在 UTC 午夜重置（您的当地时间 {{time}}）。",
   "stillProcessing": "仍在处理中，请稍后再试。",
   "scanPaused": "扫描已暂停，请稍后再试。",
-  "dismissNotice": "关闭"
+  "dismissNotice": "关闭",
+  "tryAgainNotice": "重试"
 }

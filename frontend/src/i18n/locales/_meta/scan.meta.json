@@ -199,5 +199,10 @@
     "description": "Button that dismisses the scan notice card",
     "tone": "neutral",
     "characterLimit": 12
+  },
+  "tryAgainNotice": {
+    "description": "Button on the scan notice card that retries the refused scan",
+    "tone": "neutral",
+    "characterLimit": 20
   }
 }

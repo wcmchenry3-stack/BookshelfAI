@@ -11,7 +11,6 @@ import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
   MAX_IN_PROGRESS_RETRIES,
-  scanNoticeMessage,
   toScanNotice,
   type ScanNotice,
   type ScanUiState,
@@ -84,14 +83,22 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [enhancedCredits, setEnhancedCredits] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const [usageRefreshKey, setUsageRefreshKey] = useState(0);
+  // Keep jobs in a ref so callbacks can read the latest state synchronously.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
   const drainingRef = useRef(false);
+  // Set when a scan is refused for a reason that applies to every queued job.
+  const stopDrainRef = useRef(false);
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
   // Set when the initial load fails, so the persist effect below doesn't
   // immediately overwrite storage with the empty `jobs` state it starts
   // with — we don't know what was actually stored. Consumed on first fire.
   const skipNextPersistRef = useRef(false);
   const { showBanner } = useBanner();
-  const { t, i18n } = useTranslation('scan');
+  const { t } = useTranslation('scan');
 
   const dismissScanNotice = useCallback(() => setScanNotice(null), []);
   const bumpUsage = useCallback(() => setUsageRefreshKey((k) => k + 1), []);
@@ -148,17 +155,19 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const drainQueue = useCallback(async () => {
     drainingRef.current = true;
     try {
-      // Read the latest jobs from state via a callback to avoid stale closures.
-      let queuedJobs: ScanJob[] = [];
-      setJobs((prev) => {
-        queuedJobs = prev.filter((j) => j.status === 'queued' || j.status === 'pending');
-        return prev;
-      });
+      // Read the latest jobs from the ref: a setJobs updater is run lazily by
+      // React, so it can't be used to read state synchronously.
+      const queuedJobs = jobsRef.current.filter(
+        (j) => j.status === 'queued' || j.status === 'pending'
+      );
 
+      stopDrainRef.current = false;
       for (const job of queuedJobs) {
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) break;
         await executeScanRef.current(job);
+        // Monthly/daily limit or scanning paused: leave the rest queued.
+        if (stopDrainRef.current) break;
         // Delay between jobs to avoid API burst.
         if (queuedJobs.indexOf(job) < queuedJobs.length - 1) {
           await new Promise((r) => setTimeout(r, QUEUE_DRAIN_DELAY));
@@ -179,12 +188,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
-
-  // Keep jobs in a ref so callbacks can read the latest state synchronously.
-  const jobsRef = useRef(jobs);
-  useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
 
   const pendingCount = useMemo(() => jobs.filter(isPendingUpload).length, [jobs]);
   const isQueueFull = pendingCount >= MAX_QUEUE_SIZE;
@@ -402,12 +405,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     function restorePriorResults(
       job: ScanJob,
       updates: Partial<ScanJob>,
-      message: string,
+      message: string | null,
       type: 'info' | 'error'
     ) {
       updateJob(job.id, { status: 'complete', error: undefined, ...updates });
       setReviewingJobId(job.id);
-      showBanner({ message, type, duration: 6000 });
+      if (message) showBanner({ message, type, duration: 6000 });
     }
 
     // A refusal from POST /scan (limit, busy, paused). Not a failure worth a
@@ -416,8 +419,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     function handleScanRefusal(job: ScanJob, state: ScanUiState) {
       const notice = toScanNotice(state, Date.now(), true);
       if (!notice) return;
-      setScanNotice(notice);
-      if (state.kind !== 'paused' && state.kind !== 'in_progress') bumpUsage();
+      // Limits and "paused" apply to every queued job, so stop draining.
+      if (state.kind !== 'in_progress') stopDrainRef.current = true;
       Sentry.addBreadcrumb({
         category: 'scan',
         message: `Scan refused: ${state.kind}`,
@@ -425,15 +428,15 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         data: { jobId: job.id },
       });
       // A refused enhanced re-scan must not strand the standard scan's books.
+      // The notice card speaks, so no banner with the same text.
       if (job.enhanced && job.results?.length) {
-        restorePriorResults(
-          job,
-          { enhanced: false },
-          scanNoticeMessage(notice, t, i18n.language),
-          'info'
-        );
+        setScanNotice(notice);
+        restorePriorResults(job, { enhanced: false }, null, 'info');
         return;
       }
+      // Remember the job so the notice can offer "Try again" instead of
+      // stranding the photo.
+      setScanNotice({ ...notice, jobId: job.id });
       updateJob(job.id, { status: 'failed', error: state.kind });
     }
 
@@ -569,6 +572,18 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         const uiState =
           job.type === 'image' ? classifyScanError(err) : { kind: 'generic' as const };
 
+        // The server answered, so a scan may have been counted (or refunded):
+        // refresh the counters. Not for paused/in_progress (nothing reserved),
+        // and not for network errors, which returned above.
+        if (
+          job.type === 'image' &&
+          (err as { response?: unknown } | null)?.response != null &&
+          uiState.kind !== 'paused' &&
+          uiState.kind !== 'in_progress'
+        ) {
+          bumpUsage();
+        }
+
         if (
           uiState.kind === 'monthly_limit' ||
           uiState.kind === 'daily_limit' ||
@@ -613,16 +628,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         });
       }
     };
-  }, [
-    showBanner,
-    t,
-    i18n.language,
-    bumpUsage,
-    retryScan,
-    queueForLater,
-    requestEnhancedScan,
-    enhancedCredits,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showBanner, t, bumpUsage, retryScan, queueForLater, requestEnhancedScan, enhancedCredits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reviewingJob = useMemo(
     () => (reviewingJobId ? (jobs.find((j) => j.id === reviewingJobId) ?? null) : null),

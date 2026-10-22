@@ -36,5 +36,6 @@
   "dailyLimit": "Tageslimit erreicht. Das Scannen wird um Mitternacht UTC zurückgesetzt ({{time}} Ortszeit).",
   "stillProcessing": "Wird noch verarbeitet. Bitte versuche es gleich noch einmal.",
   "scanPaused": "Das Scannen ist pausiert. Bitte versuche es später erneut.",
-  "dismissNotice": "Schließen"
+  "dismissNotice": "Schließen",
+  "tryAgainNotice": "Erneut versuchen"
 }

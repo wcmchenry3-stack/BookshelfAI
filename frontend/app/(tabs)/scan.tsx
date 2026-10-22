@@ -20,8 +20,15 @@ export default function ScanScreen() {
   // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
   const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
   const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
-  const { startScan, isQueueFull, pendingCount, scanNotice, dismissScanNotice, usageRefreshKey } =
-    useScanJobs();
+  const {
+    startScan,
+    retryScan,
+    isQueueFull,
+    pendingCount,
+    scanNotice,
+    dismissScanNotice,
+    usageRefreshKey,
+  } = useScanJobs();
   const usage = useScanUsage(usageRefreshKey ?? 0);
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
@@ -218,6 +225,15 @@ export default function ScanScreen() {
       usage={usage}
       notice={scanNotice ?? null}
       onDismissNotice={dismissScanNotice ?? (() => {})}
+      onRetryNotice={
+        scanNotice?.jobId && retryScan
+          ? () => {
+              const jobId = scanNotice.jobId as string;
+              dismissScanNotice?.();
+              retryScan(jobId);
+            }
+          : undefined
+      }
     />
   );
 

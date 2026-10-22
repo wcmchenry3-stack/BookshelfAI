@@ -37,5 +37,6 @@
   "dailyLimit": "Limite quotidienne atteinte. La numérisation reprend à minuit UTC ({{time}}, heure locale).",
   "stillProcessing": "Traitement en cours. Veuillez réessayer dans un instant.",
   "scanPaused": "La numérisation est en pause. Veuillez réessayer plus tard.",
-  "dismissNotice": "Fermer"
+  "dismissNotice": "Fermer",
+  "tryAgainNotice": "Réessayer"
 }

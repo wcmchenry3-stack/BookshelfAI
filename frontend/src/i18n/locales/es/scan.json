@@ -37,5 +37,6 @@
   "dailyLimit": "Límite diario alcanzado. El escaneo se restablece a medianoche UTC ({{time}} en tu hora).",
   "stillProcessing": "Todavía se está procesando. Inténtalo de nuevo en un momento.",
   "scanPaused": "El escaneo está en pausa. Inténtalo de nuevo más tarde.",
-  "dismissNotice": "Cerrar"
+  "dismissNotice": "Cerrar",
+  "tryAgainNotice": "Intentar de nuevo"
 }

@@ -36,5 +36,6 @@
   "dailyLimit": "Daglimiet bereikt. Scannen wordt om middernacht UTC hersteld ({{time}} jouw tijd).",
   "stillProcessing": "Nog bezig met verwerken. Probeer het zo meteen opnieuw.",
   "scanPaused": "Scannen is gepauzeerd. Probeer het later opnieuw.",
-  "dismissNotice": "Sluiten"
+  "dismissNotice": "Sluiten",
+  "tryAgainNotice": "Opnieuw proberen"
 }
