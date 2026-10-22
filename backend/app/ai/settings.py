@@ -38,22 +38,21 @@ key                         type     meaning
                                      ``throttle`` (enhanced scans refused, 429
                                      ``enhanced_throttled``, until the window
                                      clears)
-``cache.enabled``           bool     false switches off the per-user result
-                                     cache (#534): no lookup, no store
-``cache.max_rows_per_user`` int      1..10,000 cached results per user; the
-                                     oldest are evicted first
-``cache.ttl_days``          int      1..30 days a cached result is served
-``cache.max_hits_per_day``  int      0..1,000 cache hits served per user per
-                                     UTC day; past it a re-upload takes the
-                                     normal path (0: hits never served)
+``scan_records.enabled``    bool     false switches off scan records
+                                     (#585): no lookup, no save; every scan
+                                     takes the normal (charged) path
+``scan_records.``           int      1..30 days a scan record is kept and
+``retention_days``                   served; older ones are purged daily
+``scan_records.``           int      1..10,000 scan records per user; the
+``max_per_user``                     oldest are evicted first
 ==========================  =======  =========================================
 
 Enhanced scans are Premium-only (#533): non-Premium tiers have no enhanced
 allowance key and are refused (403 ``enhanced_requires_premium``) before any
 reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
-code defaults (3, 24, ``charge``), not from the env, as are the four
-``cache.*`` keys (``cache.enabled`` ``true``, ``cache.max_rows_per_user``
-500, ``cache.ttl_days`` 30, ``cache.max_hits_per_day`` 3).
+code defaults (3, 24, ``charge``), not from the env, as are the three
+``scan_records.*`` keys (``enabled`` ``true``, ``retention_days`` 30,
+``max_per_user`` 500).
 
 The ``quota.*`` allowances are per tier and shared by standard and enhanced
 scans (one ``ai_quota`` counter per user and window, under
@@ -179,18 +178,16 @@ ZERO_RESULT_ACTIONS = (ZERO_RESULT_ACTION_CHARGE, ZERO_RESULT_ACTION_THROTTLE)
 DEFAULT_ZERO_RESULT_THRESHOLD = 3
 DEFAULT_ZERO_RESULT_WINDOW_HOURS = 24
 DEFAULT_ZERO_RESULT_ACTION = ZERO_RESULT_ACTION_CHARGE
-# Result cache (#534): per-user, keyed by the normalised-image SHA-256.
-CACHE_ENABLED_KEY = "cache.enabled"
-CACHE_MAX_ROWS_PER_USER_KEY = "cache.max_rows_per_user"
-CACHE_TTL_DAYS_KEY = "cache.ttl_days"
-CACHE_MAX_HITS_PER_DAY_KEY = "cache.max_hits_per_day"
-CACHE_MAX_HITS_PER_DAY_BOUNDS = (0, 1_000)
-DEFAULT_CACHE_MAX_HITS_PER_DAY = 3
-CACHE_MAX_ROWS_PER_USER_BOUNDS = (1, 10_000)
-CACHE_TTL_DAYS_BOUNDS = (1, 30)
-DEFAULT_CACHE_ENABLED = True
-DEFAULT_CACHE_MAX_ROWS_PER_USER = 500
-DEFAULT_CACHE_TTL_DAYS = 30
+# Scan records (#585): per user, keyed by the normalised-image SHA-256.
+SCAN_RECORDS_ENABLED_KEY = "scan_records.enabled"
+SCAN_RECORDS_RETENTION_DAYS_KEY = "scan_records.retention_days"
+SCAN_RECORDS_MAX_PER_USER_KEY = "scan_records.max_per_user"
+# At most 30 days (decision #573), to be revisited with the privacy review.
+SCAN_RECORDS_RETENTION_DAYS_BOUNDS = (1, 30)
+SCAN_RECORDS_MAX_PER_USER_BOUNDS = (1, 10_000)
+DEFAULT_SCAN_RECORDS_ENABLED = True
+DEFAULT_SCAN_RECORDS_RETENTION_DAYS = 30
+DEFAULT_SCAN_RECORDS_MAX_PER_USER = 500
 # Tiers with allowance keys: quota.<tier>.daily / quota.<tier>.monthly. Plain
 # strings (the Tier enum values) so this module stays free of request-side
 # imports; app/ai/quota.py maps a Tier to its keys.
@@ -274,9 +271,8 @@ _free_daily_ceiling = _bounded_int(FREE_DAILY_CEILING_MICROS_BOUNDS)
 _enhanced_monthly_allowance = _bounded_int(ENHANCED_MONTHLY_ALLOWANCE_BOUNDS)
 _zero_result_threshold = _bounded_int(ZERO_RESULT_THRESHOLD_BOUNDS)
 _zero_result_window_hours = _bounded_int(ZERO_RESULT_WINDOW_HOURS_BOUNDS)
-_cache_max_rows_per_user = _bounded_int(CACHE_MAX_ROWS_PER_USER_BOUNDS)
-_cache_ttl_days = _bounded_int(CACHE_TTL_DAYS_BOUNDS)
-_cache_max_hits_per_day = _bounded_int(CACHE_MAX_HITS_PER_DAY_BOUNDS)
+_scan_records_retention_days = _bounded_int(SCAN_RECORDS_RETENTION_DAYS_BOUNDS)
+_scan_records_max_per_user = _bounded_int(SCAN_RECORDS_MAX_PER_USER_BOUNDS)
 
 
 def _zero_result_action(value: Any) -> str:
@@ -396,31 +392,25 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             "(refuse enhanced scans until the window clears) (seed: charge)",
         ),
         SettingDefinition(
-            CACHE_ENABLED_KEY,
+            SCAN_RECORDS_ENABLED_KEY,
             _bool,
-            lambda: DEFAULT_CACHE_ENABLED,
-            "per-user scan result cache on/off; an invalid value disables it "
-            "(seed: code default true)",
+            lambda: DEFAULT_SCAN_RECORDS_ENABLED,
+            "per-user scan records on/off; off, every scan takes the normal "
+            "path; an invalid value disables them (seed: code default true)",
         ),
         SettingDefinition(
-            CACHE_MAX_ROWS_PER_USER_KEY,
-            _cache_max_rows_per_user,
-            lambda: DEFAULT_CACHE_MAX_ROWS_PER_USER,
-            "cached scan results kept per user, oldest evicted first "
+            SCAN_RECORDS_RETENTION_DAYS_KEY,
+            _scan_records_retention_days,
+            lambda: DEFAULT_SCAN_RECORDS_RETENTION_DAYS,
+            "days a scan record is kept and served, then purged "
+            "(seed: code default 30)",
+        ),
+        SettingDefinition(
+            SCAN_RECORDS_MAX_PER_USER_KEY,
+            _scan_records_max_per_user,
+            lambda: DEFAULT_SCAN_RECORDS_MAX_PER_USER,
+            "scan records kept per user, oldest evicted first "
             "(seed: code default 500)",
-        ),
-        SettingDefinition(
-            CACHE_TTL_DAYS_KEY,
-            _cache_ttl_days,
-            lambda: DEFAULT_CACHE_TTL_DAYS,
-            "days a cached scan result is served (seed: code default 30)",
-        ),
-        SettingDefinition(
-            CACHE_MAX_HITS_PER_DAY_KEY,
-            _cache_max_hits_per_day,
-            lambda: DEFAULT_CACHE_MAX_HITS_PER_DAY,
-            "cache hits served per user per UTC day; past it a re-upload "
-            "takes the normal path, 0 serves none (seed: code default 3)",
         ),
     ]
     return MappingProxyType({d.key: d for d in defs})
@@ -583,20 +573,16 @@ class AISettings:
         return self.get(ZERO_RESULT_ACTION_KEY)
 
     @property
-    def cache_enabled(self) -> bool:
-        return self.get(CACHE_ENABLED_KEY)
+    def scan_records_enabled(self) -> bool:
+        return self.get(SCAN_RECORDS_ENABLED_KEY)
 
     @property
-    def cache_max_rows_per_user(self) -> int:
-        return self.get(CACHE_MAX_ROWS_PER_USER_KEY)
+    def scan_records_retention_days(self) -> int:
+        return self.get(SCAN_RECORDS_RETENTION_DAYS_KEY)
 
     @property
-    def cache_ttl_days(self) -> int:
-        return self.get(CACHE_TTL_DAYS_KEY)
-
-    @property
-    def cache_max_hits_per_day(self) -> int:
-        return self.get(CACHE_MAX_HITS_PER_DAY_KEY)
+    def scan_records_max_per_user(self) -> int:
+        return self.get(SCAN_RECORDS_MAX_PER_USER_KEY)
 
     def allowance(self, tier: str) -> tuple[int, int]:
         """``(daily, monthly)`` scans for ``tier`` (``"free"`` or ``"premium"``)."""

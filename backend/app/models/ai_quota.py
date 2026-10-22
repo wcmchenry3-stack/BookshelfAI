@@ -24,11 +24,7 @@ class AIQuota(Base):
 
     ``feature`` is the quota key: every scan, standard or enhanced, counts
     under ``"scan"`` (``app.ai.quota.SCAN_QUOTA_FEATURE``, one shared
-    allowance); ``"scan.enhanced"`` is the Premium enhanced monthly allowance
-    (``ENHANCED_QUOTA_FEATURE``, #533, month rows only); ``"scan.cache_hit"``
-    counts result-cache hits served per user per UTC day
-    (``CACHE_HIT_QUOTA_FEATURE``, #534, day rows only, excluded from the
-    global daily count). Later AI features can have their own keys.
+    allowance); the column lets later AI features have their own.
     ``window_kind`` is ``day`` (``window_start`` = the UTC date) or ``month``
     (``window_start`` = the first day of the UTC calendar month). One small
     row (~70 bytes) per active user, quota key and window. Day rows are purged

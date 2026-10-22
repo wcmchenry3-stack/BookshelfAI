@@ -6,8 +6,6 @@ or override its provider/model within the registry's allow-list. Nothing from
 the client reaches those settings.
 """
 
-import hashlib
-import json
 from dataclasses import dataclass
 
 import anyio
@@ -16,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai import entitlements
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
-from app.ai.providers import anthropic_vision, openai_vision
 from app.ai.providers.anthropic_vision import AnthropicVisionProvider
 from app.ai.providers.base import (
     ProviderOutcome,
@@ -78,42 +75,6 @@ def resolve_spec(feature: str, current: ai_settings.AISettings) -> FeatureSpec:
     switch applied. ``/scan`` uses it to name the model in the usage ledger
     when the call raised and no :class:`AIResult` exists."""
     return current.spec_for(get_feature(feature))
-
-
-# Each adapter's request builder (pure; the same function its ``identify``
-# uses) and hand-bumped PROMPT_VERSION (for parsing changes the request does
-# not show). Module functions, not the provider classes, so tests that patch
-# a class still get real fingerprints.
-_ADAPTERS = {
-    "openai": (openai_vision.build_request, lambda: openai_vision.PROMPT_VERSION),
-    "anthropic": (
-        anthropic_vision.build_request,
-        lambda: anthropic_vision.PROMPT_VERSION,
-    ),
-}
-
-
-def request_fingerprint(spec: FeatureSpec) -> str:
-    """SHA-256 hex of the request shape ``spec`` sends, part of the
-    result-cache key (#534): the provider, the adapter's ``PROMPT_VERSION``
-    and the request it builds with no image (system prompt as rendered with
-    ``scan_max_books``, user text, output schema or response format, effort,
-    ``max_tokens`` and model). Any change to what is sent misses the cache.
-    Raises ``ValueError`` for a provider with no adapter, like
-    :func:`_build_provider`."""
-    try:
-        build, version = _ADAPTERS[spec.provider]
-    except KeyError:
-        raise ValueError(f"no provider adapter for {spec.provider!r}") from None
-    shape = {
-        "provider": spec.provider,
-        "prompt_version": version(),
-        "effort": spec.effort,
-        "max_tokens": spec.max_tokens,
-        "request": build(spec, b""),
-    }
-    encoded = json.dumps(shape, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 async def run_feature(

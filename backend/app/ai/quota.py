@@ -78,8 +78,9 @@ Every other give-back of the enhanced unit (:func:`refund`, a refusal in
 failed attempt committed, and a repeat would take a second unit off, so a
 failure leaves the user charged. Threshold 0: with
 ``charge`` every zero-result enhanced scan is charged (no rows, no warning);
-with ``throttle`` every enhanced scan is refused. A future result-cache hit
-(#534) makes no provider call and must not pass a :class:`ZeroResult`.
+with ``throttle`` every enhanced scan is refused. A repeat served from a
+scan record (#585) makes no provider call and must not pass a
+:class:`ZeroResult`.
 
 Every step commits straight away, on the request's own session: the
 reservation is visible to concurrent requests and the connection goes back to
@@ -147,10 +148,6 @@ SCAN_QUOTA_FEATURE = "scan"
 # The ai_quota counter key for the Premium enhanced monthly allowance (#533),
 # reserved on top of the shared SCAN_QUOTA_FEATURE units.
 ENHANCED_QUOTA_FEATURE = "scan.enhanced"
-# Result-cache hits served per user per UTC day (#534, cache.max_hits_per_day).
-# Day rows only; not an allowance: never counted by the global count cap and
-# not shown by GET /scan/usage.
-CACHE_HIT_QUOTA_FEATURE = "scan.cache_hit"
 # The Sentry tag for the zero-result warning (the gateway feature name).
 ENHANCED_FEATURE_TAG = "scan.enhanced"
 
@@ -480,13 +477,10 @@ async def units_used(
 
 
 async def global_units_today(db: AsyncSession, day: date) -> int:
-    """Units reserved on ``day`` across all users and features, except the
-    result-cache hit counter (#534): a hit is not a provider call."""
+    """Units reserved on ``day`` across all users and features."""
     result = await db.execute(
         select(func.coalesce(func.sum(AIQuota.units_used), 0)).where(
-            AIQuota.window_kind == WINDOW_DAY,
-            AIQuota.window_start == day,
-            AIQuota.feature != CACHE_HIT_QUOTA_FEATURE,
+            AIQuota.window_kind == WINDOW_DAY, AIQuota.window_start == day
         )
     )
     return int(result.scalar_one())
@@ -982,8 +976,8 @@ async def require_enhanced_entitlement(
 ) -> Tier:
     """The user's tier (``entitlements.tier_for``, server-side only); raises
     :class:`EnhancedRequiresPremium` for an enhanced scan by any tier but
-    Premium (#533). Used by :func:`reserve` and by ``/scan`` before a
-    result-cache lookup (#534), so feature gating applies to cache hits too.
+    Premium (#533). Used by :func:`reserve` and by ``/scan`` before a scan
+    record is served (#585), so feature gating applies to repeats too.
     Takes nothing."""
     tier = await entitlements.tier_for(db, user)
     if enhanced and tier is not Tier.PREMIUM:
@@ -1214,26 +1208,6 @@ async def enhanced_remaining(db: AsyncSession, reservation: Reservation) -> int 
     return max(0, reservation.enhanced_allowance - used)
 
 
-async def take_cache_hit(
-    db: AsyncSession, user_id: uuid.UUID, ai: AISettings, now: datetime | None = None
-) -> bool:
-    """Count one result-cache hit for today (UTC) against
-    ``cache.max_hits_per_day`` (#534); False at the cap (or a cap of 0), when
-    nothing changes and the caller takes the normal path. Commits. A commit
-    whose acknowledgement was lost and is retried counts the hit twice,
-    which only makes the cap stricter (more requests take the paid path),
-    never looser."""
-    used = await reserve_unit(
-        db,
-        user_id,
-        CACHE_HIT_QUOTA_FEATURE,
-        WINDOW_DAY,
-        utc_today(now),
-        ai.cache_max_hits_per_day,
-    )
-    return used is not None
-
-
 async def enhanced_remaining_for(
     db: AsyncSession,
     *,
@@ -1243,9 +1217,9 @@ async def enhanced_remaining_for(
     now: datetime | None = None,
 ) -> int | None:
     """The user's remaining enhanced allowance this month with no
-    reservation (a result-cache hit, #534, which takes nothing): ``None`` for
-    every tier but Premium, as :func:`enhanced_remaining`. Ends its read
-    transaction."""
+    reservation (a repeat served from a scan record, #585, which takes
+    nothing): ``None`` for every tier but Premium, as
+    :func:`enhanced_remaining`. Ends its read transaction."""
     if tier is not Tier.PREMIUM:
         return None
     month = month_start(utc_today(now))

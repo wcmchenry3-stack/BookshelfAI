@@ -1,7 +1,6 @@
 import logging
 import uuid
-from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from functools import partial
 
 import anyio
@@ -11,14 +10,13 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
-from app.ai import breaker, cache, ledger, quota
+from app.ai import breaker, ledger, quota, scan_records
 from app.ai.entitlements import Tier
 from app.ai.gateway import (
     AIResult,
     FeatureDisabledError,
     ProviderTimeoutError,
     VisionPayload,
-    request_fingerprint,
     resolve_spec,
     run_feature,
 )
@@ -54,6 +52,8 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB
 READ_CHUNK_BYTES = 64 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+STANDARD_FEATURE = "scan.standard"
+ENHANCED_FEATURE = "scan.enhanced"
 
 # Image normalisation is CPU- and memory-heavy (a 40 MP image decodes to
 # hundreds of MB), so it runs in a worker thread to keep the event loop free,
@@ -235,9 +235,9 @@ async def _require_enhanced_entitlement(
     db: AsyncSession, user: User, enhanced: bool
 ) -> Tier:
     """The user's tier (server-side); 403 ``enhanced_requires_premium`` for
-    an enhanced scan by a non-Premium user (#533). Checked before a
-    result-cache hit is served, so a hit is gated like a miss (#534); takes
-    nothing."""
+    an enhanced scan by a non-Premium user (#533). Checked before a repeat
+    is served from a scan record, so a repeat is gated like a new photo
+    (#585); takes nothing."""
     try:
         return await quota.require_enhanced_entitlement(db, user, enhanced)
     except quota.EnhancedRequiresPremium:
@@ -245,59 +245,24 @@ async def _require_enhanced_entitlement(
 
 
 # ---------------------------------------------------------------------------
-# Result cache (#534)
+# Scan records (#585)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _CacheSlot:
-    """Where this request's result is (or would be) cached. Every part is
-    decided by the server."""
-
-    key: str
-    image_hash: str
-    feature: str
-    model: str
-    prompt_version: str
-
-
-def _cache_slot(
-    user_id: uuid.UUID, image_bytes: bytes, feature: str, ai: AISettings
-) -> _CacheSlot | None:
-    """The cache slot for this request, or None when the cache is off (or
-    the feature is switched off: the gateway then refuses as before). The
-    model is the per-request resolved one (``ai_settings`` provider/model
-    override) and ``prompt_version`` is the gateway's fingerprint of the
-    request shape, so a switch of provider, model, prompt, schema, effort or
-    token cap misses. Never raises."""
-    if not ai.cache_enabled:
-        return None
+def _fingerprint(image_bytes: bytes, ai: AISettings) -> str | None:
+    """The photo's fingerprint (SHA-256 of the normalised bytes), or None
+    when scan records are switched off. Never raises."""
     try:
-        spec = resolve_spec(feature, ai)
-        if not spec.enabled:
+        if not ai.scan_records_enabled:
             return None
-        image_hash = cache.image_sha256(image_bytes)
-        version = request_fingerprint(spec)
-        return _CacheSlot(
-            key=cache.cache_key(
-                user_id=user_id,
-                image_hash=image_hash,
-                feature=spec.name,
-                model=spec.model,
-                prompt_version=version,
-            ),
-            image_hash=image_hash,
-            feature=spec.name,
-            model=spec.model,
-            prompt_version=version,
-        )
-    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
-        logger.warning("scan: result cache key failed (%s)", type(exc).__name__)
+        return scan_records.fingerprint(image_bytes)
+    except Exception as exc:  # noqa: BLE001 - scan records never fail a scan
+        logger.warning("scan: fingerprint failed (%s)", type(exc).__name__)
         return None
 
 
 async def _recover_session(db: AsyncSession, user: User | None = None) -> None:
-    """Roll back after a cache failure and reload ``user`` (a rollback
+    """Roll back after a scan-record failure and reload ``user`` (a rollback
     expires it), so the normal path can continue. Never raises."""
     try:
         await db.rollback()
@@ -305,111 +270,172 @@ async def _recover_session(db: AsyncSession, user: User | None = None) -> None:
             await db.refresh(user)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "scan: session recovery after a cache failure failed (%s)",
+            "scan: session recovery after a scan-record failure failed (%s)",
             type(exc).__name__,
         )
 
 
-async def _cache_lookup(
-    db: AsyncSession, user: User, slot: _CacheSlot | None
-) -> list | None:
-    """The cached candidates, or None (miss, cache off, or any failure:
-    logged without content, then the normal path runs)."""
-    if slot is None:
+async def _record_lookup(
+    db: AsyncSession,
+    user: User,
+    user_id: uuid.UUID,
+    fingerprint: str | None,
+    ai: AISettings,
+) -> scan_records.Record | None:
+    """This user's record for the photo, or None (no record, switched off,
+    or any failure: logged without content, then the normal path runs)."""
+    if fingerprint is None:
         return None
     try:
-        return await cache.lookup(db, key=slot.key, user_id=user.id)
-    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
+        return await scan_records.lookup(
+            db,
+            user_id=user_id,
+            fingerprint=fingerprint,
+            retention_days=ai.scan_records_retention_days,
+        )
+    except Exception as exc:  # noqa: BLE001 - scan records never fail a scan
         logger.warning(
-            "scan: result cache lookup failed (%s); calling the provider",
+            "scan: scan-record lookup failed (%s); taking the normal path",
             type(exc).__name__,
         )
+        scan_records.log_event("lookup_failed", ai_done=False, enrich_done=False)
         await _recover_session(db, user)
         return None
 
 
-async def _cache_store(
+def _record_serves(record: scan_records.Record | None, enhanced: bool) -> bool:
+    """Whether ``record`` answers this request. A standard scan is answered
+    by any record of the photo. An enhanced scan only by one an enhanced
+    scan produced: an enhanced re-scan is how a user gets a better answer
+    for the same photo (decision #573 point 5), so it never gets the
+    standard answer back."""
+    if record is None:
+        return False
+    return not enhanced or record.feature == ENHANCED_FEATURE
+
+
+async def _save_ai_step(
     db: AsyncSession,
-    slot: _CacheSlot | None,
+    *,
+    fingerprint: str | None,
     user_id: uuid.UUID,
+    reservation: quota.Reservation,
     result: AIResult,
     ai: AISettings,
-) -> None:
-    """Cache a provider result: only outcome ``ok`` with at least one book.
-    Never a refusal, a truncated reply or an error (those never reach here),
-    and never an empty list: both adapters return ``ok`` with no books for a
-    reply that was missing, malformed or unparseable, and caching that would
-    pin "no books" for the photo for the whole TTL. Idempotent by key; a
-    failure is logged without content and the scan still returns."""
-    if (
-        slot is None
-        or result.outcome != STATUS_OK
-        or not result.candidates
-        or result.model != slot.model
-        or result.feature != slot.feature
-    ):
-        return
-    try:
-        await cache.store(
-            db,
-            key=slot.key,
-            user_id=user_id,
-            image_hash=slot.image_hash,
-            feature=slot.feature,
-            model=slot.model,
-            prompt_version=slot.prompt_version,
-            candidates=result.candidates,
-            ttl_days=ai.cache_ttl_days,
-            max_rows_per_user=ai.cache_max_rows_per_user,
+) -> datetime | None:
+    """Save the provider's answer as the record's AI step; the step's time,
+    or None when not saved. Only outcome ``ok`` with at least one book is
+    saved: never a refusal, a truncated reply or an error (those never reach
+    here), and not an empty list either: both adapters return ``ok`` with
+    no books for a reply that was missing, malformed or unparseable as well
+    as for a genuine ``{"books": []}``, and cannot tell them apart today
+    (#572), so a no-match is not saved yet. Never raises."""
+    if fingerprint is None:
+        return None
+    if result.outcome != STATUS_OK or not result.candidates:
+        reason = "no_match" if result.outcome == STATUS_OK else result.outcome
+        scan_records.log_event(
+            "not_saved", ai_done=False, enrich_done=False, reason=reason
         )
-    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
-        logger.warning("scan: result cache store failed (%s)", type(exc).__name__)
-        await _recover_session(db)
-
-
-async def _take_cache_hit(
-    db: AsyncSession, user: User, user_id: uuid.UUID, ai: AISettings
-) -> bool:
-    """Count this hit against ``cache.max_hits_per_day`` (#534). False at
-    the cap (or cap 0), or if counting fails: the request is then a miss and
-    takes the normal path (reservation, provider call, store); this cap never
-    refuses a scan. A lost-ack double count only makes the cap stricter."""
+        return None
+    tier = reservation.tier.value if isinstance(reservation.tier, Tier) else "unknown"
     try:
-        return await quota.take_cache_hit(db, user_id, ai)
-    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
-        logger.warning("scan: cache-hit count failed (%s)", type(exc).__name__)
-        await _recover_session(db, user)
+        return await scan_records.save_ai_step(
+            db,
+            user_id=user_id,
+            fingerprint=fingerprint,
+            feature=result.feature,
+            tier=tier,
+            model=result.model,
+            candidates=result.candidates,
+            max_per_user=ai.scan_records_max_per_user,
+        )
+    except Exception as exc:  # noqa: BLE001 - scan records never fail a scan
+        logger.warning("scan: scan-record save failed (%s)", type(exc).__name__)
+        scan_records.log_event("save_failed", ai_done=False, enrich_done=False)
+        await _recover_session(db)
+        return None
+
+
+async def _save_enrichment_step(
+    db: AsyncSession,
+    *,
+    fingerprint: str | None,
+    user_id: uuid.UUID,
+    ai_created_at: datetime | None,
+    books: list[EnrichedBook],
+) -> bool:
+    """Save the finished enrichment on the record; True when saved. Never
+    raises."""
+    if fingerprint is None or ai_created_at is None:
+        return False
+    try:
+        return await scan_records.save_enrichment_step(
+            db,
+            user_id=user_id,
+            fingerprint=fingerprint,
+            ai_created_at=ai_created_at,
+            books=books,
+        )
+    except Exception as exc:  # noqa: BLE001 - scan records never fail a scan
+        logger.warning(
+            "scan: scan-record enrichment save failed (%s)", type(exc).__name__
+        )
+        await _recover_session(db)
         return False
 
 
-async def _serve_cache_hit(
+async def _serve_repeat(
     db: AsyncSession,
     *,
     user_id: uuid.UUID,
     tier: Tier,
+    feature: str,
     enhanced: bool,
-    slot: _CacheSlot,
-    candidates: list,
+    fingerprint: str,
+    record: scan_records.Record,
     ai: AISettings,
 ) -> ScanResponse:
-    """A cache hit: no provider call, no reservation, lease, count-cap unit,
-    cost settle or zero-result row. One ``cache_hit`` ledger row (cost 0),
-    then the usual enrichment, dedup and response; the remaining enhanced
-    allowance is read as it stands (unchanged by the hit)."""
+    """A repeat of a photo with a saved answer: no provider call and nothing
+    taken (no reservation, lease, global count-cap unit, cost settle or
+    zero-result row). One ``cache_hit`` ledger row (cost 0). A finished
+    record is served as saved; one whose enrichment step is missing has
+    only that step redone (and saved when it finishes). The library check
+    always runs; the remaining enhanced allowance is read as it stands."""
     try:
         await ledger.record(
             db,
             call_id=uuid.uuid4(),
             user_id=user_id,
-            feature=slot.feature,
-            model=slot.model,
+            feature=feature,
+            model=record.model,
             status=STATUS_CACHE_HIT,
             request_id=ledger.current_request_id(),
         )
-    except Exception as exc:  # noqa: BLE001 - never fail a hit on the ledger
-        logger.warning("scan: cache-hit ledger row failed (%s)", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 - never fail a repeat on the ledger
+        logger.warning("scan: repeat ledger row failed (%s)", type(exc).__name__)
         await _recover_session(db)
-    books = await _books_for(db, user_id, candidates)
+    if record.books is not None:
+        books = record.books
+        event, enrich_done = "repeat", True
+    else:
+        books, complete = await _enrich(record.candidates)
+        enrich_done = complete and await _save_enrichment_step(
+            db,
+            fingerprint=fingerprint,
+            user_id=user_id,
+            ai_created_at=record.created_at,
+            books=books,
+        )
+        event = "repeat_enriched"
+    books = await _mark_library(db, user_id, books)
+    scan_records.log_event(
+        event,
+        ai_done=True,
+        enrich_done=enrich_done,
+        books=len(books),
+        in_library=sum(1 for b in books if b.already_in_library),
+    )
     try:
         remaining = await quota.enhanced_remaining_for(
             db, user_id=user_id, tier=tier, ai=ai
@@ -419,7 +445,10 @@ async def _serve_cache_hit(
         await _recover_session(db)
         remaining = None
     return ScanResponse(
-        books=books, enhanced=enhanced, enhanced_scans_remaining=remaining
+        books=books,
+        enhanced=enhanced,
+        enhanced_scans_remaining=remaining,
+        repeat=True,
     )
 
 
@@ -441,18 +470,26 @@ async def _release_scan_lease(
     await quota.release(db, reservation, ledger_row, settlement, zero_result)
 
 
-async def _books_for(
-    db: AsyncSession, user_id: uuid.UUID, candidates: list
-) -> list[EnrichedBook]:
-    """Enrich, dedupe and mark the provider's candidates: the books handed
-    back."""
+async def _enrich(candidates: list) -> tuple[list[EnrichedBook], bool]:
+    """Enrich and dedupe the provider's candidates (Open Library / Google
+    Books); also whether every lookup finished (the scan record's
+    enrichment step, #585)."""
     if not candidates:
-        return []
+        return [], True
     enrichment = EnrichmentService()
     enriched = await enrichment.enrich(candidates, limit=settings.scan_max_books)
-    enriched = _dedupe_enriched(enriched)
+    complete = getattr(enrichment, "last_complete", None) is True
+    return _dedupe_enriched(enriched), complete
+
+
+async def _mark_library(
+    db: AsyncSession, user_id: uuid.UUID, books: list[EnrichedBook]
+) -> list[EnrichedBook]:
+    """Flag the books already in the user's library (work-level match)."""
+    if not books:
+        return []
     dedup = DeduplicationService()
-    return await dedup.check(db, str(user_id), enriched)
+    return await dedup.check(db, str(user_id), books)
 
 
 async def _enhanced_remaining(
@@ -637,7 +674,7 @@ async def scan(
     # The client only chooses standard vs enhanced; the gateway's registry
     # (with the ai_settings provider/model override) decides the provider,
     # model, token cap, timeout and image size for that feature.
-    feature = "scan.enhanced" if enhanced else "scan.standard"
+    feature = ENHANCED_FEATURE if enhanced else STANDARD_FEATURE
 
     # Normalise before any credit or quota check, so a bad image never uses a
     # scan: full decode (415 image_undecodable), pixel cap from
@@ -671,30 +708,33 @@ async def scan(
     # (refund or lease release) rolls back, which expires current_user.
     user_id = current_user.id
 
-    # --- Result cache (#534) ---
-    # Per user, keyed by the SHA-256 of the normalised bytes, the feature, the
-    # resolved model and the prompt version. A hit makes no provider call and
-    # takes nothing: no reservation, lease, global count-cap unit, cost
-    # estimate or zero-result row; it writes one cache_hit ledger row (cost
-    # 0). A cache failure is a miss. Feature gating still applies: an
-    # enhanced hit for a non-Premium user (e.g. one who has since left
-    # Premium) gets the same 403 enhanced_requires_premium as a miss, which
-    # quota.reserve refuses before anything is taken. Then the hit is counted
-    # against cache.max_hits_per_day; past the cap it is treated as a miss.
-    slot = _cache_slot(user_id, image_bytes, feature, ai)
-    cached = await _cache_lookup(db, current_user, slot)
-    if cached is not None and slot is not None:
+    # --- Scan records (#585) ---
+    # Looked up before the allowance, per user, by the SHA-256 of the
+    # normalised bytes only (not the prompt or model: old answers stay
+    # valid). A record with a finished AI step answers the request (see
+    # _record_serves): no provider call and nothing taken; the enrichment
+    # step is redone only if it is missing. Feature gating still applies:
+    # an enhanced repeat for a non-Premium user (e.g. one who has since left
+    # Premium) gets the same 403 enhanced_requires_premium as a new photo.
+    # Any scan-record failure takes the normal path.
+    fingerprint = _fingerprint(image_bytes, ai)
+    record = await _record_lookup(db, current_user, user_id, fingerprint, ai)
+    if (
+        fingerprint is not None
+        and record is not None
+        and _record_serves(record, enhanced)
+    ):
         tier = await _require_enhanced_entitlement(db, current_user, enhanced)
-        if await _take_cache_hit(db, current_user, user_id, ai):
-            return await _serve_cache_hit(
-                db,
-                user_id=user_id,
-                tier=tier,
-                enhanced=enhanced,
-                slot=slot,
-                candidates=cached,
-                ai=ai,
-            )
+        return await _serve_repeat(
+            db,
+            user_id=user_id,
+            tier=tier,
+            feature=feature,
+            enhanced=enhanced,
+            fingerprint=fingerprint,
+            record=record,
+            ai=ai,
+        )
 
     reservation = await _reserve_scan_quota(db, current_user, feature, ai, enhanced)
 
@@ -713,8 +753,9 @@ async def scan(
     # The decision is on the provider's candidates, so enrichment stays after
     # the settle (the lease covers only the provider call); enrichment returns
     # a book for every candidate it does not crash on. A provider error,
-    # timeout or unavailability is never a zero-result. A result-cache hit
-    # (#534) returned above: it made no provider call and records none.
+    # timeout or unavailability is never a zero-result. A repeat served from
+    # a scan record (#585) returned above: it made no provider call and
+    # records none.
     #
     # Usage ledger (#530): every outcome of the provider call writes one
     # ai_usage row, committed with the lease release. call_id is generated
@@ -785,10 +826,36 @@ async def scan(
             settlement = spend(status=STATUS_ERROR)
         await _release_scan_lease(db, reservation, ledger_row, settlement, zero_result)
 
-    # After the settle, outside the lease; never fails the scan.
-    await _cache_store(db, slot, user_id, result, ai)
-
-    books = await _books_for(db, user_id, result.candidates)
+    # Scan record (#585), step by step after the settle and outside the
+    # lease: the AI step first, then the enrichment step once every lookup
+    # finished. Never fails the scan.
+    ai_saved_at = await _save_ai_step(
+        db,
+        fingerprint=fingerprint,
+        user_id=user_id,
+        reservation=reservation,
+        result=result,
+        ai=ai,
+    )
+    books, complete = await _enrich(result.candidates)
+    enrich_done = False
+    if ai_saved_at is not None:
+        enrich_done = complete and await _save_enrichment_step(
+            db,
+            fingerprint=fingerprint,
+            user_id=user_id,
+            ai_created_at=ai_saved_at,
+            books=books,
+        )
+    books = await _mark_library(db, user_id, books)
+    if ai_saved_at is not None:
+        scan_records.log_event(
+            "saved",
+            ai_done=True,
+            enrich_done=enrich_done,
+            books=len(books),
+            in_library=sum(1 for b in books if b.already_in_library),
+        )
 
     return ScanResponse(
         books=books,

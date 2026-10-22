@@ -30,11 +30,6 @@ logger = logging.getLogger(__name__)
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
-# Bump whenever SYSTEM_PROMPT (or how this adapter parses the reply) changes:
-# it is part of the result-cache key (#534), so old cached results stop
-# being served. The Claude adapter has its own.
-PROMPT_VERSION = "2026-10-1"
-
 SYSTEM_PROMPT = """You are a book identification assistant.
 You will be shown a photo that may contain one book or many: a single cover, a stack of covers, or a shelf of book spines.
 Identify EVERY distinct book you can read in the photo, up to {max_books} books.
@@ -143,46 +138,6 @@ def _dedupe_key(candidate: BookCandidate) -> tuple[str, str]:
     return (candidate.title.strip().casefold(), candidate.author.strip().casefold())
 
 
-def build_request(
-    spec: FeatureSpec, image_bytes: bytes, max_books: int | None = None
-) -> dict:
-    """The chat-completions payload for one call: every value from the spec
-    and settings. Pure (no I/O), so the gateway can also fingerprint the
-    request shape for the result cache (#534) by building it with no image.
-    ``max_books`` defaults to ``settings.scan_max_books``; ``identify`` passes
-    the value it also parses with, so one call reads the setting once.
-    """
-    b64 = base64.standard_b64encode(image_bytes).decode()
-    if max_books is None:
-        max_books = settings.scan_max_books
-    return {
-        "model": spec.model,
-        "max_tokens": spec.max_tokens,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT.format(max_books=max_books),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        # Spine text is small; "high" detail tiles the image so
-                        # the model can actually read it.
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{b64}",
-                            "detail": "high",
-                        },
-                    },
-                    {"type": "text", "text": "Identify every book in this photo."},
-                ],
-            },
-        ],
-    }
-
-
 class OpenAIVisionProvider:
     def __init__(self, spec: FeatureSpec) -> None:
         if spec.provider != "openai":
@@ -190,8 +145,35 @@ class OpenAIVisionProvider:
         self.spec = spec
 
     async def identify(self, image_bytes: bytes) -> ProviderResult:
+        b64 = base64.standard_b64encode(image_bytes).decode()
         max_books = settings.scan_max_books
-        payload = build_request(self.spec, image_bytes, max_books)
+
+        payload = {
+            "model": self.spec.model,
+            "max_tokens": self.spec.max_tokens,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT.format(max_books=max_books),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            # Spine text is small; "high" detail tiles the image so
+                            # the model can actually read it.
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{b64}",
+                                "detail": "high",
+                            },
+                        },
+                        {"type": "text", "text": "Identify every book in this photo."},
+                    ],
+                },
+            ],
+        }
 
         try:
             async with httpx.AsyncClient(timeout=self.spec.timeout_s) as client:

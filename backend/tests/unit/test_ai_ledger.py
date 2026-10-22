@@ -660,7 +660,7 @@ class TestCleanupTask:
                 token_cleanup, "purge_old_zero_results", AsyncMock(return_value=0)
             ),
             patch.object(
-                token_cleanup, "purge_expired_results", AsyncMock(return_value=0)
+                token_cleanup, "purge_old_scan_records", AsyncMock(return_value=0)
             ),
             patch.object(token_cleanup.asyncio, "sleep", sleeps),
             patch.multiple(token_cleanup, **patches),

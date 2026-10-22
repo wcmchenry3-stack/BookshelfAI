@@ -147,8 +147,9 @@ def downstream():
 
 def _upload() -> StarletteUploadFile:
     return StarletteUploadFile(
-        # A different photo each call: since #534 a re-upload of the same
-        # photo by the same user is a result-cache hit (no provider call).
+        # A different photo each call: since #585 a re-upload of the same
+        # photo by the same user is a repeat served from its scan record (no
+        # provider call).
         file=io.BytesIO(_distinct_jpeg()),
         filename="scan.jpg",
         headers=Headers({"content-type": "image/jpeg"}),

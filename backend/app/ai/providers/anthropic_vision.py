@@ -76,10 +76,6 @@ logger = logging.getLogger(__name__)
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 
 USER_TEXT = "Identify every book in this photo."
-# Bump whenever SYSTEM_PROMPT, USER_TEXT, the output schema or the parsing
-# changes: it is part of the result-cache key (#534), so old cached results
-# stop being served.
-PROMPT_VERSION = "2026-10-1"
 
 MAX_RETRIES = 2
 RETRYABLE_STATUSES = frozenset({429, 500, 503, 529})
@@ -375,53 +371,6 @@ def backoff_delay(attempt: int, retry_after: float | None) -> float:
 # ---------------------------------------------------------------------------
 
 
-def build_request(spec: FeatureSpec, image_bytes: bytes) -> dict[str, Any]:
-    """The ``messages.create`` arguments: all from the spec and settings.
-    Pure (no I/O), so the gateway can also fingerprint the request shape for
-    the result cache (#534) by building it with no image.
-
-    Server-side ``fallbacks`` are deliberately not used: the usage ledger
-    prices each call by ``spec.model``, and a fallback would be billed at
-    another model's rates, so the recorded cost would be wrong.
-    """
-    max_books = settings.scan_max_books
-    b64 = base64.standard_b64encode(image_bytes).decode()
-    return {
-        "model": spec.model,
-        "max_tokens": spec.max_tokens,
-        "system": [
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT.format(max_books=max_books),
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        "output_config": {
-            "effort": spec.effort,
-            "format": {
-                "type": "json_schema",
-                "schema": anthropic.transform_schema(output_schema(max_books)),
-            },
-        },
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": b64,
-                        },
-                    },
-                    {"type": "text", "text": USER_TEXT},
-                ],
-            }
-        ],
-    }
-
-
 class AnthropicVisionProvider:
     def __init__(self, spec: FeatureSpec) -> None:
         if spec.provider != "anthropic":
@@ -429,8 +378,48 @@ class AnthropicVisionProvider:
         self.spec = spec
 
     def request(self, image_bytes: bytes) -> dict[str, Any]:
-        """The ``messages.create`` arguments (:func:`build_request`)."""
-        return build_request(self.spec, image_bytes)
+        """The ``messages.create`` arguments: all from the spec and settings.
+
+        Server-side ``fallbacks`` are deliberately not used: the usage ledger
+        prices each call by ``spec.model``, and a fallback would be billed at
+        another model's rates, so the recorded cost would be wrong.
+        """
+        max_books = settings.scan_max_books
+        b64 = base64.standard_b64encode(image_bytes).decode()
+        return {
+            "model": self.spec.model,
+            "max_tokens": self.spec.max_tokens,
+            "system": [
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT.format(max_books=max_books),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "output_config": {
+                "effort": self.spec.effort,
+                "format": {
+                    "type": "json_schema",
+                    "schema": anthropic.transform_schema(output_schema(max_books)),
+                },
+            },
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": b64,
+                            },
+                        },
+                        {"type": "text", "text": USER_TEXT},
+                    ],
+                }
+            ],
+        }
 
     def _client(self) -> anthropic.AsyncAnthropic:
         return anthropic.AsyncAnthropic(

@@ -117,6 +117,8 @@ class TestScanEndpoint:
             "enhanced": False,
             # #533: replaces enhanced_scan_credits; None for non-Premium.
             "enhanced_scans_remaining": None,
+            # #585: a new photo, not a repeat served from a scan record.
+            "repeat": False,
         }
 
     def test_returns_enriched_candidates(self, client):

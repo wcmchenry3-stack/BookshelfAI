@@ -16,6 +16,10 @@ export interface EnrichedBook {
   subjects: string[];
   confidence: number;
   already_in_library: boolean;
+  /** Same work-level library match as already_in_library, sent by POST /scan
+   * (#585). Optional: GET /books/search responses and older clients' saved
+   * results may not carry it. */
+  in_library?: boolean;
   editions: {
     isbn_13?: string;
     isbn_10?: string;

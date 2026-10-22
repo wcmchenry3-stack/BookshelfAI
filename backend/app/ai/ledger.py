@@ -7,7 +7,7 @@ Writing
 ``app.ai.prices`` at :data:`~app.ai.prices.CURRENT_PRICE_VERSION`. ``/scan``
 hands it to ``quota.release`` so the row is committed in the same transaction
 as the settle (the lease delete). :func:`record` writes a row on its own (for
-callers with no lease, e.g. a future cache hit, #534).
+callers with no lease, e.g. a repeat served from a scan record, #585).
 
 A row holds counts, cost, the feature, model and status, the user id and the
 server-generated request id. Never the prompt, the image, or the model's
@@ -139,7 +139,7 @@ async def record(db: AsyncSession, **fields) -> None:
     """Insert one ledger row (:func:`usage_insert` arguments) and COMMIT.
 
     Warning: this commits the session on its own. It is only for paths with
-    no settle to share a transaction with (e.g. cache hits, #534). A paid
+    no settle to share a transaction with (e.g. repeats served from a scan record, #585). A paid
     provider call must hand :func:`usage_insert`'s statement to
     ``quota.release`` instead, so the row commits with the lease release.
     A ``call_id`` is generated when none is given.

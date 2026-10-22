@@ -1,10 +1,11 @@
-"""Result-cache authority (#534): the cache is per user and every part of the
-key is decided by the server. User B never gets user A's entry for the same
-photo, a non-Premium user never gets an enhanced hit, nothing a client sends
-(form fields, query parameters, headers) changes the key or what is stored,
-and a cache row holds no image bytes and no raw model output.
+"""Scan-record authority (#585): records are per user and keyed by the server.
+User B never gets user A's record for the same photo; a client cannot name a
+fingerprint, a user, a tier, a model or a step (form fields, query
+parameters, headers change nothing); a non-Premium user never gets an
+enhanced repeat; and a stored record holds no image bytes and no raw model
+output.
 
-Run on its own with:  pytest -m security tests/security/test_result_cache_authority.py
+Run on its own with:  pytest -m security tests/security/test_scan_records_authority.py
 """
 
 import base64
@@ -20,7 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from app.ai import cache, entitlements
+from app.ai import entitlements, scan_records
 from app.ai.entitlements import Tier
 from app.ai.providers.base import ProviderResult
 from app.ai.registry import FEATURES
@@ -28,17 +29,18 @@ from app.api import scan as scan_api
 from app.core.config import settings
 from app.core.database import Base
 from app.main import app
-from app.models.ai_result_cache import AIResultCache
 from app.models.ai_usage import AIUsage
+from app.models.scan_record import ScanRecord
 from app.models.user import User
+from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate
-from tests.unit._cache_fake import FakeResultCache
 from tests.unit._quota_fake import FakeQuotaStore
+from tests.unit._scan_records_fake import FakeScanRecords
 
 pytestmark = pytest.mark.security
 
-ALICE = User(id=uuid.UUID("00000000-0000-0000-0000-0000000534a1"), email="a@x.io")
-BOB = User(id=uuid.UUID("00000000-0000-0000-0000-0000000534b2"), email="b@x.io")
+ALICE = User(id=uuid.UUID("00000000-0000-0000-0000-0000000585a1"), email="a@x.io")
+BOB = User(id=uuid.UUID("00000000-0000-0000-0000-0000000585b2"), email="b@x.io")
 DUNE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 
 
@@ -59,10 +61,10 @@ def store():
 
 
 @pytest.fixture
-def fake_cache():
-    c = FakeResultCache()
-    with c.installed():
-        yield c
+def records():
+    r = FakeScanRecords()
+    with r.installed():
+        yield r
 
 
 @pytest.fixture
@@ -94,16 +96,24 @@ def provider():
         patch("app.api.scan.DeduplicationService") as dedup,
         patch("app.api.scan.ledger.record", AsyncMock()),
     ):
+
+        async def _enrich(candidates, limit):
+            enrich.return_value.last_complete = True
+            return [
+                EnrichedBook(title=c.title, author=c.author, confidence=c.confidence)
+                for c in candidates
+            ]
+
         cls.return_value.identify = AsyncMock(return_value=ProviderResult([DUNE]))
-        enrich.return_value.enrich = AsyncMock(return_value=[])
-        dedup.return_value.check = AsyncMock(return_value=[])
+        enrich.return_value.enrich = AsyncMock(side_effect=_enrich)
+        dedup.return_value.check = AsyncMock(side_effect=lambda _d, _u, b: b)
         yield cls
 
 
-def _post(client, data=None, headers=None, params=None):
+def _post(client, data=None, headers=None, params=None, image=_JPEG):
     return client.post(
         "/scan",
-        files={"file": ("scan.jpg", io.BytesIO(_JPEG), "image/jpeg")},
+        files={"file": ("scan.jpg", io.BytesIO(image), "image/jpeg")},
         data=data or {},
         headers=headers or {},
         params=params or {},
@@ -111,42 +121,61 @@ def _post(client, data=None, headers=None, params=None):
 
 
 class TestPerUserScope:
-    def test_user_b_cannot_hit_user_a_entry_with_the_same_photo(
-        self, as_user, store, fake_cache, provider
+    def test_user_b_never_gets_user_a_record_for_the_same_photo(
+        self, as_user, store, records, provider
     ):
-        assert _post(as_user(ALICE)).status_code == 200
-        assert _post(as_user(BOB)).status_code == 200
+        assert _post(as_user(ALICE)).json()["repeat"] is False
+        assert _post(as_user(BOB)).json()["repeat"] is False
         assert provider.return_value.identify.await_count == 2
-        a, b = fake_cache.stores
-        assert a["image_hash"] == b["image_hash"]
-        assert a["key"] != b["key"]
-        assert (a["user_id"], b["user_id"]) == (ALICE.id, BOB.id)
-        # Each now hits only their own entry.
-        _post(as_user(ALICE))
-        _post(as_user(BOB))
+        alice_fp, bob_fp = [fp for (_, fp) in records.rows]
+        assert alice_fp == bob_fp  # same photo, separate records
+        assert {u for (u, _) in records.rows} == {ALICE.id, BOB.id}
+        # Each now repeats only their own record.
+        assert _post(as_user(ALICE)).json()["repeat"] is True
+        assert _post(as_user(BOB)).json()["repeat"] is True
         assert provider.return_value.identify.await_count == 2
-        assert fake_cache.lookups[-2:] == [a["key"], b["key"]]
 
-    def test_forged_user_id_or_key_cannot_reach_another_users_entry(
-        self, as_user, store, fake_cache, provider
+    def test_forged_user_or_fingerprint_cannot_reach_another_users_record(
+        self, as_user, store, records, provider
     ):
         _post(as_user(ALICE))
-        (alice,) = fake_cache.stores
-        forged = {"user_id": str(ALICE.id), "cache_key": alice["key"]}
+        ((_, alice_fp),) = records.rows
+        forged = {"user_id": str(ALICE.id), "fingerprint": alice_fp}
         resp = _post(
             as_user(BOB),
             data=forged,
             params=forged,
-            headers={"X-User-Id": str(ALICE.id), "X-Cache-Key": alice["key"]},
+            headers={"X-User-Id": str(ALICE.id), "X-Fingerprint": alice_fp},
         )
         assert resp.status_code == 200
+        assert resp.json()["repeat"] is False
         assert provider.return_value.identify.await_count == 2
-        assert fake_cache.stores[-1]["user_id"] == BOB.id
+        assert (BOB.id, alice_fp) in records.rows
+
+    def test_client_cannot_name_a_fingerprint_for_another_photo(
+        self, as_user, store, records, provider
+    ):
+        """A forged fingerprint of a photo Alice scanned, sent with a
+        different photo, is ignored: the fingerprint comes from the bytes."""
+        _post(as_user(ALICE))
+        ((_, fp),) = records.rows
+        other = io.BytesIO()
+        Image.new("RGB", (16, 16), (200, 1, 1)).save(other, format="JPEG")
+        resp = _post(
+            as_user(ALICE),
+            data={"fingerprint": fp, "repeat": "true"},
+            params={"fingerprint": fp},
+            headers={"X-Fingerprint": fp},
+            image=other.getvalue(),
+        )
+        assert resp.json()["repeat"] is False
+        assert provider.return_value.identify.await_count == 2
+        assert len(records.rows) == 2
 
 
 class TestEntitlement:
-    def test_non_premium_never_gets_an_enhanced_hit(
-        self, as_user, store, fake_cache, provider, monkeypatch
+    def test_non_premium_never_gets_an_enhanced_repeat(
+        self, as_user, store, records, provider, monkeypatch
     ):
         monkeypatch.setattr(
             entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM)
@@ -167,41 +196,40 @@ class TestEntitlement:
         assert provider.return_value.identify.await_count == 1
 
 
-# Every cache field a client might try to set, as form fields, query
+# Every record field a client might try to set, as form fields, query
 # parameters and headers.
 _FORGED = {
-    "cache_key": "f" * 64,
-    "image_sha256": "e" * 64,
-    "image_hash": "e" * 64,
+    "fingerprint": "f" * 64,
     "user_id": str(BOB.id),
+    "tier": "premium",
     "model": "gpt-4o",
-    "prompt_version": "forged",
     "feature": "scan.enhanced",
-    "cache": "false",
-    "cache.enabled": "false",
-    "ttl_days": "1",
-    "max_rows_per_user": "1",
+    "ai_done": "true",
+    "enrich_done": "true",
+    "repeat": "true",
+    "scan_records.enabled": "false",
+    "retention_days": "1",
+    "max_per_user": "1",
 }
 
 
 class TestForgedFields:
-    def test_forged_fields_change_nothing(self, as_user, store, fake_cache, provider):
+    def test_forged_fields_change_nothing(self, as_user, store, records, provider):
         assert _post(as_user(ALICE)).status_code == 200
-        (honest,) = fake_cache.stores
+        (((user_id, fp), honest),) = records.rows.items()
         headers = {
             f"X-{k.replace('.', '-').replace('_', '-')}": v for k, v in _FORGED.items()
         }
         resp = _post(as_user(ALICE), data=_FORGED, params=_FORGED, headers=headers)
         assert resp.status_code == 200
-        # The forged request looked up the honest key and was a hit.
-        assert fake_cache.lookups == [honest["key"], honest["key"]]
+        # The forged request found the honest record and was a repeat.
+        assert resp.json()["repeat"] is True
         assert provider.return_value.identify.await_count == 1
-        assert honest["user_id"] == ALICE.id
-        assert honest["image_hash"] not in (_FORGED["image_sha256"],)
+        assert list(records.rows) == [(ALICE.id, fp)]
+        assert user_id == ALICE.id and fp != _FORGED["fingerprint"]
         assert honest["model"] == FEATURES["scan.standard"].model
-        assert honest["feature"] == "scan.standard"
-        assert honest["prompt_version"] != "forged"
-        assert (honest["ttl_days"], honest["max_rows_per_user"]) == (30, 500)
+        assert (honest["feature"], honest["tier"]) == ("scan.standard", "free")
+        assert honest["max_per_user"] == 500
 
 
 # ---------------------------------------------------------------------------
@@ -209,33 +237,37 @@ class TestForgedFields:
 # ---------------------------------------------------------------------------
 
 
-def test_columns_are_exactly_the_key_parts_and_the_result():
-    assert {c.name for c in AIResultCache.__table__.columns} == {
-        "cache_key",
+def test_columns_are_exactly_the_record_fields():
+    assert {c.name for c in ScanRecord.__table__.columns} == {
+        "id",
         "user_id",
-        "image_sha256",
+        "fingerprint",
         "feature",
+        "tier",
         "model",
-        "prompt_version",
-        "result",
+        "candidates",
+        "enrichment",
+        "ai_done",
+        "enrich_done",
         "created_at",
-        "expires_at",
+        "updated_at",
     }
 
 
 def test_no_column_can_hold_image_bytes_or_free_text():
-    for column in AIResultCache.__table__.columns:
+    for column in ScanRecord.__table__.columns:
         assert not isinstance(column.type, LargeBinary | Text), column.name
         if isinstance(column.type, String):
             assert column.type.length is not None and column.type.length <= 64
-    assert isinstance(AIResultCache.__table__.c.result.type, JSON)
+    for name in ("candidates", "enrichment"):
+        assert isinstance(ScanRecord.__table__.c[name].type, JSON)
 
 
-def test_serialised_result_holds_only_candidate_fields():
+def test_serialised_candidates_hold_only_candidate_fields():
     item = BookCandidate(
         title="T", author="A", confidence=0.5, isbn_13="9780000000002", isbn_10=None
     )
-    assert cache.serialise([item]) == [
+    assert scan_records.serialise_candidates([item]) == [
         {
             "title": "T",
             "author": "A",
@@ -247,7 +279,7 @@ def test_serialised_result_holds_only_candidate_fields():
 
 
 @pytest.mark.integration
-async def test_stored_row_has_no_image_bytes_and_no_raw_output():
+async def test_stored_record_has_no_image_bytes_and_no_raw_output():
     engine = create_async_engine(settings.async_database_url)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -268,11 +300,17 @@ async def test_stored_row_has_no_image_bytes_and_no_raw_output():
         with (
             patch("app.ai.gateway.OpenAIVisionProvider", provider_cls),
             patch("app.api.scan.EnrichmentService") as enrich,
-            patch("app.api.scan.DeduplicationService") as dedup,
             patch.object(settings, "turnstile_required", False),
         ):
-            enrich.return_value.enrich = AsyncMock(return_value=[])
-            dedup.return_value.check = AsyncMock(return_value=[])
+
+            async def _enrich(candidates, limit):
+                enrich.return_value.last_complete = True
+                return [
+                    EnrichedBook(title=c.title, author=c.author, confidence=0.9)
+                    for c in candidates
+                ]
+
+            enrich.return_value.enrich = AsyncMock(side_effect=_enrich)
             async with factory() as db:
                 user = await db.get(User, uid)
                 await scan_api.scan.__wrapped__(
@@ -289,13 +327,11 @@ async def test_stored_row_has_no_image_bytes_and_no_raw_output():
                 )
         async with factory() as db:
             (row,) = (
-                await db.execute(
-                    select(AIResultCache).where(AIResultCache.user_id == uid)
-                )
+                await db.execute(select(ScanRecord).where(ScanRecord.user_id == uid))
             ).scalars()
         (sent,) = seen
-        assert row.image_sha256 == cache.image_sha256(sent)
-        assert row.result == [
+        assert row.fingerprint == scan_records.fingerprint(sent)
+        assert row.candidates == [
             {
                 "title": "Dune",
                 "author": "Frank Herbert",
@@ -305,7 +341,7 @@ async def test_stored_row_has_no_image_bytes_and_no_raw_output():
             }
         ]
         values = " ".join(
-            str(getattr(row, c.name)) for c in AIResultCache.__table__.columns
+            str(getattr(row, c.name)) for c in ScanRecord.__table__.columns
         )
         for image in (sent, _JPEG):
             assert base64.b64encode(image).decode()[:40] not in values

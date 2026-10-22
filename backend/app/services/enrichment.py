@@ -1,6 +1,7 @@
 """EnrichmentService — merges Open Library + Google Books into EnrichedBook."""
 
 import asyncio
+import contextvars
 import logging
 
 from app.schemas.book import EditionPreview, EnrichedBook
@@ -15,14 +16,47 @@ logger = logging.getLogger(__name__)
 # photo can yield 15 candidates, so cap how many are in flight at once.
 MAX_CONCURRENT_ENRICHMENTS = 5
 
+# Lookup failures (an Open Library or Google Books call that raised) during
+# the current ``enrich`` call. A context variable, so concurrent calls on a
+# shared instance never see each other's failures; the gathered tasks copy
+# the context and so append to the same list.
+_LOOKUP_FAILURES: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "enrichment_lookup_failures", default=None
+)
+
+
+def _note_failure(source: str) -> None:
+    failures = _LOOKUP_FAILURES.get()
+    if failures is not None:
+        failures.append(source)
+
 
 class EnrichmentService:
     def __init__(self) -> None:
         self.ol = OpenLibraryService()
         self.gb = GoogleBooksService()
+        # After ``enrich``: True when every lookup for every candidate
+        # finished (a lookup that found nothing still finished), False when
+        # any Open Library / Google Books call or any candidate failed. Scan
+        # records (#585) only save an enrichment that finished. Meant for a
+        # per-request instance; on a shared one it is the last call's.
+        self.last_complete: bool | None = None
 
     async def enrich(
         self, candidates: list[BookCandidate], limit: int = 3
+    ) -> list[EnrichedBook]:
+        self.last_complete = False
+        failures: list[str] = []
+        token = _LOOKUP_FAILURES.set(failures)
+        try:
+            enriched = await self._enrich_all(candidates, limit)
+        finally:
+            _LOOKUP_FAILURES.reset(token)
+        self.last_complete = not failures and len(enriched) == len(candidates[:limit])
+        return enriched
+
+    async def _enrich_all(
+        self, candidates: list[BookCandidate], limit: int
     ) -> list[EnrichedBook]:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_ENRICHMENTS)
 
@@ -58,9 +92,11 @@ class EnrichmentService:
 
         if isinstance(ol_doc, Exception):
             logger.warning("Open Library error: %s", ol_doc)
+            _note_failure("open_library")
             ol_doc = None
         if isinstance(gb_volume, Exception):
             logger.warning("Google Books error: %s", gb_volume)
+            _note_failure("google_books")
             gb_volume = None
 
         work_id = self.ol.extract_work_id(ol_doc) if ol_doc else None
