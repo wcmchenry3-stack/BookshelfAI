@@ -330,8 +330,8 @@ async def _save_ai_step(
     unparseable reply as ``malformed`` (a 503 that never reaches here), so an
     empty ``ok`` list is a genuine ``{"books": []}``, and a re-upload of that
     photo is a free repeat of the no-match (owner decision on #573). Never a
-    refusal or a truncated reply (logged as ``not_saved``), nor an error.
-    Never raises."""
+    refusal or a truncated reply with books (logged as ``not_saved``; one
+    with no books is ``malformed``), nor an error. Never raises."""
     if fingerprint is None:
         return None
     if result.outcome != STATUS_OK:
@@ -749,7 +749,8 @@ async def scan(
     #
     # A malformed reply (#572: the provider answered HTTP 200, billed, but the
     # reply was missing, not JSON, of the wrong shape or ended on an
-    # unexpected stop reason) is treated like unavailability for the user:
+    # unexpected stop reason, or it was cut off by the token limit before a
+    # single complete book) is treated like unavailability for the user:
     # 503 scan_unavailable and every unit refunded (daily, monthly and the
     # enhanced unit), never a zero-result and never saved as a scan record.
     # Its real token usage is still recorded (ledger status ``malformed``)
@@ -831,10 +832,11 @@ async def scan(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="scan_unavailable",
             )
-        # A refusal (and a truncated reply with no books) is still a
-        # zero-book answer here: refusals are out of scope for #572, see the
-        # comment on #572 about the limits-matrix row
-        # premium/enhanced/provider_refused_below_threshold.
+        # A refusal is still a zero-book answer here: refusals are out of
+        # scope for #572, see the comment on #572 about the limits-matrix row
+        # premium/enhanced/provider_refused_below_threshold. A truncated reply
+        # with no books never gets here: the gateway reports it as
+        # ``malformed`` (owner decision on #572).
         if enhanced and not result.candidates:
             # The provider answered with no books: the settle decides.
             zero_result = quota.ZeroResult(

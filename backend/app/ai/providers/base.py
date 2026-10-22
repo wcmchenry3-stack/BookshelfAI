@@ -10,11 +10,13 @@ from app.services.book_identifier import BookCandidate, ScanUnavailableError
 #
 # ``malformed`` (#572): the provider answered (HTTP 200, billed) but the reply
 # is not a usable answer: no content, not JSON, JSON of the wrong shape, a
-# non-empty book list in which no item validates, or an unexpected stop
-# reason. It is never "no books found": ``/scan`` treats it like the provider
-# being unavailable for the user (503 ``scan_unavailable``, every unit
-# refunded) while the billed cost is still settled. A genuine, well-formed
-# ``{"books": []}`` stays ``ok`` with no candidates.
+# non-empty book list in which every item is structurally broken, or an
+# unexpected stop reason; and, set by the gateway
+# (``app.ai.gateway.reported_outcome``), a reply cut off by the token limit
+# with no complete book. It is never "no books found": ``/scan`` treats it
+# like the provider being unavailable for the user (503 ``scan_unavailable``,
+# every unit refunded) while the billed cost is still settled. A genuine,
+# well-formed ``{"books": []}`` stays ``ok`` with no candidates.
 ProviderOutcome = Literal["ok", "refused", "truncated", "malformed"]
 
 

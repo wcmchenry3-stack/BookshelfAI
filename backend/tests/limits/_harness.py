@@ -157,6 +157,9 @@ OUTCOMES: dict[str, Callable[[], ProviderResult]] = {
     # Answered (HTTP 200, billed) but unusable (#572): missing, not JSON, the
     # wrong shape or an unexpected stop reason.
     "malformed": lambda: no_books(outcome="malformed"),
+    # Cut off by the token limit before a complete book: the gateway reports
+    # it as malformed (#572, owner decision: never charged).
+    "truncated_no_books": lambda: no_books(outcome="truncated"),
 }
 ERRORS: dict[str, Callable[[], BaseException]] = {
     "timeout": lambda: ProviderTimeoutError("slow"),

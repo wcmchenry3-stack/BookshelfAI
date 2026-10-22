@@ -30,8 +30,9 @@ Done:
   of a saved answer is free and is looked up before the allowance)
 - #572 malformed replies: the ``malformed`` provider outcome (503
   ``scan_unavailable``, every unit refunded, the priced cost settled, ledger
-  status ``malformed``), and a genuine no-match saved, so its re-upload is a
-  free repeat (``REPEATS``)
+  status ``malformed``), a reply cut off before any complete book treated
+  the same way (``truncated_no_books``), and a genuine no-match saved, so
+  its re-upload is a free repeat (``REPEATS``)
 
 Rules that do not exist yet get their rows from their own stories:
 
@@ -170,6 +171,12 @@ CASES: list[Case] = [
     # unavailability; the priced cost is settled and the ledger says so.
     Case("free-standard-malformed-refunded_cost_spent", FREE, False,
          "malformed", 503, "scan_unavailable", NOTHING, COST, ledger="malformed"),
+    # A reply cut off before a single complete book is malformed (owner
+    # decision on #572): never charged. Cut off with books stays charged
+    # (free-standard-truncated-charged).
+    Case("free-standard-truncated_no_books-refunded_cost_spent", FREE, False,
+         "truncated_no_books", 503, "scan_unavailable", NOTHING, COST,
+         ledger="malformed"),
     # Any other error after the reservation keeps it (may have been paid).
     Case("free-standard-other_error-kept", FREE, False, "error",
          500, "RuntimeError", CHARGED, ESTIMATE),
@@ -221,6 +228,9 @@ CASES: list[Case] = [
          "timeout", 503, "scan_unavailable", NOTHING, ESTIMATE),
     Case("premium-standard-malformed-refunded_cost_spent", PREMIUM, False,
          "malformed", 503, "scan_unavailable", NOTHING, COST, ledger="malformed"),
+    Case("premium-standard-truncated_no_books-refunded_cost_spent", PREMIUM,
+         False, "truncated_no_books", 503, "scan_unavailable", NOTHING, COST,
+         ledger="malformed"),
     Case("premium-standard-other_error-kept", PREMIUM, False, "error",
          500, "RuntimeError", CHARGED, ESTIMATE),
     Case("premium-standard-daily_limit-refused", PREMIUM, False, None,
@@ -279,6 +289,12 @@ CASES: list[Case] = [
     Case("premium-enhanced-malformed_at_zero_result_threshold-all_refunded",
          PREMIUM, True, "malformed", 503, "scan_unavailable", NOTHING, COST,
          Start(zero_results=3), ledger="malformed"),
+    # Cut off before a complete book (#572): every unit refunded, never a
+    # zero-result. Cut off with books stays charged
+    # (premium-enhanced-truncated_with_books-charged).
+    Case("premium-enhanced-truncated_no_books-all_refunded_cost_spent", PREMIUM,
+         True, "truncated_no_books", 503, "scan_unavailable", NOTHING, COST,
+         ledger="malformed"),
     Case("premium-enhanced-other_error-kept", PREMIUM, True, "error",
          500, "RuntimeError", CHARGED_ENHANCED, ESTIMATE),
     Case("premium-enhanced-enhanced_limit-refused", PREMIUM, True, None,

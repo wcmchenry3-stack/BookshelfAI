@@ -12,11 +12,15 @@ billed usage and the outcome (``ok``, ``refused``, ``truncated`` or
 ``malformed`` (#572): a 200 whose reply is not a usable answer: no message
 content (and no refusal), content that is not JSON, JSON that is not a
 ``{"books": [...]}`` object (a bare list is still accepted, as before), a
-non-empty list in which no item validates (a title and an author that are
-non-empty strings), or an unexpected ``finish_reason`` (anything but
-``stop``, ``length`` or ``content_filter``; a missing one is judged on the
-content alone). A list where at least one item validates is ``ok`` with the
-valid items. A genuine ``{"books": []}`` is ``ok`` with no candidates.
+non-empty list in which every item is structurally broken (not an object, a
+title or author missing or not a string, or a confidence that is not a
+number), or an unexpected ``finish_reason`` (anything but ``stop``,
+``length`` or ``content_filter``; a missing one is judged on the content
+alone). Otherwise the reply is ``ok`` with its well-formed items, kept as
+before #572: an empty author (or title) is still a candidate (a title-only
+lookup). A genuine ``{"books": []}`` is ``ok`` with no candidates. A
+``length`` reply stays ``truncated`` here; with no books the gateway reports
+it as ``malformed``.
 """
 
 import base64
@@ -150,9 +154,27 @@ def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None
     )
 
 
-def _is_text(value: object) -> bool:
-    """A title or author: a string with something in it."""
-    return isinstance(value, str) and bool(value.strip())
+def _candidate(item: object) -> BookCandidate | None:
+    """The candidate for one item, or None when the item is structurally
+    broken (#572): not an object, a title or author missing or not a string
+    (a ``null`` author used to crash the de-duplication), or a confidence
+    that is not a number. Strings are kept as they are, empty ones too."""
+    if not isinstance(item, dict):
+        return None
+    title, author = item.get("title"), item.get("author")
+    if not isinstance(title, str) or not isinstance(author, str):
+        return None
+    try:
+        confidence = float(item.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        return None
+    return BookCandidate(
+        title=title,
+        author=author,
+        confidence=confidence,
+        isbn_13=item.get("isbn_13"),
+        isbn_10=item.get("isbn_10"),
+    )
 
 
 def _dedupe_key(candidate: BookCandidate) -> tuple[str, str]:
@@ -238,8 +260,9 @@ class OpenAIVisionProvider:
             # A refusal is parsed as before (out of scope for #572).
             parsed = self._parse_reply(content, finish_reason, max_books)
             if parsed is None and outcome == "ok":
-                # Missing, non-JSON or schema-invalid content (#572). A
-                # truncated reply stays ``truncated`` (out of scope).
+                # Missing, non-JSON or structurally broken content (#572). A
+                # truncated reply stays ``truncated`` here; with no books the
+                # gateway reports it as ``malformed``.
                 outcome = "malformed"
             candidates = parsed or []
         return ProviderResult(
@@ -262,7 +285,8 @@ class OpenAIVisionProvider:
     ) -> list[BookCandidate] | None:
         """The candidates in the model's reply, or None when the reply is
         malformed (#572): no content, not JSON, the wrong shape, or a
-        non-empty list in which no item validates."""
+        non-empty list in which every item is structurally broken (see
+        :func:`_candidate`)."""
         if content is None:
             # No text to parse (an unexpected body). The response itself is
             # not logged.
@@ -287,34 +311,25 @@ class OpenAIVisionProvider:
 
         candidates: list[BookCandidate] = []
         seen: set[tuple[str, str]] = set()
-        valid = 0
+        broken = 0
         for item in items:
             if len(candidates) >= max_books:
                 break
-            try:
-                title, author = item["title"], item["author"]
-                if not _is_text(title) or not _is_text(author):
-                    continue
-                candidate = BookCandidate(
-                    title=title,
-                    author=author,
-                    confidence=float(item.get("confidence", 0.5)),
-                    isbn_13=item.get("isbn_13"),
-                    isbn_10=item.get("isbn_10"),
-                )
-            except (KeyError, TypeError, ValueError, AttributeError):
+            candidate = _candidate(item)
+            if candidate is None:
+                broken += 1
                 continue
-            valid += 1
             key = _dedupe_key(candidate)
             if key in seen:
                 continue
             seen.add(key)
             candidates.append(candidate)
 
-        if items and not valid and finish_reason != "length":
-            # A list of books none of which is a book: not a "no books" answer.
+        if items and broken == len(items):
+            # A list none of whose items has the requested structure: not a
+            # "no books" answer.
             _log_unparseable(
-                "no valid book in a non-empty list", content, finish_reason
+                "no well-formed item in a non-empty list", content, finish_reason
             )
             return None
         return candidates

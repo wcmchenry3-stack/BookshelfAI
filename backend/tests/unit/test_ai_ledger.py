@@ -409,12 +409,16 @@ def _one(rows):
 
 
 class TestScanRecordsUsage:
-    @pytest.mark.parametrize("outcome", ["ok", "refused", "truncated"])
+    # A truncated reply holds a book: with none it is malformed (#572).
+    @pytest.mark.parametrize(
+        ("outcome", "candidates"),
+        [("ok", []), ("refused", []), ("truncated", [DUNE])],
+    )
     def test_provider_answer_records_its_outcome_and_usage(
-        self, client, store, provider, rows, outcome
+        self, client, store, provider, rows, outcome, candidates
     ):
         provider.return_value.identify = AsyncMock(
-            return_value=ProviderResult([], outcome=outcome, **USAGE)
+            return_value=ProviderResult(candidates, outcome=outcome, **USAGE)
         )
         resp = client.post("/scan", files=_file())
         assert resp.status_code == 200
