@@ -151,12 +151,17 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).
 #
-# OriginAuthMiddleware is innermost: it rejects requests that lack the origin
-# header before routing (so no handler, DB query or rate-limit counter runs),
-# while its 403 still passes back through SecurityHeadersMiddleware.
+# Execution order (outermost → innermost):
+#   TrustedHostMiddleware → RequestSizeLimitMiddleware → OriginAuthMiddleware
+#   → CORSMiddleware → RequestIdMiddleware → SentryContextMiddleware
+#   → SecurityHeadersMiddleware
+#
+# OriginAuthMiddleware must be outer to CORSMiddleware so that OPTIONS preflight
+# requests also reach the origin-auth check (CORSMiddleware short-circuits OPTIONS
+# before inner middleware runs).  Its 403 still passes back through CORS,
+# RequestId, Sentry and SecurityHeaders on the way out.
 # The client IP used for rate limiting is not set by a middleware: the
 # limiter's key function calls app.core.client_ip directly.
-app.add_middleware(OriginAuthMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SentryContextMiddleware)
 app.add_middleware(RequestIdMiddleware)
@@ -167,7 +172,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
 )
-# RequestSizeLimitMiddleware runs before CORS/headers to drop oversized bodies early.
+app.add_middleware(OriginAuthMiddleware)
+# RequestSizeLimitMiddleware runs before CORS/origin-auth to drop oversized bodies early.
 app.add_middleware(RequestSizeLimitMiddleware)
 
 

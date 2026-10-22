@@ -88,19 +88,6 @@ class Settings(BaseSettings):
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 
-    # Scan service — configurable so cost ceilings can be tightened in the
-    # Render dashboard without a redeploy.
-    scan_model: str = "gpt-4o-mini"
-    scan_enhanced_model: str = "gpt-4o"
-    # SCAN_MAX_TOKENS is the per-request token budget sent to OpenAI.  2048 is
-    # enough for a JSON array of 3 book candidates; raise only if the model
-    # truncates valid responses.  Hard cap from OpenAI context: 16384.
-    scan_max_tokens: int = 2048
-    scan_timeout_seconds: int = 45
-    # Number of free enhanced-scan credits per user before the feature requires
-    # a paid tier.  0 disables enhanced scan entirely.
-    enhanced_scan_free_credits: int = 5
-
     # Cloudflare Turnstile — bot protection on /scan.
     # turnstile_required=true (default) means every /scan request must supply a valid
     # cf-turnstile-response token.  If turnstile_secret_key is absent at startup the
