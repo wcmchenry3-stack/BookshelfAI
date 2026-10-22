@@ -38,7 +38,10 @@ from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 pytestmark = pytest.mark.integration
 
-FEATURE = "scan.standard"
+# Every scan, standard or enhanced, reserves under this one key (OD-1).
+FEATURE = quota.SCAN_QUOTA_FEATURE
+# Another feature's counter (the column allows later AI features their own).
+OTHER_FEATURE = "other.feature"
 DAY = date(2026, 10, 21)
 MONTH = date(2026, 10, 1)
 MIGRATION = (
@@ -118,7 +121,7 @@ def _upload() -> StarletteUploadFile:
     )
 
 
-async def _call_scan(factory, user_id):
+async def _call_scan(factory, user_id, enhanced=False):
     """Call the /scan handler below the rate limiter with a real session."""
     async with factory() as db:
         user = await db.get(User, user_id)
@@ -128,7 +131,7 @@ async def _call_scan(factory, user_id):
             current_user=user,
             db=db,
             cf_turnstile_response=None,
-            enhanced=False,
+            enhanced=enhanced,
         )
 
 
@@ -215,8 +218,7 @@ class TestReservations:
             assert await quota.reserve_unit(db, user_id, FEATURE, "day", DAY, 1) == 1
             assert await quota.reserve_unit(db, user_id, FEATURE, "day", DAY, 1) is None
             assert (
-                await quota.reserve_unit(db, user_id, "scan.enhanced", "day", DAY, 1)
-                == 1
+                await quota.reserve_unit(db, user_id, OTHER_FEATURE, "day", DAY, 1) == 1
             )
             assert (
                 await quota.reserve_unit(db, user_id, FEATURE, "month", MONTH, 1) == 1
@@ -228,7 +230,7 @@ class TestReservations:
         far = date(1999, 1, 1)  # isolated from other tests' rows
         async with factory() as db:
             await quota.reserve_unit(db, a, FEATURE, "day", far, 10)
-            await quota.reserve_unit(db, a, "scan.enhanced", "day", far, 10)
+            await quota.reserve_unit(db, a, OTHER_FEATURE, "day", far, 10)
             await quota.reserve_unit(db, b, FEATURE, "day", far, 10)
             await quota.reserve_unit(db, b, FEATURE, "month", far, 10)
             await quota.reserve_unit(db, b, FEATURE, "day", far + timedelta(1), 10)
@@ -573,6 +575,90 @@ class TestScanEndpoint:
         assert dedup.return_value.check.await_args.args[1] == str(user_id)
         assert await _lease(factory, user_id) is None
 
+    async def test_standard_and_enhanced_scans_share_one_allowance(
+        self, sessions, downstream
+    ):
+        """OD-1: 3 standard + 2 enhanced scans use a daily limit of 5; the 6th
+        scan of either kind is refused before the provider."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        today = quota.utc_today()
+        provider = _CountingProvider(delay=0)
+        with (
+            provider.patch(),
+            patch.object(settings, "scan_free_daily_limit", 5),
+            patch.object(settings, "scan_free_monthly_limit", 100),
+            patch.object(settings, "enhanced_scan_free_credits", 10),
+        ):
+            for enhanced in (False, False, False, True, True):
+                await _call_scan(factory, user_id, enhanced=enhanced)
+            for enhanced in (False, True):
+                with pytest.raises(HTTPException) as exc:
+                    await _call_scan(factory, user_id, enhanced=enhanced)
+                assert (exc.value.status_code, exc.value.detail) == (
+                    429,
+                    "daily_scan_limit",
+                )
+        assert provider.calls == 5
+        assert await _units(factory, user_id, "day", today) == 5
+        assert await _units(factory, user_id, "month", quota.month_start(today)) == 5
+        async with factory() as db:
+            features = (
+                await db.execute(
+                    select(AIQuota.feature).where(AIQuota.user_id == user_id)
+                )
+            ).scalars()
+            assert set(features) == {FEATURE}
+
+    async def test_release_timeout_mid_query_leaves_session_usable(
+        self, sessions, downstream
+    ):
+        """A lease release cut off by CLEANUP_TIMEOUT_SECONDS while its query is
+        running must not leave the request session unusable: the dedup check
+        (a real query on the same session) still runs and /scan returns."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        real_release = quota.release_lease
+        seen: dict[str, bool] = {}
+
+        async def slow_release(db, uid, lease_id):
+            # Outlasts the 1 s bound, so the query is cancelled mid-execute.
+            await db.execute(select(func.pg_sleep(3)))
+            return await real_release(db, uid, lease_id)
+
+        async def dedup_check(db, uid, books):
+            # What DeduplicationService.check does: a query on the session.
+            await db.execute(select(func.count()).select_from(User))
+            seen["dedup_query_ran"] = True
+            return books
+
+        book = MagicMock()
+        with (
+            _CountingProvider(delay=0).patch(),
+            patch.object(quota, "release_lease", slow_release),
+            patch.object(quota, "CLEANUP_TIMEOUT_SECONDS", 1.0),
+            patch("app.api.scan.EnrichmentService") as enrich,
+            patch("app.api.scan.DeduplicationService") as dedup,
+            patch("app.api.scan._dedupe_enriched", lambda books: books),
+            patch("app.api.scan.ScanResponse", lambda **kw: kw),
+        ):
+            enrich.return_value.enrich = AsyncMock(return_value=[book])
+            dedup.return_value.check = dedup_check
+            async with factory() as db:
+                user = await db.get(User, user_id)
+                resp = await scan_api.scan.__wrapped__(
+                    request=MagicMock(),
+                    file=_upload(),
+                    current_user=user,
+                    db=db,
+                    cf_turnstile_response=None,
+                    enhanced=False,
+                )
+                # And the session still answers a plain query afterwards.
+                assert (await db.execute(select(func.count()))).scalar_one() == 1
+        assert resp["books"] == [book]
+        assert seen == {"dedup_query_ran": True}
+
     async def test_usage_reads_current_windows(self, sessions):
         factory, make_user = sessions
         user_id = await make_user()
@@ -584,7 +670,7 @@ class TestScanEndpoint:
                     db, user_id, FEATURE, "month", quota.month_start(today), 5
                 )
             # Other feature and an older day: not counted.
-            await quota.reserve_unit(db, user_id, "scan.enhanced", "day", today, 5)
+            await quota.reserve_unit(db, user_id, OTHER_FEATURE, "day", today, 5)
             await quota.reserve_unit(
                 db, user_id, FEATURE, "day", today - timedelta(days=1), 5
             )

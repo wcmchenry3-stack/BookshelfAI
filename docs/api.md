@@ -251,9 +251,9 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `415` — bad extension / MIME / magic bytes
 - `415` — the image cannot be fully decoded as JPEG, PNG, WebP or HEIC/HEIF (`detail: "image_undecodable"`)
 - `402` — enhanced scan requested with no enhanced credits left (`detail: "no_enhanced_credits"`)
-- `402` — the user's monthly scan allowance is used (`detail: "scan_limit_reached"`). The body also carries the allowance: `{"detail": "scan_limit_reached", "limit": 5, "used": 5, "period_end": "2026-11-01"}`. `period_end` is the UTC date the monthly count resets (the 1st of the next month). Both `402`s use the same status; clients tell them apart by the `detail` string, which stays a string here as in every other error. No `Retry-After`.
+- `402` — the user's monthly scan allowance is used (standard and enhanced scans count together; `detail: "scan_limit_reached"`). The body also carries the allowance: `{"detail": "scan_limit_reached", "limit": 5, "used": 5, "period_end": "2026-11-01"}`. `period_end` is the UTC date the monthly count resets (the 1st of the next month). Both `402`s use the same status; clients tell them apart by the `detail` string, which stays a string here as in every other error. No `Retry-After`.
 - `429` — another scan by the same user is still running (`detail: "scan_in_progress"`, `Retry-After: 2`). One paid scan per user may be in flight at a time.
-- `429` — the user's daily scan limit is reached (`detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets.
+- `429` — the user's daily scan limit is reached (standard and enhanced scans count together; `detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets.
 - `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily or monthly allowance
 - `503` — scanning switched off by the operator (`detail: "scan_disabled"`, `ai_settings` key `scan.standard.enabled=false`); returned before the upload is read, Turnstile is called or any provider is contacted (the multipart body is still received by the framework)
 - `503` — enhanced scanning switched off (`detail: "enhanced_scan_disabled"`, `ai_settings` key `scan.enhanced.enabled=false`); standard scans still work
@@ -286,7 +286,7 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 }
 ```
 
-Counts are for standard scans (`scan.standard`) in the current UTC day and UTC calendar month; enhanced scans have their own counters and are not included. Limits are the caller's tier allowance from `ai_settings`. `period_end` is the UTC date the monthly count resets.
+Counts cover all scans, standard and enhanced together, in the current UTC day and UTC calendar month: both share one allowance (quota key `scan`). Enhanced-scan credits are separate and not shown here. Limits are the caller's tier allowance from `ai_settings`. `period_end` is the UTC date the monthly count resets.
 
 **Errors:** `401` (no or invalid token), `429` (rate limit), `503 ai_unavailable` (AI settings cannot be read and none are cached).
 

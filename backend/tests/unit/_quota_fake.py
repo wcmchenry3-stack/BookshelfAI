@@ -56,7 +56,7 @@ class FakeQuotaStore:
     async def units_used(self, _db, user_id, feature, kind, start) -> int:
         return self.rows.get((user_id, feature, kind, start), 0)
 
-    def count(self, user_id=None, feature="scan.standard", kind="day") -> int:
+    def count(self, user_id=None, feature=quota.SCAN_QUOTA_FEATURE, kind="day") -> int:
         user_id = user_id or self.default_user
         today = quota.utc_today()
         start = today if kind == "day" else quota.month_start(today)

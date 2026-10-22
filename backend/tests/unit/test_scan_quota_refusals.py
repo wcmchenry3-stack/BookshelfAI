@@ -85,7 +85,7 @@ class TestRefusalResponses:
         self, client, store, provider
     ):
         today, _ = _today_month()
-        store.rows[(USER.id, "scan.standard", "day", today)] = 5
+        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "day", today)] = 5
         resp = client.post("/scan", files=_file())
         assert resp.status_code == 429
         assert resp.json() == {"detail": "daily_scan_limit"}
@@ -97,7 +97,7 @@ class TestRefusalResponses:
         self, client, store, provider
     ):
         today, month = _today_month()
-        store.rows[(USER.id, "scan.standard", "month", month)] = 5
+        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "month", month)] = 5
         resp = client.post("/scan", files=_file())
         assert resp.status_code == 402
         assert resp.json() == {
@@ -171,10 +171,49 @@ class TestOrderAndSettle:
         assert store.count() == 0 and store.count(kind="month") == 0
         assert store.leases == {}
 
-    def test_enhanced_scans_have_their_own_counters(self, client, store, provider):
-        client.post("/scan", files=_file(), data={"enhanced": "true"})
-        assert store.count(feature="scan.enhanced") == 1
-        assert store.count(feature="scan.standard") == 0
+    def test_enhanced_scans_use_the_shared_scan_counter(self, client, store, provider):
+        assert (
+            client.post("/scan", files=_file(), data={"enhanced": "true"}).status_code
+            == 200
+        )
+        assert client.post("/scan", files=_file()).status_code == 200
+        assert store.count() == 2
+        assert store.count(kind="month") == 2
+        # One key for every scan (OD-1); nothing under the gateway names.
+        assert {feature for (_, feature, _, _) in store.rows} == {
+            quota.SCAN_QUOTA_FEATURE
+        }
+
+    @pytest.mark.parametrize("sixth", ["standard", "enhanced"])
+    def test_three_standard_and_two_enhanced_exhaust_a_daily_limit_of_5(
+        self, client, store, provider, sixth
+    ):
+        enhanced = {"enhanced": "true"}
+        for data in ({}, {}, {}, enhanced, enhanced):
+            assert client.post("/scan", files=_file(), data=data).status_code == 200
+        assert store.count() == 5
+        resp = client.post(
+            "/scan", files=_file(), data=enhanced if sixth == "enhanced" else {}
+        )
+        assert resp.status_code == 429
+        assert resp.json() == {"detail": "daily_scan_limit"}
+        assert store.count() == 5
+        assert provider.return_value.identify.await_count == 5
+
+    def test_enhanced_refund_gives_back_the_shared_units(self, client, store, provider):
+        provider.return_value.identify = AsyncMock(side_effect=ScanUnavailableError())
+        resp = client.post("/scan", files=_file(), data={"enhanced": "true"})
+        assert resp.json() == {"detail": "scan_unavailable"}
+        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.rows == {
+            (USER.id, quota.SCAN_QUOTA_FEATURE, "day", quota.utc_today()): 0,
+            (
+                USER.id,
+                quota.SCAN_QUOTA_FEATURE,
+                "month",
+                quota.month_start(quota.utc_today()),
+            ): 0,
+        }
 
     def test_disabled_scan_takes_no_lease(self, client, store, provider):
         with patch.object(scan_module.settings, "scan_enabled", False):
@@ -225,8 +264,8 @@ class TestOrderAndSettle:
 class TestUsageEndpoint:
     def test_returns_current_usage_and_limits(self, client, store):
         today, month = _today_month()
-        store.rows[(USER.id, "scan.standard", "day", today)] = 2
-        store.rows[(USER.id, "scan.standard", "month", month)] = 4
+        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "day", today)] = 2
+        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "month", month)] = 4
         with patch.object(
             quota,
             "usage_for",
@@ -243,7 +282,7 @@ class TestUsageEndpoint:
             "monthly_limit": 5,
             "period_end": quota.next_month_start(today).isoformat(),
         }
-        assert usage_for.await_args.kwargs["feature"] == "scan.standard"
+        assert usage_for.await_args.kwargs["feature"] == quota.SCAN_QUOTA_FEATURE
         assert usage_for.await_args.kwargs["user"] is USER
 
     async def test_usage_for_reads_rows_and_tier_limits(self):
@@ -252,7 +291,7 @@ class TestUsageEndpoint:
         usage = await quota.usage_for(
             db,
             user=USER,
-            feature="scan.standard",
+            feature=quota.SCAN_QUOTA_FEATURE,
             ai=ai_settings.AISettings({"quota.free.monthly": 9}),
         )
         assert (usage.used_today, usage.used_month) == (2, 4)

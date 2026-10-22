@@ -23,9 +23,9 @@ key                         type     meaning
 ``quota.premium.monthly``   int      0..100,000 (as above, Premium tier)
 ==========================  =======  =========================================
 
-The ``quota.*`` allowances are per tier and apply to each scan feature
-separately (``scan.standard`` and ``scan.enhanced`` each have their own
-counters in ``ai_quota``); see ``app/ai/quota.py``.
+The ``quota.*`` allowances are per tier and shared by standard and enhanced
+scans (one ``ai_quota`` counter per user and window, under
+``quota.SCAN_QUOTA_FEATURE``, OD-1); see ``app/ai/quota.py``.
 
 **Seeding.** At startup :func:`seed_ai_settings_at_startup` inserts every key
 that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
@@ -257,15 +257,15 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
                 f"quota.{tier}.daily",
                 _daily_allowance,
                 lambda t=tier: getattr(settings, f"scan_{t}_daily_limit"),
-                f"{tier} scans per user per UTC day, per scan feature "
-                f"(seed: SCAN_{tier.upper()}_DAILY_LIMIT)",
+                f"{tier} scans per user per UTC day, standard and enhanced "
+                f"combined (seed: SCAN_{tier.upper()}_DAILY_LIMIT)",
             ),
             SettingDefinition(
                 f"quota.{tier}.monthly",
                 _monthly_allowance,
                 lambda t=tier: getattr(settings, f"scan_{t}_monthly_limit"),
-                f"{tier} scans per user per UTC calendar month, per scan "
-                f"feature (seed: SCAN_{tier.upper()}_MONTHLY_LIMIT)",
+                f"{tier} scans per user per UTC calendar month, standard and "
+                f"enhanced combined (seed: SCAN_{tier.upper()}_MONTHLY_LIMIT)",
             ),
         ]
     return MappingProxyType({d.key: d for d in defs})

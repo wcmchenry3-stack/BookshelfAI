@@ -154,6 +154,10 @@ async def _reserve_scan_quota(
     """Global ceiling, then the in-flight lease, then the daily and monthly
     reservations (``app/ai/quota.py``), mapped to HTTP refusals.
 
+    ``feature`` (the gateway feature) only sets the lease length from its
+    timeout; the units are reserved under ``quota.SCAN_QUOTA_FEATURE``, the
+    one allowance standard and enhanced scans share.
+
     Runs on the request's own session; each step commits, so the connection
     is back in the pool during the provider call. A refusal has already given
     back anything taken.
@@ -162,7 +166,7 @@ async def _reserve_scan_quota(
         return await quota.reserve(
             db,
             user=user,
-            feature=feature,
+            feature=quota.SCAN_QUOTA_FEATURE,
             timeout_s=get_feature(feature).timeout_s,
             ai=ai,
         )
@@ -311,6 +315,7 @@ async def scan(
         )
 
     # --- Tier allowance, global ceiling, in-flight lease, daily, monthly ---
+    # One allowance for standard and enhanced scans (quota.SCAN_QUOTA_FEATURE).
     # The tier is resolved server-side inside quota.reserve; every refusal
     # here happens before the provider and gives back what it took.
     # Read before anything can roll the session back: a failed give-back
@@ -373,7 +378,8 @@ async def scan_usage(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ScanUsageResponse:
-    """The current user's standard-scan usage and allowance (read only)."""
+    """The current user's scan usage and allowance (read only). Standard and
+    enhanced scans count against the same allowance."""
     try:
         ai = await get_ai_settings(db)
     except AISettingsUnavailableError:
@@ -381,7 +387,9 @@ async def scan_usage(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="ai_unavailable",
         ) from None
-    usage = await quota.usage_for(db, user=current_user, feature="scan.standard", ai=ai)
+    usage = await quota.usage_for(
+        db, user=current_user, feature=quota.SCAN_QUOTA_FEATURE, ai=ai
+    )
     return ScanUsageResponse(
         used_today=usage.used_today,
         daily_limit=usage.daily_limit,

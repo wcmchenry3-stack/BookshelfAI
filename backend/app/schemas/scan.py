@@ -4,7 +4,8 @@ from pydantic import BaseModel
 
 
 class ScanUsageResponse(BaseModel):
-    """Returned by GET /scan/usage: the current user's standard-scan usage.
+    """Returned by GET /scan/usage: the current user's scan usage. Standard
+    and enhanced scans share one allowance, so both are counted.
 
     Counts are scans reserved (provider calls, refunds excluded) in the
     current UTC day and UTC calendar month; ``period_end`` is the date the

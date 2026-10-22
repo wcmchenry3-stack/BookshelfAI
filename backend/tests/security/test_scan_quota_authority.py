@@ -94,7 +94,7 @@ def _post(client, **kwargs):
     )
 
 
-def _fill(store, kind: str, n: int, feature: str = "scan.standard") -> None:
+def _fill(store, kind: str, n: int, feature: str = quota.SCAN_QUOTA_FEATURE) -> None:
     today = quota.utc_today()
     start = today if kind == "day" else quota.month_start(today)
     store.rows[(USER.id, feature, kind, start)] = n

@@ -22,11 +22,14 @@ In order (#528):
    random ``lease_id``; :func:`release` deletes the row only while it still
    holds that id, so a slow request whose lease expired and was taken over
    cannot delete the new holder's lease.
-4. **Daily, then monthly reservation** (table ``ai_quota``, per feature). The
+4. **Daily, then monthly reservation** (table ``ai_quota``). The
    same exact conditional upsert as #509: ``units_used = units_used + 1 WHERE
    units_used < limit``. Postgres serialises upserts on the same key, so no
    more than ``limit`` reservations can succeed (:class:`DailyLimitReached`,
    :class:`MonthlyLimitReached`). A limit of 0 refuses without writing.
+   Standard and enhanced scans share one allowance (OD-1): both reserve under
+   :data:`SCAN_QUOTA_FEATURE`. The ``feature`` column stays so later AI
+   features can have their own allowance.
 
 Every step commits straight away, on the request's own session: the
 reservation is visible to concurrent requests and the connection goes back to
@@ -71,6 +74,10 @@ from app.models.ai_quota import WINDOW_DAY, WINDOW_MONTH, AIInflight, AIQuota
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+# The ai_quota counter key for every scan, standard or enhanced: one shared
+# daily and monthly allowance per user (OD-1). Not a gateway feature name.
+SCAN_QUOTA_FEATURE = "scan"
 
 # The lease outlives the provider timeout by this much (AC: timeout_s + 30).
 LEASE_GRACE_SECONDS = 30
@@ -356,6 +363,11 @@ async def _give_back(
     once after a rollback (the session may be in a failed transaction after
     the error being handled); a second failure is logged and swallowed: the
     lease expiry is the backstop.
+
+    If the bound cuts a query off mid-execute, SQLAlchemy invalidates the
+    session's connection and every later query on the request session would
+    raise ``PendingRollbackError``. So after a timeout the session is rolled
+    back (also shielded and bounded; a failure there is logged and swallowed).
     """
     with anyio.move_on_after(CLEANUP_TIMEOUT_SECONDS, shield=True) as scope:
         for attempt in (1, 2):
@@ -370,6 +382,13 @@ async def _give_back(
                     logger.exception("ai_quota: rollback after failed %s", what)
     if scope.cancelled_caught:
         logger.error("ai_quota: %s timed out", what)
+        with anyio.move_on_after(CLEANUP_TIMEOUT_SECONDS, shield=True) as rb_scope:
+            try:
+                await db.rollback()
+            except Exception:
+                logger.exception("ai_quota: rollback after timed-out %s", what)
+        if rb_scope.cancelled_caught:
+            logger.error("ai_quota: rollback after timed-out %s timed out", what)
 
 
 async def release(db: AsyncSession, reservation: Reservation) -> None:

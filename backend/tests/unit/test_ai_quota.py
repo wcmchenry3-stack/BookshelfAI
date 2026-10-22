@@ -7,6 +7,8 @@ import uuid
 from datetime import UTC, date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
+import anyio.lowlevel
 import pytest
 from sqlalchemy.dialects import postgresql
 
@@ -18,7 +20,7 @@ from app.models.user import User
 from tests.unit._quota_fake import FakeQuotaStore
 
 USER = User(id=uuid.UUID("00000000-0000-0000-0000-000000000528"), email="q@e.com")
-FEATURE = "scan.standard"
+FEATURE = quota.SCAN_QUOTA_FEATURE
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
 TODAY = date(2026, 10, 21)
 MONTH = date(2026, 10, 1)
@@ -274,25 +276,48 @@ class TestGiveBack:
         await quota._give_back(db, "refund", op)
         assert op.await_count == 2
 
-    async def test_runs_even_when_the_task_is_being_cancelled(self):
-        done = []
+    async def test_runs_to_completion_inside_a_cancelled_scope(self):
+        """The enclosing scope stays cancelled for the whole give-back, so
+        every await inside ``op`` would raise without the shield."""
+        steps = []
 
         async def op():
-            await asyncio.sleep(0.01)
-            done.append(True)
+            steps.append("started")
+            await anyio.lowlevel.checkpoint()
+            steps.append("checkpointed")
+            await anyio.sleep(0.01)
+            steps.append("done")
 
-        async def request():
-            try:
-                await asyncio.sleep(10)
-            finally:
-                await quota._give_back(AsyncMock(), "lease release", op)
+        with anyio.CancelScope() as scope:
+            scope.cancel()
+            await quota._give_back(AsyncMock(), "lease release", op)
+        assert steps == ["started", "checkpointed", "done"]
 
-        task = asyncio.create_task(request())
-        await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert done == [True]
+    async def test_timeout_rolls_the_session_back(self, caplog):
+        """A give-back cut off by the bound may leave the connection
+        invalidated mid-query; the session is rolled back so the request can
+        keep using it."""
+        db = AsyncMock()
+
+        async def op():
+            await anyio.sleep(5)
+
+        with patch.object(quota, "CLEANUP_TIMEOUT_SECONDS", 0.01):
+            await quota._give_back(db, "lease release", op)
+        db.rollback.assert_awaited_once()
+        assert "lease release timed out" in caplog.text
+
+    async def test_failed_rollback_after_timeout_is_swallowed(self, caplog):
+        db = AsyncMock()
+        db.rollback.side_effect = OSError("connection gone")
+
+        async def op():
+            await anyio.sleep(5)
+
+        with patch.object(quota, "CLEANUP_TIMEOUT_SECONDS", 0.01):
+            await quota._give_back(db, "refund", op)
+        db.rollback.assert_awaited_once()
+        assert "rollback after timed-out refund" in caplog.text
 
 
 class TestSql:

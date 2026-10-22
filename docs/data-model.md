@@ -79,7 +79,7 @@ erDiagram
   }
   AI_QUOTA {
     uuid user_id PK,FK "cascade delete"
-    varchar feature PK "scan.standard / scan.enhanced"
+    varchar feature PK "quota key: scan"
     varchar window_kind PK "day | month"
     date window_start PK "UTC day / 1st of UTC month"
     int units_used ">= 0"
@@ -219,21 +219,21 @@ Counts scans that reached the vision provider, per user per UTC day. Backed the 
 
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 
-Per-user count of AI calls reserved, per feature and window (#528). Backs the daily and monthly scan allowances and the global daily ceiling ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
+Per-user count of AI calls reserved, per quota key and window (#528). Backs the daily and monthly scan allowances and the global daily ceiling ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
 
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
-| `feature` | varchar(64), PK part | the gateway feature: `scan.standard` or `scan.enhanced` (counted separately) |
+| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`). Kept as a column so later AI features can have their own allowance |
 | `window_kind` | varchar(8), PK part, CHECK `IN ('day', 'month')` | |
 | `window_start` | date, PK part | the UTC day, or the 1st of the UTC calendar month |
 | `units_used` | int, not null, server default 0, CHECK `>= 0` | incremented by the reservation upsert, decremented (never below 0) on a refund |
 
 **Keys and indexes:** the composite primary key `(user_id, feature, window_kind, window_start)` is the unique key the reservation upsert targets (`INSERT … ON CONFLICT … DO UPDATE SET units_used = units_used + 1 WHERE units_used < limit`). `ix_ai_quota_window (window_kind, window_start)` serves the global daily sum and the retention purge.
 
-**Writes:** only `app/ai/quota.py` (reserve, refund, purge), from the request's server-side user and the server's feature name. No client-supplied value is stored.
+**Writes:** only `app/ai/quota.py` (reserve, refund, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
 
-**Volume and retention:** about 70 bytes per row. Per active user, one day row per scan feature used that day plus one month row per feature per month: roughly 140 bytes per active user per day. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month, in batches of 5,000 and at most 20 batches per window kind per run.
+**Volume and retention:** about 70 bytes per row. Per active user, one day row for each day they scan plus one month row per month: roughly 70 bytes per active user per day, plus 70 bytes per active user per month. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month, in batches of 5,000 and at most 20 batches per window kind per run.
 
 ### `ai_inflight` (`backend/app/models/ai_quota.py`)
 
