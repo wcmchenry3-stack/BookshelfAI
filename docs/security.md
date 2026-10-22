@@ -36,7 +36,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 
 ## Upload pipeline (`POST /scan`)
 
-Every step runs before the enhanced-credit check and the daily-cap reservation, so a rejected image never uses a scan. Order:
+Every step runs before the enhanced entitlement check (Premium-only, #533) and the quota reservations, so a rejected image never uses a scan. Order:
 
 1. Kill switches (`ai_settings` keys `scan.standard.enabled`, `scan.enhanced.enabled`; `503 ai_unavailable` if the table cannot be read and nothing is cached, or the cached value is older than `AI_SETTINGS_MAX_STALE_SECONDS`; an invalid `*.enabled` value counts as disabled) → Turnstile. No request field, header or query can set an `ai_settings` key; they change only through the CLI or the database (`tests/security/test_ai_settings_authority.py`).
 2. Extension and `Content-Type` → `415`.

@@ -12,6 +12,7 @@ erDiagram
   USERS ||--o{ AI_QUOTA : "AI calls per window"
   USERS ||--o| AI_INFLIGHT : "call in flight"
   USERS |o--o{ AI_USAGE : "provider calls (set null on delete)"
+  USERS ||--o{ AI_ENHANCED_ZERO_RESULTS : "uncharged empty enhanced scans"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
@@ -22,6 +23,7 @@ erDiagram
     string google_id UK
     string display_name
     string avatar_url
+    int enhanced_scan_credits "legacy, unused since #533; dropped in #540"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -116,6 +118,12 @@ erDiagram
     bigint output_tokens
     bigint cost_micros
   }
+  AI_ENHANCED_ZERO_RESULTS {
+    uuid id PK
+    uuid user_id FK "cascade delete"
+    timestamptz created_at "indexed with user_id"
+    uuid ledger_id "nullable, ai_usage.call_id (no FK)"
+  }
   AI_SPEND_DAILY {
     date day PK "UTC"
     bigint reserved_micros "check >= 0"
@@ -138,7 +146,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 |---|---|---|
 | `user_books.user_id` → `users.id` | `CASCADE` | Deleting an account removes that user's library (intentional). |
 | `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
-| `scan_usage_daily.user_id`, `ai_quota.user_id`, `ai_inflight.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters and any lease. |
+| `scan_usage_daily.user_id`, `ai_quota.user_id`, `ai_inflight.user_id`, `ai_enhanced_zero_results.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters, any lease and its zero-result enhanced-scan rows. |
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
@@ -157,6 +165,7 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 | `google_id` | string, **unique**, not null | Google OAuth `sub` claim |
 | `display_name` | string, nullable | from Google profile |
 | `avatar_url` | string, nullable | from Google profile |
+| `enhanced_scan_credits` | int, not null, server default 5 | **legacy:** the old lifetime enhanced-scan balance (migration 0003). Since #533 nothing in the app reads or writes it (enhanced scans use the Premium enhanced allowance in `ai_quota`, quota key `scan.enhanced`); new rows get the server default. Dropped in #540 |
 | `created_at` / `updated_at` | timestamptz, server defaults | `updated_at` auto-bumps on row change |
 
 **Lockdown:** the backend enforces `ALLOWED_EMAILS` at the `/auth/google` endpoint — any Google account whose email isn't in that comma-separated env var is rejected *before* a User row is created. See [`architecture.md`](architecture.md#auth-architecture).
@@ -258,7 +267,7 @@ Per-user count of AI calls reserved, per quota key and window (#528). Backs the 
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
-| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`). Kept as a column so later AI features can have their own allowance |
+| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`), and `scan.enhanced` for the Premium enhanced monthly allowance (#533; month rows only, `quota.ENHANCED_QUOTA_FEATURE`) |
 | `window_kind` | varchar(8), PK part, CHECK `IN ('day', 'month')` | |
 | `window_start` | date, PK part | the UTC day, or the 1st of the UTC calendar month |
 | `units_used` | int, not null, server default 0, CHECK `>= 0` | incremented by the reservation upsert, decremented (never below 0) on a refund |
@@ -329,6 +338,23 @@ Daily totals of `ai_usage` per UTC day, feature, model and status (#530). No use
 
 **Volume and retention:** tens of rows per day (features × models × statuses), each under 100 bytes. Rows are kept 400 days; the same cleanup run deletes older ones in bounded batches.
 
+### `ai_enhanced_zero_results` (`backend/app/models/ai_enhanced_zero_result.py`)
+
+One row per uncharged enhanced scan that returned no books (#533). Used to stop the "an empty enhanced scan is free" rule from being farmed: the per-user count inside `scan.enhanced.zero_result_window_hours` is compared with `scan.enhanced.zero_result_threshold` (see [architecture.md](architecture.md#book-identification--dedup-pipeline)).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID, PK | generated (`uuid4`) |
+| `user_id` | UUID FK → `users.id`, not null, `ON DELETE CASCADE` | |
+| `created_at` | timestamptz, not null, server default `now()` | set to `clock_timestamp()` by the insert; the window is measured on the same database clock |
+| `ledger_id` | UUID, nullable, no FK | the scan's `ai_usage.call_id`; NULL when the settle had no ledger row. No FK because `ai_usage` rows are rolled up and deleted after 30 days |
+
+**Index:** `ix_ai_enhanced_zero_results_user_created (user_id, created_at)` serves the window count (`WHERE user_id = ? AND created_at > clock_timestamp() - window`) and the throttle's Retry-After lookup.
+
+**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row, the refund of the `scan.enhanced` month unit and the lease delete commit together. It is applied only when that ledger insert returned a row (or, without a ledger row, only while the lease was still held), so a settle retried after a lost commit acknowledgement writes no second row. The row is written only when the scan is not charged (the user was below the threshold); a charged empty scan, a scan with books and any provider error or timeout write nothing. A future result-cache hit (#534) makes no provider call and must not write one. No client-supplied value is stored: no image, hash or content.
+
+**Volume and retention:** about 40 bytes per row (more with the index), bounded by the threshold per user per window (at most 20 per window at the maximum setting). Rows older than 30 days are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_zero_results`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
+
 ### `ai_spend_daily` (`backend/app/models/ai_spend.py`)
 
 The service-wide daily AI cost circuit breaker (#531, `app/ai/breaker.py`). One row per UTC day, all tiers and features together. Standalone: no foreign keys, no user column, no content.
@@ -359,7 +385,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 **Writes:** only the startup seed (insert-if-missing) and the CLI `python -m app.ai.settings set`. No endpoint reads or writes it from a request.
 
-**Volume and retention:** 13 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531), each under 300 bytes. It does not grow with usage, so no retention job.
+**Volume and retention:** 17 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531, plus `quota.premium.enhanced_monthly` and the three `scan.enhanced.zero_result_*` keys from #533), each under 300 bytes. It does not grow with usage, so no retention job.
 
 ## Dedup strategy — why work_id, not ISBN
 
@@ -408,6 +434,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0007_ai_quota.py` — adds `ai_quota` (per-user daily/monthly AI allowance counters) and `ai_inflight` (one call in flight per user) tables; additive, the downgrade drops both
 - `0008_ai_usage.py` — adds `ai_usage` (one row per paid AI provider call) and `ai_usage_daily` (daily rollup) tables; additive, the downgrade drops both
 - `0009_ai_spend_daily.py` — adds `ai_spend_daily` (service-wide daily AI spend for the cost circuit breaker); additive, the downgrade drops it
+- `0010_ai_enhanced_zero_results.py` — adds `ai_enhanced_zero_results` (uncharged empty enhanced scans, #533) with the `(user_id, created_at)` index; additive, the downgrade drops it
 
 ### Writing a new migration
 

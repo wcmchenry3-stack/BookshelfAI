@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # (quota.premium.enhanced_monthly, seeded from
     # SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT below; #533).
     scan_enhanced_model: str = "gpt-4o"
+    # LEGACY: the old lifetime enhanced-scan credit grant. Unused since #533
+    # (nothing reads users.enhanced_scan_credits any more); kept only so an
+    # existing .env that sets ENHANCED_SCAN_FREE_CREDITS still loads. Removed
+    # with the column in #540.
+    enhanced_scan_free_credits: int = 5
     # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
     # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
     # boot, and after that the DB row is the source of truth (change it with
