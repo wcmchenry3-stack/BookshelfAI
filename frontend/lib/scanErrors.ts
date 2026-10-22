@@ -10,7 +10,7 @@
  *   429 daily_scan_limit       -> daily_limit     (Retry-After: s to UTC midnight)
  *   429 scan_in_progress       -> in_progress     (Retry-After: 2)
  *   503 scan_disabled | enhanced_scan_disabled | scan_capacity |
- *       ai_unavailable | scan_unavailable -> paused
+ *       ai_budget_reached | ai_unavailable | scan_unavailable -> paused
  *   anything else              -> generic
  *
  * A bare 402 with no `detail` predates the coded responses and always meant
@@ -58,6 +58,9 @@ export const PAUSED_CODES: readonly string[] = [
   'enhanced_scan_disabled',
   'scan_capacity',
   'ai_unavailable',
+  // The service's daily AI budget is used up; Free scans pause until UTC
+  // midnight (#531).
+  'ai_budget_reached',
   'scan_unavailable',
 ];
 

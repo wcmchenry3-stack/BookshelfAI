@@ -57,7 +57,9 @@ class VisionProvider(Protocol):
     Raises ``ProviderTimeoutError`` (a ``ScanUnavailableError``) when the
     provider times out and ``ScanUnavailableError`` when it returns an HTTP
     error. A connection that was never established raises
-    ``httpx.ConnectError`` (OpenAI, propagated as-is) or
+    ``httpx.ConnectError`` (OpenAI, propagated as-is; a connect or pool
+    timeout, where nothing was billed, is raised as ``httpx.ConnectError``
+    too, while a read or write timeout is a ``ProviderTimeoutError``) or
     ``ProviderConnectError`` (Claude); both are refunded.
     """
 

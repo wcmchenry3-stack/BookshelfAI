@@ -142,6 +142,7 @@ SCAN_FREE_DAILY_LIMIT=5                  # 0..1000, seeds quota.free.daily (per 
 SCAN_FREE_MONTHLY_LIMIT=5                # 0..100000, seeds quota.free.monthly (per UTC month)
 SCAN_PREMIUM_DAILY_LIMIT=30              # 0..1000, seeds quota.premium.daily
 SCAN_PREMIUM_MONTHLY_LIMIT=300           # 0..100000, seeds quota.premium.monthly
+SCAN_FREE_DAILY_CEILING_MICROS=10000000  # 0..1000000000 micro-dollars/UTC day, seeds breaker.free_daily_ceiling_micros
 ```
 
 ### App

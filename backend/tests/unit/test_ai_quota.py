@@ -49,6 +49,7 @@ async def _reserve(ai=None, **kw):
         timeout_s=60,
         ai=ai or AISettings({}),
         now=NOW,
+        est_cost_micros=kw.pop("est_cost_micros", 10_000),
         **kw,
     )
 

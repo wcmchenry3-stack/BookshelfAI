@@ -21,6 +21,10 @@ key                         type     meaning
 ``quota.free.monthly``      int      0..100,000 scans per user per UTC month
 ``quota.premium.daily``     int      0..1,000 (as above, Premium tier)
 ``quota.premium.monthly``   int      0..100,000 (as above, Premium tier)
+``breaker.free_daily_``     int      0..1,000,000,000 micro-dollars of AI spend
+``ceiling_micros``                   per UTC day, all tiers counted, above which
+                                     Free-tier scans get 503 ``ai_budget_reached``
+                                     (Premium continues; ``app/ai/breaker.py``)
 ==========================  =======  =========================================
 
 The ``quota.*`` allowances are per tier and shared by standard and enhanced
@@ -31,7 +35,7 @@ scans (one ``ai_quota`` counter per user and window, under
 that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
 ``SCAN_MAX_IMAGE_PIXELS``, ``SCAN_GLOBAL_DAILY_LIMIT``, ``SCAN_FREE_DAILY_LIMIT``,
 ``SCAN_FREE_MONTHLY_LIMIT``, ``SCAN_PREMIUM_DAILY_LIMIT``,
-``SCAN_PREMIUM_MONTHLY_LIMIT``) and the registry defaults (``SCAN_MODEL``,
+``SCAN_PREMIUM_MONTHLY_LIMIT``, ``SCAN_FREE_DAILY_CEILING_MICROS``) and the registry defaults (``SCAN_MODEL``,
 ``SCAN_ENHANCED_MODEL``). Existing rows are never touched, so after the first
 boot the row is the source of truth and the env vars are initial defaults
 only. A key with no row (deleted by hand, or seeding failed while the DB was
@@ -39,7 +43,7 @@ down) falls back to that same env/registry default.
 
 **Validation.** Writes (the CLI below) are validated against the same rules
 and refused when invalid. On read, an invalid provider, model, pixel cap,
-global cap or allowance is ignored with a warning (log + Sentry) and the default is used, so a bad hand
+global cap, allowance or cost ceiling is ignored with a warning (log + Sentry) and the default is used, so a bad hand
 edit can never widen what the registry allows: a model must be in the
 allow-list of the provider it is paired with, and the registry still
 re-validates the per-request spec. An invalid ``*.enabled`` row (anything but
@@ -128,6 +132,9 @@ MAX_IMAGE_PIXELS_BOUNDS = (1_000_000, 100_000_000)
 GLOBAL_DAILY_LIMIT_BOUNDS = (1, 1_000_000)
 DAILY_ALLOWANCE_BOUNDS = (0, 1_000)
 MONTHLY_ALLOWANCE_BOUNDS = (0, 100_000)
+# Micro-dollars per UTC day (1,000,000 = $1); 0 pauses every Free scan.
+FREE_DAILY_CEILING_MICROS_BOUNDS = (0, 1_000_000_000)
+FREE_DAILY_CEILING_KEY = "breaker.free_daily_ceiling_micros"
 # Tiers with allowance keys: quota.<tier>.daily / quota.<tier>.monthly. Plain
 # strings (the Tier enum values) so this module stays free of request-side
 # imports; app/ai/quota.py maps a Tier to its keys.
@@ -207,6 +214,7 @@ _max_image_pixels = _bounded_int(MAX_IMAGE_PIXELS_BOUNDS)
 _global_daily_limit = _bounded_int(GLOBAL_DAILY_LIMIT_BOUNDS)
 _daily_allowance = _bounded_int(DAILY_ALLOWANCE_BOUNDS)
 _monthly_allowance = _bounded_int(MONTHLY_ALLOWANCE_BOUNDS)
+_free_daily_ceiling = _bounded_int(FREE_DAILY_CEILING_MICROS_BOUNDS)
 
 
 @dataclass(frozen=True)
@@ -282,6 +290,15 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
                 f"enhanced combined (seed: SCAN_{tier.upper()}_MONTHLY_LIMIT)",
             ),
         ]
+    defs.append(
+        SettingDefinition(
+            FREE_DAILY_CEILING_KEY,
+            _free_daily_ceiling,
+            lambda: settings.scan_free_daily_ceiling_micros,
+            "AI spend per UTC day in micro-dollars, all tiers counted, above "
+            "which Free-tier scans pause (seed: SCAN_FREE_DAILY_CEILING_MICROS)",
+        )
+    )
     return MappingProxyType({d.key: d for d in defs})
 
 
@@ -417,6 +434,10 @@ class AISettings:
     @property
     def global_daily_limit(self) -> int:
         return self.get("scan.global_daily_limit")
+
+    @property
+    def free_daily_ceiling_micros(self) -> int:
+        return self.get(FREE_DAILY_CEILING_KEY)
 
     def allowance(self, tier: str) -> tuple[int, int]:
         """``(daily, monthly)`` scans for ``tier`` (``"free"`` or ``"premium"``)."""

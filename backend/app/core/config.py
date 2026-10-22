@@ -109,6 +109,14 @@ class Settings(BaseSettings):
     scan_free_monthly_limit: int = Field(default=5, ge=0, le=100_000)
     scan_premium_daily_limit: int = Field(default=30, ge=0, le=1000)
     scan_premium_monthly_limit: int = Field(default=300, ge=0, le=100_000)
+    # Cost circuit breaker (#531). INITIAL DEFAULT ONLY: seeds the ai_settings
+    # row breaker.free_daily_ceiling_micros (same bounds): the service-wide
+    # spend per UTC day, in micro-dollars (1,000,000 = $1), above which
+    # Free-tier scans are refused with 503 ai_budget_reached. Premium is not
+    # paused (#544). 0 pauses every Free scan. Default $10/day.
+    scan_free_daily_ceiling_micros: int = Field(
+        default=10_000_000, ge=0, le=1_000_000_000
+    )
     # Decompression-bomb guard for /scan uploads: an image whose decoded pixel
     # count (width x height) is above this is refused with 413
     # image_too_large_pixels before it is fully decoded. Bounded so a typo

@@ -1,11 +1,12 @@
-"""In-memory stand-in for the ai_quota / ai_inflight primitives (#528)."""
+"""In-memory stand-in for the ai_quota / ai_inflight primitives (#528) and
+the ai_spend_daily cost breaker primitives (#531)."""
 
 import contextlib
 import uuid
 from datetime import date
 from unittest.mock import patch
 
-from app.ai import quota
+from app.ai import breaker, quota
 
 
 class FakeQuotaStore:
@@ -19,6 +20,9 @@ class FakeQuotaStore:
         self.expired: set[uuid.UUID] = set()
         self.extra_global = 0
         self.releases = 0
+        # ai_spend_daily (#531): day -> [reserved, settled, alerted_mask]
+        self.spend: dict[date, list[int]] = {}
+        self.cost_refusals = 0
 
     async def global_units_today(self, _db, day: date) -> int:
         return self.extra_global + sum(
@@ -63,6 +67,43 @@ class FakeQuotaStore:
     async def units_used(self, _db, user_id, feature, kind, start) -> int:
         return self.rows.get((user_id, feature, kind, start), 0)
 
+    # --- cost breaker (#531), same semantics as app/ai/breaker.py ---
+
+    async def spend_reserve(self, _db, day, est, ceiling, *, enforce) -> bool:
+        row = self.spend.get(day, [0, 0, 0])
+        if enforce and row[0] + row[1] + est > ceiling:
+            self.cost_refusals += 1
+            return False
+        row[0] += est
+        self.spend[day] = row
+        return True
+
+    async def spend_release(self, _db, day, est) -> None:
+        if day in self.spend:
+            self.spend[day][0] = max(0, self.spend[day][0] - est)
+
+    async def spend_settle(self, _db, day, est, cost):
+        if day not in self.spend:
+            return None
+        row = self.spend[day]
+        row[0] = max(0, row[0] - est)
+        row[1] += cost
+        return (row[1], row[0], row[2])
+
+    async def spend_claim_alerts(self, _db, day, pcts) -> list[int]:
+        won = []
+        for pct in pcts:
+            bit = breaker.threshold_bit(pct)
+            if day in self.spend and not self.spend[day][2] & bit:
+                self.spend[day][2] |= bit
+                won.append(pct)
+        return won
+
+    def spend_today(self) -> tuple[int, int]:
+        """``(reserved, settled)`` for today."""
+        reserved, settled, _ = self.spend.get(quota.utc_today(), [0, 0, 0])
+        return reserved, settled
+
     def count(self, user_id=None, feature=quota.SCAN_QUOTA_FEATURE, kind="day") -> int:
         user_id = user_id or self.default_user
         today = quota.utc_today()
@@ -79,7 +120,15 @@ class FakeQuotaStore:
             "refund_unit",
             "units_used",
         )
-        return [patch.object(quota, n, getattr(self, n)) for n in names]
+        spend = {
+            "reserve": self.spend_reserve,
+            "release": self.spend_release,
+            "settle": self.spend_settle,
+            "claim_alerts": self.spend_claim_alerts,
+        }
+        return [patch.object(quota, n, getattr(self, n)) for n in names] + [
+            patch.object(breaker, n, fn) for n, fn in spend.items()
+        ]
 
     @contextlib.contextmanager
     def installed(self):
