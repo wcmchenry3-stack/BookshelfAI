@@ -294,12 +294,6 @@ class TestReserveGivesTheEstimateBack:
             await _reserve(_ai(**{"quota.free.daily": 0}))
         assert store.spend[TODAY][0] == 0
 
-    async def test_monthly_refusal(self, store):
-        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "month", date(2026, 10, 1))] = 5
-        with pytest.raises(quota.MonthlyLimitReached):
-            await _reserve()
-        assert store.spend[TODAY][0] == 0
-
     async def test_lease_lost(self, store):
         with (
             patch.object(quota, "renew_lease", AsyncMock(return_value=False)),

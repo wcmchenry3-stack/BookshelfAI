@@ -27,10 +27,12 @@ class AIQuota(Base):
     ``feature`` is the quota key: every scan, standard or enhanced, counts
     under ``"scan"`` (``app.ai.quota.SCAN_QUOTA_FEATURE``, one shared
     allowance); the column lets later AI features have their own.
-    ``window_kind`` is ``day`` (``window_start`` = the UTC date) or ``month``
-    (``window_start`` = the first day of the UTC calendar month). One small
-    row (~70 bytes) per active user, quota key and window. Day rows are purged
-    after 90 days and month rows after 13 months by the daily cleanup task
+    ``window_kind`` is ``day`` (``window_start`` = the UTC date). ``month``
+    (``window_start`` = the first day of the UTC calendar month) is legacy:
+    there is no monthly limit since #582 and nothing writes or reads month
+    rows; the ones written before are left to age out. One small row (~70
+    bytes) per active user, quota key and day. Day rows are purged after 90
+    days and month rows after 13 months by the daily cleanup task
     (``app/ai/quota.py``). Rows go with the user (ON DELETE CASCADE).
     """
 
@@ -84,6 +86,9 @@ class AIInflight(Base):
     # transaction as its give-back, so a commit whose acknowledgement was lost
     # can be told apart afterwards and a unit is never given back twice. A
     # takeover of an expired lease resets them (they belong to the new lease).
+    # Since #582 only daily_taken is used: there is no monthly or enhanced
+    # monthly unit, so monthly_taken and enhanced_taken are never set (kept
+    # until a contract migration drops them; a takeover still clears them).
     daily_taken: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )

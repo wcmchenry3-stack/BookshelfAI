@@ -9,7 +9,7 @@ The same daily run also purges, in bounded batches:
 - the legacy scan usage counters (``scan_usage_daily``) older than 90 days
   (app/services/scan_quota.py, removed in #540);
 - AI quota counters (``ai_quota``): day rows older than 90 days and month rows
-  older than 13 months (app/ai/quota.py);
+  (no longer written since #582) older than 13 months (app/ai/quota.py);
 - the AI usage ledger (``ai_usage``): raw rows older than 30 days are rolled
   up into ``ai_usage_daily`` and deleted, and daily rows older than 400 days
   are deleted (app/ai/ledger.py);

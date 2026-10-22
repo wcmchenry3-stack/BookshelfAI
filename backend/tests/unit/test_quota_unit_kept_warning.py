@@ -20,9 +20,8 @@ def _reservation() -> quota.Reservation:
         feature=quota.SCAN_QUOTA_FEATURE,
         lease_id=uuid.uuid4(),
         day=DAY,
-        month=DAY.replace(day=1),
         tier=Tier.FREE,
-        allowance=quota.Allowance(5, 50),
+        allowance=quota.Allowance(5),
     )
 
 
@@ -54,12 +53,10 @@ def _gate(monkeypatch, *outcomes):
     monkeypatch.setattr(quota, "give_back_unit", give_back_unit)
 
 
-async def _run(env, *, taken, flag=quota.FLAG_DAILY):
+async def _run(env, *, taken):
     db = env[0]
     reservation = _reservation()
-    unit = quota._units(reservation)[
-        {quota.FLAG_DAILY: 0, quota.FLAG_MONTHLY: 1, quota.FLAG_ENHANCED: 2}[flag]
-    ]
+    unit = quota._daily_unit(reservation)
     await quota._return_unit(db, reservation, unit, taken=taken)
     return reservation
 
@@ -74,18 +71,10 @@ def _only_call(warnings, reservation, *, reason, unit):
     assert str(reservation.lease_id) not in blob
 
 
-@pytest.mark.parametrize(
-    "flag, unit",
-    [
-        (quota.FLAG_DAILY, "daily"),
-        (quota.FLAG_MONTHLY, "monthly"),
-        (quota.FLAG_ENHANCED, "enhanced"),
-    ],
-)
-async def test_lease_lost_and_not_acknowledged_warns_once(env, monkeypatch, flag, unit):
+async def test_lease_lost_and_not_acknowledged_warns_once(env, monkeypatch):
     _gate(monkeypatch, quota.UNIT_LEASE_LOST)
-    reservation = await _run(env, taken=False, flag=flag)
-    _only_call(env[1], reservation, reason="lease_lost_unacknowledged", unit=unit)
+    reservation = await _run(env, taken=False)
+    _only_call(env[1], reservation, reason="lease_lost_unacknowledged", unit="daily")
     assert env[2] == []
 
 
@@ -103,8 +92,8 @@ async def test_a_failing_fallback_warns_once(env, monkeypatch):
 
 async def test_every_attempt_raising_warns_once(env, monkeypatch):
     _gate(monkeypatch, OSError("a"), OSError("b"))
-    reservation = await _run(env, taken=True, flag=quota.FLAG_MONTHLY)
-    _only_call(env[1], reservation, reason="give_back_failed", unit="monthly")
+    reservation = await _run(env, taken=True)
+    _only_call(env[1], reservation, reason="give_back_failed", unit="daily")
 
 
 async def test_a_timeout_warns_once(env, monkeypatch):

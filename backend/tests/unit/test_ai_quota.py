@@ -63,28 +63,22 @@ class TestWindows:
         early_tokyo = datetime(2026, 11, 1, 5, 0, tzinfo=timezone(timedelta(hours=9)))
         assert quota.utc_today(early_tokyo) == date(2026, 10, 31)
 
-    @pytest.mark.parametrize(
-        "day,start,end",
-        [
-            (date(2026, 10, 21), date(2026, 10, 1), date(2026, 11, 1)),
-            (date(2026, 10, 1), date(2026, 10, 1), date(2026, 11, 1)),
-            (date(2026, 10, 31), date(2026, 10, 1), date(2026, 11, 1)),
-            (date(2026, 12, 31), date(2026, 12, 1), date(2027, 1, 1)),
-            (date(2027, 1, 1), date(2027, 1, 1), date(2027, 2, 1)),
-            (date(2028, 2, 29), date(2028, 2, 1), date(2028, 3, 1)),
-        ],
-    )
-    def test_month_window_and_period_end(self, day, start, end):
-        assert quota.month_start(day) == start
-        assert quota.next_month_start(day) == end
-        assert quota.period_end(day) == end
-
-    def test_month_boundary_at_utc_midnight(self):
+    def test_year_end_boundary_at_utc_midnight(self):
+        """#582: only the day window is left; a year (and month) end is just
+        the next UTC day."""
         before = datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC)
         after = datetime(2027, 1, 1, 0, 0, 0, tzinfo=UTC)
-        assert quota.month_start(quota.utc_today(before)) == date(2026, 12, 1)
-        assert quota.month_start(quota.utc_today(after)) == date(2027, 1, 1)
+        assert quota.utc_today(before) == date(2026, 12, 31)
+        assert quota.utc_today(after) == date(2027, 1, 1)
         assert quota.seconds_until_utc_midnight(before) == 1
+
+    def test_no_month_window_helpers_are_left(self):
+        """#582: there is no monthly allowance, so nothing computes a month
+        window or a monthly reset date any more."""
+        for name in ("month_start", "next_month_start", "period_end"):
+            assert not hasattr(quota, name)
+        for name in ("MonthlyLimitReached", "EnhancedLimitReached"):
+            assert not hasattr(quota, name)
 
     def test_seconds_until_utc_midnight(self):
         assert quota.seconds_until_utc_midnight(NOW) == 12 * 3600
@@ -118,32 +112,23 @@ class TestWindows:
 
 class TestAllowances:
     def test_free_defaults_are_od1(self):
-        assert quota.allowance_for(AISettings({}), Tier.FREE) == quota.Allowance(5, 5)
+        assert quota.allowance_for(AISettings({}), Tier.FREE) == quota.Allowance(5)
 
     def test_premium_defaults(self):
-        assert quota.allowance_for(AISettings({}), Tier.PREMIUM) == quota.Allowance(
-            30, 300
-        )
+        assert quota.allowance_for(AISettings({}), Tier.PREMIUM) == quota.Allowance(30)
 
     def test_tier_selects_its_own_keys(self):
-        ai = AISettings(
-            {
-                "quota.free.daily": 1,
-                "quota.free.monthly": 2,
-                "quota.premium.daily": 3,
-                "quota.premium.monthly": 4,
-            }
-        )
-        assert quota.allowance_for(ai, Tier.FREE) == quota.Allowance(1, 2)
-        assert quota.allowance_for(ai, Tier.PREMIUM) == quota.Allowance(3, 4)
+        ai = AISettings({"quota.free.daily": 1, "quota.premium.daily": 3})
+        assert quota.allowance_for(ai, Tier.FREE) == quota.Allowance(1)
+        assert quota.allowance_for(ai, Tier.PREMIUM) == quota.Allowance(3)
 
     def test_seeds_come_from_env_settings(self):
         with (
             patch.object(settings, "scan_free_daily_limit", 7),
-            patch.object(settings, "scan_premium_monthly_limit", 900),
+            patch.object(settings, "scan_premium_daily_limit", 90),
         ):
             assert quota.allowance_for(AISettings({}), Tier.FREE).daily == 7
-            assert quota.allowance_for(AISettings({}), Tier.PREMIUM).monthly == 900
+            assert quota.allowance_for(AISettings({}), Tier.PREMIUM).daily == 90
 
     async def test_free_user_gets_free_limits(self, store):
         ai = AISettings({"quota.free.daily": 1, "quota.premium.daily": 30})
@@ -168,14 +153,12 @@ class TestAllowances:
 
 
 class TestReserveFlow:
-    async def test_success_takes_lease_daily_and_monthly(self, store):
+    async def test_success_takes_lease_and_daily_only(self, store):
+        """#582: one daily unit, no month-window unit."""
         r = await _reserve()
-        assert (r.day, r.month, r.feature) == (TODAY, MONTH, FEATURE)
+        assert (r.day, r.feature) == (TODAY, FEATURE)
         assert store.leases == {USER.id: r.lease_id}
-        assert store.rows == {
-            (USER.id, FEATURE, "day", TODAY): 1,
-            (USER.id, FEATURE, "month", MONTH): 1,
-        }
+        assert store.rows == {(USER.id, FEATURE, "day", TODAY): 1}
 
     async def test_global_refusal_takes_nothing(self, store):
         store.extra_global = 10
@@ -204,32 +187,24 @@ class TestReserveFlow:
         assert store.leases == {}
         assert store.rows == {}
 
-    async def test_monthly_refusal_refunds_daily_and_releases_lease(self, store):
-        store.rows[(USER.id, FEATURE, "month", MONTH)] = 5
-        store.rows[(USER.id, FEATURE, "day", TODAY)] = 2
-        with pytest.raises(quota.MonthlyLimitReached) as exc:
-            await _reserve()
-        assert (exc.value.limit, exc.value.used) == (5, 5)
-        assert exc.value.period_end == date(2026, 11, 1)
-        assert store.leases == {}
-        assert store.rows[(USER.id, FEATURE, "day", TODAY)] == 2  # given back
-        assert store.rows[(USER.id, FEATURE, "month", MONTH)] == 5
+    async def test_month_rows_and_retired_keys_never_refuse(self, store):
+        """#582: a month row left by the previous release (far over any old
+        monthly limit) and a retired monthly key set to 0 change nothing:
+        the scan is allowed and the month row is neither read nor written."""
+        store.rows[(USER.id, FEATURE, "month", MONTH)] = 10**6
+        store.rows[(USER.id, "scan.enhanced", "month", MONTH)] = 10**6
+        ai = AISettings({"quota.free.monthly": 0, "quota.premium.enhanced_monthly": 0})
+        r = await _reserve(ai)
+        assert store.rows[(USER.id, FEATURE, "day", TODAY)] == 1
+        assert store.rows[(USER.id, FEATURE, "month", MONTH)] == 10**6
+        assert store.rows[(USER.id, "scan.enhanced", "month", MONTH)] == 10**6
+        await quota.release(AsyncMock(), r)
 
-    async def test_monthly_used_reports_count_above_lowered_limit(self, store):
-        store.rows[(USER.id, FEATURE, "month", MONTH)] = 9
-        with pytest.raises(quota.MonthlyLimitReached) as exc:
-            await _reserve(AISettings({"quota.free.monthly": 3}))
-        assert (exc.value.limit, exc.value.used) == (3, 9)
-
-    async def test_error_in_monthly_reservation_gives_back_daily_and_lease(self, store):
-        real = store.take_unit
-
-        async def fail_month(db, user_id, lease_id, flag, feature, kind, start, limit):
-            if kind == "month":
-                raise OSError("db down")
-            return await real(db, user_id, lease_id, flag, feature, kind, start, limit)
-
-        with patch.object(quota, "take_unit", fail_month), pytest.raises(OSError):
+    async def test_error_after_the_daily_take_gives_back_daily_and_lease(self, store):
+        with (
+            patch.object(quota, "renew_lease", AsyncMock(side_effect=OSError("db"))),
+            pytest.raises(OSError),
+        ):
             await _reserve()
         assert store.leases == {}
         assert store.rows == {(USER.id, FEATURE, "day", TODAY): 0}
@@ -237,7 +212,7 @@ class TestReserveFlow:
     async def test_lease_lost_during_reservation_gives_everything_back(self, store):
         """A reservation that stalled past the lease (Codex P2 on #559): another
         request took the lease meanwhile, so this one must not call the
-        provider, and must give back both units without touching the new
+        provider, and must give back its unit without touching the new
         holder's lease."""
         real = store.take_unit
         taken_over = {}
@@ -246,7 +221,7 @@ class TestReserveFlow:
             db, user_id, lease_id, flag, feature, kind, start, limit
         ):
             got = await real(db, user_id, lease_id, flag, feature, kind, start, limit)
-            if kind == "month":
+            if kind == "day":
                 store.expire_lease(user_id)
                 taken_over["id"] = await store.acquire_lease(db, user_id, 90)
             return got
@@ -256,10 +231,7 @@ class TestReserveFlow:
             pytest.raises(quota.ScanInProgress),
         ):
             await _reserve()
-        assert store.rows == {
-            (USER.id, FEATURE, "day", TODAY): 0,
-            (USER.id, FEATURE, "month", MONTH): 0,
-        }
+        assert store.rows == {(USER.id, FEATURE, "day", TODAY): 0}
         assert store.leases == {USER.id: taken_over["id"]}
 
     async def test_cancellation_during_reservation_releases_lease(self, store):
@@ -272,31 +244,25 @@ class TestReserveFlow:
             await _reserve()
         assert store.leases == {}
 
-    @pytest.mark.parametrize("lost_kind", ["day", "month"])
-    async def test_lost_ack_on_a_take_gives_the_unit_back(self, store, lost_kind):
+    async def test_lost_ack_on_a_take_gives_the_unit_back(self, store):
         """#590: the take commits (unit and flag) and its acknowledgement is
-        lost. The flag shows it landed, so the unit is given back; the
-        monthly unit after a lost daily ack is never taken."""
+        lost. The flag shows it landed, so the unit is given back."""
         real = store.take_unit
 
         async def ack_lost(db, user_id, lease_id, flag, feature, kind, start, limit):
-            used = await real(db, user_id, lease_id, flag, feature, kind, start, limit)
-            if kind == lost_kind:
-                raise OSError("commit acknowledgement lost")
-            return used
+            await real(db, user_id, lease_id, flag, feature, kind, start, limit)
+            raise OSError("commit acknowledgement lost")
 
         with patch.object(quota, "take_unit", ack_lost), pytest.raises(OSError):
             await _reserve()
         assert store.count() == 0
-        assert store.count(kind="month") == 0
         assert store.leases == {}
-        if lost_kind == "day":
-            assert (USER.id, FEATURE, "month", MONTH) not in store.rows
+        assert not any(kind == "month" for (_, _, kind, _) in store.rows)
 
     async def test_a_refused_take_gives_nothing_back(self, store):
         """A refusal that was acknowledged took nothing, so no give-back runs
-        for it (and the earlier daily unit comes back once)."""
-        store.rows[(USER.id, FEATURE, "month", MONTH)] = 5
+        for it."""
+        store.rows[(USER.id, FEATURE, "day", TODAY)] = 5
         calls = []
         real = store.give_back_unit
 
@@ -306,13 +272,14 @@ class TestReserveFlow:
 
         with (
             patch.object(quota, "give_back_unit", give_back),
-            pytest.raises(quota.MonthlyLimitReached),
+            pytest.raises(quota.DailyLimitReached),
         ):
-            await _reserve(AISettings({"quota.free.monthly": 5}))
-        assert calls == [quota.FLAG_DAILY]
-        assert store.count() == 0
+            await _reserve(AISettings({"quota.free.daily": 5}))
+        assert calls == []
+        assert store.rows == {(USER.id, FEATURE, "day", TODAY): 5}
+        assert store.leases == {}
 
-    async def test_refund_gives_back_both_windows_never_below_zero(self, store):
+    async def test_refund_gives_back_the_daily_unit_never_below_zero(self, store):
         r = await _reserve()
         db = AsyncMock()
         await quota.refund(db, r)

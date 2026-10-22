@@ -77,9 +77,8 @@ class Settings(BaseSettings):
     # ai_settings rows scan.standard.model / scan.enhanced.model.
     scan_model: str = "gpt-4o-mini"
     # "Enhanced" scan — a stronger model a Premium user can opt into when the
-    # standard scan misses books. Premium-only, with its own monthly allowance
-    # (quota.premium.enhanced_monthly, seeded from
-    # SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT below; #533).
+    # standard scan misses books. Premium-only (#533); it uses the shared
+    # daily allowance (there is no monthly allowance, #582).
     scan_enhanced_model: str = "gpt-4o"
     # LEGACY: the old lifetime enhanced-scan credit grant. Unused since #533
     # (nothing reads users.enhanced_scan_credits any more); kept only so an
@@ -106,20 +105,19 @@ class Settings(BaseSettings):
     # per-user reservation (503 scan_capacity). Approximate under concurrency.
     scan_global_daily_limit: int = Field(default=2000, ge=1, le=1_000_000)
     # Per-user scan allowances by tier (#528). INITIAL DEFAULTS ONLY: they seed
-    # the ai_settings rows quota.<tier>.daily / quota.<tier>.monthly (same
-    # bounds), which are the source of truth after first boot. Daily windows
-    # are UTC days, monthly windows UTC calendar months. 0 refuses every scan
-    # for that tier. Launch values (OD-1): Free 5 a day and 5 a month.
+    # the ai_settings rows quota.<tier>.daily (same bounds), which are the
+    # source of truth after first boot. Windows are UTC days. 0 refuses every
+    # scan for that tier. There is no monthly allowance (#582).
     scan_free_daily_limit: int = Field(default=5, ge=0, le=1000)
-    scan_free_monthly_limit: int = Field(default=5, ge=0, le=100_000)
     scan_premium_daily_limit: int = Field(default=30, ge=0, le=1000)
-    scan_premium_monthly_limit: int = Field(default=300, ge=0, le=100_000)
-    # Enhanced scans per Premium user per UTC calendar month (#533), on top of
-    # the shared allowance above. INITIAL DEFAULT ONLY: seeds the ai_settings
-    # row quota.premium.enhanced_monthly (same bounds). Enhanced scans are
-    # Premium-only, so there is no Free equivalent. 0 refuses every enhanced
-    # scan (402 enhanced_limit_reached).
-    scan_premium_enhanced_monthly_limit: int = Field(default=20, ge=0, le=10_000)
+    # LEGACY (#582): SCAN_FREE_MONTHLY_LIMIT, SCAN_PREMIUM_MONTHLY_LIMIT and
+    # SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT seeded the retired monthly keys.
+    # Nothing reads them; they are accepted (any integer, or unset) only so
+    # an existing .env that still sets them loads (extra keys are refused).
+    # Delete them with the contract migration that drops the retired rows.
+    scan_free_monthly_limit: int | None = None
+    scan_premium_monthly_limit: int | None = None
+    scan_premium_enhanced_monthly_limit: int | None = None
     # Cost circuit breaker (#531). INITIAL DEFAULT ONLY: seeds the ai_settings
     # row breaker.free_daily_ceiling_micros (same bounds): the service-wide
     # spend per UTC day, in micro-dollars (1,000,000 = $1), above which

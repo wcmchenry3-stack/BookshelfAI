@@ -110,18 +110,10 @@ class FakeQuotaStore:
 
     async def record_zero_result(self, _db, reservation, ledger_id):
         if self.leases.get(reservation.user_id) != reservation.lease_id:
-            return None  # this request no longer holds the lease: charged
+            return None  # this request no longer holds the lease: no row
         rows = self.zero_results.setdefault(reservation.user_id, [])
         if quota.zero_result_charged(len(rows), reservation.zero_result_threshold):
             return None
-        key = (
-            reservation.user_id,
-            quota.ENHANCED_QUOTA_FEATURE,
-            "month",
-            reservation.month,
-        )
-        if key in self.rows:
-            self.rows[key] = max(0, self.rows[key] - 1)
         rows.append(ledger_id)
         warn = (
             len(rows) == reservation.zero_result_threshold
@@ -171,7 +163,7 @@ class FakeQuotaStore:
     def count(self, user_id=None, feature=quota.SCAN_QUOTA_FEATURE, kind="day") -> int:
         user_id = user_id or self.default_user
         today = quota.utc_today()
-        start = today if kind == "day" else quota.month_start(today)
+        start = today if kind == "day" else today.replace(day=1)
         return self.rows.get((user_id, feature, kind, start), 0)
 
     def patches(self):

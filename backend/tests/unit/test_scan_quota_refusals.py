@@ -5,7 +5,6 @@ import asyncio
 import dataclasses
 import io
 import uuid
-from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
@@ -84,16 +83,20 @@ def premium(monkeypatch):
     monkeypatch.setattr(entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM))
 
 
-def _today_month():
-    today = quota.utc_today()
-    return today, quota.month_start(today)
+def _today():
+    return quota.utc_today()
+
+
+def _month_rows(store) -> int:
+    """Month-window rows (#582: never written)."""
+    return sum(1 for (_, _, kind, _) in store.rows if kind == "month")
 
 
 class TestRefusalResponses:
     def test_daily_limit_429_with_retry_after_to_utc_midnight(
         self, client, store, provider
     ):
-        today, _ = _today_month()
+        today = _today()
         store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "day", today)] = 5
         resp = client.post("/scan", files=_file())
         assert resp.status_code == 429
@@ -102,23 +105,26 @@ class TestRefusalResponses:
         provider.assert_not_called()
         assert store.leases == {}  # lease released
 
-    def test_monthly_limit_402_with_limit_used_and_period_end(
-        self, client, store, provider
-    ):
-        today, month = _today_month()
-        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "month", month)] = 5
-        resp = client.post("/scan", files=_file())
-        assert resp.status_code == 402
-        assert resp.json() == {
-            "detail": "scan_limit_reached",
-            "limit": 5,
-            "used": 5,
-            "period_end": quota.next_month_start(today).isoformat(),
-        }
-        assert "Retry-After" not in resp.headers
-        provider.assert_not_called()
-        assert store.leases == {}
-        assert store.count() == 0  # the daily reservation was given back
+    def test_no_402_for_a_monthly_reason(self, client, store, provider, premium):
+        """#582: month rows far over any old monthly limit (left by the
+        previous release) and the retired monthly keys set to 0 never refuse
+        a scan, standard or enhanced."""
+        month = _today().replace(day=1)
+        for feature in (quota.SCAN_QUOTA_FEATURE, "scan.enhanced"):
+            store.rows[(USER.id, feature, "month", month)] = 10**6
+        ai_settings.reset_cache(
+            {
+                "quota.premium.monthly": 0,
+                "quota.premium.enhanced_monthly": 0,
+                "quota.free.monthly": 0,
+            }
+        )
+        assert client.post("/scan", files=_file()).status_code == 200
+        resp = client.post("/scan", files=_file(), data={"enhanced": "true"})
+        assert resp.status_code == 200
+        assert provider.return_value.identify.await_count == 2
+        assert store.count() == 2
+        assert store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "month", month)] == 10**6
 
     def test_scan_in_progress_429_retry_after_2(self, client, store, provider):
         store.leases[USER.id] = held = uuid.uuid4()
@@ -150,26 +156,10 @@ class TestRefusalResponses:
         resp = client.post("/scan", files=_file())
         assert resp.json() == {"detail": "daily_scan_limit"}
 
-    def test_402_codes_differ_for_enhanced_and_monthly_limit(
-        self, client, store, provider, premium
-    ):
-        """Both refusals are 402; the client keys on the detail string. (#533
-        replaced no_enhanced_credits with enhanced_limit_reached.)"""
-        today, month = _today_month()
-        ai_settings.reset_cache({"quota.premium.enhanced_monthly": 2})
-        store.rows[(USER.id, quota.ENHANCED_QUOTA_FEATURE, "month", month)] = 2
-        resp = client.post("/scan", files=_file(), data={"enhanced": "true"})
-        assert resp.status_code == 402
-        assert resp.json() == {
-            "detail": "enhanced_limit_reached",
-            "limit": 2,
-            "used": 2,
-            "period_end": quota.next_month_start(today).isoformat(),
-        }
-        provider.assert_not_called()
-        assert store.leases == {}
-        # The shared units taken before it were given back.
-        assert store.count() == 0 and store.count(kind="month") == 0
+    def test_scan_limit_reached_error_is_gone(self):
+        """#582: the only 402 /scan had (monthly and enhanced monthly) is
+        removed."""
+        assert not hasattr(scan_module, "ScanLimitReachedError")
 
 
 class TestOrderAndSettle:
@@ -177,7 +167,7 @@ class TestOrderAndSettle:
         assert client.post("/scan", files=_file()).status_code == 200
         assert store.leases == {}
         assert store.count() == 1
-        assert store.count(kind="month") == 1
+        assert _month_rows(store) == 0
 
     def test_provider_unavailable_refunds_both_and_releases(
         self, client, store, provider
@@ -185,7 +175,7 @@ class TestOrderAndSettle:
         provider.return_value.identify = AsyncMock(side_effect=ScanUnavailableError())
         resp = client.post("/scan", files=_file())
         assert resp.json() == {"detail": "scan_unavailable"}
-        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.count() == 0 and _month_rows(store) == 0
         assert store.leases == {}
 
     @pytest.mark.parametrize("enhanced", [False, True])
@@ -211,7 +201,7 @@ class TestOrderAndSettle:
             )
         assert resp.status_code == 503
         assert resp.json() == {"detail": "scan_unavailable"}
-        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.count() == 0 and _month_rows(store) == 0
         assert store.leases == {}
 
     def test_enhanced_scans_use_the_shared_scan_counter(
@@ -223,12 +213,10 @@ class TestOrderAndSettle:
         )
         assert client.post("/scan", files=_file()).status_code == 200
         assert store.count() == 2
-        assert store.count(kind="month") == 2
-        # One shared key for every scan (OD-1), plus the enhanced allowance's
-        # own month key (#533); nothing else.
-        assert {feature for (_, feature, _, _) in store.rows} == {
-            quota.SCAN_QUOTA_FEATURE,
-            quota.ENHANCED_QUOTA_FEATURE,
+        # One shared day key for every scan (OD-1); no month key and no
+        # enhanced key since #582.
+        assert set(store.rows) == {
+            (USER.id, quota.SCAN_QUOTA_FEATURE, "day", quota.utc_today())
         }
 
     @pytest.mark.parametrize("sixth", ["standard", "enhanced"])
@@ -254,22 +242,9 @@ class TestOrderAndSettle:
         provider.return_value.identify = AsyncMock(side_effect=ScanUnavailableError())
         resp = client.post("/scan", files=_file(), data={"enhanced": "true"})
         assert resp.json() == {"detail": "scan_unavailable"}
-        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.count() == 0 and _month_rows(store) == 0
         assert store.rows == {
             (USER.id, quota.SCAN_QUOTA_FEATURE, "day", quota.utc_today()): 0,
-            (
-                USER.id,
-                quota.SCAN_QUOTA_FEATURE,
-                "month",
-                quota.month_start(quota.utc_today()),
-            ): 0,
-            # #533: the enhanced unit follows the shared units.
-            (
-                USER.id,
-                quota.ENHANCED_QUOTA_FEATURE,
-                "month",
-                quota.month_start(quota.utc_today()),
-            ): 0,
         }
 
     def test_disabled_scan_takes_no_lease(self, client, store, provider):
@@ -320,48 +295,37 @@ class TestOrderAndSettle:
 
 class TestUsageEndpoint:
     def test_returns_current_usage_and_limits(self, client, store):
-        today, month = _today_month()
-        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "day", today)] = 2
-        store.rows[(USER.id, quota.SCAN_QUOTA_FEATURE, "month", month)] = 4
         with patch.object(
             quota,
             "usage_for",
-            AsyncMock(
-                return_value=quota.Usage(2, 5, 4, 5, quota.next_month_start(today))
-            ),
+            AsyncMock(return_value=quota.Usage(2, 5)),
         ) as usage_for:
             resp = client.get("/scan/usage")
         assert resp.status_code == 200
+        # #582: the monthly fields stay in the body for one release, always
+        # null, so older app builds still parse it.
         assert resp.json() == {
             "used_today": 2,
             "daily_limit": 5,
-            "used_month": 4,
-            "monthly_limit": 5,
-            "period_end": quota.next_month_start(today).isoformat(),
-            # #533
-            "enhanced_used_month": 0,
-            "enhanced_monthly_limit": 0,
+            "used_month": None,
+            "monthly_limit": None,
+            "period_end": None,
+            "enhanced_used_month": None,
+            "enhanced_monthly_limit": None,
         }
         assert usage_for.await_args.kwargs["feature"] == quota.SCAN_QUOTA_FEATURE
         assert usage_for.await_args.kwargs["user"] is USER
 
     async def test_usage_for_reads_rows_and_tier_limits(self):
         db = AsyncMock()
-        db.execute.return_value = MagicMock(
-            all=lambda: [
-                (quota.SCAN_QUOTA_FEATURE, "day", 2),
-                (quota.SCAN_QUOTA_FEATURE, "month", 4),
-            ]
-        )
+        db.execute.return_value = MagicMock(scalar_one_or_none=lambda: 2)
         usage = await quota.usage_for(
             db,
             user=USER,
             feature=quota.SCAN_QUOTA_FEATURE,
-            ai=ai_settings.AISettings({"quota.free.monthly": 9}),
+            ai=ai_settings.AISettings({"quota.free.daily": 9}),
         )
-        assert (usage.used_today, usage.used_month) == (2, 4)
-        assert (usage.daily_limit, usage.monthly_limit) == (5, 9)
-        assert isinstance(usage.period_end, date)
+        assert usage == quota.Usage(used_today=2, daily_limit=9)
 
     def test_ai_settings_unavailable_is_503(self, client):
         with patch(

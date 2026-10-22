@@ -19,8 +19,8 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     # LEGACY: the lifetime enhanced-scan credit balance. Since #533 nothing in
-    # the app reads or writes it (enhanced scans use the Premium-only
-    # quota.premium.enhanced_monthly allowance); new rows get the server
+    # the app reads or writes it (enhanced scans are Premium-only and use the
+    # shared daily allowance, #582); new rows get the server
     # default. The column is dropped in #540.
     enhanced_scan_credits: Mapped[int] = mapped_column(
         Integer,

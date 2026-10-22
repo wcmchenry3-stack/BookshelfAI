@@ -392,15 +392,28 @@ class TestLease:
 
 
 class TestReserveFlow:
-    async def test_monthly_refusal_refunds_daily_and_releases_lease(self, sessions):
+    async def test_month_rows_never_refuse_and_none_are_written(self, sessions):
+        """#582: a month row far over any old monthly limit (left by the
+        previous release) and the retired monthly keys set to 0 never refuse
+        a reservation; no month row is read, written or created."""
         factory, make_user = sessions
         user_id = await make_user()
-        ai = AISettings({"quota.free.daily": 5, "quota.free.monthly": 2})
+        ai = AISettings(
+            {"quota.free.daily": 5, "quota.free.monthly": 0, "quota.premium.monthly": 0}
+        )
         now = quota.utc_now()
-        today, month = quota.utc_today(now), quota.month_start(quota.utc_today(now))
+        today = quota.utc_today(now)
+        month = today.replace(day=1)
         async with factory() as db:
+            await quota.reserve_unit(db, user_id, FEATURE, "month", month, 10**7)
+            await db.execute(
+                update(AIQuota)
+                .where(AIQuota.user_id == user_id, AIQuota.window_kind == "month")
+                .values(units_used=10**6)
+            )
+            await db.commit()
             user = await db.get(User, user_id)
-            for _ in range(2):
+            for _ in range(3):
                 r = await quota.reserve(
                     db,
                     user=user,
@@ -411,26 +424,14 @@ class TestReserveFlow:
                     est_cost_micros=EST,
                 )
                 await quota.release(db, r)
-            with pytest.raises(quota.MonthlyLimitReached) as exc:
-                await quota.reserve(
-                    db,
-                    user=user,
-                    feature=FEATURE,
-                    timeout_s=30,
-                    ai=ai,
-                    now=now,
-                    est_cost_micros=EST,
-                )
-        assert (exc.value.limit, exc.value.used) == (2, 2)
-        assert exc.value.period_end == quota.next_month_start(today)
-        assert await _units(factory, user_id, "day", today) == 2
-        assert await _units(factory, user_id, "month", month) == 2
+        assert await _units(factory, user_id, "day", today) == 3
+        assert await _units(factory, user_id, "month", month) == 10**6
         assert await _lease(factory, user_id) is None
 
     async def test_lease_lost_during_reservation_refuses_and_gives_back(self, sessions):
         """Codex P2 on #559: the upserts stalled past the lease and another
         request took it, so reserve must refuse instead of letting two
-        provider calls run, and give back both units."""
+        provider calls run, and give back its unit."""
         factory, make_user = sessions
         user_id = await make_user()
         today = quota.utc_today()
@@ -441,7 +442,7 @@ class TestReserveFlow:
             db, uid, lease_id, flag, feature, kind, start, limit
         ):
             got = await real(db, uid, lease_id, flag, feature, kind, start, limit)
-            if kind == "month":
+            if kind == "day":
                 await _expire_lease(factory, uid)
                 async with factory() as other:
                     taken_over["id"] = await quota.acquire_lease(other, uid, 60)
@@ -462,7 +463,7 @@ class TestReserveFlow:
                     est_cost_micros=EST,
                 )
         assert await _units(factory, user_id, "day", today) == 0
-        assert await _units(factory, user_id, "month", quota.month_start(today)) == 0
+        assert await _units(factory, user_id, "month", today.replace(day=1)) is None
         assert (await _lease(factory, user_id)).lease_id == taken_over["id"]
 
     async def test_daily_refusal_releases_lease(self, sessions):
@@ -510,7 +511,6 @@ class TestScanEndpoint:
         with (
             provider.patch(),
             patch.object(settings, "scan_free_daily_limit", 5),
-            patch.object(settings, "scan_free_monthly_limit", 100),
         ):
             outcomes = await asyncio.gather(*(one() for _ in range(20)))
 
@@ -557,28 +557,22 @@ class TestScanEndpoint:
         assert provider.calls == 0
         assert await _units(factory, user_id, "day", quota.utc_today()) is None
 
-    async def test_monthly_exhaustion_refuses_before_provider(
-        self, sessions, downstream
-    ):
+    async def test_full_month_row_does_not_refuse(self, sessions, downstream):
+        """#582: no 402 scan_limit_reached; a month row at any count is
+        ignored and the scan reaches the provider."""
         factory, make_user = sessions
         user_id = await make_user()
         today = quota.utc_today()
-        month = quota.month_start(today)
+        month = today.replace(day=1)
         async with factory() as db:
             for _ in range(5):
                 await quota.reserve_unit(db, user_id, FEATURE, "month", month, 5)
         provider = _CountingProvider()
-        with provider.patch(), pytest.raises(scan_api.ScanLimitReachedError) as exc:
+        with provider.patch():
             await _call_scan(factory, user_id)
-        assert exc.value.status_code == 402
-        assert exc.value.body() == {
-            "detail": "scan_limit_reached",
-            "limit": 5,
-            "used": 5,
-            "period_end": quota.next_month_start(today).isoformat(),
-        }
-        assert provider.calls == 0
-        assert await _units(factory, user_id, "day", today) == 0  # refunded
+        assert provider.calls == 1
+        assert await _units(factory, user_id, "day", today) == 1
+        assert await _units(factory, user_id, "month", month) == 5  # untouched
         assert await _lease(factory, user_id) is None
 
     @pytest.mark.parametrize(
@@ -596,7 +590,7 @@ class TestScanEndpoint:
         assert (exc.value.status_code, exc.value.detail) == (503, "scan_unavailable")
         assert provider.calls == 1
         assert await _units(factory, user_id, "day", today) == 0
-        assert await _units(factory, user_id, "month", quota.month_start(today)) == 0
+        assert await _units(factory, user_id, "month", today.replace(day=1)) is None
         assert await _lease(factory, user_id) is None
 
     async def test_success_keeps_reservation_and_releases_lease(
@@ -608,7 +602,7 @@ class TestScanEndpoint:
         with _CountingProvider(delay=0).patch():
             await _call_scan(factory, user_id)
         assert await _units(factory, user_id, "day", today) == 1
-        assert await _units(factory, user_id, "month", quota.month_start(today)) == 1
+        assert await _units(factory, user_id, "month", today.replace(day=1)) is None
         assert await _lease(factory, user_id) is None
 
     async def test_unexpected_error_keeps_reservation_and_releases_lease(
@@ -630,8 +624,8 @@ class TestScanEndpoint:
     ):
         """A lease release that fails rolls the request session back (which
         expires the loaded user); the rest of the request must not touch the
-        expired user, and the enhanced unit is still charged (#533: books were
-        found)."""
+        expired user, and the daily unit is still charged (books were found;
+        #582: an enhanced scan takes only the daily unit)."""
         factory, make_user = sessions
         user_id = await make_user()
         real_release = quota.release_lease
@@ -653,7 +647,7 @@ class TestScanEndpoint:
             patch("app.api.scan._dedupe_enriched", lambda books: books),
             patch("app.api.scan.ScanResponse", lambda **kw: kw),
             patch.object(entitlements, "tier_for", AsyncMock(return_value=PREMIUM)),
-            patch.object(settings, "scan_premium_enhanced_monthly_limit", 7),
+            patch.object(settings, "scan_premium_daily_limit", 7),
         ):
             enrich.return_value.enrich = AsyncMock(return_value=[book])
             dedup.return_value.check = AsyncMock(return_value=[book])
@@ -677,8 +671,8 @@ class TestScanEndpoint:
     ):
         """OD-1: 3 standard + 2 enhanced scans use a daily limit of 5; the 6th
         scan of either kind is refused before the provider. (#533: enhanced
-        scans are Premium-only, so the user is Premium; they also take an
-        enhanced unit, under their own key.)"""
+        scans are Premium-only, so the user is Premium. #582: no month or
+        enhanced unit is taken.)"""
         factory, make_user = sessions
         user_id = await make_user()
         today = quota.utc_today()
@@ -686,8 +680,6 @@ class TestScanEndpoint:
         with (
             provider.patch(),
             patch.object(settings, "scan_premium_daily_limit", 5),
-            patch.object(settings, "scan_premium_monthly_limit", 100),
-            patch.object(settings, "scan_premium_enhanced_monthly_limit", 10),
             patch.object(entitlements, "tier_for", AsyncMock(return_value=PREMIUM)),
         ):
             for enhanced in (False, False, False, True, True):
@@ -701,14 +693,15 @@ class TestScanEndpoint:
                 )
         assert provider.calls == 5
         assert await _units(factory, user_id, "day", today) == 5
-        assert await _units(factory, user_id, "month", quota.month_start(today)) == 5
         async with factory() as db:
-            features = (
+            keys = (
                 await db.execute(
-                    select(AIQuota.feature).where(AIQuota.user_id == user_id)
+                    select(AIQuota.feature, AIQuota.window_kind).where(
+                        AIQuota.user_id == user_id
+                    )
                 )
-            ).scalars()
-            assert set(features) == {FEATURE, quota.ENHANCED_QUOTA_FEATURE}
+            ).all()
+            assert set(keys) == {(FEATURE, "day")}
 
     async def test_release_timeout_mid_query_leaves_session_usable(
         self, sessions, downstream
@@ -765,9 +758,10 @@ class TestScanEndpoint:
         today = quota.utc_today()
         async with factory() as db:
             await quota.reserve_unit(db, user_id, FEATURE, "day", today, 5)
+            # A month row left by the previous release: not counted (#582).
             for _ in range(3):
                 await quota.reserve_unit(
-                    db, user_id, FEATURE, "month", quota.month_start(today), 5
+                    db, user_id, FEATURE, "month", today.replace(day=1), 5
                 )
             # Other feature and an older day: not counted.
             await quota.reserve_unit(db, user_id, OTHER_FEATURE, "day", today, 5)
@@ -778,9 +772,7 @@ class TestScanEndpoint:
             usage = await quota.usage_for(
                 db, user=user, feature=FEATURE, ai=AISettings({})
             )
-        assert (usage.used_today, usage.used_month) == (1, 3)
-        assert (usage.daily_limit, usage.monthly_limit) == (5, 5)
-        assert usage.period_end == quota.next_month_start(today)
+        assert usage == quota.Usage(used_today=1, daily_limit=5)
 
 
 class TestPurge:

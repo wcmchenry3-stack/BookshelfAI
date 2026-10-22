@@ -83,8 +83,10 @@ class ScanResponse(BaseModel):
 
     books: list[EnrichedBook] = []
     enhanced: bool = False  # True when the stronger model was used
-    # The remaining Premium enhanced monthly allowance after this scan (#533);
-    # None for users who are not Premium (enhanced scans are Premium-only).
+    # Enhanced scans the user can still make today after this scan: the
+    # shared daily allowance left, since an enhanced scan uses the shared
+    # daily unit (#582; there is no enhanced monthly allowance). None for
+    # users who are not Premium (enhanced scans are Premium-only, #533).
     enhanced_scans_remaining: int | None = None
     # True when the answer came from the user's saved scan record for this
     # exact photo (#585): no AI call and nothing charged.

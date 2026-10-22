@@ -609,13 +609,10 @@ _VALID = {
     # #528 allowance keys and the global ceiling.
     "scan.global_daily_limit": [1, 2000, 1_000_000],
     "quota.free.daily": [0, 5, 1000],
-    "quota.free.monthly": [0, 5, 100_000],
     "quota.premium.daily": [0, 30, 1000],
-    "quota.premium.monthly": [0, 300, 100_000],
     # #531 cost ceiling (micro-dollars)
     "breaker.free_daily_ceiling_micros": [0, 10_000_000, 1_000_000_000],
     # #533 enhanced allowance and zero-result limits
-    "quota.premium.enhanced_monthly": [0, 20, 10_000],
     "scan.enhanced.zero_result_threshold": [0, 3, 20],
     "scan.enhanced.zero_result_window_hours": [1, 24, 720],
     "scan.enhanced.zero_result_action": ["charge", "throttle"],
@@ -634,9 +631,7 @@ _INVALID = {
     "scan.max_image_pixels": [999_999, 100_000_001, 0, -1, True, 1e7, "4e7", None],
     "scan.global_daily_limit": [0, -1, 1_000_001, True, 2.5, "2000", None],
     "quota.free.daily": [-1, 1001, True, False, 5.0, "5", None],
-    "quota.free.monthly": [-1, 100_001, True, 5.5, "5", None],
     "quota.premium.daily": [-1, 1001, True, None],
-    "quota.premium.monthly": [-1, 100_001, False, None],
     "breaker.free_daily_ceiling_micros": [
         -1,
         1_000_000_001,
@@ -645,7 +640,6 @@ _INVALID = {
         "10000000",
         None,
     ],
-    "quota.premium.enhanced_monthly": [-1, 10_001, True, 2.5, "20", None],
     "scan.enhanced.zero_result_threshold": [-1, 21, True, 3.0, "3", None],
     "scan.enhanced.zero_result_window_hours": [0, 721, -1, False, 24.5, "24", None],
     "scan.enhanced.zero_result_action": [
@@ -681,13 +675,10 @@ def test_initial_key_set():
         # #528
         "scan.global_daily_limit",
         "quota.free.daily",
-        "quota.free.monthly",
         "quota.premium.daily",
-        "quota.premium.monthly",
         # #531
         "breaker.free_daily_ceiling_micros",
-        # #533
-        "quota.premium.enhanced_monthly",
+        # #533 (quota.premium.enhanced_monthly retired by #582)
         "scan.enhanced.zero_result_threshold",
         "scan.enhanced.zero_result_window_hours",
         "scan.enhanced.zero_result_action",
@@ -750,6 +741,31 @@ class TestBounds:
     def test_unknown_key_ignored_on_read(self):
         ai_settings.reset_cache({"scan.premium.model": "gpt-5"})
         assert dict(ai_settings._cache.rows) == {}
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "quota.free.monthly",
+            "quota.premium.monthly",
+            "quota.premium.enhanced_monthly",
+        ],
+    )
+    def test_retired_monthly_keys_are_unknown(self, key, caplog):
+        """#582: no monthly limits. The keys are unknown on write, and a row
+        the previous release left behind is dropped on read without a log
+        line or a Sentry warning (expected until the contract migration)."""
+        assert key in ai_settings.RETIRED_KEYS
+        assert key not in ai_settings.KNOWN_KEYS
+        with pytest.raises(ai_settings.AISettingValueError, match="unknown key"):
+            ai_settings.validate_write(key, 5, {})
+        with (
+            patch.object(ai_settings.sentry_sdk, "capture_message") as capture,
+            caplog.at_level("INFO", logger="app.ai.settings"),
+        ):
+            ai_settings.reset_cache({key: 0, "quota.free.daily": 5})
+        assert dict(ai_settings._cache.rows) == {"quota.free.daily": 5}
+        capture.assert_not_called()
+        assert key not in caplog.text
 
 
 _TWO_PROVIDERS = {
@@ -836,6 +852,7 @@ class TestSeeding:
             # #528 seeds
             patch.object(ai_settings.settings, "scan_global_daily_limit", 77),
             patch.object(ai_settings.settings, "scan_free_daily_limit", 4),
+            # #582: retired, must seed nothing
             patch.object(ai_settings.settings, "scan_free_monthly_limit", 6),
             patch.object(ai_settings.settings, "scan_premium_daily_limit", 31),
             patch.object(ai_settings.settings, "scan_premium_monthly_limit", 301),
@@ -857,12 +874,10 @@ class TestSeeding:
             "scan.max_image_pixels": 2_000_000,
             "scan.global_daily_limit": 77,
             "quota.free.daily": 4,
-            "quota.free.monthly": 6,
             "quota.premium.daily": 31,
-            "quota.premium.monthly": 301,
             "breaker.free_daily_ceiling_micros": 42,
-            # #533: env seed, then code defaults
-            "quota.premium.enhanced_monthly": 21,
+            # #533: code defaults (the retired monthly env vars seed nothing,
+            # #582)
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -1021,6 +1036,16 @@ class TestCLI:
     def test_set_rejects_unknown_key(self, cli_db):
         with pytest.raises(SystemExit) as exc:
             ai_settings.main(["set", "scan.premium.enabled", "true"])
+        assert exc.value.code != 0
+        cli_db.execute.assert_not_awaited()
+
+    @pytest.mark.parametrize("command", ["set", "get"])
+    @pytest.mark.parametrize("key", sorted(ai_settings.RETIRED_KEYS))
+    def test_cli_rejects_retired_monthly_keys(self, cli_db, command, key):
+        """#582: the retired monthly keys are unknown to the CLI."""
+        argv = [command, key] + (["5"] if command == "set" else [])
+        with pytest.raises(SystemExit) as exc:
+            ai_settings.main(argv)
         assert exc.value.code != 0
         cli_db.execute.assert_not_awaited()
 

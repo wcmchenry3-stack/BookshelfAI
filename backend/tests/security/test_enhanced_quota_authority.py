@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import app as app_package
-from app.ai import entitlements, quota
+from app.ai import entitlements
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
 from app.ai.providers.base import ProviderResult
@@ -118,7 +118,7 @@ def premium(monkeypatch):
 def _settings(**rows):
     ai_settings.reset_cache(
         {
-            "quota.premium.enhanced_monthly": 20,
+            "quota.premium.daily": 30,
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -169,20 +169,21 @@ class TestPremiumOnly:
 
 
 class TestAllowanceAuthority:
-    def test_zero_enhanced_allowance_refused_before_the_provider(
+    def test_zero_daily_allowance_refused_before_the_provider(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.enhanced_monthly": 0})
+        """#582: an enhanced scan is limited by the shared daily allowance
+        (no enhanced monthly allowance); forged values cannot lift it."""
+        _settings(**{"quota.premium.daily": 0})
         resp = _post(client)
-        assert resp.status_code == 402
-        assert resp.json()["detail"] == "enhanced_limit_reached"
-        assert resp.json()["limit"] == 0
+        assert resp.status_code == 429
+        assert resp.json() == {"detail": "daily_scan_limit"}
         provider.assert_not_called()
         assert store.leases == {}
-        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.rows == {}
 
     def test_forged_remaining_is_ignored(self, client, store, provider, premium):
-        _settings(**{"quota.premium.enhanced_monthly": 5})
+        _settings(**{"quota.premium.daily": 5})
         provider.return_value.identify = AsyncMock(
             return_value=ProviderResult(
                 [BookCandidate(title="Dune", author="F", confidence=0.9)]
@@ -223,9 +224,8 @@ class TestZeroResultAuthority:
         _settings(**{"scan.enhanced.zero_result_threshold": 1})
         _post(client)
         _post(client)
-        enhanced = store.count(feature=quota.ENHANCED_QUOTA_FEATURE, kind="month")
-        assert enhanced == 1  # the second was charged
-        assert len(store.zero_results[USER.id]) == 1
+        assert store.count() == 2  # both used the daily unit (#582)
+        assert len(store.zero_results[USER.id]) == 1  # forged threshold ignored
 
     def test_another_users_rows_never_count(self, client, store, provider, premium):
         _settings(

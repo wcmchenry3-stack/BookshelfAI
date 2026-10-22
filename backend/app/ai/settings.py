@@ -18,23 +18,18 @@ key                         type     meaning
 ``scan.global_daily_limit`` int      1..1,000,000 scans per UTC day, all users
                                      (503 ``scan_capacity``)
 ``quota.free.daily``        int      0..1,000 scans per user per UTC day
-``quota.free.monthly``      int      0..100,000 scans per user per UTC month
 ``quota.premium.daily``     int      0..1,000 (as above, Premium tier)
-``quota.premium.monthly``   int      0..100,000 (as above, Premium tier)
 ``breaker.free_daily_``     int      0..1,000,000,000 micro-dollars of AI spend
 ``ceiling_micros``                   per UTC day, all tiers counted, above which
                                      Free-tier scans get 503 ``ai_budget_reached``
                                      (Premium continues; ``app/ai/breaker.py``)
-``quota.premium.``          int      0..10,000 enhanced scans per Premium user
-``enhanced_monthly``                 per UTC month, on top of the shared
-                                     allowance (402 ``enhanced_limit_reached``)
-``scan.enhanced.``          int      0..20 uncharged zero-result enhanced scans
-``zero_result_threshold``            per user per window before the action
-                                     applies (#533)
+``scan.enhanced.``          int      0..20 zero-result enhanced scans
+``zero_result_threshold``            recorded per user per window before the
+                                     action applies (#533)
 ``scan.enhanced.``          int      1..720 hours: the sliding window the
 ``zero_result_window_hours``         zero-result count covers
-``scan.enhanced.``          str      ``charge`` (a zero-result scan at the
-``zero_result_action``               threshold uses the enhanced allowance) or
+``scan.enhanced.``          str      ``charge`` (record and warn only; every
+``zero_result_action``               scan uses the shared daily unit) or
                                      ``throttle`` (enhanced scans refused, 429
                                      ``enhanced_throttled``, until the window
                                      clears)
@@ -47,23 +42,28 @@ key                         type     meaning
 ``max_per_user``                     oldest are evicted first
 ==========================  =======  =========================================
 
-Enhanced scans are Premium-only (#533): non-Premium tiers have no enhanced
-allowance key and are refused (403 ``enhanced_requires_premium``) before any
-reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
+Enhanced scans are Premium-only (#533): non-Premium tiers are refused (403
+``enhanced_requires_premium``) before any reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
 code defaults (3, 24, ``charge``), not from the env, as are the three
 ``scan_records.*`` keys (``enabled`` ``true``, ``retention_days`` 30,
 ``max_per_user`` 500).
 
 The ``quota.*`` allowances are per tier and shared by standard and enhanced
-scans (one ``ai_quota`` counter per user and window, under
+scans (one ``ai_quota`` counter per user and UTC day, under
 ``quota.SCAN_QUOTA_FEATURE``, OD-1); see ``app/ai/quota.py``.
+
+**No monthly keys (#582).** ``quota.free.monthly``, ``quota.premium.monthly``
+and ``quota.premium.enhanced_monthly`` are retired (:data:`RETIRED_KEYS`):
+there is no monthly limit. The CLI rejects them as unknown keys, seeding no
+longer writes them, and a row still stored for one is ignored on read
+(without a warning). The rows are deleted by a later contract migration,
+once no running release reads them.
 
 **Seeding.** At startup :func:`seed_ai_settings_at_startup` inserts every key
 that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
 ``SCAN_MAX_IMAGE_PIXELS``, ``SCAN_GLOBAL_DAILY_LIMIT``, ``SCAN_FREE_DAILY_LIMIT``,
-``SCAN_FREE_MONTHLY_LIMIT``, ``SCAN_PREMIUM_DAILY_LIMIT``,
-``SCAN_PREMIUM_MONTHLY_LIMIT``, ``SCAN_FREE_DAILY_CEILING_MICROS``,
-``SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT``), the code defaults above and the registry defaults (``SCAN_MODEL``,
+``SCAN_PREMIUM_DAILY_LIMIT``, ``SCAN_FREE_DAILY_CEILING_MICROS``), the code
+defaults above and the registry defaults (``SCAN_MODEL``,
 ``SCAN_ENHANCED_MODEL``). Existing rows are never touched, so after the first
 boot the row is the source of truth and the env vars are initial defaults
 only. A key with no row (deleted by hand, or seeding failed while the DB was
@@ -159,14 +159,10 @@ MASTER_SWITCH = "scan.standard.enabled"
 MAX_IMAGE_PIXELS_BOUNDS = (1_000_000, 100_000_000)
 GLOBAL_DAILY_LIMIT_BOUNDS = (1, 1_000_000)
 DAILY_ALLOWANCE_BOUNDS = (0, 1_000)
-MONTHLY_ALLOWANCE_BOUNDS = (0, 100_000)
 # Micro-dollars per UTC day (1,000,000 = $1); 0 pauses every Free scan.
 FREE_DAILY_CEILING_MICROS_BOUNDS = (0, 1_000_000_000)
 FREE_DAILY_CEILING_KEY = "breaker.free_daily_ceiling_micros"
-# Enhanced scans (#533): Premium-only monthly allowance and the zero-result
-# abuse limits.
-ENHANCED_MONTHLY_ALLOWANCE_BOUNDS = (0, 10_000)
-PREMIUM_ENHANCED_MONTHLY_KEY = "quota.premium.enhanced_monthly"
+# Enhanced scans (#533): the zero-result abuse limits.
 ZERO_RESULT_THRESHOLD_KEY = "scan.enhanced.zero_result_threshold"
 ZERO_RESULT_WINDOW_HOURS_KEY = "scan.enhanced.zero_result_window_hours"
 ZERO_RESULT_ACTION_KEY = "scan.enhanced.zero_result_action"
@@ -188,7 +184,13 @@ SCAN_RECORDS_MAX_PER_USER_BOUNDS = (1, 10_000)
 DEFAULT_SCAN_RECORDS_ENABLED = True
 DEFAULT_SCAN_RECORDS_RETENTION_DAYS = 30
 DEFAULT_SCAN_RECORDS_MAX_PER_USER = 500
-# Tiers with allowance keys: quota.<tier>.daily / quota.<tier>.monthly. Plain
+# Keys removed by #582 (no monthly limits). Unknown to the CLI and the seed;
+# a stored row is skipped on read without a warning until a contract
+# migration deletes it.
+RETIRED_KEYS = frozenset(
+    {"quota.free.monthly", "quota.premium.monthly", "quota.premium.enhanced_monthly"}
+)
+# Tiers with allowance keys: quota.<tier>.daily. Plain
 # strings (the Tier enum values) so this module stays free of request-side
 # imports; app/ai/quota.py maps a Tier to its keys.
 QUOTA_TIERS = ("free", "premium")
@@ -266,9 +268,7 @@ def _bounded_int(bounds: tuple[int, int]) -> Callable[[Any], int]:
 _max_image_pixels = _bounded_int(MAX_IMAGE_PIXELS_BOUNDS)
 _global_daily_limit = _bounded_int(GLOBAL_DAILY_LIMIT_BOUNDS)
 _daily_allowance = _bounded_int(DAILY_ALLOWANCE_BOUNDS)
-_monthly_allowance = _bounded_int(MONTHLY_ALLOWANCE_BOUNDS)
 _free_daily_ceiling = _bounded_int(FREE_DAILY_CEILING_MICROS_BOUNDS)
-_enhanced_monthly_allowance = _bounded_int(ENHANCED_MONTHLY_ALLOWANCE_BOUNDS)
 _zero_result_threshold = _bounded_int(ZERO_RESULT_THRESHOLD_BOUNDS)
 _zero_result_window_hours = _bounded_int(ZERO_RESULT_WINDOW_HOURS_BOUNDS)
 _scan_records_retention_days = _bounded_int(SCAN_RECORDS_RETENTION_DAYS_BOUNDS)
@@ -346,13 +346,6 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
                 f"{tier} scans per user per UTC day, standard and enhanced "
                 f"combined (seed: SCAN_{tier.upper()}_DAILY_LIMIT)",
             ),
-            SettingDefinition(
-                f"quota.{tier}.monthly",
-                _monthly_allowance,
-                lambda t=tier: getattr(settings, f"scan_{t}_monthly_limit"),
-                f"{tier} scans per user per UTC calendar month, standard and "
-                f"enhanced combined (seed: SCAN_{tier.upper()}_MONTHLY_LIMIT)",
-            ),
         ]
     defs.append(
         SettingDefinition(
@@ -365,17 +358,10 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
     )
     defs += [
         SettingDefinition(
-            PREMIUM_ENHANCED_MONTHLY_KEY,
-            _enhanced_monthly_allowance,
-            lambda: settings.scan_premium_enhanced_monthly_limit,
-            "enhanced scans per Premium user per UTC calendar month, on top of "
-            "the shared allowance (seed: SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT)",
-        ),
-        SettingDefinition(
             ZERO_RESULT_THRESHOLD_KEY,
             _zero_result_threshold,
             lambda: DEFAULT_ZERO_RESULT_THRESHOLD,
-            "uncharged zero-result enhanced scans per user per window before "
+            "zero-result enhanced scans recorded per user per window before "
             "the action applies (seed: code default 3)",
         ),
         SettingDefinition(
@@ -388,8 +374,9 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             ZERO_RESULT_ACTION_KEY,
             _zero_result_action,
             lambda: DEFAULT_ZERO_RESULT_ACTION,
-            "at the threshold: charge (use the enhanced allowance) or throttle "
-            "(refuse enhanced scans until the window clears) (seed: charge)",
+            "at the threshold: charge (stop recording; every scan uses the "
+            "daily unit) or throttle (refuse enhanced scans until the window "
+            "clears) (seed: charge)",
         ),
         SettingDefinition(
             SCAN_RECORDS_ENABLED_KEY,
@@ -486,7 +473,8 @@ def _warn_switch_disabled(key: str, reason: str) -> None:
 def _sanitise_rows(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Validate rows read from the table.
 
-    Unknown keys are dropped. An invalid ``*.enabled`` value becomes ``False``
+    Unknown keys are dropped (retired keys, :data:`RETIRED_KEYS`, without a
+    log line: they are expected until the contract migration). An invalid ``*.enabled`` value becomes ``False``
     (fail closed); any other invalid value is dropped, so the env/registry
     default is used.
     """
@@ -494,7 +482,8 @@ def _sanitise_rows(raw: Mapping[str, Any]) -> dict[str, Any]:
     for key, value in raw.items():
         definition = DEFINITIONS.get(key)
         if definition is None:
-            logger.info("ai_settings: ignoring unknown key %r", key)
+            if key not in RETIRED_KEYS:
+                logger.info("ai_settings: ignoring unknown key %r", key)
             continue
         try:
             valid[key] = definition.validate(value)
@@ -553,13 +542,6 @@ class AISettings:
     def free_daily_ceiling_micros(self) -> int:
         return self.get(FREE_DAILY_CEILING_KEY)
 
-    def enhanced_monthly_allowance(self, tier: str) -> int:
-        """Enhanced scans per UTC month for ``tier``: the Premium key, and 0
-        for every other tier (enhanced scans are Premium-only, #533)."""
-        if tier != "premium":
-            return 0
-        return self.get(PREMIUM_ENHANCED_MONTHLY_KEY)
-
     @property
     def zero_result_threshold(self) -> int:
         return self.get(ZERO_RESULT_THRESHOLD_KEY)
@@ -584,9 +566,10 @@ class AISettings:
     def scan_records_max_per_user(self) -> int:
         return self.get(SCAN_RECORDS_MAX_PER_USER_KEY)
 
-    def allowance(self, tier: str) -> tuple[int, int]:
-        """``(daily, monthly)`` scans for ``tier`` (``"free"`` or ``"premium"``)."""
-        return self.get(f"quota.{tier}.daily"), self.get(f"quota.{tier}.monthly")
+    def daily_allowance(self, tier: str) -> int:
+        """Scans per UTC day for ``tier`` (``"free"`` or ``"premium"``). There
+        is no monthly allowance (#582)."""
+        return self.get(f"quota.{tier}.daily")
 
     def feature_enabled(self, feature: str) -> bool:
         """``scan.standard.enabled`` is the master switch for every scan."""

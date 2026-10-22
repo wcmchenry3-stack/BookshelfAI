@@ -42,7 +42,7 @@ from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 pytestmark = pytest.mark.integration
 
-ENHANCED = quota.ENHANCED_QUOTA_FEATURE
+SCAN = quota.SCAN_QUOTA_FEATURE
 MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "alembic"
@@ -95,8 +95,6 @@ def _settings(**rows):
     ai_settings.reset_cache(
         {
             "quota.premium.daily": 1000,
-            "quota.premium.monthly": 100_000,
-            "quota.premium.enhanced_monthly": 20,
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -169,18 +167,32 @@ async def _scan(factory, user_id, enhanced=True):
         )
 
 
-async def _enhanced_used(factory, user_id) -> int:
+async def _daily_used(factory, user_id) -> int:
+    """Today's shared daily unit count: since #582 the only unit an enhanced
+    scan takes (no enhanced monthly unit)."""
     async with factory() as db:
         return (
             await db.execute(
                 select(AIQuota.units_used).where(
                     AIQuota.user_id == user_id,
-                    AIQuota.feature == ENHANCED,
-                    AIQuota.window_kind == "month",
-                    AIQuota.window_start == quota.month_start(quota.utc_today()),
+                    AIQuota.feature == SCAN,
+                    AIQuota.window_kind == "day",
+                    AIQuota.window_start == quota.utc_today(),
                 )
             )
         ).scalar_one_or_none() or 0
+
+
+async def _month_rows(factory, user_id) -> int:
+    """Month-window rows of the user (#582: never written)."""
+    async with factory() as db:
+        return (
+            await db.execute(
+                select(func.count())
+                .select_from(AIQuota)
+                .where(AIQuota.user_id == user_id, AIQuota.window_kind == "month")
+            )
+        ).scalar_one()
 
 
 async def _zero_rows(factory, user_id) -> list[AIEnhancedZeroResult]:
@@ -236,7 +248,7 @@ class TestConcurrency:
     ):
         factory, make_user = sessions
         users = [await make_user() for _ in range(3)]
-        _settings(**{"quota.premium.enhanced_monthly": 3})
+        _settings(**{"quota.premium.daily": 3})
         provider = _Provider(books=True, delay=0.02)
         refusals: list[str] = []
 
@@ -251,11 +263,12 @@ class TestConcurrency:
                 await asyncio.gather(*(one(uid) for uid in users for _ in range(4)))
         assert provider.calls == 3 * len(users)
         for uid in users:
-            assert await _enhanced_used(factory, uid) == 3
+            assert await _daily_used(factory, uid) == 3
+            assert await _month_rows(factory, uid) == 0
             async with factory() as db:
                 assert await db.get(AIInflight, uid) is None
-        assert set(refusals) <= {"enhanced_limit_reached", "scan_in_progress"}
-        assert "enhanced_limit_reached" in refusals
+        assert set(refusals) <= {"daily_scan_limit", "scan_in_progress"}
+        assert "daily_scan_limit" in refusals
 
 
 # ---------------------------------------------------------------------------
@@ -264,17 +277,20 @@ class TestConcurrency:
 
 
 class TestZeroResult:
-    async def test_zero_result_is_uncharged_and_writes_one_row_with_the_ledger_id(
+    async def test_zero_result_writes_one_row_with_the_ledger_id(
         self, sessions, downstream, premium
     ):
+        """#582: the daily unit stays charged (no enhanced unit to give
+        back); the row is the abuse signal."""
         factory, make_user = sessions
         user_id = await make_user()
         _settings()
         with _Provider(books=False).patch():
             resp = await _scan(factory, user_id)
         assert resp.books == []
-        assert resp.enhanced_scans_remaining == 20
-        assert await _enhanced_used(factory, user_id) == 0
+        assert resp.enhanced_scans_remaining == 999
+        assert await _daily_used(factory, user_id) == 1
+        assert await _month_rows(factory, user_id) == 0
         (row,) = await _zero_rows(factory, user_id)
         async with factory() as db:
             (usage,) = (
@@ -290,17 +306,18 @@ class TestZeroResult:
         _settings()
         with _Provider(books=True).patch():
             resp = await _scan(factory, user_id)
-        assert resp.enhanced_scans_remaining == 19
-        assert await _enhanced_used(factory, user_id) == 1
+        assert resp.enhanced_scans_remaining == 999
+        assert await _daily_used(factory, user_id) == 1
+        assert await _month_rows(factory, user_id) == 0
         assert await _zero_rows(factory, user_id) == []
 
     async def test_row_is_committed_with_the_settle(
         self, sessions, downstream, premium
     ):
-        """Just before the lease delete commits, the zero-result row and the
-        refunded unit are visible on the request session but not on another
-        connection: one COMMIT writes them with the usage row and the
-        release."""
+        """Just before the lease delete commits, the zero-result row is
+        visible on the request session but not on another connection: one
+        COMMIT writes it with the usage row and the release. (#582: the daily
+        unit, committed at reserve time, is never given back here.)"""
         factory, make_user = sessions
         user_id = await make_user()
         _settings()
@@ -315,7 +332,7 @@ class TestZeroResult:
             )
             facts["own"] = own.scalar_one()
             facts["other"] = len(await _zero_rows(factory, uid))
-            facts["other_used"] = await _enhanced_used(factory, uid)
+            facts["other_used"] = await _daily_used(factory, uid)
             return await real_release(db, uid, lease_id)
 
         with (
@@ -325,7 +342,7 @@ class TestZeroResult:
             await _scan(factory, user_id)
         assert facts == {"own": 1, "other": 0, "other_used": 1}
         assert len(await _zero_rows(factory, user_id)) == 1
-        assert await _enhanced_used(factory, user_id) == 0
+        assert await _daily_used(factory, user_id) == 1
 
     async def test_failed_settle_rolls_back_and_retry_writes_one_row(
         self, sessions, downstream, premium
@@ -349,27 +366,20 @@ class TestZeroResult:
             await _scan(factory, user_id)
         assert len(attempts) == 2
         assert len(await _zero_rows(factory, user_id)) == 1
-        assert await _enhanced_used(factory, user_id) == 0
+        assert await _daily_used(factory, user_id) == 1
 
     async def test_retried_settle_after_lost_ack_writes_no_second_row(
         self, sessions, downstream, premium
     ):
         """The first settle commits, then its acknowledgement is lost (an
         error after the commit). The retry finds the usage row already there
-        and applies nothing again: one row, one refund."""
+        and applies nothing again: one row, and (#582) nothing given back."""
         factory, make_user = sessions
         user_id = await make_user()
         _settings()
-        # Another unit already used this month, so a double refund would show.
+        # Another unit already used today, so any give-back would show.
         async with factory() as db:
-            await quota.reserve_unit(
-                db,
-                user_id,
-                ENHANCED,
-                "month",
-                quota.month_start(quota.utc_today()),
-                20,
-            )
+            await quota.reserve_unit(db, user_id, SCAN, "day", quota.utc_today(), 20)
         real_release = quota.release_lease
         attempts = []
 
@@ -387,7 +397,7 @@ class TestZeroResult:
             await _scan(factory, user_id)
         assert len(attempts) == 2
         assert len(await _zero_rows(factory, user_id)) == 1
-        assert await _enhanced_used(factory, user_id) == 1  # refunded once only
+        assert await _daily_used(factory, user_id) == 2  # nothing given back
 
     @pytest.mark.parametrize(
         "error", [ScanUnavailableError("down"), RuntimeError("provider blew up")]
@@ -404,14 +414,14 @@ class TestZeroResult:
         ):
             await _scan(factory, user_id)
         assert await _zero_rows(factory, user_id) == []
-        # Unavailable refunds the unit with the shared ones; another error
-        # keeps it (the provider may have been paid).
+        # Unavailable refunds the daily unit; another error keeps it (the
+        # provider may have been paid).
         expected = 0 if isinstance(error, ScanUnavailableError) else 1
-        assert await _enhanced_used(factory, user_id) == expected
+        assert await _daily_used(factory, user_id) == expected
 
 
 class TestThreshold:
-    async def test_charge_up_to_threshold_free_then_charged(
+    async def test_charge_records_up_to_threshold_then_nothing(
         self, sessions, downstream, premium
     ):
         factory, make_user = sessions
@@ -420,12 +430,12 @@ class TestThreshold:
         with _Provider(books=False).patch():
             for _ in range(3):
                 await _scan(factory, user_id)
-            assert await _enhanced_used(factory, user_id) == 0
+            assert await _daily_used(factory, user_id) == 3
             assert len(await _zero_rows(factory, user_id)) == 3
             resp = await _scan(factory, user_id)
-        assert await _enhanced_used(factory, user_id) == 1
+        assert await _daily_used(factory, user_id) == 4
         assert len(await _zero_rows(factory, user_id)) == 3
-        assert resp.enhanced_scans_remaining == 19
+        assert resp.enhanced_scans_remaining == 996
 
     async def test_throttle_refuses_the_next_enhanced_before_the_provider(
         self, sessions, downstream, premium
@@ -443,16 +453,7 @@ class TestThreshold:
         with provider.patch():
             await _scan(factory, user_id)
             await _scan(factory, user_id)
-            async with factory() as db:
-                units_before = list(
-                    (
-                        await db.execute(
-                            select(AIQuota.feature, AIQuota.units_used).where(
-                                AIQuota.user_id == user_id
-                            )
-                        )
-                    ).all()
-                )
+            units_before = await _daily_used(factory, user_id)
             with pytest.raises(HTTPException) as exc:
                 await _scan(factory, user_id)
             # Standard scans are not affected.
@@ -463,19 +464,12 @@ class TestThreshold:
         assert provider.calls == 3  # two enhanced + the standard one
         async with factory() as db:
             assert await db.get(AIInflight, user_id) is None
-            units_after = dict(
-                (
-                    await db.execute(
-                        select(AIQuota.feature, AIQuota.units_used).where(
-                            AIQuota.user_id == user_id,
-                            AIQuota.window_kind == "month",
-                        )
-                    )
-                ).all()
-            )
-        assert units_after[ENHANCED] == dict(units_before)[ENHANCED]
+        # The refused scan gave its daily unit back; only the standard scan
+        # added one.
+        assert await _daily_used(factory, user_id) == units_before + 1
+        assert await _month_rows(factory, user_id) == 0
 
-    async def test_window_expiry_makes_zero_results_free_again(
+    async def test_window_expiry_records_zero_results_again(
         self, sessions, downstream, premium
     ):
         factory, make_user = sessions
@@ -489,11 +483,11 @@ class TestThreshold:
         with _Provider(books=False).patch():
             await _scan(factory, user_id)
             await _scan(factory, user_id)
-            await _scan(factory, user_id)  # charged
-            assert await _enhanced_used(factory, user_id) == 1
+            await _scan(factory, user_id)  # at the threshold: no row
+            assert len(await _zero_rows(factory, user_id)) == 2
             await _age_rows(factory, user_id, timedelta(hours=1, seconds=1))
-            await _scan(factory, user_id)  # free again
-        assert await _enhanced_used(factory, user_id) == 1
+            await _scan(factory, user_id)  # recorded again
+        assert await _daily_used(factory, user_id) == 4
         assert len(await _zero_rows(factory, user_id)) == 3
 
     async def test_window_edge(self, sessions):
@@ -541,7 +535,7 @@ class TestThreshold:
         _settings(**{"scan.enhanced.zero_result_threshold": 1})
         with _Provider(books=False).patch():
             await _scan(factory, quiet)
-        assert await _enhanced_used(factory, quiet) == 0  # free: own count 0
+        assert len(await _zero_rows(factory, quiet)) == 1  # own count was 0
 
     async def test_warning_once_per_user_per_window(
         self, sessions, downstream, premium
@@ -598,11 +592,11 @@ class TestThreshold:
             assert [r.warned for r in (r1, r2, r3)] == [False, False, True]
 
             await age(r1.id)  # count back to 2
-            await _scan(factory, user_id)  # count 3 again: free, no warning
+            await _scan(factory, user_id)  # count 3 again: recorded, no warning
             await age(r2.id)
-            await _scan(factory, user_id)  # count 3 again: free, no warning
+            await _scan(factory, user_id)  # count 3 again: recorded, no warning
             assert warn.call_count == 1
-            assert await _enhanced_used(factory, user_id) == 0
+            assert len(await _zero_rows(factory, user_id)) == 5
 
             await age(r3.id)  # the warned row leaves the window
             await _scan(factory, user_id)
@@ -615,47 +609,40 @@ class TestTwoSettles:
     """Two settles of the same user interleaved: a request whose lease expired
     and was taken over settles while the new holder settles. Only the holder
     of the lease may record (the lease row is locked FOR UPDATE until its
-    commit), so at most `threshold` rows are uncharged and at most one warning
-    is claimed, in the same month and across a UTC month boundary."""
+    commit), so at most `threshold` rows are recorded and at most one warning
+    is claimed. (#582: there is no enhanced unit to give back, so no month
+    window is involved.)"""
 
-    @pytest.mark.parametrize("cross_month", [False, True])
     @pytest.mark.parametrize("stale_first", [True, False])
-    async def test_at_most_threshold_uncharged_and_one_warning(
-        self, sessions, cross_month, stale_first
+    async def test_at_most_threshold_recorded_and_one_warning(
+        self, sessions, stale_first
     ):
         factory, make_user = sessions
         user_id = await make_user()
         today = quota.utc_today()
-        month = quota.month_start(today)
-        other_month = quota.next_month_start(today) if cross_month else month
         async with factory() as db:
             stale_lease = await quota.acquire_lease(db, user_id, 60)
-            for m in {month, other_month}:
-                await quota.reserve_unit(db, user_id, ENHANCED, "month", m, 20)
-                await quota.reserve_unit(db, user_id, ENHANCED, "month", m, 20)
         await _expire_lease(factory, user_id)
         async with factory() as db:
             holder_lease = await quota.acquire_lease(db, user_id, 60)
         assert holder_lease is not None and holder_lease != stale_lease
         await _insert_rows(factory, user_id, [timedelta(hours=2), timedelta(hours=1)])
 
-        def reservation(lease_id, m):
+        def reservation(lease_id):
             return quota.Reservation(
                 user_id=user_id,
                 feature=quota.SCAN_QUOTA_FEATURE,
                 lease_id=lease_id,
                 day=today,
-                month=m,
                 tier=Tier.PREMIUM,
-                allowance=quota.Allowance(30, 300),
+                allowance=quota.Allowance(30),
                 enhanced=True,
-                enhanced_allowance=20,
                 zero_result_threshold=3,
                 zero_result_window_hours=24,
             )
 
-        stale = reservation(stale_lease, month)
-        holder = reservation(holder_lease, other_month)
+        stale = reservation(stale_lease)
+        holder = reservation(holder_lease)
         first, second = (stale, holder) if stale_first else (holder, stale)
         async with factory() as db1, factory() as db2:
             r1 = await quota.record_zero_result(db1, first, None)
@@ -665,32 +652,19 @@ class TestTwoSettles:
             r2 = await task
             await db2.commit()
         results = {id(first): r1, id(second): r2}
-        assert results[id(stale)] is None  # charged: no longer its lease
+        assert results[id(stale)] is None  # no longer its lease: no row
         assert results[id(holder)] == quota.ZeroResultRecorded(3, warn=True)
         rows = await _zero_rows(factory, user_id)
         assert len(rows) == 3  # threshold, not threshold + 1
         assert sum(r.warned for r in rows) == 1
-        async with factory() as db:
-            used = dict(
-                (
-                    await db.execute(
-                        select(AIQuota.window_start, AIQuota.units_used).where(
-                            AIQuota.user_id == user_id, AIQuota.feature == ENHANCED
-                        )
-                    )
-                ).all()
-            )
-        # Only the holder's unit was given back.
-        if cross_month:
-            assert used == {month: 2, other_month: 1}
-        else:
-            assert used == {month: 1}
+        assert await _month_rows(factory, user_id) == 0
 
 
 class TestEnhancedRefundOnce:
-    """A give-back of the enhanced unit that commits and then loses its
-    acknowledgement is retried, and the retry gives nothing back: it is gated
-    on the lease row's flag (#590), so exactly one unit comes back."""
+    """A give-back of an enhanced scan's unit (#582: the shared daily unit,
+    the only one it takes) that commits and then loses its acknowledgement
+    is retried, and the retry gives nothing back: it is gated on the lease
+    row's flag (#590), so exactly one unit comes back."""
 
     @pytest.fixture
     def ack_lost(self):
@@ -701,7 +675,7 @@ class TestEnhancedRefundOnce:
             outcome = await real(
                 db, user_id, lease_id, flag, feature, kind, start
             )  # commits
-            if feature == ENHANCED:
+            if feature == SCAN and kind == "day":
                 enhanced_calls.append(outcome)
                 if len(enhanced_calls) == 1:
                     raise ConnectionError("acknowledgement lost")
@@ -712,9 +686,7 @@ class TestEnhancedRefundOnce:
 
     async def _one_unit_used(self, factory, user_id):
         async with factory() as db:
-            await quota.reserve_unit(
-                db, user_id, ENHANCED, "month", quota.month_start(quota.utc_today()), 20
-            )
+            await quota.reserve_unit(db, user_id, SCAN, "day", quota.utc_today(), 20)
 
     async def test_provider_unavailable_refund(
         self, sessions, downstream, premium, ack_lost
@@ -729,7 +701,7 @@ class TestEnhancedRefundOnce:
         ):
             await _scan(factory, user_id)
         assert ack_lost == [quota.UNIT_GIVEN_BACK, quota.UNIT_NOT_TAKEN]
-        assert await _enhanced_used(factory, user_id) == 1
+        assert await _daily_used(factory, user_id) == 1
 
     async def test_reserve_give_back_after_lost_lease(
         self, sessions, downstream, premium, ack_lost
@@ -748,7 +720,7 @@ class TestEnhancedRefundOnce:
         assert exc.value.detail == "scan_in_progress"
         assert provider.calls == 0
         assert ack_lost == [quota.UNIT_GIVEN_BACK, quota.UNIT_NOT_TAKEN]
-        assert await _enhanced_used(factory, user_id) == 1
+        assert await _daily_used(factory, user_id) == 1
 
 
 # ---------------------------------------------------------------------------

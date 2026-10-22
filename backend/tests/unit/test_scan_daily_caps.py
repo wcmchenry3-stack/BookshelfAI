@@ -390,9 +390,9 @@ class TestRequestSession:
             resp = client.post("/scan", files=_file())
 
         assert resp.status_code == 503
-        # global, lease, daily, monthly, lease renewal, daily refund,
-        # monthly refund, release
-        assert len(seen) == 8
+        # global, lease, daily, lease renewal, daily refund, release (no
+        # monthly take or refund since #582)
+        assert len(seen) == 6
         assert all(db is request_db for db in seen)
         other_sessions.assert_not_called()
 

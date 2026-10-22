@@ -274,7 +274,7 @@ class TestFinishedRepeat:
             await _scan(factory, user_id)
             after = await _state(factory, user_id)
         assert after == before
-        assert after["usage"].used_today == 1 and after["usage"].used_month == 1
+        assert after["usage"].used_today == 1
         assert after["lease"] is None
         ledger_after = await _ledger(factory, user_id)
         assert len(ledger_after) == len(ledger_before) + 1
@@ -355,7 +355,7 @@ class TestFinishedRepeat:
         factory, make_user = sessions
         user_id = await make_user()
         provider = _Provider()
-        ai_settings.reset_cache({"quota.premium.enhanced_monthly": 20})
+        ai_settings.reset_cache({"quota.premium.daily": 30})
         with provider.patch():
             first = await _scan(factory, user_id, enhanced=True)
             before = await _state(factory, user_id)
