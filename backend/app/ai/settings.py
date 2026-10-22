@@ -403,9 +403,11 @@ async def _load_rows(db: AsyncSession) -> dict[str, Any]:
         async with db.begin():
             result = await db.execute(query)
             return {key: value for key, value in result.all()}
-    # Inside the request's transaction: a SAVEPOINT, so a failed read rolls
-    # back only itself; the session stays usable and objects it already
-    # loaded (the current user) are not expired.
+    # Otherwise (a transaction is open, or the session holds objects or
+    # pending changes): a SAVEPOINT, so a failed read rolls back only itself;
+    # the session stays usable and objects it already loaded (the current
+    # user) are not expired. When no transaction was open, the session's
+    # autobegun transaction stays open until the caller commits or closes.
     async with db.begin_nested():
         result = await db.execute(query)
         return {key: value for key, value in result.all()}
