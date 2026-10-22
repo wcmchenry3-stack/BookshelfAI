@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai import entitlements
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
+from app.ai.providers.anthropic_vision import AnthropicVisionProvider
 from app.ai.providers.base import (
     ProviderOutcome,
     ProviderTimeoutError,
@@ -62,6 +63,8 @@ def _build_provider(spec: FeatureSpec) -> VisionProvider:
     # provider class at this module's boundary.
     if spec.provider == "openai":
         return OpenAIVisionProvider(spec)
+    if spec.provider == "anthropic":
+        return AnthropicVisionProvider(spec)
     # Unreachable while the registry validates providers; fail closed anyway.
     raise ValueError(f"no provider adapter for {spec.provider!r}")
 
