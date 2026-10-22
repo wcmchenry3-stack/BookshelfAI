@@ -7,3 +7,12 @@ See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for univers
 - Frontend: `npx jest --coverage`
 - E2E (Detox): runs on PRs to `main` only
 - DB isolation: rollback fixture in `backend/tests/conftest.py` — do NOT mock the database
+- Cost guard: no test may call a real AI provider. `backend/tests/_network_guard.py` (installed for every run by `backend/tests/conftest.py`) blocks any request to an Anthropic or OpenAI API host and fails the test. Fake providers at the gateway boundary (`backend/tests/limits/_harness.py`) or with `backend/tests/_claude_fake.py`.
+
+## Scan limits matrix
+
+`backend/tests/limits/` holds one table of every scan outcome (`test_limits_matrix.py`, `CASES`): for each tier and scan type, the starting counters and `ai_settings` overrides, what the provider does, and then the HTTP status and code, whether the provider was reached, how each counter moves (daily, monthly, enhanced monthly, global, zero-result rows) and what the day's spend settles. Next to it: limit changes through the `ai_settings` CLI, parallel requests and lost commit acknowledgements, and UTC day and month boundaries. It runs on real Postgres (`integration`), in CI's integration job on every PR.
+
+- **Any story that adds or changes a scan limit must add its rows to `backend/tests/limits/`** (a refusal, a counter, a window, a tier rule, a backstop). Add `Case(...)` rows to `CASES`; if the rule needs a new input or expectation, add a field with a default that leaves the existing rows unchanged. A changed rule changes its rows in the same PR, with a Test changes row citing the AC.
+- ship-story's test-integrity audit checks this: a PR that touches scan limits (`backend/app/ai/quota.py`, `breaker.py`, the limit keys in `settings.py`, the refusals in `backend/app/api/scan.py`) without matrix rows is sent back.
+- Matrix rows replace the older per-feature tests (`tests/unit/test_ai_quota.py`, `tests/integration/test_*quota*_db.py`, ...) only when they cover the same thing: the same inputs, the same code path and every assertion the old test makes. Otherwise keep the old test.
