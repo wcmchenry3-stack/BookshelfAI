@@ -567,6 +567,7 @@ class TestNormalisationRunsOffTheEventLoop:
     ):
         import anyio.to_thread
 
+        from app.ai import settings as ai_settings
         from app.api import scan as scan_module
 
         real_run_sync = anyio.to_thread.run_sync
@@ -585,8 +586,11 @@ class TestNormalisationRunsOffTheEventLoop:
         call = sanitize_calls[0]
         assert call.kwargs["limiter"] is scan_module._NORMALISE_LIMITER
         assert call.args[0].args == (_JPEG,)
+        # #526: the pixel cap now comes from ai_settings (scan.max_image_pixels);
+        # with no row it falls back to SCAN_MAX_IMAGE_PIXELS.
         assert call.args[0].keywords == {
-            "max_long_edge_px": FEATURES["scan.standard"].max_image_long_edge_px
+            "max_long_edge_px": FEATURES["scan.standard"].max_image_long_edge_px,
+            "max_pixels": ai_settings.settings.scan_max_image_pixels,
         }
 
     def test_sanitize_image_runs_off_the_event_loop(self, client, provider):

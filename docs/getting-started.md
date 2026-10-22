@@ -130,8 +130,12 @@ TURNSTILE_SECRET_KEY=                    # leave blank to skip Turnstile check o
 
 ### Scan dials
 ```bash
-SCAN_ENABLED=true                        # false → /scan returns 503 scan_disabled
-SCAN_ENHANCED_ENABLED=true               # false → enhanced scans return 503
+# Initial defaults only: they seed the ai_settings table on first boot. After
+# that use `python -m app.ai.settings set <key> <value>` (e.g. scan.standard.enabled).
+SCAN_ENABLED=true                        # seeds scan.standard.enabled (false → 503 scan_disabled)
+SCAN_ENHANCED_ENABLED=true               # seeds scan.enhanced.enabled
+AI_SETTINGS_CACHE_TTL_SECONDS=30         # 1..300, how long each process caches ai_settings
+AI_SETTINGS_MAX_STALE_SECONDS=300        # 1..3600 (>= TTL), max age of cached ai_settings served when a read fails
 SCAN_DAILY_LIMIT_PER_USER=20             # 1..1000, per UTC day
 SCAN_GLOBAL_DAILY_LIMIT=2000             # 1..1000000, all users, per UTC day
 ```

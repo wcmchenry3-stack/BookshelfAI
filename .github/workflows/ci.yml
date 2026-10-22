@@ -203,6 +203,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
         run: alembic downgrade -1
+      - name: Integration tests (real Postgres)
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+        run: |
+          pip install -r requirements-dev.txt
+          alembic upgrade head
+          pytest -m integration tests/integration -q
 
   # --- Podfile.lock staleness check -------------------------------------------
   # If Podfile was modified but Podfile.lock was not, the developer forgot to

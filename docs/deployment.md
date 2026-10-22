@@ -53,14 +53,23 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 
 Scan dials (optional; defaults shown; change in the dashboard and restart, no release needed — out-of-range values fail at boot):
 
-- `SCAN_ENABLED` (`true`) — `false` turns off all scans (`503 scan_disabled`)
-- `SCAN_ENHANCED_ENABLED` (`true`) — `false` turns off enhanced scans only
+- `SCAN_ENABLED` (`true`), `SCAN_ENHANCED_ENABLED` (`true`), `SCAN_MAX_IMAGE_PIXELS`, `SCAN_MODEL`, `SCAN_ENHANCED_MODEL` — **initial defaults only** (#526). They seed the `ai_settings` table on first boot (see "AI settings" below); after that, changing the env var does nothing for a key that already has a row. They are also the fallback for a key whose row is missing
 - `SCAN_DAILY_LIMIT_PER_USER` (`20`, range 1–1000) — scans per user per UTC day
 - `SCAN_GLOBAL_DAILY_LIMIT` (`2000`, range 1–1,000,000) — scans per UTC day across all users
-- `SCAN_MAX_IMAGE_PIXELS` (`40000000`, range 1,000,000–100,000,000) — decompression-bomb guard: an upload whose width × height is above this gets `413 image_too_large_pixels` before it is decoded. Moves to `ai_settings` in #526
-- `SCAN_NORMALISE_CONCURRENCY` (`1`, range 1–8) — how many scan images are normalised (decoded and resized, in worker threads) at once per process. Each can briefly hold a few hundred MB for a 40 MP image, so this bounds peak memory; requests over the limit wait for a slot. Peak is roughly 160–350 MB per 40 MP image, times this value, times the uvicorn worker count; keep it at 1 on a 512 MB instance and raise it only with more memory
+- `SCAN_MAX_IMAGE_PIXELS` (`40000000`, range 1,000,000–100,000,000) — seed for `scan.max_image_pixels`; decompression-bomb guard: an upload whose width × height is above this gets `413 image_too_large_pixels` before it is decoded
+- `SCAN_NORMALISE_CONCURRENCY` (`1`, range 1–8) — how many scan images are normalised (decoded and resized, in worker threads) at once per process. Each can briefly hold a few hundred MB for a 40 MP image, so this bounds peak memory; requests over the limit wait for a slot. Peak is roughly 160–350 MB per 40 MP image, times this value, times the uvicorn worker count; keep it at 1 on a 512 MB instance and raise it only with more memory. Stays env (not in `ai_settings`): it sizes a process-wide `anyio.CapacityLimiter` created at import, so a database change could not take effect without a restart
+- `AI_SETTINGS_CACHE_TTL_SECONDS` (`30`, range 1–300) — how long each process (uvicorn worker) reuses the `ai_settings` rows it last read
+- `AI_SETTINGS_MAX_STALE_SECONDS` (`300`, range 1–3600, and never below `AI_SETTINGS_CACHE_TTL_SECONDS`; the app refuses to boot otherwise) — when a read of `ai_settings` fails, how old the cached rows may be and still be used; past this, scans return `503 ai_unavailable`
 - `SCAN_MAX_TOKENS` (`2048`, range 1–16384) and `SCAN_TIMEOUT_SECONDS` (`45`, range 1–120) — reply cap and timeout for the vision call
-- `SCAN_MODEL` (`gpt-4o-mini`) and `SCAN_ENHANCED_MODEL` (`gpt-4o`) — must be an allowed OpenAI model (list in `backend/app/ai/models_allowlist.py`); the app names the env var and refuses to boot otherwise. This is deliberate (#552): a bad value stops the whole API, not just scans. Before removing a model from the allowlist, check that no environment (prod, dev, preview) still sets it
+- `SCAN_MODEL` (`gpt-4o-mini`) and `SCAN_ENHANCED_MODEL` (`gpt-4o`) — must be an allowed OpenAI model (list in `backend/app/ai/models_allowlist.py`); the app names the env var and refuses to boot otherwise. This is deliberate (#552): a bad value stops the whole API, not just scans. Before removing a model from the allowlist, check that no environment (prod, dev, preview) still sets it, and that no `ai_settings` row still names it (`python -m app.ai.settings list`; a row naming a removed model is ignored with a warning)
+
+AI settings (`ai_settings` table; no release or restart needed):
+
+- Keys: `scan.standard.enabled` (all scans), `scan.enhanced.enabled`, `scan.standard.provider`, `scan.enhanced.provider`, `scan.standard.model`, `scan.enhanced.model`, `scan.max_image_pixels` (1,000,000–100,000,000). Models must be in the provider's allow-list.
+- Change them from a shell with the app's `DATABASE_URL` (e.g. the Render shell): `python -m app.ai.settings list`, `python -m app.ai.settings get scan.standard.enabled`, `python -m app.ai.settings set scan.standard.enabled false --by <you>`. `set` validates against the same bounds and records `updated_at` and `updated_by` (`--by`, else `$USER`, else `cli`); a bad value exits non-zero and writes nothing. Editing the row directly in the database also works, but skips validation. An invalid provider, model or pixel cap is then ignored with a warning and the default is used; an invalid `*.enabled` value (anything but JSON `true`/`false`, e.g. `"false"`, `0` or `null`) is treated as **disabled**, with a warning.
+- Deleting an `*.enabled` row re-enables per `SCAN_ENABLED`/`SCAN_ENHANCED_ENABLED` (a missing row falls back to the env default); use `set … false` to disable.
+- The cache is per process (per uvicorn worker). A change reaches every process within `AI_SETTINGS_CACHE_TTL_SECONDS` (30 s). With two instances running (zero-downtime deploys), or several workers, they can disagree for up to that long.
+- If the table cannot be read and a process has never read it, scans return `503 ai_unavailable`. A process that has read it before keeps using the last value it read, with a warning, while that value is at most `AI_SETTINGS_MAX_STALE_SECONDS` (300 s) old; after that it logs an error and scans return `503 ai_unavailable` until a read succeeds.
 
 ### Database
 

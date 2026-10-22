@@ -75,6 +75,12 @@ erDiagram
     date usage_date PK "UTC, indexed"
     int scans
   }
+  AI_SETTINGS {
+    text key PK
+    jsonb value
+    timestamptz updated_at
+    text updated_by "nullable"
+  }
 ```
 
 All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`). All timestamps are `TIMESTAMPTZ` (UTC).
@@ -194,6 +200,21 @@ Counts scans that reached the vision provider, per user per UTC day. Backs the p
 
 **Volume and retention:** one row per active user per day (~40 bytes of data, roughly 100 bytes on disk with the indexes). The daily cleanup task (`app/services/token_cleanup.py`, calling `scan_quota.purge_old_scan_usage`) deletes rows with `usage_date` older than 90 days, in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade.
 
+### `ai_settings` (`backend/app/models/ai_settings.py`)
+
+Server-side AI dials and kill switches ([architecture.md](architecture.md#book-identification--dedup-pipeline)). Standalone: no foreign keys, no user data.
+
+| Column | Type | Notes |
+|---|---|---|
+| `key` | text, PK | one of the keys defined in `app/ai/settings.py`; other keys are ignored |
+| `value` | JSONB, not null | bool, string or int depending on the key; validated on write and again on read |
+| `updated_at` | timestamptz, not null, server default `now()` | set on every write |
+| `updated_by` | text, nullable | `seed` for startup seeding, else the CLI's `--by` / `$USER` / `cli` |
+
+**Writes:** only the startup seed (insert-if-missing) and the CLI `python -m app.ai.settings set`. No endpoint reads or writes it from a request.
+
+**Volume and retention:** 7 rows today (about 8 expected), each under 300 bytes. It does not grow with usage, so no retention job.
+
 ## Dedup strategy — why work_id, not ISBN
 
 The dedup check lives in `backend/app/services/deduplication.py` and runs inside the `POST /scan` response pipeline. For each candidate returned by the vision identifier + enrichment:
@@ -237,6 +258,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0003_enhanced_scan_credits.py` — adds `users.enhanced_scan_credits`
 - `0004_restrict_catalog_deletes.py` — `user_books.book_id` and `editions.book_id` FKs become `ON DELETE RESTRICT`
 - `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps)
+- `0006_ai_settings.py` — adds `ai_settings` table (DB-backed AI dials and kill switches; rows are seeded at app startup, not by the migration)
 
 ### Writing a new migration
 

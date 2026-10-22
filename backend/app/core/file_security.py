@@ -101,7 +101,9 @@ def sanitize_image(
     raw-bytes fallback: an image that cannot be decoded is rejected.
 
     ``max_long_edge_px`` defaults to the ``scan.standard`` registry value and
-    ``max_pixels`` to ``SCAN_MAX_IMAGE_PIXELS``.
+    ``max_pixels`` to ``SCAN_MAX_IMAGE_PIXELS``. ``/scan`` passes the
+    ``scan.max_image_pixels`` value from ``ai_settings``; the env value is only
+    the seed and the fallback for callers without a DB session.
 
     Raises:
         HTTPException 415 ``image_undecodable``    — not a decodable image
