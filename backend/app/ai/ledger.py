@@ -15,8 +15,9 @@ output.
 
 Statuses
 --------
-``ok`` / ``refused`` / ``truncated``: the provider answered (its
-``ProviderResult.outcome``). ``timeout``: the provider timed out (its own
+``ok`` / ``refused`` / ``truncated`` / ``malformed``: the provider answered
+(its ``ProviderResult.outcome``; ``malformed``, #572: a billed reply with no
+usable answer, refunded to the user, tokens and cost as billed). ``timeout``: the provider timed out (its own
 HTTP timeout or the gateway deadline; refunded). ``refunded``: the provider
 was unavailable or never reached (refunded). ``error``: anything else after
 the reservation (the reservation is kept). ``cache_hit``: served from a cache,

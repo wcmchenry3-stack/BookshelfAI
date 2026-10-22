@@ -21,6 +21,9 @@ from app.core.database import Base
 STATUS_OK = "ok"
 STATUS_REFUSED = "refused"
 STATUS_TRUNCATED = "truncated"
+# The provider answered (billed) but the reply was unusable (#572): refunded
+# to the user, the priced cost settled.
+STATUS_MALFORMED = "malformed"
 STATUS_ERROR = "error"
 STATUS_TIMEOUT = "timeout"
 STATUS_REFUNDED = "refunded"
@@ -34,6 +37,7 @@ USAGE_STATUSES = (
     STATUS_TIMEOUT,
     STATUS_REFUNDED,
     STATUS_CACHE_HIT,
+    STATUS_MALFORMED,
 )
 
 _STATUS_IN = "status IN ({})".format(", ".join(f"'{s}'" for s in USAGE_STATUSES))

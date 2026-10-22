@@ -168,8 +168,10 @@ class TestScanWritesOneRow:
                 "refused",
                 None,
             ),
+            # A truncated reply holds a book: with none it is malformed
+            # (#572, see test_ai_usage_malformed_db.py).
             (
-                {"return_value": ProviderResult([], outcome="truncated", **_USAGE)},
+                {"return_value": ProviderResult([DUNE], outcome="truncated", **_USAGE)},
                 "truncated",
                 None,
             ),

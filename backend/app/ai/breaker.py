@@ -39,7 +39,9 @@ the reservation) and commits.
 
 What a call settles (``app/api/scan.py``):
 
-- the provider answered (``ok``/``refused``/``truncated``): its priced cost;
+- the provider answered (``ok``/``refused``/``truncated``, and ``malformed``,
+  #572: a billed reply with no usable answer, refunded to the user): its
+  priced cost;
 - the provider timed out after connecting (``timeout``: a read/write
   timeout or the gateway deadline; the user's units are refunded): the
   estimate, because the request reached the provider and is likely billed;

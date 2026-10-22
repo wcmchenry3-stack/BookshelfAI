@@ -25,9 +25,10 @@ Steps
    which is re-checked on every scan). It only lands on the answer it was
    computed from (matched on the AI step's ``created_at``).
 
-The caller decides what is saved: only a provider outcome ``ok`` with at
-least one candidate (never a refusal, a truncated reply or any error), and an
-enrichment only when every lookup finished.
+The caller decides what is saved: only a provider outcome ``ok``, with
+candidates or without (a genuine no-match, #572; never a refusal, a truncated
+or malformed reply or any error), and an enrichment only when every lookup
+finished.
 
 Lifetime
 --------
@@ -433,7 +434,7 @@ def log_event(
     - ``repeat``: a finished record was served;
     - ``repeat_enriched``: an AI-done record had its enrichment redone;
     - ``not_saved``: an answered scan was not saved (``reason``: the
-      outcome, or ``no_match`` for an empty list, see ``/scan``);
+      outcome, ``refused`` or ``truncated``, see ``/scan``);
     - ``save_failed`` / ``lookup_failed``: a database error (normal path).
     """
     logger.info(

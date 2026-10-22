@@ -17,6 +17,7 @@ from app.ai.entitlements import Tier
 from app.ai.providers.anthropic_vision import AnthropicVisionProvider
 from app.ai.providers.base import (
     ProviderOutcome,
+    ProviderResult,
     ProviderTimeoutError,
     VisionProvider,
 )
@@ -56,6 +57,18 @@ class AIResult:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+
+
+def reported_outcome(provided: ProviderResult) -> ProviderOutcome:
+    """The outcome every caller sees. A reply cut off by the token limit
+    (``truncated``) with no complete book is ``malformed`` (#572, owner
+    decision: a cut-off reply never counts against the user), whatever the
+    adapter: ``/scan`` refunds it and the ledger records ``malformed``. A
+    truncated reply that still holds books stays ``truncated`` (answered,
+    charged)."""
+    if provided.outcome == "truncated" and not provided.candidates:
+        return "malformed"
+    return provided.outcome
 
 
 def _build_provider(spec: FeatureSpec) -> VisionProvider:
@@ -145,7 +158,7 @@ async def run_feature(
         model=spec.model,
         candidates=provided.candidates,
         tier=tier,
-        outcome=provided.outcome,
+        outcome=reported_outcome(provided),
         input_tokens=provided.input_tokens,
         output_tokens=provided.output_tokens,
         cache_read_tokens=provided.cache_read_tokens,

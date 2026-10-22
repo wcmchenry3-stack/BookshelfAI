@@ -290,10 +290,11 @@ class TestResult:
         assert result.outcome == "truncated"
         assert result.candidates == []
 
-    async def test_empty_reply_is_ok_and_empty(self, provider):
+    async def test_empty_reply_is_malformed(self, provider):
+        """No text at all is not "no books found" (#572)."""
         with fake_claude(message("")):
             result = await provider.identify(IMAGE)
-        assert result.outcome == "ok"
+        assert result.outcome == "malformed"
         assert result.candidates == []
 
     async def test_garbled_usage_gives_zeros(self, provider):

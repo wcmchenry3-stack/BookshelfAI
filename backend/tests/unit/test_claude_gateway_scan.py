@@ -7,6 +7,7 @@ write tokens) and refunds exactly as for OpenAI.
 """
 
 import io
+import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -216,9 +217,23 @@ def test_claude_refusal_records_refused_and_keeps_the_reservation(client, store,
 
 
 def test_claude_truncated_records_truncated(client, store, rows):
-    with fake_claude(message('{"books": [{"title": "Du', stop_reason="max_tokens")):
+    # A cut-off reply that still holds a complete book (#572: one with no
+    # book is malformed, see the test below).
+    cut = '{"books": [' + json.dumps(DUNE) + ', {"title": "Du'
+    with fake_claude(message(cut, stop_reason="max_tokens")):
         assert client.post("/scan", files=_file()).status_code == 200
     assert rows[0]["status"] == "truncated"
+
+
+def test_claude_truncated_with_no_books_is_malformed_and_refunded(client, store, rows):
+    """Owner decision on #572: a cut-off reply never counts against the user."""
+    with fake_claude(message('{"books": [{"title": "Du', stop_reason="max_tokens")):
+        resp = client.post("/scan", files=_file())
+    assert (resp.status_code, resp.json()["detail"]) == (503, "scan_unavailable")
+    [row] = rows
+    assert row["status"] == "malformed"
+    assert row["input_tokens"] == 1_200  # billed, so recorded
+    assert store.count() == 0  # refunded
 
 
 @pytest.mark.parametrize(

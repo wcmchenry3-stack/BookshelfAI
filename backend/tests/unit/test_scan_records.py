@@ -680,18 +680,41 @@ class TestEnrichmentMissing:
         assert provider.identify.await_count == 1
 
 
-class TestNotSaved:
-    def test_no_match_is_not_saved(self, client, store, records, provider, caplog):
-        """An empty ok list can be a genuine {"books": []} or an unparseable
-        reply; the adapters cannot tell them apart yet (#572), so it is not
-        saved and a re-upload takes the normal path."""
+class TestNoMatchSaved:
+    def test_no_match_is_saved_and_its_repeat_is_free(
+        self, client, store, records, provider, ledger_rows
+    ):
+        """Since #572 an empty ok list is a genuine {"books": []} (a
+        malformed reply is its own outcome), so it is saved as a finished
+        record and a re-upload is a free repeat of the no-match (owner
+        decision on #573)."""
         provider.identify.return_value = ProviderResult([])
-        with caplog.at_level(logging.INFO, logger="app.ai.scan_records"):
-            assert _post(client).json()["books"] == []
-            _post(client)
+        first = _post(client)
+        assert first.status_code == 200
+        assert first.json()["books"] == [] and first.json()["repeat"] is False
+        row = records.only()
+        assert row["ai_done"] is True and row["enrich_done"] is True
+        before = _snapshot(store)
+        again = _post(client)
+        assert again.status_code == 200
+        assert again.json()["books"] == [] and again.json()["repeat"] is True
+        assert provider.identify.await_count == 1
+        assert _snapshot(store) == before
+        assert [r["status"] for r in ledger_rows] == ["cache_hit"]
+
+
+class TestNotSaved:
+    def test_malformed_is_not_saved(self, client, store, records, provider):
+        """A malformed reply (#572) is a 503 and is never saved, so a
+        re-upload takes the normal path."""
+        provider.identify.return_value = ProviderResult([], outcome="malformed")
+        assert _post(client).status_code == 503
         assert records.rows == {}
+        assert "save_ai_step" not in records.calls
+        provider.identify.return_value = ProviderResult([DUNE])
+        resp = _post(client)
+        assert resp.status_code == 200 and resp.json()["repeat"] is False
         assert provider.identify.await_count == 2
-        assert "event=not_saved" in caplog.text and "reason=no_match" in caplog.text
 
     @pytest.mark.parametrize("outcome", ["refused", "truncated"])
     def test_refused_or_truncated_not_saved(

@@ -44,8 +44,9 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 - Timeout → `ScanUnavailableError` → endpoint returns `503 scan_unavailable`
 - Non-2xx (including 429 rate limit) → `ScanUnavailableError` → 503
 - Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
-- JSON parse failure → returns empty candidate list (endpoint returns `200 []`)
-- Malformed candidate entries skipped individually (try/except on each)
+- No content, not JSON, the wrong shape (a bare list is still accepted), or a non-empty list in which every entry is structurally broken → ledger `malformed`, `503 scan_unavailable`, refunded (#572)
+- Structurally broken entries (not an object, a title or author missing or not a string, a confidence that is not a number) are skipped individually; an empty title or author is kept, as before (a title-only lookup)
+- `finish_reason: length` → ledger `truncated` with the parsed books; with none, `malformed` (503, refunded; #572)
 
 **Cost note:** gpt-4o-mini is the cheapest vision-capable model. Scan cost is approximately $0.001 per image at current pricing. The `rate_limit_scan` bucket (10/min per client) caps abuse at the HTTP layer.
 
@@ -66,7 +67,8 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Error handling:**
 - `stop_reason: refusal` → empty result, ledger `refused`, reservation kept
-- `stop_reason: max_tokens` → complete books parsed, ledger `truncated`
+- `stop_reason: max_tokens` → complete books parsed, ledger `truncated`; with no complete book, ledger `malformed`, 503, refunded (#572)
+- Any other stop reason, or an `end_turn` reply that is missing, not JSON, the wrong shape, or a non-empty list in which every book is structurally broken (not an object, a title or author missing, not a string or over 500 characters) → ledger `malformed`, 503, refunded (#572); a book with an empty or blank title or author is dropped, as before
 - 429 / 500 / 503 / 529 → up to 2 retries (jittered backoff, honours `retry-after`, bounded by the timeout), then `ScanUnavailableError` → 503, refunded
 - Other 4xx / 502 / 504 → `ScanUnavailableError` → 503, refunded (4xx also logged at error level)
 - Timeout → `ProviderTimeoutError` → 503, refunded, ledger `timeout`

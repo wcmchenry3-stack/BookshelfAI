@@ -26,9 +26,20 @@ The request:
 
 The result: ``stop_reason == "refusal"`` is an empty ``refused`` result,
 ``max_tokens`` is ``truncated`` with the complete books that were parsed, and
-anything else is ``ok``. Every book is validated (pydantic); an ISBN with the
+``end_turn`` is ``ok``. Every book is validated (pydantic); an ISBN with the
 wrong digit count or checksum is dropped and the title and author are kept.
 The output is only ever a search key for enrichment.
+
+``malformed`` (#572), an answered and billed call with no usable answer: any
+other stop reason (or none), or an ``end_turn`` reply whose text is missing,
+not JSON, not a ``{"books": [...]}`` object, or a non-empty list in which
+every item is structurally broken (not an object, a title or author missing,
+not a string or over ``MAX_TEXT_LENGTH``). Otherwise the reply is ``ok``:
+broken items are dropped, and so are schema-valid items with an empty or
+whitespace title or author (as before #572), so the list may end up empty. A
+genuine ``{"books": []}`` is ``ok`` with no candidates. A ``max_tokens`` reply
+stays ``truncated`` here; with no books the gateway reports it as
+``malformed``.
 
 Errors: the SDK's own retries are off (``max_retries=0``); this module retries
 429, 500, 503 and 529 at most ``MAX_RETRIES`` times with exponential backoff
@@ -235,36 +246,66 @@ def _log_content(kind: str, text: str, stop_reason: str | None) -> None:
     )
 
 
-def parse_books(
+def _is_broken(item: Any) -> bool:
+    """An item that breaks the requested structure (#572): not an object, a
+    title or author that is missing or not a string, or one longer than
+    ``MAX_TEXT_LENGTH``. An empty or whitespace title or author is not broken:
+    the item is schema-valid and only dropped."""
+    if not isinstance(item, dict):
+        return True
+    for key in ("title", "author"):
+        value = item.get(key)
+        if not isinstance(value, str) or len(value.strip()) > MAX_TEXT_LENGTH:
+            return True
+    return False
+
+
+def parse_reply(
     text: str, stop_reason: str | None, max_books: int
-) -> list[BookCandidate]:
+) -> list[BookCandidate] | None:
     """The validated, de-duplicated candidates in a reply (at most
-    ``max_books``). Unparseable output gives an empty list."""
+    ``max_books``), or None when the reply is malformed (#572): not JSON, not
+    a ``{"books": [...]}`` object, or a non-empty list in which every item is
+    structurally broken (see :func:`_is_broken`). Schema-valid items with an
+    empty or whitespace title or author are dropped, as before, so such a
+    reply can be ``ok`` with fewer books or none. A genuine ``{"books": []}``
+    is an empty list, not None.
+
+    A reply cut off by ``max_tokens`` keeps the complete items it holds; when
+    it holds none it is an empty list (the gateway reports a truncated reply
+    with no books as ``malformed``, see ``app.ai.gateway``)."""
     items: list[Any]
     try:
         raw = json.loads(text)
     except json.JSONDecodeError:
-        items = _complete_items(text) if stop_reason == "max_tokens" else []
-        if not items:
+        if stop_reason == "max_tokens":
+            items = _complete_items(text)
+            if not items:
+                _log_content("no parseable JSON", text, stop_reason)
+                return []
+        else:
             _log_content("no parseable JSON", text, stop_reason)
-            return []
+            return None
     else:
         books = raw.get("books") if isinstance(raw, dict) else None
         if not isinstance(books, list):
             _log_content("an unexpected JSON shape", text, stop_reason)
-            return []
+            return None
         items = books
 
     candidates: list[BookCandidate] = []
     seen: set[tuple[str, str]] = set()
+    broken = 0
     for item in items:
         if len(candidates) >= max_books:
             break
-        if not isinstance(item, dict):
+        if _is_broken(item):
+            broken += 1
             continue
         try:
             book = _Book.model_validate(item)
         except ValidationError:
+            # Schema-valid but empty or whitespace: dropped, not broken.
             continue
         candidate = BookCandidate(
             title=book.title,
@@ -278,7 +319,19 @@ def parse_books(
             continue
         seen.add(key)
         candidates.append(candidate)
+    if items and broken == len(items):
+        # A list none of whose items has the requested structure: not a
+        # "no books" answer.
+        _log_content("no well-formed item in a non-empty list", text, stop_reason)
+        return None
     return candidates
+
+
+def parse_books(
+    text: str, stop_reason: str | None, max_books: int
+) -> list[BookCandidate]:
+    """:func:`parse_reply`, with a malformed reply as an empty list."""
+    return parse_reply(text, stop_reason, max_books) or []
 
 
 # ---------------------------------------------------------------------------
@@ -307,12 +360,21 @@ def _usage(message: Any) -> tuple[int, int, int, int]:
     )
 
 
+# The stop reason of a finished, well-formed answer. Anything else that is not
+# a refusal or ``max_tokens`` (``tool_use``, ``pause_turn``, ``stop_sequence``
+# (none is set), ``model_context_window_exceeded``, a missing or new value)
+# is ``malformed`` (#572).
+NORMAL_STOP_REASONS = frozenset({"end_turn"})
+
+
 def _outcome(stop_reason: str | None) -> ProviderOutcome:
     if stop_reason == "refusal":
         return "refused"
     if stop_reason == "max_tokens":
         return "truncated"
-    return "ok"
+    if stop_reason in NORMAL_STOP_REASONS:
+        return "ok"
+    return "malformed"
 
 
 def _reply_text(message: Any) -> str:
@@ -449,14 +511,23 @@ class AnthropicVisionProvider:
         stop_reason = getattr(message, "stop_reason", None)
         input_tokens, output_tokens, cache_read, cache_write = _usage(message)
         outcome = _outcome(stop_reason)
+        candidates: list[BookCandidate] = []
         if outcome == "refused":
             logger.warning("Claude declined the scan: stop_reason=refusal")
-            candidates: list[BookCandidate] = []
+        elif outcome == "malformed":
+            # An unexpected stop reason: the reply is not a finished answer.
+            _log_content("an unexpected stop_reason", _reply_text(message), stop_reason)
         else:
             text = _reply_text(message)
             if outcome == "truncated":
                 _log_content("a truncated reply", text, stop_reason)
-            candidates = parse_books(text, stop_reason, settings.scan_max_books)
+            parsed = parse_reply(text, stop_reason, settings.scan_max_books)
+            if parsed is None and outcome == "ok":
+                # Missing, non-JSON or structurally broken content (#572). A
+                # truncated reply stays ``truncated`` here; with no books the
+                # gateway reports it as ``malformed``.
+                outcome = "malformed"
+            candidates = parsed or []
         return ProviderResult(
             candidates=candidates,
             input_tokens=input_tokens,
