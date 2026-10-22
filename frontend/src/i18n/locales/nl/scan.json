@@ -39,5 +39,9 @@
   "dismissNotice": "Sluiten",
   "tryAgainNotice": "Opnieuw proberen",
   "queueFullLimited": "Je hebt je scanlimiet bereikt. Je opgeslagen foto's worden verzonden zodra scannen weer beschikbaar is.",
-  "sendPendingNow": "Nu verzenden"
+  "sendPendingNow": "Nu verzenden",
+  "enhancedRequiresPremium": "Uitgebreide scans zijn onderdeel van Premium.",
+  "enhancedLimitReached": "Je hebt al je uitgebreide scans voor deze maand gebruikt.",
+  "enhancedThrottled": "Meerdere recente uitgebreide scans vonden geen boeken. Probeer het opnieuw na {{time}}.",
+  "enhancedThrottledLater": "Meerdere recente uitgebreide scans vonden geen boeken. Probeer het later opnieuw."
 }

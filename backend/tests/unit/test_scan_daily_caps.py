@@ -166,17 +166,20 @@ class TestPerUserDailyLimit:
         assert resp.json()["books"] == []
         assert store.count() == 1
 
-    def test_enhanced_credit_check_runs_before_reservation(
+    def test_enhanced_premium_check_runs_before_reservation(
         self, client, store, provider
     ):
-        broke = User(id=uuid.uuid4(), email="broke@example.com")
-        broke.enhanced_scan_credits = 0
+        # #533 replaced the credit check: a Free user's enhanced scan is
+        # refused before anything is reserved.
+        free = User(id=uuid.uuid4(), email="free@example.com")
         from app.auth.dependencies import get_current_user
 
-        app.dependency_overrides[get_current_user] = lambda: broke
+        app.dependency_overrides[get_current_user] = lambda: free
         resp = client.post("/scan", files=_file(), data={"enhanced": "true"})
-        assert resp.status_code == 402
+        assert resp.status_code == 403
+        assert resp.json() == {"detail": "enhanced_requires_premium"}
         assert store.rows == {}
+        assert store.leases == {}
 
 
 class TestGlobalDailyLimit:

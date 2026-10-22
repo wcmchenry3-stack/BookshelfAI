@@ -38,5 +38,9 @@
   "dismissNotice": "关闭",
   "tryAgainNotice": "重试",
   "queueFullLimited": "您已达到扫描上限。已保存的照片将在扫描恢复可用后发送。",
-  "sendPendingNow": "立即发送"
+  "sendPendingNow": "立即发送",
+  "enhancedRequiresPremium": "增强扫描是 Premium 功能。",
+  "enhancedLimitReached": "您本月的增强扫描次数已用完。",
+  "enhancedThrottled": "最近几次增强扫描都未找到书籍。请在 {{time}} 之后重试。",
+  "enhancedThrottledLater": "最近几次增强扫描都未找到书籍。请稍后重试。"
 }

@@ -97,8 +97,8 @@ beforeEach(() => {
   mockDeleteScanImage.mockResolvedValue(undefined);
 });
 
-function scanResponse(books: { title: string; author: string }[], credits = 5) {
-  return { data: { books, enhanced: false, enhanced_scan_credits: credits } };
+function scanResponse(books: { title: string; author: string }[], remaining: number | null = 5) {
+  return { data: { books, enhanced: false, enhanced_scans_remaining: remaining } };
 }
 
 const BOOK = {
@@ -183,7 +183,7 @@ describe('ScanJobContext — startScan', () => {
       'Emma',
       'Ulysses',
     ]);
-    expect(result.current.enhancedCredits).toBe(4);
+    expect(result.current.enhancedScansRemaining).toBe(4);
   });
 
   it('does not delete the image when the scan fails (kept for retry)', async () => {
@@ -677,7 +677,7 @@ describe('ScanJobContext — enhanced scan', () => {
           { title: 'Emma', author: 'B' },
         ],
         enhanced: true,
-        enhanced_scan_credits: 4,
+        enhanced_scans_remaining: 4,
       },
     });
     await act(async () => {
@@ -687,7 +687,7 @@ describe('ScanJobContext — enhanced scan', () => {
     expect(enhancedField(mockPost.mock.calls[1])).toBe('true');
     expect(result.current.jobs[0].status).toBe('complete');
     expect(result.current.jobs[0].results).toHaveLength(2);
-    expect(result.current.enhancedCredits).toBe(4);
+    expect(result.current.enhancedScansRemaining).toBe(4);
   });
 
   it('keeps the standard results when the enhanced scan finds nothing', async () => {
@@ -726,24 +726,27 @@ describe('ScanJobContext — enhanced scan', () => {
     expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
   });
 
-  it('reopens the earlier results when out of credits', async () => {
+  it('reopens the earlier results when the enhanced allowance is used up', async () => {
     const { result } = await renderScanJobs();
     mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'A' }]));
     await act(async () => {
       await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
     });
 
-    mockPost.mockRejectedValueOnce({ response: { status: 402 } });
+    // #533: 402 enhanced_limit_reached replaces the old (bare) 402.
+    mockPost.mockRejectedValueOnce({
+      response: { status: 402, data: { detail: 'enhanced_limit_reached' } },
+    });
     await act(async () => {
       await result.current.requestEnhancedScan(result.current.jobs[0].id);
     });
 
-    expect(result.current.enhancedCredits).toBe(0);
+    expect(result.current.enhancedScansRemaining).toBe(0);
     expect(result.current.reviewingJob?.status).toBe('complete');
     expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
   });
 
-  it('falls back and records zero credits when the server says none are left', async () => {
+  it('falls back and records none left when the server says none are left', async () => {
     const { result } = await renderScanJobs();
     mockPost.mockResolvedValueOnce(scanResponse([]));
     await act(async () => {
@@ -751,12 +754,14 @@ describe('ScanJobContext — enhanced scan', () => {
     });
     expect(result.current.jobs[0].status).toBe('failed');
 
-    mockPost.mockRejectedValueOnce({ response: { status: 402 } });
+    mockPost.mockRejectedValueOnce({
+      response: { status: 402, data: { detail: 'enhanced_limit_reached' } },
+    });
     await act(async () => {
       await result.current.requestEnhancedScan(result.current.jobs[0].id);
     });
 
-    expect(result.current.enhancedCredits).toBe(0);
+    expect(result.current.enhancedScansRemaining).toBe(0);
     expect(result.current.jobs[0]).toEqual(
       expect.objectContaining({ status: 'failed', enhanced: false, error: 'no_results' })
     );

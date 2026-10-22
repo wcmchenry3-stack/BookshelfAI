@@ -40,8 +40,8 @@ interface Props {
   preselect?: boolean;
   /** When set, offers a re-scan with the stronger model. */
   onEnhance?: () => void;
-  /** Enhanced-scan credits left; null when not yet known. */
-  enhancedCredits?: number | null;
+  /** Enhanced scans left this month; null when not known. */
+  enhancedScansRemaining?: number | null;
 }
 
 function initialSelection(candidates: EnrichedBook[], preselect: boolean): Set<number> {
@@ -60,7 +60,7 @@ export function BookCandidatePicker({
   onDismiss,
   preselect = false,
   onEnhance,
-  enhancedCredits = null,
+  enhancedScansRemaining = null,
 }: Props) {
   const { theme } = useTheme();
   const { t } = useTranslation('components');
@@ -69,7 +69,7 @@ export function BookCandidatePicker({
   );
 
   const allSelected = candidates.length > 0 && selected.size === candidates.length;
-  const outOfCredits = enhancedCredits === 0;
+  const outOfCredits = enhancedScansRemaining === 0;
 
   function toggle(index: number) {
     setSelected((prev) => {
@@ -249,9 +249,9 @@ export function BookCandidatePicker({
               >
                 {outOfCredits
                   ? t('bookCandidatePicker.noCreditsLeft')
-                  : enhancedCredits === null
+                  : enhancedScansRemaining === null
                     ? t('bookCandidatePicker.enhanceCostsCredit')
-                    : t('bookCandidatePicker.creditsLeft', { count: enhancedCredits })}
+                    : t('bookCandidatePicker.creditsLeft', { count: enhancedScansRemaining })}
               </Text>
             </Pressable>
           )}

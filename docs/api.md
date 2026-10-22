@@ -30,12 +30,12 @@ Common status codes:
 |---|---|---|
 | 400 | Bad Request | validation failure, missing Turnstile token |
 | 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token |
-| 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed |
+| 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 413 | Payload Too Large | request body > 10 MB (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload, or an image that cannot be decoded (`image_undecodable`) |
-| 402 | Payment Required | no enhanced credits (`no_enhanced_credits`), monthly scan allowance used (`scan_limit_reached`) |
-| 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), another scan still running (`scan_in_progress`) |
+| 402 | Payment Required | monthly scan allowance used (`scan_limit_reached`), Premium enhanced monthly allowance used (`enhanced_limit_reached`) |
+| 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), another scan still running (`scan_in_progress`), enhanced scans throttled after repeated empty enhanced scans (`enhanced_throttled`) |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
 | 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity |
 
@@ -212,11 +212,12 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 **Request:** `multipart/form-data`
 - `file` (required) — image, max 5 MB, extensions `.jpg` / `.jpeg` / `.png` / `.webp` / `.heic` / `.heif`, `Content-Type` must start with `image/`, magic bytes must match the declared extension
 - `cf-turnstile-response` (required iff `TURNSTILE_SECRET_KEY` is set on the server) — Turnstile token from the client widget
+- `enhanced` (optional, default `false`) — `true` re-scans with the stronger model. Premium only (#533); see the rules below
 
 **Response `200`:** a `ScanResponse` object (`backend/app/schemas/book.py`):
 - `books` — array of 0–15 `EnrichedBook` objects (at most `SCAN_MAX_BOOKS`), one per distinct book in the photo
 - `enhanced` — `true` when the enhanced model was used
-- `enhanced_scan_credits` — the user's enhanced-scan credits remaining after this scan
+- `enhanced_scans_remaining` — integer or `null`: the Premium enhanced monthly allowance left after this scan (`quota.premium.enhanced_monthly` minus the enhanced scans charged this UTC month); `null` when the user is not Premium (#533). Replaces the removed `enhanced_scan_credits` field
 ```json
 {
   "books": [
@@ -237,7 +238,7 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
     }
   ],
   "enhanced": false,
-  "enhanced_scan_credits": 0
+  "enhanced_scans_remaining": null
 }
 ```
 
@@ -250,10 +251,12 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `413` — the image's pixel count (width × height, read from its header before decoding) is above `SCAN_MAX_IMAGE_PIXELS` (default 40,000,000) (`detail: "image_too_large_pixels"`)
 - `415` — bad extension / MIME / magic bytes
 - `415` — the image cannot be fully decoded as JPEG, PNG, WebP or HEIC/HEIF (`detail: "image_undecodable"`)
-- `402` — enhanced scan requested with no enhanced credits left (`detail: "no_enhanced_credits"`)
-- `402` — the user's monthly scan allowance is used (standard and enhanced scans count together; `detail: "scan_limit_reached"`). The body also carries the allowance: `{"detail": "scan_limit_reached", "limit": 5, "used": 5, "period_end": "2026-11-01"}`. `period_end` is the UTC date the monthly count resets (the 1st of the next month). Both `402`s use the same status; clients tell them apart by the `detail` string, which stays a string here as in every other error. No `Retry-After`.
+- `403` — `enhanced=true` from a user who is not Premium (`detail: "enhanced_requires_premium"`, #533). The tier is decided on the server (`entitlements.tier_for`); nothing is reserved and no provider is called
+- `402` — the Premium enhanced monthly allowance is used (`detail: "enhanced_limit_reached"`, #533). Same body shape as `scan_limit_reached`: `{"detail": "enhanced_limit_reached", "limit": 20, "used": 20, "period_end": "2026-11-01"}`. The shared units taken before it are given back
+- `402` — the user's monthly scan allowance is used (standard and enhanced scans count together; `detail: "scan_limit_reached"`). The body also carries the allowance: `{"detail": "scan_limit_reached", "limit": 5, "used": 5, "period_end": "2026-11-01"}`. `period_end` is the UTC date the monthly count resets (the 1st of the next month). The `402`s use the same status; clients tell them apart by the `detail` string, which stays a string here as in every other error. No `Retry-After`.
 - `429` — another scan by the same user is still running (`detail: "scan_in_progress"`, `Retry-After: 2`). One paid scan per user may be in flight at a time.
 - `429` — the user's daily scan limit is reached (standard and enhanced scans count together; `detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets.
+- `429` — enhanced scans are throttled for this user (`detail: "enhanced_throttled"`, #533): `scan.enhanced.zero_result_action` is `throttle` and the user already has `scan.enhanced.zero_result_threshold` uncharged empty enhanced scans inside the last `scan.enhanced.zero_result_window_hours`. `Retry-After` gives the seconds until enough of them leave the window (at least 1; the whole window when the threshold is 0). Standard scans are not affected
 - `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily or monthly allowance
 - `503` — scanning switched off by the operator (`detail: "scan_disabled"`, `ai_settings` key `scan.standard.enabled=false`); returned before the upload is read, Turnstile is called or any provider is contacted (the multipart body is still received by the framework)
 - `503` — enhanced scanning switched off (`detail: "enhanced_scan_disabled"`, `ai_settings` key `scan.enhanced.enabled=false`); standard scans still work
@@ -261,9 +264,11 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `503` — the service's daily AI budget is reached and the user is on the Free tier (`detail: "ai_budget_reached"`, #531, owner decision on #531): Free scans pause until UTC midnight. The frontend shows it as "Scanning is paused". The ceiling is the `ai_settings` key `breaker.free_daily_ceiling_micros` (micro-dollars, seeded from `SCAN_FREE_DAILY_CEILING_MICROS`, default 10,000,000 = $10). Premium scans are not paused by it (decision #544); they are bound by their own allowances and the count cap below. Nothing is reserved for the user and no provider is called
 - `503` — the service-wide daily scan capacity is used up (`detail: "scan_capacity"`, `ai_settings` key `scan.global_daily_limit`, seeded from `SCAN_GLOBAL_DAILY_LIMIT`, default 2000)
 
-Allowances (`ai_settings`, by tier; everyone is Free until purchases exist): Free 5 scans a day and 5 a month (`quota.free.daily` / `quota.free.monthly`), Premium 30 and 300 (`quota.premium.*`). Days are UTC days and months UTC calendar months. Standard and enhanced scans share one allowance (quota key `scan`, OD-1): for example 3 standard + 2 enhanced scans use a daily limit of 5. Enhanced scans also still need an enhanced credit.
+Allowances (`ai_settings`, by tier; everyone is Free until purchases exist): Free 5 scans a day and 5 a month (`quota.free.daily` / `quota.free.monthly`), Premium 30 and 300 (`quota.premium.*`). Days are UTC days and months UTC calendar months. Standard and enhanced scans share one allowance (quota key `scan`, OD-1): for example 3 standard + 2 enhanced scans use a daily limit of 5.
 
-Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → entitlement (tier, enhanced-credit check) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → daily allowance (`daily_scan_limit`) → monthly allowance (`scan_limit_reached`) → vision provider. Every refusal gives back what was already taken (the cost estimate, the lease, the daily reservation) and happens before the provider is called. A scan counts toward the daily and monthly allowances once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan or an enhanced credit.
+Enhanced scans (#533) are Premium-only. On top of the shared units, each enhanced scan reserves one unit of the Premium enhanced monthly allowance (`quota.premium.enhanced_monthly`, default 20, quota key `scan.enhanced`) before the provider is called. That unit is charged only when the provider returned books: an enhanced scan whose provider answered but returned no books gives the unit back and is recorded (table `ai_enhanced_zero_results`), as long as the user has fewer than `scan.enhanced.zero_result_threshold` (default 3) such uncharged scans in the last `scan.enhanced.zero_result_window_hours` (default 24, sliding). At or above the threshold, `scan.enhanced.zero_result_action` decides: `charge` (default) keeps the unit for every further empty enhanced scan until the window clears; `throttle` refuses further enhanced scans (`429 enhanced_throttled`). Threshold 0: with `charge` every empty enhanced scan is charged; with `throttle` every enhanced scan is refused. The shared daily and monthly units are counted for every scan, empty or not. A provider error or timeout is never an empty scan: the enhanced unit follows the shared units (refunded on `503 scan_unavailable`, kept otherwise) and nothing is recorded. None of these settings can be read or changed by a client.
+
+Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → entitlement (tier; `enhanced_requires_premium` for a non-Premium enhanced scan) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → zero-result throttle (`enhanced_throttled`, enhanced with action `throttle` only) → daily allowance (`daily_scan_limit`) → monthly allowance (`scan_limit_reached`) → enhanced monthly allowance (`enhanced_limit_reached`, enhanced only) → vision provider. Every refusal gives back what was already taken (the cost estimate, the lease, the daily, monthly and enhanced reservations) and happens before the provider is called. A scan counts toward the daily and monthly allowances once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan or an enhanced scan.
 
 **Example:**
 ```bash
@@ -283,11 +288,13 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
   "daily_limit": 5,
   "used_month": 4,
   "monthly_limit": 5,
-  "period_end": "2026-11-01"
+  "period_end": "2026-11-01",
+  "enhanced_used_month": 0,
+  "enhanced_monthly_limit": 0
 }
 ```
 
-Counts cover all scans, standard and enhanced together, in the current UTC day and UTC calendar month: both share one allowance (quota key `scan`). Enhanced-scan credits are separate and not shown here. Limits are the caller's tier allowance from `ai_settings`. `period_end` is the UTC date the monthly count resets.
+Counts cover all scans, standard and enhanced together, in the current UTC day and UTC calendar month: both share one allowance (quota key `scan`). `enhanced_used_month` is the enhanced scans charged this UTC month (quota key `scan.enhanced`; uncharged empty enhanced scans are not counted) and `enhanced_monthly_limit` the Premium enhanced allowance (`quota.premium.enhanced_monthly`); the limit is `0` for every tier but Premium, so the app offers an enhanced re-scan only when `enhanced_monthly_limit - enhanced_used_month > 0` (#533). Limits are the caller's tier allowance from `ai_settings`. `period_end` is the UTC date the monthly count resets.
 
 **Errors:** `401` (no or invalid token), `429` (rate limit), `503 ai_unavailable` (AI settings cannot be read and none are cached).
 

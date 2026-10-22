@@ -43,5 +43,9 @@
   "dismissNotice": "إغلاق",
   "tryAgainNotice": "حاول مرة أخرى",
   "queueFullLimited": "لقد بلغت حد المسح. سيتم إرسال صورك المحفوظة عندما يصبح المسح متاحًا مرة أخرى.",
-  "sendPendingNow": "أرسل الآن"
+  "sendPendingNow": "أرسل الآن",
+  "enhancedRequiresPremium": "عمليات المسح المحسّن جزء من Premium.",
+  "enhancedLimitReached": "لقد استخدمت كل عمليات المسح المحسّن لهذا الشهر.",
+  "enhancedThrottled": "لم تعثر عدة عمليات مسح محسّن حديثة على أي كتب. حاول مرة أخرى بعد {{time}}.",
+  "enhancedThrottledLater": "لم تعثر عدة عمليات مسح محسّن حديثة على أي كتب. يُرجى المحاولة مرة أخرى لاحقًا."
 }

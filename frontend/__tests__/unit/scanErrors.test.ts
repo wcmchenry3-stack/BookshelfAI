@@ -1,5 +1,6 @@
 import {
   classifyScanError,
+  enhancedRefusalMessage,
   formatPeriodEnd,
   nextUtcMidnight,
   scanNoticeMessage,
@@ -18,8 +19,31 @@ describe('classifyScanError: every backend code maps to exactly one UI state', (
       err(402, 'scan_limit_reached', { limit: 5, used: 5, period_end: '2026-11-01' }),
       { kind: 'monthly_limit', limit: 5, periodEnd: '2026-11-01' },
     ],
-    ['402 no_enhanced_credits', err(402, 'no_enhanced_credits'), { kind: 'no_enhanced_credits' }],
-    ['402 with no detail (legacy)', err(402), { kind: 'no_enhanced_credits' }],
+    // #533: enhanced refusals replace 402 no_enhanced_credits (gone, as is
+    // the bare-402 meaning "out of credits").
+    [
+      '402 enhanced_limit_reached',
+      err(402, 'enhanced_limit_reached', { limit: 20, used: 20, period_end: '2026-11-01' }),
+      { kind: 'enhanced_refused', reason: 'limit_reached' },
+    ],
+    [
+      '403 enhanced_requires_premium',
+      err(403, 'enhanced_requires_premium'),
+      { kind: 'enhanced_refused', reason: 'premium_required' },
+    ],
+    [
+      '429 enhanced_throttled',
+      err(429, 'enhanced_throttled', {}, { 'retry-after': '5400' }),
+      { kind: 'enhanced_refused', reason: 'throttled', retryAfterSeconds: 5400 },
+    ],
+    [
+      '429 enhanced_throttled without Retry-After',
+      err(429, 'enhanced_throttled'),
+      { kind: 'enhanced_refused', reason: 'throttled', retryAfterSeconds: undefined },
+    ],
+    ['402 no_enhanced_credits (removed)', err(402, 'no_enhanced_credits'), { kind: 'generic' }],
+    ['402 with no detail', err(402), { kind: 'generic' }],
+    ['403 other detail', err(403, 'Turnstile verification failed'), { kind: 'generic' }],
     ['402 unknown detail', err(402, 'something_else'), { kind: 'generic' }],
     [
       '429 daily_scan_limit',
@@ -93,9 +117,12 @@ describe('toScanNotice', () => {
     expect(toScanNotice(state, now, true)).toEqual({ kind: 'still_processing' });
   });
 
-  it('has no notice for generic or credits', () => {
+  it('has no notice for generic or enhanced refusals (a banner speaks)', () => {
     expect(toScanNotice({ kind: 'generic' })).toBeNull();
-    expect(toScanNotice({ kind: 'no_enhanced_credits' })).toBeNull();
+    expect(toScanNotice({ kind: 'enhanced_refused', reason: 'premium_required' })).toBeNull();
+    expect(
+      toScanNotice({ kind: 'enhanced_refused', reason: 'throttled', retryAfterSeconds: 60 })
+    ).toBeNull();
   });
 });
 
@@ -117,6 +144,33 @@ describe('copy', () => {
     );
     expect(msg).toContain('monthlyLimit:{"count":5}');
     expect(msg).toContain('monthlyResets:{"date":"November 1, 2026"}');
+  });
+
+  it('enhanced refusals each have their own line', () => {
+    expect(enhancedRefusalMessage({ reason: 'premium_required' }, t, 'en')).toBe(
+      'enhancedRequiresPremium:{}'
+    );
+    expect(enhancedRefusalMessage({ reason: 'limit_reached' }, t, 'en')).toBe(
+      'enhancedLimitReached:{}'
+    );
+    expect(enhancedRefusalMessage({ reason: 'throttled' }, t, 'en')).toBe(
+      'enhancedThrottledLater:{}'
+    );
+  });
+
+  it('a throttle names the local time from Retry-After', () => {
+    const now = Date.UTC(2026, 9, 22, 15, 30);
+    const msg = enhancedRefusalMessage(
+      { reason: 'throttled', retryAfterSeconds: 3600 },
+      t,
+      'en',
+      now
+    );
+    const expected = new Date(now + 3_600_000).toLocaleTimeString('en', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    expect(msg).toBe(`enhancedThrottled:${JSON.stringify({ time: expected })}`);
   });
 
   it('monthly limit without numbers falls back to the generic line', () => {

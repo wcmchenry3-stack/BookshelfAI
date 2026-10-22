@@ -14,7 +14,9 @@ The same daily run also purges, in bounded batches:
   up into ``ai_usage_daily`` and deleted, and daily rows older than 400 days
   are deleted (app/ai/ledger.py);
 - the daily AI spend totals (``ai_spend_daily``) older than 90 days
-  (app/ai/breaker.py).
+  (app/ai/breaker.py);
+- uncharged zero-result enhanced scans (``ai_enhanced_zero_results``) older
+  than 30 days (app/ai/quota.py, #533).
 
 The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
@@ -28,7 +30,7 @@ from sqlalchemy import delete
 
 from app.ai.breaker import purge_old_spend
 from app.ai.ledger import rollup_and_purge
-from app.ai.quota import purge_old_quota, utc_today
+from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.core.database import AsyncSessionLocal
 from app.models.refresh_token import RefreshToken
 from app.services.scan_quota import purge_old_scan_usage
@@ -79,6 +81,18 @@ async def cleanup_expired_tokens() -> None:
                 )
         except Exception:
             logger.exception("token_cleanup: error during cleanup run (ai spend)")
+
+        try:
+            async with AsyncSessionLocal() as db:
+                purged = await purge_old_zero_results(db)
+                logger.info(
+                    "token_cleanup: purged %d old ai_enhanced_zero_results row(s)",
+                    purged,
+                )
+        except Exception:
+            logger.exception(
+                "token_cleanup: error during cleanup run (enhanced zero results)"
+            )
 
         try:
             async with AsyncSessionLocal() as db:

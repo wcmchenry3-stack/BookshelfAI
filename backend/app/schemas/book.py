@@ -74,4 +74,6 @@ class ScanResponse(BaseModel):
 
     books: list[EnrichedBook] = []
     enhanced: bool = False  # True when the stronger model was used
-    enhanced_scan_credits: int  # credits remaining after this scan
+    # The remaining Premium enhanced monthly allowance after this scan (#533);
+    # None for users who are not Premium (enhanced scans are Premium-only).
+    enhanced_scans_remaining: int | None = None

@@ -157,7 +157,10 @@ def test_model_output_only_changes_the_parsed_list(client, scan_deps):
     # One call, nothing acted on.
     assert create.await_count == 1
     assert dict(ai_settings._cache.rows) == rows_before
-    assert resp.json()["enhanced_scan_credits"] == USER.enhanced_scan_credits
+    # #533: the remaining enhanced allowance comes from the server (None for
+    # a Free user), never from the model's output.
+    assert resp.json()["enhanced_scans_remaining"] is None
+    assert "enhanced_scan_credits" not in resp.json()
     refund.assert_not_awaited()
     # The only use of the output: candidates (title/author/ISBN search keys)
     # handed to enrichment, with no extra fields.

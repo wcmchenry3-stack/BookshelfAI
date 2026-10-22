@@ -39,5 +39,9 @@
   "dismissNotice": "Schließen",
   "tryAgainNotice": "Erneut versuchen",
   "queueFullLimited": "Du hast dein Scan-Limit erreicht. Deine gespeicherten Fotos werden gesendet, sobald Scannen wieder möglich ist.",
-  "sendPendingNow": "Jetzt senden"
+  "sendPendingNow": "Jetzt senden",
+  "enhancedRequiresPremium": "Erweiterte Scans sind Teil von Premium.",
+  "enhancedLimitReached": "Du hast alle erweiterten Scans für diesen Monat aufgebraucht.",
+  "enhancedThrottled": "Mehrere erweiterte Scans haben zuletzt keine Bücher gefunden. Versuche es nach {{time}} erneut.",
+  "enhancedThrottledLater": "Mehrere erweiterte Scans haben zuletzt keine Bücher gefunden. Bitte versuche es später erneut."
 }

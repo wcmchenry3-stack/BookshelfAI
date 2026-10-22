@@ -18,8 +18,9 @@ from sqlalchemy.dialects import postgresql
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from app.ai import ledger, quota
+from app.ai import entitlements, ledger, quota
 from app.ai import settings as ai_settings
+from app.ai.entitlements import Tier
 from app.ai.gateway import VisionPayload, run_feature
 from app.ai.prices import CURRENT_PRICE_VERSION, UnknownPriceError
 from app.ai.providers.base import ProviderResult, ProviderTimeoutError
@@ -416,7 +417,11 @@ class TestScanRecordsUsage:
     def test_enhanced_scan_records_its_feature_and_model(
         self, client, store, provider, rows
     ):
-        client.post("/scan", files=_file(), data={"enhanced": "true"})
+        # Enhanced scans are Premium-only (#533).
+        with patch.object(
+            entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM)
+        ):
+            client.post("/scan", files=_file(), data={"enhanced": "true"})
         row = _one(rows)
         assert (row["feature"], row["model"]) == ("scan.enhanced", "gpt-4o")
 
@@ -651,6 +656,9 @@ class TestCleanupTask:
             ),
             patch.object(token_cleanup, "purge_old_quota", AsyncMock(return_value=0)),
             patch.object(token_cleanup, "purge_old_spend", AsyncMock(return_value=0)),
+            patch.object(
+                token_cleanup, "purge_old_zero_results", AsyncMock(return_value=0)
+            ),
             patch.object(token_cleanup.asyncio, "sleep", sleeps),
             patch.multiple(token_cleanup, **patches),
             pytest.raises(_Stop),

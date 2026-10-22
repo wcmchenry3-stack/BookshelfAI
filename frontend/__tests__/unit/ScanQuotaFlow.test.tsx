@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import { ScanJobProvider } from '../../contexts/ScanJobContext';
 import { BannerProvider } from '../../contexts/BannerContext';
+import { useBanner } from '../../hooks/useBanner';
 import { useScanJobs } from '../../hooks/useScanJobs';
 
 const mockPost = jest.fn();
@@ -52,7 +53,7 @@ const OK = {
   data: {
     books: [{ title: 'Dune', author: 'Herbert' }],
     enhanced: false,
-    enhanced_scan_credits: 5,
+    enhanced_scans_remaining: 5,
   },
 };
 
@@ -117,18 +118,109 @@ describe('scan refusals', () => {
     }
   );
 
-  it('keeps the enhanced out-of-credits handling for 402 no_enhanced_credits', async () => {
+  // #533 replaced 402 no_enhanced_credits with these enhanced-only refusals.
+  const ENHANCED_REFUSALS: [string, ReturnType<typeof refusal>, string][] = [
+    ['403 enhanced_requires_premium', refusal(403, 'enhanced_requires_premium'), 'Premium'],
+    [
+      '402 enhanced_limit_reached',
+      refusal(402, 'enhanced_limit_reached', { limit: 20, used: 20, period_end: '2026-11-01' }),
+      'this month',
+    ],
+    [
+      '429 enhanced_throttled',
+      refusal(429, 'enhanced_throttled', {}, { 'retry-after': '3600' }),
+      'found no books',
+    ],
+  ];
+
+  it.each(ENHANCED_REFUSALS)(
+    '%s falls back without a notice and hides the offer',
+    async (_name, err, text) => {
+      const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
+        wrapper,
+      });
+      await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
+      const { result } = hook;
+      mockPost.mockResolvedValueOnce({ data: { ...OK.data, books: [] } });
+      await act(async () => {
+        await result.current.scan.startScan('image', 'file:///a.jpg');
+      });
+      mockPost.mockRejectedValueOnce(err);
+      await act(async () => {
+        await result.current.scan.requestEnhancedScan(result.current.scan.jobs[0].id);
+      });
+      expect(result.current.scan.enhancedScansRemaining).toBe(0);
+      expect(result.current.scan.scanNotice).toBeNull();
+      expect(result.current.scan.jobs[0]).toEqual(
+        expect.objectContaining({ status: 'failed', enhanced: false, error: 'no_results' })
+      );
+      expect(result.current.banner.banner?.message).toContain(text);
+      // Only one request: a refusal is never retried.
+      expect(mockPost).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each(ENHANCED_REFUSALS)(
+    '%s on a re-scan restores the standard scan books',
+    async (_name, err) => {
+      const { result } = await setup();
+      mockPost.mockResolvedValueOnce(OK);
+      await act(async () => {
+        await result.current.startScan('image', 'file:///a.jpg');
+      });
+      mockPost.mockRejectedValueOnce(err);
+      await act(async () => {
+        await result.current.requestEnhancedScan(result.current.jobs[0].id);
+      });
+      expect(result.current.jobs[0]).toEqual(
+        expect.objectContaining({ status: 'complete', enhanced: false })
+      );
+      expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
+    }
+  );
+
+  it('offers the enhanced re-scan only when the server reports scans left', async () => {
+    const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
+      wrapper,
+    });
+    await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
+    const { result } = hook;
+    // A Free user: the server reports null (enhanced is Premium-only).
+    mockPost.mockResolvedValueOnce({
+      data: { books: [], enhanced: false, enhanced_scans_remaining: null },
+    });
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    expect(result.current.scan.enhancedScansRemaining).toBeNull();
+    expect(result.current.banner.banner?.actions).toBeUndefined();
+
+    // Premium with scans left: offered.
+    mockPost.mockResolvedValueOnce({
+      data: { books: [], enhanced: false, enhanced_scans_remaining: 3 },
+    });
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///b.jpg');
+    });
+    expect(result.current.scan.enhancedScansRemaining).toBe(3);
+    expect(result.current.banner.banner?.actions?.[0]?.label).toBe('Try enhanced scan');
+
+    // Premium with none left: not offered.
+    mockPost.mockResolvedValueOnce({
+      data: { books: [], enhanced: false, enhanced_scans_remaining: 0 },
+    });
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///c.jpg');
+    });
+    expect(result.current.banner.banner?.actions).toBeUndefined();
+  });
+
+  it('syncs the enhanced scans left from the usage counters', async () => {
     const { result } = await setup();
-    mockPost.mockResolvedValueOnce({ data: { ...OK.data, books: [] } });
     await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
+      result.current.syncEnhancedScansRemaining(7);
     });
-    mockPost.mockRejectedValueOnce(refusal(402, 'no_enhanced_credits'));
-    await act(async () => {
-      await result.current.requestEnhancedScan(result.current.jobs[0].id);
-    });
-    expect(result.current.enhancedCredits).toBe(0);
-    expect(result.current.scanNotice).toBeNull();
+    expect(result.current.enhancedScansRemaining).toBe(7);
   });
 
   it('a successful scan clears the notice and bumps the usage refresh key', async () => {
@@ -380,6 +472,56 @@ describe('refusal follow-ups', () => {
     expect(byId['q-enh']).toBe('queued');
     expect(byId['q-enh-2']).toBe('queued');
     expect(byId['q-std']).toBe('complete');
+  });
+
+  it.each([
+    ['403 enhanced_requires_premium', refusal(403, 'enhanced_requires_premium')],
+    ['402 enhanced_limit_reached', refusal(402, 'enhanced_limit_reached')],
+    ['429 enhanced_throttled', refusal(429, 'enhanced_throttled', {}, { 'retry-after': '60' })],
+  ])('%s still lets queued standard photos through', async (_name, err) => {
+    mockLoadJobs.mockResolvedValue([
+      {
+        id: 'q-enh',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 1,
+        imageUri: 'file:///e.jpg',
+        retryCount: 0,
+        enhanced: true,
+      },
+      {
+        id: 'q-enh-2',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 2,
+        imageUri: 'file:///e2.jpg',
+        retryCount: 0,
+        enhanced: true,
+      },
+      {
+        id: 'q-std',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 3,
+        imageUri: 'file:///s.jpg',
+        retryCount: 0,
+      },
+    ]);
+    mockPost.mockRejectedValueOnce(err).mockResolvedValue(OK);
+    const { result } = await setup();
+    jest.useFakeTimers();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    // The refused enhanced photo, then the standard one; the second enhanced
+    // photo is not sent in this drain.
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    const byId = Object.fromEntries(result.current.jobs.map((j) => [j.id, j.status]));
+    expect(byId['q-enh']).toBe('failed');
+    expect(byId['q-enh-2']).toBe('queued');
+    expect(byId['q-std']).toBe('complete');
+    expect(result.current.scanNotice).toBeNull();
   });
 
   it('a photo refusal still lets queued text searches through', async () => {
