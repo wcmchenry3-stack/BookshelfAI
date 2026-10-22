@@ -160,7 +160,7 @@ def _is_sdk_call(node: ast.Call) -> str | None:
         and chain[-1] in ("create", "stream")
         and "messages" in chain[:-1]
     ):
-        if chain[-2] in ("messages", "with_raw_response"):
+        if chain[-2] in ("messages", "with_raw_response", "with_streaming_response"):
             return "messages"
         return "other"
     if chain and chain[-1] in ("AsyncAnthropic", "Anthropic"):
@@ -212,18 +212,40 @@ def code_facts(tree: ast.AST) -> CodeFacts:
     return facts
 
 
+SAFE_ATTRS = frozenset(
+    {"width", "height", "size", "nbytes", "status_code", "mode", "format"}
+)
+
+
+def _root_name(node: ast.AST) -> str | None:
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call)):
+        node = node.func if isinstance(node, ast.Call) else node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
 def _raw_refs(node: ast.AST) -> list[str]:
     """Raw content a logging argument would emit: a bare raw-field name, an
-    attribute whose own name is a raw field (``response.content``), or a
-    raw-field subscript. ``image.width`` and ``raw.status_code`` are fine;
-    anything wrapped in len()/sha256()/hexdigest() is fine."""
+    attribute whose own name is a raw field (``response.content``), a method
+    call on a raw-named receiver (``text.strip()``), any attribute read on a
+    raw-named base other than a few size-like ones (``image.width``,
+    ``raw.status_code``, ``*_tokens``), or a raw-field subscript. Anything
+    wrapped in len()/sha256()/hexdigest() is fine."""
     found: list[str] = []
 
-    def visit(n: ast.AST) -> None:
-        if isinstance(n, ast.Call) and _call_name(n.func) in SAFE_WRAPPERS:
+    def visit(n: ast.AST, is_func: bool = False) -> None:
+        if isinstance(n, ast.Call):
+            if _call_name(n.func) in SAFE_WRAPPERS:
+                return
+            visit(n.func, True)
+            for child in [*n.args, *[k.value for k in n.keywords]]:
+                visit(child)
             return
         if isinstance(n, ast.Attribute):
-            if n.attr in RAW_FIELDS:
+            root = _root_name(n.value)
+            safe_read = n.attr in SAFE_ATTRS or n.attr.endswith("_tokens")
+            if n.attr in RAW_FIELDS or (
+                root in RAW_FIELDS and (is_func or not safe_read)
+            ):
                 found.append(n.attr)
             if not isinstance(n.value, ast.Name):
                 visit(n.value)
@@ -245,13 +267,53 @@ def _raw_refs(node: ast.AST) -> list[str]:
     return found
 
 
+def _dict_has_max_tokens(node: ast.AST | None, tree: ast.AST, depth: int = 0) -> bool:
+    """Resolve ``node`` to a dict literal / ``dict(...)`` / the return values of
+    a same-file function it calls, and require the ``max_tokens`` key."""
+    if depth > 3 or node is None:
+        return False
+    if isinstance(node, ast.Dict):
+        return any(
+            isinstance(k, ast.Constant) and k.value == "max_tokens" for k in node.keys
+        )
+    if isinstance(node, ast.Call):
+        name = _call_name(node.func)
+        if name == "dict":
+            return any(k.arg == "max_tokens" for k in node.keywords)
+        returns = [
+            r.value
+            for f in ast.walk(tree)
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name == name
+            for r in ast.walk(f)
+            if isinstance(r, ast.Return) and r.value is not None
+        ]
+        return bool(returns) and all(
+            _dict_has_max_tokens(r, tree, depth + 1) for r in returns
+        )
+    return False
+
+
+def _splat_has_max_tokens(value: ast.expr, tree: ast.AST) -> bool:
+    """``**value`` passes max_tokens when every same-file binding of the name
+    resolves to a dict that has it; unresolvable fails closed."""
+    if not isinstance(value, ast.Name):
+        return _dict_has_max_tokens(value, tree)
+    bound = []
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            if any(isinstance(t, ast.Name) and t.id == value.id for t in targets):
+                bound.append(n.value)
+    return bool(bound) and all(_dict_has_max_tokens(b, tree) for b in bound)
+
+
 def _is_503(node: ast.expr | None) -> bool:
     if isinstance(node, ast.Constant):
         return node.value == 503
     if isinstance(node, ast.Attribute):
-        return node.attr.endswith("HTTP_503_SERVICE_UNAVAILABLE")
+        return node.attr.endswith("SERVICE_UNAVAILABLE")
     if isinstance(node, ast.Name):
-        return node.id.endswith("HTTP_503_SERVICE_UNAVAILABLE")
+        return node.id.endswith("SERVICE_UNAVAILABLE")
     return False
 
 
@@ -366,9 +428,8 @@ def check_file(
                 kws = {k.arg for k in call.keywords}
                 if "max_tokens" in kws:
                     continue
-                if None in kws and (
-                    "max_tokens" in facts.strings or "max_tokens" in facts.names
-                ):
+                splats = [k.value for k in call.keywords if k.arg is None]
+                if splats and all(_splat_has_max_tokens(v, tree) for v in splats):
                     continue
                 fail(
                     "max-tokens",

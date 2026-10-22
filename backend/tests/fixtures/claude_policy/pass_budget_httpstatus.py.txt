@@ -1,0 +1,7 @@
+from http import HTTPStatus
+
+from fastapi import HTTPException
+
+
+def refuse():
+    raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail="ai_budget_reached")
