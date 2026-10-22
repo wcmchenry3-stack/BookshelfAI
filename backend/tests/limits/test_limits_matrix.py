@@ -29,6 +29,7 @@ exist yet get their rows from their own stories:
 - #583 Premium escalation
 - #574 retries
 - #572 malformed replies
+- #581 adds a drift test of the limits overview against the settings registry
 
 Write a row as ``Case(...)`` with a readable ``id``
 (``<tier>-<scan>-<what happens>``). Starting counters may be ``LIMIT`` (at
@@ -52,6 +53,9 @@ FREE, PREMIUM = Tier.FREE, Tier.PREMIUM
 
 # Starting counter "at the limit" for that window and tier.
 LIMIT = "limit"
+# Starting spend for which the scan's own estimate exactly fits under the
+# Free ceiling (starting spend = ceiling - estimate).
+FITS = "fits"
 
 # The settings every row starts from (rows override keys). The numbers are
 # today's defaults (app/core/config.py, app/ai/settings.py), written out so
@@ -84,7 +88,8 @@ class Start:
     # Day units of OTHER users today (the service-wide count), or LIMIT.
     global_others: int | str = 0
     # Settled spend today in micro-dollars, or LIMIT (the Free ceiling minus
-    # less than one estimate: the next Free scan does not fit).
+    # less than one estimate: the next Free scan does not fit), or FITS (the
+    # ceiling minus exactly one estimate: the next Free scan just fits).
     spend: int | str = 0
     zero_results: int = 0
     lease_held: bool = False
@@ -162,6 +167,8 @@ CASES: list[Case] = [
          {"scan.global_daily_limit": 3}),
     Case("free-standard-spend_ceiling-refused", FREE, False, None,
          503, "ai_budget_reached", NOTHING, NO_SPEND, Start(spend=LIMIT)),
+    Case("free-standard-last_estimate_fits-allowed", FREE, False, "books",
+         ALLOWED, None, CHARGED, COST, Start(spend=FITS)),
     Case("free-standard-zero_ceiling-refused", FREE, False, None,
          503, "ai_budget_reached", NOTHING, NO_SPEND,
          settings={"breaker.free_daily_ceiling_micros": 0}),
@@ -297,7 +304,12 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
         (other, h.SCAN, "day", day, _resolve(s.global_others, global_limit)),
     ):
         await db.seed_units(uid, feature=feature, kind=kind, start=start, units=units)
-    spend_start = max(0, ceiling - est + 1) if s.spend == LIMIT else int(s.spend)
+    if s.spend == LIMIT:
+        spend_start = max(0, ceiling - est + 1)
+    elif s.spend == FITS:
+        spend_start = ceiling - est
+    else:
+        spend_start = int(s.spend)
     if spend_start:
         await db.seed_spend(day, settled=spend_start)
     await db.seed_zero_results(user_id, s.zero_results)
@@ -382,3 +394,16 @@ def test_matrix_ids_are_unique_and_cover_every_refusal_code():
     } <= codes
     outcomes = {c.provider for c in CASES} - {None}
     assert outcomes == set(h.OUTCOMES) | set(h.ERRORS)
+
+
+def test_expected_standard_scan_cost_is_anchored_to_a_literal():
+    """``h.cost`` prices expectations with the code's own price table, so pin
+    one value by hand. The default standard scan is openai gpt-4o-mini (prices
+    in micro-dollars per million tokens: input 150_000, output 600_000, cache
+    read 75_000); USAGE = 1_000 input, 500 output, 2_000 cache-read tokens:
+        1_000 * 150_000 / 1e6 = 150
+          500 * 600_000 / 1e6 = 300
+        2_000 *  75_000 / 1e6 = 150
+                        total = 600 micro-dollars.
+    """
+    assert h.cost(False, BASE) == 600

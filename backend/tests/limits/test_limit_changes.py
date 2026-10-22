@@ -18,7 +18,6 @@ import pytest
 from app.ai import quota
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
-from app.ai.settings import DAILY_ALLOWANCE_BOUNDS
 from app.api import scan as scan_api
 from app.models.ai_settings import AISetting
 from app.models.user import User
@@ -183,7 +182,7 @@ async def test_lowering_a_limit_while_a_scan_is_in_flight_refunds_without_going_
 @pytest.mark.parametrize(
     "key, value",
     [
-        ("quota.free.daily", str(DAILY_ALLOWANCE_BOUNDS[1] + 1)),
+        ("quota.free.daily", "1001"),
         ("quota.free.daily", "-1"),
         ("quota.free.daily", "2.5"),
         ("quota.free.daily", "true"),

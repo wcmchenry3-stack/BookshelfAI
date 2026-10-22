@@ -132,8 +132,16 @@ async def test_parallel_free_users_never_pass_the_spend_ceiling(limits_db, downs
             asyncio.create_task(h.call_scan(db.factory, u, enhanced=False))
             for u in users
         ]
-        await asyncio.wait_for(release_when_refused(tasks), 30)
-        outcomes = [t.code for t in await asyncio.gather(*tasks)]
+        try:
+            await asyncio.wait_for(release_when_refused(tasks), 10)
+            outcomes = [t.code for t in await asyncio.gather(*tasks)]
+        finally:
+            # On a regression (too many scans let through) do not leave the
+            # tasks parked at the gate.
+            gate.set()
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     assert sorted(outcomes, key=str) == sorted(
         [None] * L + ["ai_budget_reached"] * (N - L), key=str
