@@ -873,7 +873,7 @@ class TestSeeding:
             "cache.enabled": True,
             "cache.max_rows_per_user": 500,
             "cache.ttl_days": 30,
-            "cache.max_hits_per_day": 20,
+            "cache.max_hits_per_day": 3,
         }
 
     async def test_seed_is_insert_if_missing(self):

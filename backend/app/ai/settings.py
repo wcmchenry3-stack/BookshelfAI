@@ -53,7 +53,7 @@ allowance key and are refused (403 ``enhanced_requires_premium``) before any
 reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
 code defaults (3, 24, ``charge``), not from the env, as are the four
 ``cache.*`` keys (``cache.enabled`` ``true``, ``cache.max_rows_per_user``
-500, ``cache.ttl_days`` 30, ``cache.max_hits_per_day`` 20).
+500, ``cache.ttl_days`` 30, ``cache.max_hits_per_day`` 3).
 
 The ``quota.*`` allowances are per tier and shared by standard and enhanced
 scans (one ``ai_quota`` counter per user and window, under
@@ -185,7 +185,7 @@ CACHE_MAX_ROWS_PER_USER_KEY = "cache.max_rows_per_user"
 CACHE_TTL_DAYS_KEY = "cache.ttl_days"
 CACHE_MAX_HITS_PER_DAY_KEY = "cache.max_hits_per_day"
 CACHE_MAX_HITS_PER_DAY_BOUNDS = (0, 1_000)
-DEFAULT_CACHE_MAX_HITS_PER_DAY = 20
+DEFAULT_CACHE_MAX_HITS_PER_DAY = 3
 CACHE_MAX_ROWS_PER_USER_BOUNDS = (1, 10_000)
 CACHE_TTL_DAYS_BOUNDS = (1, 30)
 DEFAULT_CACHE_ENABLED = True
@@ -420,7 +420,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             _cache_max_hits_per_day,
             lambda: DEFAULT_CACHE_MAX_HITS_PER_DAY,
             "cache hits served per user per UTC day; past it a re-upload "
-            "takes the normal path, 0 serves none (seed: code default 20)",
+            "takes the normal path, 0 serves none (seed: code default 3)",
         ),
     ]
     return MappingProxyType({d.key: d for d in defs})
