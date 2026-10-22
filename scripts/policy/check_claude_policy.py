@@ -433,7 +433,10 @@ def check_file(
                 if "max_tokens" in kws:
                     continue
                 splats = [k.value for k in call.keywords if k.arg is None]
-                if splats and all(_splat_has_max_tokens(v, tree) for v in splats):
+                # One expanded mapping supplying max_tokens is enough (two would
+                # be a duplicate-keyword error); each mapping's bindings must
+                # all have it (_splat_has_max_tokens).
+                if any(_splat_has_max_tokens(v, tree) for v in splats):
                     continue
                 fail(
                     "max-tokens",

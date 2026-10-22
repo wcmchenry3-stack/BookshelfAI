@@ -255,6 +255,24 @@ def test_budget_httpstatus_passes():
     assert run("pass_budget_httpstatus.py.txt", APP) == []
 
 
+def test_one_splat_with_max_tokens_is_enough():
+    """client.messages.create(**request, **{"extra_headers": {}}) passes when
+    request supplies max_tokens; it fails when no mapping does."""
+    src = (
+        "import anthropic\n"
+        "def build():\n"
+        '    return {"model": "claude-haiku-5-5", "max_tokens": 10}\n'
+        "async def call(client):\n"
+        "    request = build()\n"
+        '    r = await client.messages.create(**request, **{"extra_headers": {}})\n'
+        "    return r.stop_reason\n"
+    )
+    rel = "backend/app/ai/providers/sample.py"
+    assert "max-tokens" not in checks(policy.check_file(rel, src, ALLOWED))
+    bad = src.replace(', "max_tokens": 10', "")
+    assert "max-tokens" in checks(policy.check_file(rel, bad, ALLOWED))
+
+
 def test_budget_mixed_positional_status_and_keyword_detail():
     """HTTPException(503, detail=...) is compliant; (402, detail=...) is not."""
     ok = 'from fastapi import HTTPException\nraise HTTPException(503, detail="ai_budget_reached")\n'
