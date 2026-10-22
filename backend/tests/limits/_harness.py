@@ -18,6 +18,7 @@ the same real code path:
 
 import asyncio
 import io
+import os
 import random
 import uuid
 from collections.abc import Callable, Mapping
@@ -53,6 +54,7 @@ from app.models.ai_quota import WINDOW_DAY, WINDOW_MONTH, AIInflight, AIQuota
 from app.models.ai_settings import AISetting
 from app.models.ai_spend import AISpendDaily
 from app.models.ai_usage import AIUsage
+from app.models.scan_record import ScanRecord
 from app.models.user import User
 from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
@@ -64,18 +66,24 @@ DUNE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 USAGE = {"input_tokens": 1_000, "output_tokens": 500, "cache_read_tokens": 2_000}
 
 
-def _jpeg() -> bytes:
+def distinct_jpeg() -> bytes:
+    """A JPEG no other scan uses (random pixels). Since scan records (#585)
+    a second upload of the same photo by the same user can be a free repeat
+    (looked up before the allowance), so every scan uses its own photo
+    unless a test deliberately repeats one (pass ``image=`` to
+    :func:`call_scan`)."""
     buf = io.BytesIO()
-    Image.new("RGB", (32, 24), (10, 120, 30)).save(buf, format="JPEG")
+    Image.frombytes("RGB", (32, 24), os.urandom(32 * 24 * 3)).save(buf, format="JPEG")
     return buf.getvalue()
 
 
-_JPEG = _jpeg()
+# A fixed photo, for tests that pass image bytes to a provider directly.
+_JPEG = distinct_jpeg()
 
 
-def upload() -> StarletteUploadFile:
+def upload(image: bytes | None = None) -> StarletteUploadFile:
     return StarletteUploadFile(
-        file=io.BytesIO(_JPEG),
+        file=io.BytesIO(distinct_jpeg() if image is None else image),
         filename="scan.jpg",
         headers=Headers({"content-type": "image/jpeg"}),
     )
@@ -231,7 +239,10 @@ def use_settings(rows: Mapping[str, Any]) -> None:
 @contextmanager
 def downstream():
     """Enrichment returns one book per candidate; dedup passes them through;
-    Turnstile off."""
+    Turnstile off. Yields the enrichment fake: set its ``last_complete`` to
+    True for an enrichment whose every lookup finished (the scan record's
+    enrichment step is then saved, #585); left as is, the step stays
+    incomplete. ``.enrich.await_count`` counts enrichment runs."""
 
     async def enrich(candidates, limit):
         return [
@@ -246,7 +257,7 @@ def downstream():
     ):
         enrich_cls.return_value.enrich = AsyncMock(side_effect=enrich)
         dedup_cls.return_value.check = AsyncMock(side_effect=lambda _d, _u, b: b)
-        yield
+        yield enrich_cls.return_value
 
 
 # ---------------------------------------------------------------------------
@@ -266,13 +277,18 @@ class ScanOutcome:
     response: Any = None
 
 
-async def call_scan(factory, user_id: uuid.UUID, *, enhanced: bool) -> ScanOutcome:
+async def call_scan(
+    factory, user_id: uuid.UUID, *, enhanced: bool, image: bytes | None = None
+) -> ScanOutcome:
+    """One /scan request. ``image``: the photo's bytes (default: a new photo
+    every call, see :func:`distinct_jpeg`); pass the same bytes twice to
+    send a repeat."""
     async with factory() as db:
         user = await db.get(User, user_id)
         try:
             response = await scan_api.scan.__wrapped__(
                 request=MagicMock(),
-                file=upload(),
+                file=upload(image),
                 current_user=user,
                 db=db,
                 cf_turnstile_response=None,
@@ -449,6 +465,29 @@ class LimitsDb:
         async with self.factory() as db:
             row = await db.get(AIInflight, user_id)
             return None if row is None else row.lease_id
+
+    async def usage(self, user_id) -> list[tuple[str, int]]:
+        """The user's usage-ledger rows, oldest first: ``(status, cost)``."""
+        async with self.factory() as db:
+            rows = await db.execute(
+                select(AIUsage.status, AIUsage.cost_micros)
+                .where(AIUsage.user_id == user_id)
+                .order_by(AIUsage.id)
+            )
+            return [(status, int(cost)) for status, cost in rows.all()]
+
+    async def scan_records(self, user_id) -> list[ScanRecord]:
+        """The user's scan records (#585)."""
+        async with self.factory() as db:
+            return list(
+                (
+                    await db.execute(
+                        select(ScanRecord).where(ScanRecord.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
     async def negative_counters(self) -> int:
         """Rows of this test's users below zero (the CHECK forbids them; a
