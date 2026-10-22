@@ -263,12 +263,16 @@ async def save_ai_step(
     model: str,
     candidates: list[BookCandidate],
     max_per_user: int,
+    retention_days: int,
     now: datetime | None = None,
 ) -> datetime:
     """Upsert the AI step (clearing any enrichment), then evict the user's
     oldest rows beyond ``max_per_user`` (at most :data:`EVICT_BATCH_SIZE`);
-    one commit. An existing enhanced record is never replaced by a standard
-    one (a concurrent standard scan of the same new photo that commits last);
+    one commit. An existing enhanced record that is still valid (younger
+    than ``retention_days``, as :func:`lookup` sees it) is never replaced by
+    a standard one (a concurrent standard scan of the same new photo that
+    commits last); an expired one is, so a repeat is free again before the
+    purge runs;
     the later enrichment save for that standard scan then matches nothing,
     because the row's ``created_at`` differs. Returns the step's ``created_at``, which
     :func:`save_enrichment_step` matches on. Idempotent by (user,
@@ -294,6 +298,7 @@ async def save_ai_step(
         where=or_(
             ScanRecord.feature != ENHANCED_FEATURE,
             stmt.excluded.feature == ENHANCED_FEATURE,
+            ScanRecord.created_at <= _cutoff(created, retention_days),
         ),
         set_={
             key: stmt.excluded[key]

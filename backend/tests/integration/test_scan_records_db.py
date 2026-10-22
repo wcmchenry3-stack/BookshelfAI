@@ -548,6 +548,7 @@ async def _save(
     max_per_user=500,
     model="m",
     feature="scan.standard",
+    retention=30,
 ):
     async with factory() as db:
         return await scan_records.save_ai_step(
@@ -559,6 +560,7 @@ async def _save(
             model=model,
             candidates=[DUNE],
             max_per_user=max_per_user,
+            retention_days=retention,
             now=now,
         )
 
@@ -799,6 +801,34 @@ class TestModule:
             )
         (row,) = await _rows(factory, user_id)
         assert not row.enrich_done and row.enrichment is None
+
+    async def test_standard_replaces_an_expired_enhanced_record(self, sessions):
+        """An enhanced record past retention is not served (lookup), so the
+        standard scan that ran instead must replace it; otherwise every
+        repeat is charged until the purge runs (Codex, PR #571)."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        now = scan_records.utc_now()
+        await _save(
+            factory,
+            user_id,
+            17,
+            now=now - timedelta(days=8),
+            feature="scan.enhanced",
+            model="big",
+        )
+        standard_at = await _save(factory, user_id, 17, now=now, retention=7)
+        (row,) = await _rows(factory, user_id)
+        assert row.feature == "scan.standard" and row.created_at == standard_at
+        async with factory() as db:
+            assert await scan_records.save_enrichment_step(
+                db,
+                user_id=user_id,
+                fingerprint=_fp(17),
+                ai_created_at=standard_at,
+                books=[BOOK],
+            )
+        assert await _lookup(factory, user_id, 17, retention=7, now=now) is not None
 
     async def test_enhanced_replaces_standard_and_same_replaces_same(self, sessions):
         factory, make_user = sessions

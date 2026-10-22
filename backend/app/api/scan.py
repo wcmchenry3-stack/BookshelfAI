@@ -349,6 +349,7 @@ async def _save_ai_step(
             model=result.model,
             candidates=result.candidates,
             max_per_user=ai.scan_records_max_per_user,
+            retention_days=ai.scan_records_retention_days,
         )
     except Exception as exc:  # noqa: BLE001 - scan records never fail a scan
         logger.warning("scan: scan-record save failed (%s)", type(exc).__name__)
