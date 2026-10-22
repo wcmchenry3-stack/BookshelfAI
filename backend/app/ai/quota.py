@@ -927,12 +927,17 @@ async def _refund_window(
     window_kind: str,
     start: date,
 ) -> None:
+    """Give back one daily or monthly unit. Attempted once only (#567):
+    ``refund_unit`` is not gated, so a retry after a commit whose
+    acknowledgement was lost would give a second unit back; a failure leaves
+    the user charged."""
     await _give_back(
         db,
         f"{window_kind} refund",
         lambda: refund_unit(
             db, reservation.user_id, reservation.feature, window_kind, start
         ),
+        attempts=1,
     )
 
 

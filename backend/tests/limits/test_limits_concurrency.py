@@ -263,24 +263,11 @@ async def test_lost_ack_on_a_reservation_never_charges_twice(
     assert await db.lease(user_id) is None
 
 
-# BUG (found by #584, not fixed here): quota._refund_window gives back the
-# daily and monthly units through _give_back with its default two attempts,
-# and refund_unit is not idempotent. When the first refund commits but its
-# acknowledgement is lost, the retry takes a second unit off: the user gets
-# one more scan than the limit allows. The enhanced refund (attempts=1) does
-# not have this problem. Strict xfail: it fails CI once the bug is fixed, so
-# whoever fixes it removes the marker.
-_DOUBLE_REFUND = pytest.mark.xfail(
-    strict=True,
-    reason="bug: a lost ack on the daily/monthly refund gives the unit back twice",
-)
-
-
 @pytest.mark.parametrize(
     "lost_feature, lost_kind",
     [
-        pytest.param(h.SCAN, "day", id="daily", marks=_DOUBLE_REFUND),
-        pytest.param(h.SCAN, "month", id="monthly", marks=_DOUBLE_REFUND),
+        pytest.param(h.SCAN, "day", id="daily"),
+        pytest.param(h.SCAN, "month", id="monthly"),
         pytest.param(h.ENHANCED, "month", id="enhanced"),
     ],
 )

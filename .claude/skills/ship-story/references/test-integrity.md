@@ -82,7 +82,14 @@ Write `None — only new tests added.` when no existing test was touched.
 3. Every modified or deleted existing test, and every weakening hit, must have
    a matching Test changes row with a valid reason. A missing row or an
    invalid reason is a blocking finding; send it back to the implementer.
-4. Post the audit result as part of the review-round comment.
+4. **Scan limits matrix (#584).** If the PR changes how scans are counted,
+   charged or refused, it must add or change rows in `backend/tests/limits/`.
+   That covers `backend/app/ai/quota.py`, `breaker.py`, the limit keys in
+   `settings.py`, and the refusals or outcome handling in
+   `backend/app/api/scan.py`. A PR that changes those rules without touching
+   the matrix is a blocking finding; send it back to the implementer. See
+   `docs/claude/testing.md` ("Scan limits matrix").
+5. Post the audit result as part of the review-round comment.
 
 ## Brief for implementers (paste into the subagent prompt)
 
