@@ -68,32 +68,46 @@ class Settings(BaseSettings):
     scan_timeout_seconds: float = Field(
         default=45.0, ge=TIMEOUT_S_BOUNDS[0], le=TIMEOUT_S_BOUNDS[1]
     )
+    # SCAN_MODEL / SCAN_ENHANCED_MODEL are the registry defaults and seed the
+    # ai_settings rows scan.standard.model / scan.enhanced.model.
     scan_model: str = "gpt-4o-mini"
     # "Enhanced" scan — a stronger model the user can opt into when the standard
     # scan misses books. Each successful enhanced scan costs one credit; new
     # users start with enhanced_scan_free_credits.
     scan_enhanced_model: str = "gpt-4o"
     enhanced_scan_free_credits: int = 5
-    # Kill switches and daily caps for /scan, changeable via env without a
-    # release. scan_enabled=false rejects every scan before the image is
-    # processed, Turnstile is called or the provider is contacted (the framework
-    # has already received the multipart body); scan_enhanced_enabled=false
-    # rejects only enhanced scans. The caps
-    # count provider calls per UTC day (table scan_usage_daily); the per-user
-    # cap is exact, the global cap may overshoot slightly under concurrency.
+    # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
+    # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
+    # boot, and after that the DB row is the source of truth (change it with
+    # `python -m app.ai.settings set ...`, see app/ai/settings.py). They are
+    # also the fallback when a row is missing. A disabled scan is rejected
+    # before the image is processed, Turnstile is called or the provider is
+    # contacted (the framework has already received the multipart body);
+    # scan.enhanced.enabled=false rejects only enhanced scans.
     scan_enabled: bool = True
     scan_enhanced_enabled: bool = True
+    # Daily caps (env): they count provider calls per UTC day (table
+    # scan_usage_daily); the per-user cap is exact, the global cap may
+    # overshoot slightly under concurrency.
     scan_daily_limit_per_user: int = Field(default=20, ge=1, le=1000)
     scan_global_daily_limit: int = Field(default=2000, ge=1, le=1_000_000)
     # Decompression-bomb guard for /scan uploads: an image whose decoded pixel
     # count (width x height) is above this is refused with 413
     # image_too_large_pixels before it is fully decoded. Bounded so a typo
-    # cannot disable the guard. Moves to ai_settings in #526.
+    # cannot disable the guard. INITIAL DEFAULT ONLY: seeds the ai_settings row
+    # scan.max_image_pixels (same bounds), which is the source of truth after
+    # first boot; also the fallback when that row is missing.
     scan_max_image_pixels: int = Field(default=40_000_000, ge=1_000_000, le=100_000_000)
     # How many /scan image normalisations (decode + resize) may run at once in
     # worker threads, per process. Each can hold a few hundred MB for a
     # full-size image, so this bounds peak memory; extra requests wait.
+    # Stays env (not ai_settings): it sizes a process-wide CapacityLimiter
+    # created at import, so a DB change could not take effect without a restart.
     scan_normalise_concurrency: int = Field(default=1, ge=1, le=8)
+    # How long a process reuses the ai_settings rows it last read (seconds).
+    # A change made with the CLI reaches every instance within this time, so
+    # two instances may disagree for up to this long.
+    ai_settings_cache_ttl_seconds: int = Field(default=30, ge=1, le=300)
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 

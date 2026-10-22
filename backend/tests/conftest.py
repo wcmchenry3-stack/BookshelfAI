@@ -77,3 +77,19 @@ async def db_session():
         await session.rollback()
 
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_ai_settings_cache():
+    """Give every test a fresh ai_settings cache holding no rows (#526).
+
+    With no rows every key falls back to its env/registry default, read at
+    call time, so tests that patch ``settings.scan_enabled`` and friends keep
+    working and tests with a fake DB never read the table. Tests that exercise
+    the read path call ``ai_settings.reset_cache()`` themselves.
+    """
+    from app.ai import settings as ai_settings
+
+    ai_settings.reset_cache({})
+    yield
+    ai_settings.reset_cache()

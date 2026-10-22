@@ -38,14 +38,14 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 
 Every step runs before the enhanced-credit check and the daily-cap reservation, so a rejected image never uses a scan. Order:
 
-1. Kill switches (`SCAN_ENABLED`, `SCAN_ENHANCED_ENABLED`) → Turnstile.
+1. Kill switches (`ai_settings` keys `scan.standard.enabled`, `scan.enhanced.enabled`; `503 ai_unavailable` if the table cannot be read and nothing is cached) → Turnstile. No request field, header or query can set an `ai_settings` key; they change only through the CLI or the database (`tests/security/test_ai_settings_authority.py`).
 2. Extension and `Content-Type` → `415`.
 3. **Streaming read with cap.** The handler reads the upload in 64 KB chunks and stops as soon as it has more than 5 MB (`MAX_IMAGE_BYTES`) → `413 "Image must be 5MB or smaller"`. The handler reads and holds at most 5 MB + 1 byte, but the framework has already received the whole multipart body before the handler runs (spooled to a temp file past 1 MB). `RequestSizeLimitMiddleware` rejects a request whose `Content-Length` is above 10 MB, but it checks only that header, so a chunked body (no `Content-Length`) is not capped yet — see #557.
 4. **Magic bytes** (`app/core/file_validation.py`) must match the declared extension → `415`. This runs before anything decodes the bytes.
 5. **ClamAV** (optional, `CLAMAV_ENABLED`) on the original bytes.
 6. **Normalisation** (`app/ai/images.py`, called through `sanitize_image` in `app/core/file_security.py`):
    - Only the JPEG, PNG, WebP and HEIF decoders are tried (`pillow-heif` is registered for HEIC/HEIF at import). Other Pillow plugins (TIFF, GIF, EPS, PDF, ...) are unreachable from an upload.
-   - **Decompression-bomb guard:** the pixel count declared in the header is checked before any pixel data is decoded. Above `SCAN_MAX_IMAGE_PIXELS` (default 40 MP, range 1–100 MP) → `413 image_too_large_pixels`. Pillow's own `DecompressionBombError` maps to the same response.
+   - **Decompression-bomb guard:** the pixel count declared in the header is checked before any pixel data is decoded. Above `scan.max_image_pixels` in `ai_settings` (seeded from `SCAN_MAX_IMAGE_PIXELS`; default 40 MP, range 1–100 MP) → `413 image_too_large_pixels`. Pillow's own `DecompressionBombError` maps to the same response.
    - **Decode or reject:** the image is fully decoded; anything Pillow cannot decode (truncated, corrupt, wrong format behind valid magic bytes) → `415 image_undecodable`. There is no raw-bytes fallback: undecodable bytes never reach the provider.
    - EXIF orientation is applied, then a fresh image is built so all metadata (EXIF including GPS, XMP, IPTC, ICC profiles, comments) is dropped. Re-encoding also removes polyglot payloads (scripts in comment segments, archives after the end-of-image marker).
    - It runs in a worker thread, at most `SCAN_NORMALISE_CONCURRENCY` (default 1, range 1–8) at once per process, so a burst of large images cannot block the event loop or multiply peak memory.

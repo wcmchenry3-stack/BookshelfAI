@@ -1,7 +1,9 @@
 """The single entry point for paid AI calls.
 
 Callers name a feature; the registry picks provider, model, token cap and
-timeout. Nothing from the client reaches those settings.
+timeout, and ``ai_settings`` (``app.ai.settings``) may switch the feature off
+or override its provider/model within the registry's allow-list. Nothing from
+the client reaches those settings.
 """
 
 from dataclasses import dataclass
@@ -9,6 +11,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import entitlements
+from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
 from app.ai.providers.base import VisionProvider
 from app.ai.providers.openai_vision import OpenAIVisionProvider
@@ -56,11 +59,19 @@ async def run_feature(
     ``user`` and ``db`` are accepted now so later stories (usage ledger,
     per-user limits) can use them without changing callers.
 
+    The spec used is per request: the registry default with the validated
+    ``ai_settings`` provider/model override and kill switch applied
+    (``dataclasses.replace``, which re-runs the registry's validation).
+
     Raises ``UnknownFeatureError`` for a name not in the registry,
-    ``FeatureDisabledError`` when the feature is switched off, and whatever the
-    provider raises (``ScanUnavailableError``, ``httpx.ConnectError``).
+    ``FeatureDisabledError`` when the feature is switched off (in the registry
+    or in ``ai_settings``), ``AISettingsUnavailableError`` when the settings
+    cannot be read and nothing is cached, and whatever the provider raises
+    (``ScanUnavailableError``, ``httpx.ConnectError``).
     """
     spec = get_feature(feature)
+    current = await ai_settings.get_ai_settings(db)
+    spec = current.spec_for(spec)
     if not spec.enabled:
         raise FeatureDisabledError(f"AI feature {feature!r} is disabled")
     if not isinstance(payload, VisionPayload):

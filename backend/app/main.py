@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
+from app.ai.settings import seed_ai_settings_at_startup
 from app.api.auth import router as auth_router
 from app.api.books import router as books_router
 from app.api.scan import router as scan_router
@@ -122,6 +123,9 @@ async def _validate_config() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _validate_config()
+    # Insert any missing ai_settings rows from the env. Never raises: with the
+    # DB down the app still starts and scans fail closed until it is back.
+    await seed_ai_settings_at_startup()
     cleanup_task = asyncio.create_task(cleanup_expired_tokens())
     yield
     cleanup_task.cancel()

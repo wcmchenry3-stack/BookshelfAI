@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.gateway import VisionPayload, run_feature
 from app.ai.registry import get_feature
+from app.ai.settings import AISettingsUnavailableError, get_ai_settings
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -168,16 +169,24 @@ async def scan(
     cf_turnstile_response: str | None = Form(None, alias="cf-turnstile-response"),
     enhanced: bool = Form(False),
 ) -> ScanResponse:
-    # --- Kill switches (env, no release needed) ---
-    # Checked first: before the image is processed, Turnstile is called or any
+    # --- Kill switches (ai_settings table, no release needed) ---
+    # Checked first: before the upload is read, Turnstile is called or any
     # provider is contacted. (The framework has already received the multipart
-    # body by the time the handler runs.)
-    if not settings.scan_enabled:
+    # body by the time the handler runs.) If the settings cannot be read and
+    # nothing is cached, scanning fails closed.
+    try:
+        ai = await get_ai_settings(db)
+    except AISettingsUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ai_unavailable",
+        ) from None
+    if not ai.scan_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="scan_disabled",
         )
-    if enhanced and not settings.scan_enhanced_enabled:
+    if enhanced and not ai.enhanced_scan_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="enhanced_scan_disabled",
@@ -233,13 +242,13 @@ async def scan(
     scan_for_malware(image_bytes)
 
     # The client only chooses standard vs enhanced; the gateway's registry
-    # decides the provider, model, token cap, timeout and image size for that
-    # feature.
+    # (with the ai_settings provider/model override) decides the provider,
+    # model, token cap, timeout and image size for that feature.
     feature = "scan.enhanced" if enhanced else "scan.standard"
 
     # Normalise before any credit or quota check, so a bad image never uses a
-    # scan: full decode (415 image_undecodable), pixel cap (413
-    # image_too_large_pixels), EXIF orientation, all metadata stripped, long
+    # scan: full decode (415 image_undecodable), pixel cap from
+    # scan.max_image_pixels (413 image_too_large_pixels), EXIF orientation, all metadata stripped, long
     # edge capped for the feature, re-encoded as JPEG quality 85. Only these
     # bytes reach the provider.
     # Off the event loop; the 413/415 HTTPException raised in the thread
@@ -249,6 +258,7 @@ async def scan(
             sanitize_image,
             image_bytes,
             max_long_edge_px=get_feature(feature).max_image_long_edge_px,
+            max_pixels=ai.max_image_pixels,
         ),
         limiter=_NORMALISE_LIMITER,
     )
