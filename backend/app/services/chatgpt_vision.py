@@ -34,7 +34,7 @@ class ChatGPTVisionIdentifier:
 
         payload = {
             "model": settings.scan_model,
-            "max_tokens": settings.openai_max_tokens,
+            "max_tokens": settings.scan_max_tokens,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {

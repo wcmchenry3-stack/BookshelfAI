@@ -45,7 +45,11 @@ class Settings(BaseSettings):
     # Render dashboard without a redeploy.
     scan_model: str = "gpt-4o-mini"
     scan_enhanced_model: str = "gpt-4o"
-    scan_timeout_seconds: int = 15
+    # SCAN_MAX_TOKENS is the per-request token budget sent to OpenAI.  2048 is
+    # enough for a JSON array of 3 book candidates; raise only if the model
+    # truncates valid responses.  Hard cap from OpenAI context: 16384.
+    scan_max_tokens: int = 2048
+    scan_timeout_seconds: int = 45
     # Number of free enhanced-scan credits per user before the feature requires
     # a paid tier.  0 disables enhanced scan entirely.
     enhanced_scan_free_credits: int = 5
