@@ -31,7 +31,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 from fastapi import HTTPException
 from PIL import Image
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -417,6 +417,17 @@ class LimitsDb:
         assert lease_id is not None
         return lease_id
 
+    async def expire_lease(self, user_id) -> None:
+        """The user's lease has expired (a stalled request), so another
+        request may take it over."""
+        async with self.factory() as db:
+            await db.execute(
+                update(AIInflight)
+                .where(AIInflight.user_id == user_id)
+                .values(lease_expires_at=func.clock_timestamp() - timedelta(seconds=1))
+            )
+            await db.commit()
+
     # -- reading -----------------------------------------------------------
 
     async def units(self, user_id, *, feature: str, kind: str, start: date) -> int:
@@ -465,6 +476,15 @@ class LimitsDb:
         async with self.factory() as db:
             row = await db.get(AIInflight, user_id)
             return None if row is None else row.lease_id
+
+    async def lease_flags(self, user_id) -> set[str] | None:
+        """The unit flags set on the user's lease row (#590); None without
+        a lease."""
+        async with self.factory() as db:
+            row = await db.get(AIInflight, user_id)
+            if row is None:
+                return None
+            return {flag for flag in quota.UNIT_FLAGS if getattr(row, flag)}
 
     async def usage(self, user_id) -> list[tuple[str, int]]:
         """The user's usage-ledger rows, oldest first: ``(status, cost)``."""

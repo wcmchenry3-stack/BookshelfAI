@@ -241,34 +241,134 @@ async def test_lost_ack_on_a_refusal_release_gives_back_the_estimate_once(
     assert await db.units(user_id, feature=h.SCAN, kind="day", start=day) == 1
 
 
-async def test_lost_ack_on_a_reservation_never_charges_twice(
-    limits_db, downstream, monkeypatch
+UNIT_FLAGS = [
+    pytest.param(quota.FLAG_DAILY, id="daily"),
+    pytest.param(quota.FLAG_MONTHLY, id="monthly"),
+    pytest.param(quota.FLAG_ENHANCED, id="enhanced"),
+]
+
+
+async def _seed_two_of_each(db, user_id, day) -> None:
+    """2 units in every window, so a unit given back twice shows as -1."""
+    month = quota.month_start(day)
+    for feature, kind, start in (
+        (h.SCAN, "day", day),
+        (h.SCAN, "month", month),
+        (h.ENHANCED, "month", month),
+    ):
+        await db.seed_units(user_id, feature=feature, kind=kind, start=start, units=2)
+
+
+@pytest.mark.parametrize("give_back_ack_lost", [False, True], ids=["", "gb-lost"])
+@pytest.mark.parametrize("lost_flag", UNIT_FLAGS)
+async def test_lost_ack_on_a_reservation_gives_the_unit_back_once(
+    limits_db, downstream, monkeypatch, lost_flag, give_back_ack_lost
 ):
-    """The daily reservation commits and its ack is lost: the request fails
-    (500) without reaching the provider. The unit it committed is kept (fails
-    toward charging; nothing shows the commit landed) but never taken twice,
-    the monthly unit is never taken, and the lease and estimate are given
-    back."""
+    """One unit's reservation (daily, monthly or enhanced month) commits and
+    its ack is lost (#590): the request fails (500) without reaching the
+    provider, and every counter ends where it started. The unit whose ack was
+    lost is given back (its flag on the lease row shows it landed), the units
+    before it are given back, the ones after it are never taken, and nothing
+    is given back twice, even when the give-back's own ack is lost too and it
+    is retried. The lease and the estimate are given back."""
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
+    await _seed_two_of_each(db, user_id, day)
     h.use_settings(BASE)
-    calls: list = []
-    monkeypatch.setattr(
-        quota, "reserve_unit", _ack_lost_once(quota.reserve_unit, calls)
-    )
+    takes: list = []
+    real_take = quota.take_unit
+
+    async def take_ack_lost(session, uid, lease_id, flag, *rest):
+        takes.append(flag)
+        used = await real_take(session, uid, lease_id, flag, *rest)  # committed
+        if flag == lost_flag:
+            raise OSError("commit acknowledgement lost")
+        return used
+
+    give_backs: list = []
+    real_give_back = quota.give_back_unit
+
+    async def give_back(session, uid, lease_id, flag, *rest):
+        outcome = await real_give_back(session, uid, lease_id, flag, *rest)
+        if flag == lost_flag:
+            give_backs.append(outcome)
+            if give_back_ack_lost and len(give_backs) == 1:
+                raise OSError("commit acknowledgement lost")
+        return outcome
+
+    monkeypatch.setattr(quota, "take_unit", take_ack_lost)
+    monkeypatch.setattr(quota, "give_back_unit", give_back)
     before = await db.counters(user_id, day)
     with (
         h.Clock(h.at(day)).patch(),
-        h.as_tier(Tier.FREE),
+        h.as_tier(Tier.PREMIUM),
         h.FakeProvider("books").patch() as fake,
     ):
-        got = await h.call_scan(db.factory, user_id, enhanced=False)
+        got = await h.call_scan(db.factory, user_id, enhanced=True)
     assert got.status == 500
     assert fake.calls == 0
-    delta = (await db.counters(user_id, day)).delta(before)
-    assert delta["daily"] == 1 and delta["monthly"] == 0
+    order = [quota.FLAG_DAILY, quota.FLAG_MONTHLY, quota.FLAG_ENHANCED]
+    assert takes == order[: order.index(lost_flag) + 1]  # never taken twice
+    if give_back_ack_lost:
+        # Retried; the gate gives nothing back the second time.
+        assert give_backs == [quota.UNIT_GIVEN_BACK, quota.UNIT_NOT_TAKEN]
+    else:
+        assert give_backs == [quota.UNIT_GIVEN_BACK]
+    assert (await db.counters(user_id, day)).delta(before) == {
+        "daily": 0,
+        "monthly": 0,
+        "enhanced": 0,
+        "global": 0,
+        "zero_results": 0,
+    }
     assert await db.spend(day) == (0, 0)
     assert await db.lease(user_id) is None
+
+
+async def test_lost_ack_on_a_reservation_after_a_lease_takeover_stays_charged(
+    limits_db, downstream, monkeypatch
+):
+    """The monthly reservation commits, its ack is lost, and meanwhile the
+    stalled request's lease expired and another request took it over (#590).
+    The flags now belong to the new lease (the takeover reset them), so the
+    old request's gated give-back finds nothing: its monthly unit, which it
+    never saw land, stays charged (fails toward charging). Its daily unit,
+    whose take was acknowledged, is given back once. The new holder's lease
+    and flags are untouched."""
+    db = limits_db
+    day, user_id = db.make_day(), await db.make_user()
+    await _seed_two_of_each(db, user_id, day)
+    h.use_settings(BASE)
+    real_take = quota.take_unit
+    new_holder: list = []
+
+    async def take_then_taken_over(session, uid, lease_id, flag, *rest):
+        used = await real_take(session, uid, lease_id, flag, *rest)  # committed
+        if flag == quota.FLAG_MONTHLY:
+            await db.expire_lease(uid)
+            new_holder.append(await db.hold_lease(uid))
+            raise OSError("commit acknowledgement lost")
+        return used
+
+    monkeypatch.setattr(quota, "take_unit", take_then_taken_over)
+    before = await db.counters(user_id, day)
+    with (
+        h.Clock(h.at(day)).patch(),
+        h.as_tier(Tier.PREMIUM),
+        h.FakeProvider("books").patch() as fake,
+    ):
+        got = await h.call_scan(db.factory, user_id, enhanced=True)
+    assert got.status == 500
+    assert fake.calls == 0
+    assert (await db.counters(user_id, day)).delta(before) == {
+        "daily": 0,
+        "monthly": 1,
+        "enhanced": 0,
+        "global": 0,
+        "zero_results": 0,
+    }
+    assert await db.lease(user_id) == new_holder[0]
+    assert await db.lease_flags(user_id) == set()
 
 
 @pytest.mark.parametrize(
@@ -296,16 +396,17 @@ async def test_lost_ack_on_a_refund_gives_back_once(
     ):
         await db.seed_units(user_id, feature=feature, kind=kind, start=start, units=2)
     h.use_settings(BASE)
-    real = quota.refund_unit
+    real = quota.give_back_unit
     lost: list = []
 
-    async def committed_then_raised(session, uid, feature, kind, start):
-        await real(session, uid, feature, kind, start)
+    async def committed_then_raised(session, uid, lease_id, flag, feature, kind, start):
+        outcome = await real(session, uid, lease_id, flag, feature, kind, start)
         if (feature, kind) == (lost_feature, lost_kind) and not lost:
             lost.append(1)
             raise OSError("commit acknowledgement lost")
+        return outcome
 
-    monkeypatch.setattr(quota, "refund_unit", committed_then_raised)
+    monkeypatch.setattr(quota, "give_back_unit", committed_then_raised)
     before = await db.counters(user_id, day)
     with (
         h.Clock(h.at(day)).patch(),

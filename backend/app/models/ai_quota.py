@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    false,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -76,4 +78,18 @@ class AIInflight(Base):
     lease_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     lease_expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    # Which scan units this lease's holder took (#590). Each flag is set in
+    # the same transaction as its ai_quota increment and cleared in the same
+    # transaction as its give-back, so a commit whose acknowledgement was lost
+    # can be told apart afterwards and a unit is never given back twice. A
+    # takeover of an expired lease resets them (they belong to the new lease).
+    daily_taken: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    monthly_taken: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    enhanced_taken: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
     )

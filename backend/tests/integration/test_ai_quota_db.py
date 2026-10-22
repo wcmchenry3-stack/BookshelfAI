@@ -52,6 +52,7 @@ MONTH = date(2026, 10, 1)
 MIGRATION = (
     Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0007_ai_quota.py"
 )
+FLAGS_MIGRATION = MIGRATION.with_name("0012_ai_inflight_units_taken.py")
 
 
 def _distinct_jpeg() -> bytes:
@@ -433,11 +434,13 @@ class TestReserveFlow:
         factory, make_user = sessions
         user_id = await make_user()
         today = quota.utc_today()
-        real = quota.reserve_unit
+        real = quota.take_unit
         taken_over = {}
 
-        async def stall_then_reserve(db, uid, feature, kind, start, limit):
-            got = await real(db, uid, feature, kind, start, limit)
+        async def stall_then_reserve(
+            db, uid, lease_id, flag, feature, kind, start, limit
+        ):
+            got = await real(db, uid, lease_id, flag, feature, kind, start, limit)
             if kind == "month":
                 await _expire_lease(factory, uid)
                 async with factory() as other:
@@ -447,7 +450,7 @@ class TestReserveFlow:
         async with factory() as db:
             user = await db.get(User, user_id)
             with (
-                patch.object(quota, "reserve_unit", stall_then_reserve),
+                patch.object(quota, "take_unit", stall_then_reserve),
                 pytest.raises(quota.ScanInProgress),
             ):
                 await quota.reserve(
@@ -834,8 +837,8 @@ class TestPurge:
         assert remaining.count(1) >= 3
 
 
-def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0007", MIGRATION)
+def _load_migration(path=MIGRATION, name="migration_0007"):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -844,6 +847,8 @@ def _load_migration():
 def _migration_cycle(connection) -> None:
     migration = _load_migration()
     assert (migration.revision, migration.down_revision) == ("0007", "0006")
+    # 0012 (#590) adds the unit flags to ai_inflight; the model is 0007 + 0012.
+    flags = _load_migration(FLAGS_MIGRATION, "migration_0012")
     context = MigrationContext.configure(connection)
     tables = ("ai_quota", "ai_inflight")
 
@@ -862,11 +867,13 @@ def _migration_cycle(connection) -> None:
             migration.downgrade()
         assert present() == set()
         migration.upgrade()
+        flags.upgrade()
         assert present() == set(tables)
         assert diffs() == []
         migration.downgrade()
         assert present() == set()
         migration.upgrade()
+        flags.upgrade()
         assert diffs() == []
 
 

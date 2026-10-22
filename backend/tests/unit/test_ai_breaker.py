@@ -311,7 +311,7 @@ class TestReserveGivesTheEstimateBack:
     async def test_cancellation(self, store):
         with (
             patch.object(
-                quota, "reserve_unit", AsyncMock(side_effect=asyncio.CancelledError())
+                quota, "take_unit", AsyncMock(side_effect=asyncio.CancelledError())
             ),
             pytest.raises(asyncio.CancelledError),
         ):

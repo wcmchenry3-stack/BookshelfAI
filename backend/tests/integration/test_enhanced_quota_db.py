@@ -689,20 +689,25 @@ class TestTwoSettles:
 
 class TestEnhancedRefundOnce:
     """A give-back of the enhanced unit that commits and then loses its
-    acknowledgement is not retried (a retry would take a second unit off)."""
+    acknowledgement is retried, and the retry gives nothing back: it is gated
+    on the lease row's flag (#590), so exactly one unit comes back."""
 
     @pytest.fixture
     def ack_lost(self):
-        real = quota.refund_unit
+        real = quota.give_back_unit
         enhanced_calls: list = []
 
-        async def refund(db, user_id, feature, kind, start):
-            await real(db, user_id, feature, kind, start)  # commits
+        async def give_back(db, user_id, lease_id, flag, feature, kind, start):
+            outcome = await real(
+                db, user_id, lease_id, flag, feature, kind, start
+            )  # commits
             if feature == ENHANCED:
-                enhanced_calls.append(start)
-                raise ConnectionError("acknowledgement lost")
+                enhanced_calls.append(outcome)
+                if len(enhanced_calls) == 1:
+                    raise ConnectionError("acknowledgement lost")
+            return outcome
 
-        with patch.object(quota, "refund_unit", refund):
+        with patch.object(quota, "give_back_unit", give_back):
             yield enhanced_calls
 
     async def _one_unit_used(self, factory, user_id):
@@ -723,7 +728,7 @@ class TestEnhancedRefundOnce:
             pytest.raises(HTTPException),
         ):
             await _scan(factory, user_id)
-        assert len(ack_lost) == 1
+        assert ack_lost == [quota.UNIT_GIVEN_BACK, quota.UNIT_NOT_TAKEN]
         assert await _enhanced_used(factory, user_id) == 1
 
     async def test_reserve_give_back_after_lost_lease(
@@ -742,7 +747,7 @@ class TestEnhancedRefundOnce:
             await _scan(factory, user_id)
         assert exc.value.detail == "scan_in_progress"
         assert provider.calls == 0
-        assert len(ack_lost) == 1
+        assert ack_lost == [quota.UNIT_GIVEN_BACK, quota.UNIT_NOT_TAKEN]
         assert await _enhanced_used(factory, user_id) == 1
 
 

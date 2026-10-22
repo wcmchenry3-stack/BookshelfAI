@@ -867,22 +867,29 @@ class TestReserveEnhancedGiveBack:
         assert store.leases == {}
 
     @pytest.mark.parametrize("path", ["refund", "reserve"])
-    async def test_enhanced_refund_is_attempted_once(self, store, premium, path):
-        """A refund that commits and then loses its acknowledgement must not
-        be retried: a retry would take a second enhanced unit off."""
+    async def test_enhanced_refund_retried_after_a_lost_ack_gives_back_once(
+        self, store, premium, path
+    ):
+        """A refund that commits and then loses its acknowledgement is retried
+        (#590: the give-back is gated on the lease row's flag, so a retry is
+        safe), and the retry gives nothing back: exactly one unit returns."""
         month = quota.month_start(quota.utc_today())
         key = (USER.id, quota.ENHANCED_QUOTA_FEATURE, "month", month)
         store.rows[key] = 1  # an earlier enhanced scan this month
-        real = store.refund_unit
+        real = store.give_back_unit
         enhanced_calls = []
 
-        async def ack_lost(db, user_id, feature, kind, start):
-            await real(db, user_id, feature, kind, start)  # "committed"
+        async def ack_lost(db, user_id, lease_id, flag, feature, kind, start):
+            outcome = await real(
+                db, user_id, lease_id, flag, feature, kind, start
+            )  # "committed"
             if feature == quota.ENHANCED_QUOTA_FEATURE:
-                enhanced_calls.append(start)
-                raise ConnectionError("acknowledgement lost")
+                enhanced_calls.append(outcome)
+                if len(enhanced_calls) == 1:
+                    raise ConnectionError("acknowledgement lost")
+            return outcome
 
-        with patch.object(quota, "refund_unit", ack_lost):
+        with patch.object(quota, "give_back_unit", ack_lost):
             if path == "refund":
                 reservation = await self._reserve()
                 assert store.rows[key] == 2
@@ -893,16 +900,20 @@ class TestReserveEnhancedGiveBack:
                     pytest.raises(quota.ScanInProgress),
                 ):
                     await self._reserve()
-        assert enhanced_calls == [month]  # one attempt
+        # Retried; the gate gives nothing back the second time.
+        assert enhanced_calls == [quota.UNIT_GIVEN_BACK, quota.UNIT_NOT_TAKEN]
         assert store.rows[key] == 1  # exactly one unit given back
 
-    async def test_shared_refunds_are_attempted_once(self, store, premium):
-        """The shared daily/monthly refunds are attempted once (#567): a
-        retry after a lost acknowledgement would give a second unit back."""
+    async def test_shared_refunds_are_retried_after_a_failure(self, store, premium):
+        """The shared daily/monthly refunds are gated on the lease row's flags
+        (#590), so a failed attempt is retried (#567 had made them one-shot
+        while nothing gated them) and the unit comes back."""
         reservation = await self._reserve()
+        assert store.count() == 1
+        real = store.give_back_unit
         calls = []
 
-        async def flaky(db, user_id, feature, kind, start):
+        async def flaky(db, user_id, lease_id, flag, feature, kind, start):
             calls.append((feature, kind))
             if (
                 feature == quota.SCAN_QUOTA_FEATURE
@@ -910,10 +921,13 @@ class TestReserveEnhancedGiveBack:
                 and len(calls) == 1
             ):
                 raise ConnectionError("blip")
+            return await real(db, user_id, lease_id, flag, feature, kind, start)
 
-        with patch.object(quota, "refund_unit", flaky):
+        with patch.object(quota, "give_back_unit", flaky):
             await quota.refund(AsyncMock(), reservation)
-        assert calls.count((quota.SCAN_QUOTA_FEATURE, "day")) == 1
+        assert calls.count((quota.SCAN_QUOTA_FEATURE, "day")) == 2
+        assert store.count() == 0
+        assert store.count(kind="month") == 0
 
 
 class TestWarningClaim:

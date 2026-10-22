@@ -222,14 +222,14 @@ class TestReserveFlow:
         assert (exc.value.limit, exc.value.used) == (3, 9)
 
     async def test_error_in_monthly_reservation_gives_back_daily_and_lease(self, store):
-        real = store.reserve_unit
+        real = store.take_unit
 
-        async def fail_month(db, user_id, feature, kind, start, limit):
+        async def fail_month(db, user_id, lease_id, flag, feature, kind, start, limit):
             if kind == "month":
                 raise OSError("db down")
-            return await real(db, user_id, feature, kind, start, limit)
+            return await real(db, user_id, lease_id, flag, feature, kind, start, limit)
 
-        with patch.object(quota, "reserve_unit", fail_month), pytest.raises(OSError):
+        with patch.object(quota, "take_unit", fail_month), pytest.raises(OSError):
             await _reserve()
         assert store.leases == {}
         assert store.rows == {(USER.id, FEATURE, "day", TODAY): 0}
@@ -239,18 +239,20 @@ class TestReserveFlow:
         request took the lease meanwhile, so this one must not call the
         provider, and must give back both units without touching the new
         holder's lease."""
-        real = store.reserve_unit
+        real = store.take_unit
         taken_over = {}
 
-        async def stall_then_reserve(db, user_id, feature, kind, start, limit):
-            got = await real(db, user_id, feature, kind, start, limit)
+        async def stall_then_reserve(
+            db, user_id, lease_id, flag, feature, kind, start, limit
+        ):
+            got = await real(db, user_id, lease_id, flag, feature, kind, start, limit)
             if kind == "month":
                 store.expire_lease(user_id)
                 taken_over["id"] = await store.acquire_lease(db, user_id, 90)
             return got
 
         with (
-            patch.object(quota, "reserve_unit", stall_then_reserve),
+            patch.object(quota, "take_unit", stall_then_reserve),
             pytest.raises(quota.ScanInProgress),
         ):
             await _reserve()
@@ -263,12 +265,52 @@ class TestReserveFlow:
     async def test_cancellation_during_reservation_releases_lease(self, store):
         with (
             patch.object(
-                quota, "reserve_unit", AsyncMock(side_effect=asyncio.CancelledError())
+                quota, "take_unit", AsyncMock(side_effect=asyncio.CancelledError())
             ),
             pytest.raises(asyncio.CancelledError),
         ):
             await _reserve()
         assert store.leases == {}
+
+    @pytest.mark.parametrize("lost_kind", ["day", "month"])
+    async def test_lost_ack_on_a_take_gives_the_unit_back(self, store, lost_kind):
+        """#590: the take commits (unit and flag) and its acknowledgement is
+        lost. The flag shows it landed, so the unit is given back; the
+        monthly unit after a lost daily ack is never taken."""
+        real = store.take_unit
+
+        async def ack_lost(db, user_id, lease_id, flag, feature, kind, start, limit):
+            used = await real(db, user_id, lease_id, flag, feature, kind, start, limit)
+            if kind == lost_kind:
+                raise OSError("commit acknowledgement lost")
+            return used
+
+        with patch.object(quota, "take_unit", ack_lost), pytest.raises(OSError):
+            await _reserve()
+        assert store.count() == 0
+        assert store.count(kind="month") == 0
+        assert store.leases == {}
+        if lost_kind == "day":
+            assert (USER.id, FEATURE, "month", MONTH) not in store.rows
+
+    async def test_a_refused_take_gives_nothing_back(self, store):
+        """A refusal that was acknowledged took nothing, so no give-back runs
+        for it (and the earlier daily unit comes back once)."""
+        store.rows[(USER.id, FEATURE, "month", MONTH)] = 5
+        calls = []
+        real = store.give_back_unit
+
+        async def give_back(db, user_id, lease_id, flag, feature, kind, start):
+            calls.append(flag)
+            return await real(db, user_id, lease_id, flag, feature, kind, start)
+
+        with (
+            patch.object(quota, "give_back_unit", give_back),
+            pytest.raises(quota.MonthlyLimitReached),
+        ):
+            await _reserve(AISettings({"quota.free.monthly": 5}))
+        assert calls == [quota.FLAG_DAILY]
+        assert store.count() == 0
 
     async def test_refund_gives_back_both_windows_never_below_zero(self, store):
         r = await _reserve()
