@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,6 +17,7 @@ class AIEnhancedZeroResult(Base):
     charged zero-result scan (the user is at the threshold) writes no row.
     The per-user count inside ``scan.enhanced.zero_result_window_hours`` is
     compared with ``scan.enhanced.zero_result_threshold`` (``app/ai/quota.py``).
+    ``warned`` marks the row that sent the threshold warning.
 
     Holds no image, hash or content: the user, the time and the ledger call
     (``ai_usage.call_id``; no FK, because ledger rows are rolled up and
@@ -46,4 +47,10 @@ class AIEnhancedZeroResult(Base):
     # no ledger row.
     ledger_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
+    )
+    # True on the row whose insert sent the threshold warning. A new warning
+    # is sent only while no such row of the user is inside the window, so at
+    # most one warning per user per window.
+    warned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
     )

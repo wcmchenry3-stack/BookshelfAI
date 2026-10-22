@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import pytest
 import sentry_sdk
 from fastapi.testclient import TestClient
@@ -488,7 +489,7 @@ def _reservation(**kw) -> quota.Reservation:
 class TestSettleGate:
     @pytest.fixture
     def record(self):
-        record = AsyncMock(return_value=1)
+        record = AsyncMock(return_value=quota.ZeroResultRecorded(1))
         with (
             patch.object(quota, "record_zero_result", record),
             patch.object(quota, "release_lease", AsyncMock(return_value=True)),
@@ -553,11 +554,18 @@ class TestSettleGate:
         )
         record.assert_not_awaited()
 
-    @pytest.mark.parametrize("count,sent", [(2, False), (3, True), (None, False)])
-    async def test_warning_only_when_the_count_reaches_the_threshold(
-        self, record, count, sent
-    ):
-        record.return_value = count
+    @pytest.mark.parametrize(
+        "recorded,sent",
+        [
+            (quota.ZeroResultRecorded(2), False),
+            (quota.ZeroResultRecorded(3, warn=True), True),
+            # At the threshold, but a warned row is still in the window.
+            (quota.ZeroResultRecorded(3, warn=False), False),
+            (None, False),
+        ],
+    )
+    async def test_warning_only_when_the_row_claimed_it(self, record, recorded, sent):
+        record.return_value = recorded
         with patch.object(quota, "send_zero_result_warning") as warn:
             await quota.release(
                 self._db(), _reservation(), MagicMock(), None, quota.ZeroResult(None)
@@ -572,7 +580,7 @@ class TestSettleGate:
             }
 
     async def test_no_warning_when_the_settle_failed(self, record):
-        record.return_value = 3
+        record.return_value = quota.ZeroResultRecorded(3, warn=True)
 
         async def broken(db, uid, lease_id):
             raise ConnectionError("down")
@@ -584,6 +592,27 @@ class TestSettleGate:
             await quota.release(
                 self._db(), _reservation(), MagicMock(), None, quota.ZeroResult(None)
             )
+        warn.assert_not_called()
+
+    async def test_no_warning_when_the_settle_timed_out(self, record):
+        """The settle recorded (and claimed) the warning, then the bound cut
+        the lease delete off before the commit: the claim may not be
+        committed, so nothing is sent."""
+        record.return_value = quota.ZeroResultRecorded(3, warn=True)
+
+        async def hung(db, uid, lease_id):
+            await anyio.sleep(5)
+
+        with (
+            patch.object(quota, "CLEANUP_TIMEOUT_SECONDS", 0.05),
+            patch.object(quota, "release_lease", hung),
+            patch.object(quota, "send_zero_result_warning") as warn,
+        ):
+            # No ledger row: the timed-out outcome reaches the warning check.
+            await quota.release(
+                self._db(), _reservation(), None, None, quota.ZeroResult(None)
+            )
+        record.assert_awaited_once()
         warn.assert_not_called()
 
     async def test_record_failure_is_swallowed_and_charges(self):
@@ -789,3 +818,157 @@ class TestCleanup:
         assert deleted == quota.PURGE_BATCH_SIZE * quota.PURGE_MAX_BATCHES
         sql = str(db.execute.await_args.args[0])
         assert "ai_enhanced_zero_results" in sql and "LIMIT" in sql
+
+
+# ---------------------------------------------------------------------------
+# Reserve: enhanced give-backs (#533 review)
+# ---------------------------------------------------------------------------
+
+
+class TestReserveEnhancedGiveBack:
+    async def _reserve(self):
+        return await quota.reserve(
+            AsyncMock(),
+            user=USER,
+            feature=quota.SCAN_QUOTA_FEATURE,
+            timeout_s=1,
+            ai=ai_settings.AISettings(
+                {"quota.premium.enhanced_monthly": 5, "quota.premium.daily": 5}
+            ),
+            est_cost_micros=10,
+            enhanced=True,
+        )
+
+    async def test_lost_lease_after_the_enhanced_unit_gives_it_back(
+        self, store, premium
+    ):
+        with (
+            patch.object(quota, "renew_lease", AsyncMock(return_value=False)),
+            pytest.raises(quota.ScanInProgress),
+        ):
+            await self._reserve()
+        assert _enhanced_used(store) == 0
+        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.leases == {}
+
+    async def test_cancellation_after_the_enhanced_unit_gives_it_back(
+        self, store, premium
+    ):
+        with (
+            patch.object(
+                quota, "renew_lease", AsyncMock(side_effect=asyncio.CancelledError())
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await self._reserve()
+        assert _enhanced_used(store) == 0
+        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.leases == {}
+
+    @pytest.mark.parametrize("path", ["refund", "reserve"])
+    async def test_enhanced_refund_is_attempted_once(self, store, premium, path):
+        """A refund that commits and then loses its acknowledgement must not
+        be retried: a retry would take a second enhanced unit off."""
+        month = quota.month_start(quota.utc_today())
+        key = (USER.id, quota.ENHANCED_QUOTA_FEATURE, "month", month)
+        store.rows[key] = 1  # an earlier enhanced scan this month
+        real = store.refund_unit
+        enhanced_calls = []
+
+        async def ack_lost(db, user_id, feature, kind, start):
+            await real(db, user_id, feature, kind, start)  # "committed"
+            if feature == quota.ENHANCED_QUOTA_FEATURE:
+                enhanced_calls.append(start)
+                raise ConnectionError("acknowledgement lost")
+
+        with patch.object(quota, "refund_unit", ack_lost):
+            if path == "refund":
+                reservation = await self._reserve()
+                assert store.rows[key] == 2
+                await quota.refund(AsyncMock(), reservation)
+            else:
+                with (
+                    patch.object(quota, "renew_lease", AsyncMock(return_value=False)),
+                    pytest.raises(quota.ScanInProgress),
+                ):
+                    await self._reserve()
+        assert enhanced_calls == [month]  # one attempt
+        assert store.rows[key] == 1  # exactly one unit given back
+
+    async def test_shared_refunds_still_retry(self, store, premium):
+        """Unchanged (#528): the shared daily/monthly refunds keep two
+        attempts."""
+        reservation = await self._reserve()
+        calls = []
+
+        async def flaky(db, user_id, feature, kind, start):
+            calls.append((feature, kind))
+            if (
+                feature == quota.SCAN_QUOTA_FEATURE
+                and kind == "day"
+                and len(calls) == 1
+            ):
+                raise ConnectionError("blip")
+
+        with patch.object(quota, "refund_unit", flaky):
+            await quota.refund(AsyncMock(), reservation)
+        assert calls.count((quota.SCAN_QUOTA_FEATURE, "day")) == 2
+
+
+class TestWarningClaim:
+    """record_zero_result claims the warning (warned = true on the new row)
+    only when the row reaches the threshold and no warned row of the user is
+    inside the window."""
+
+    def _db(self):
+        db = AsyncMock()
+        nested = MagicMock()
+        nested.__aenter__ = AsyncMock(return_value=None)
+        nested.__aexit__ = AsyncMock(return_value=False)
+        db.begin_nested = MagicMock(return_value=nested)
+        return db
+
+    @staticmethod
+    def _inserted_warned(db) -> bool:
+        stmt = db.execute.await_args_list[-1].args[0]
+        return stmt.compile().params["warned"]
+
+    @pytest.mark.parametrize(
+        "count_before,warned_in_window,warn",
+        [
+            (1, False, False),  # new count 2 < 3
+            (2, False, True),  # reaches 3, nothing warned in window: claim
+            (2, True, False),  # reaches 3, but a warned row is still in window
+        ],
+    )
+    async def test_claim(self, count_before, warned_in_window, warn):
+        db = self._db()
+        checked = AsyncMock(return_value=warned_in_window)
+        with (
+            patch.object(
+                quota, "zero_result_count", AsyncMock(return_value=count_before)
+            ),
+            patch.object(quota, "warned_in_window", checked),
+        ):
+            recorded = await quota.record_zero_result(db, _reservation(), None)
+        assert recorded == quota.ZeroResultRecorded(count_before + 1, warn)
+        assert self._inserted_warned(db) is warn
+
+    async def test_sliding_window_abuser_is_warned_once_per_window(self):
+        """Threshold 3; rows age out one by one so every new row brings the
+        count back to 3. Only the first claims the warning while its row is
+        in the window."""
+        warned_rows: list[bool] = []
+        db = self._db()
+
+        async def any_warned(_db, _uid, _hours):
+            return any(warned_rows)
+
+        with (
+            patch.object(quota, "zero_result_count", AsyncMock(return_value=2)),
+            patch.object(quota, "warned_in_window", any_warned),
+        ):
+            for _ in range(4):
+                recorded = await quota.record_zero_result(db, _reservation(), None)
+                warned_rows.append(recorded.warn)
+        assert warned_rows == [True, False, False, False]

@@ -61,16 +61,22 @@ In order (#528):
 
 Each refusal gives back everything taken before it, like the others. The
 enhanced unit follows the shared units on refund (:func:`refund`) and is kept
-otherwise, except for the charge decision: when the provider answered but the
-scan has no books to hand back, the caller passes a :class:`ZeroResult` to
+otherwise, except for the charge decision: when the provider answered but
+returned no books (no candidates), the caller passes a :class:`ZeroResult` to
 :func:`release`, and in the settle transaction (gated exactly like the cost
 settle, so a retried settle cannot apply it twice) the user's in-window count
 is read: below the threshold the enhanced unit is given back and one
 ``ai_enhanced_zero_results`` row is written (not charged); at or above it the
 unit is kept (charged) and no row is written. The write runs in a SAVEPOINT,
 so a failure there keeps the unit (charged) and never drops the usage row.
-When a row brings the count to exactly the threshold, one Sentry warning is
-sent after the commit (:func:`send_zero_result_warning`). Threshold 0: with
+When a row brings the count to the threshold and no row of the user with
+``warned = true`` is inside the window, that row is written with ``warned =
+true`` (the claim commits with it) and one Sentry warning is sent after the
+commit (:func:`send_zero_result_warning`): at most one per user per window.
+Every other give-back of the enhanced unit (:func:`refund`, a refusal in
+:func:`reserve`) is attempted once only: ``refund_unit`` cannot show whether a
+failed attempt committed, and a repeat would take a second unit off, so a
+failure leaves the user charged. Threshold 0: with
 ``charge`` every zero-result enhanced scan is charged (no rows, no warning);
 with ``throttle`` every enhanced scan is refused. A future result-cache hit
 (#534) makes no provider call and must not pass a :class:`ZeroResult`.
@@ -291,7 +297,7 @@ class EnhancedLimitReached(QuotaRefusal):
 @dataclass(frozen=True)
 class ZeroResult:
     """Passed to :func:`release` when an enhanced scan's provider answered but
-    there are no books to hand back (#533). ``ledger_id`` is the usage-ledger
+    returned no books, i.e. no candidates (#533). ``ledger_id`` is the usage-ledger
     ``call_id`` (None when the settle has no ledger row)."""
 
     ledger_id: uuid.UUID | None = None
@@ -555,13 +561,41 @@ def zero_result_charged(count: int, threshold: int) -> bool:
     return count >= threshold
 
 
+@dataclass(frozen=True)
+class ZeroResultRecorded:
+    """An uncharged zero-result scan was recorded: the user's new in-window
+    count, and whether this row claimed the threshold warning."""
+
+    count: int
+    warn: bool = False
+
+
+async def warned_in_window(
+    db: AsyncSession, user_id: uuid.UUID, window_hours: int
+) -> bool:
+    """True when a row of the user that sent the warning is inside the
+    window (no commit)."""
+    result = await db.execute(
+        select(AIEnhancedZeroResult.id)
+        .where(_in_window(user_id, window_hours), AIEnhancedZeroResult.warned)
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def record_zero_result(
     db: AsyncSession, reservation: "Reservation", ledger_id: uuid.UUID | None
-) -> int | None:
+) -> ZeroResultRecorded | None:
     """The charge decision, inside the caller's settle transaction (no
     commit). Returns the user's new in-window count when the scan is not
     charged (the enhanced month unit is given back and one row written), or
     ``None`` when it is charged (nothing written).
+
+    The warning claim: when the new row brings the count to the threshold
+    and no row of the user with ``warned = true`` is inside the window, the
+    new row is written with ``warned = true`` and ``warn`` is returned True.
+    The claim commits with the row, so at most one warning per user per
+    window; the caller sends it after the commit.
 
     Runs in a SAVEPOINT: if it fails, only it is rolled back (the unit stays
     charged, no row) and the settle still commits the usage row, the cost and
@@ -585,15 +619,23 @@ async def record_zero_result(
                 )
                 .values(units_used=AIQuota.units_used - 1)
             )
+            new_count = count + 1
+            warn = (
+                new_count == reservation.zero_result_threshold
+                and not await warned_in_window(
+                    db, reservation.user_id, reservation.zero_result_window_hours
+                )
+            )
             await db.execute(
                 insert(AIEnhancedZeroResult).values(
                     id=uuid.uuid4(),
                     user_id=reservation.user_id,
                     created_at=_clock_timestamp(),
                     ledger_id=ledger_id,
+                    warned=warn,
                 )
             )
-            return count + 1
+            return ZeroResultRecorded(new_count, warn)
     except Exception:
         logger.exception(
             "ai_quota: zero-result record failed; the enhanced scan stays charged"
@@ -741,7 +783,7 @@ async def release(
     est = reservation.est_cost_micros
     cost = settlement.cost_micros if settlement is not None else 0
     settled: list[tuple[int, int, int] | None] = []
-    recorded: list[int] = []
+    recorded: list[ZeroResultRecorded] = []
     attempts = 0
     decide = zero_result is not None and reservation.enhanced
 
@@ -803,15 +845,11 @@ async def release(
             outcome = await _give_back(db, "lease release", settle_after_lease)
     if outcome == GIVE_BACK_DONE and settlement is not None and settled:
         await _alert(db, reservation, settlement, settled[0])
-    if (
-        outcome == GIVE_BACK_DONE
-        and recorded
-        and recorded[0] == reservation.zero_result_threshold
-    ):
-        # The per-user lease serialises a user's settles, so only the row
-        # that brings the count to exactly the threshold sends it.
+    if outcome == GIVE_BACK_DONE and recorded and recorded[0].warn:
+        # The row that claimed the warning (warned = true) is committed, so
+        # it is sent at most once per user per window.
         send_zero_result_warning(
-            count=recorded[0],
+            count=recorded[0].count,
             threshold=reservation.zero_result_threshold,
             window_hours=reservation.zero_result_window_hours,
             action=reservation.zero_result_action,
@@ -856,13 +894,32 @@ async def _refund_window(
     reservation: Reservation,
     window_kind: str,
     start: date,
-    feature: str | None = None,
 ) -> None:
-    feature = feature or reservation.feature
     await _give_back(
         db,
         f"{window_kind} refund",
-        lambda: refund_unit(db, reservation.user_id, feature, window_kind, start),
+        lambda: refund_unit(
+            db, reservation.user_id, reservation.feature, window_kind, start
+        ),
+    )
+
+
+async def _refund_enhanced(db: AsyncSession, reservation: Reservation) -> None:
+    """Give back the enhanced month unit (#533). Attempted once only:
+    ``refund_unit`` has nothing to show whether a failed attempt committed (an
+    acknowledgement lost), and a repeat would take a second unit off. A
+    failure leaves the user charged (fails safe)."""
+    await _give_back(
+        db,
+        "enhanced month refund",
+        lambda: refund_unit(
+            db,
+            reservation.user_id,
+            ENHANCED_QUOTA_FEATURE,
+            WINDOW_MONTH,
+            reservation.month,
+        ),
+        attempts=1,
     )
 
 
@@ -873,9 +930,7 @@ async def refund(db: AsyncSession, reservation: Reservation) -> None:
     await _refund_window(db, reservation, WINDOW_DAY, reservation.day)
     await _refund_window(db, reservation, WINDOW_MONTH, reservation.month)
     if reservation.enhanced:
-        await _refund_window(
-            db, reservation, WINDOW_MONTH, reservation.month, ENHANCED_QUOTA_FEATURE
-        )
+        await _refund_enhanced(db, reservation)
 
 
 # ---------------------------------------------------------------------------
@@ -1019,9 +1074,7 @@ async def reserve(
     except BaseException:
         # Includes CancelledError: give back what was taken, then propagate.
         if enhanced_taken:
-            await _refund_window(
-                db, reservation, WINDOW_MONTH, month, ENHANCED_QUOTA_FEATURE
-            )
+            await _refund_enhanced(db, reservation)
         if monthly_taken:
             await _refund_window(db, reservation, WINDOW_MONTH, month)
         if daily_taken:

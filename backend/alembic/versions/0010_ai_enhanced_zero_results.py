@@ -37,6 +37,9 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("ledger_id", postgresql.UUID(as_uuid=True), nullable=True),
+        # True on the row that sent the threshold warning: at most one
+        # warning per user per window.
+        sa.Column("warned", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(

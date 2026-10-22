@@ -26,6 +26,8 @@ class FakeQuotaStore:
         # ai_enhanced_zero_results (#533): user_id -> rows' ledger ids, all
         # treated as inside the window.
         self.zero_results: dict[uuid.UUID, list[uuid.UUID | None]] = {}
+        # Users with a warned = true row (all treated as inside the window).
+        self.zero_warned: set[uuid.UUID] = set()
 
     async def global_units_today(self, _db, day: date) -> int:
         return self.extra_global + sum(
@@ -91,7 +93,13 @@ class FakeQuotaStore:
         if key in self.rows:
             self.rows[key] = max(0, self.rows[key] - 1)
         rows.append(ledger_id)
-        return len(rows)
+        warn = (
+            len(rows) == reservation.zero_result_threshold
+            and reservation.user_id not in self.zero_warned
+        )
+        if warn:
+            self.zero_warned.add(reservation.user_id)
+        return quota.ZeroResultRecorded(len(rows), warn)
 
     # --- cost breaker (#531), same semantics as app/ai/breaker.py ---
 

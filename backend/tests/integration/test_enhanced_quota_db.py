@@ -498,9 +498,30 @@ class TestThreshold:
         )
         async with factory() as db:
             assert await quota.zero_result_count(db, user_id, 24) == 1
+            assert await quota.warned_in_window(db, user_id, 24) is False
             # Retry-After: the inside row leaves in about 30 s.
             assert 1 <= await quota.zero_result_throttle(db, user_id, 1, 24) <= 31
             assert await quota.zero_result_throttle(db, user_id, 2, 24) is None
+
+    @pytest.mark.parametrize("threshold,leaves_in_hours", [(1, 23), (2, 22), (3, 21)])
+    async def test_retry_after_when_count_is_above_threshold(
+        self, sessions, threshold, leaves_in_hours
+    ):
+        """E.g. the threshold was lowered from 3 to 1 with 3 rows in the
+        window: the count drops below the threshold only once the newest of
+        the rows that must go (the (count - threshold + 1)-th oldest) has left
+        the window."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        await _insert_rows(
+            factory,
+            user_id,
+            [timedelta(hours=3), timedelta(hours=2), timedelta(hours=1)],
+        )
+        async with factory() as db:
+            retry_after = await quota.zero_result_throttle(db, user_id, threshold, 24)
+        expected = leaves_in_hours * 3600
+        assert expected - 60 <= retry_after <= expected + 1
 
     async def test_users_do_not_share_counts(self, sessions, downstream, premium):
         factory, make_user = sessions
@@ -535,6 +556,107 @@ class TestThreshold:
             for _ in range(3):
                 await _scan(factory, user_id)
         assert warn.call_count == 2
+
+    async def test_sliding_window_abuser_gets_one_warning_per_window(
+        self, sessions, downstream, premium
+    ):
+        """Threshold 3. Rows age out one by one, so the count keeps returning
+        to the threshold; only one warning is sent while the row that sent it
+        is inside the window, and a new one once it has left."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        _settings(**{"scan.enhanced.zero_result_threshold": 3})
+
+        async def age(row_id, hours=25):
+            async with factory() as db:
+                await db.execute(
+                    update(AIEnhancedZeroResult)
+                    .where(AIEnhancedZeroResult.id == row_id)
+                    .values(created_at=quota.utc_now() - timedelta(hours=hours))
+                )
+                await db.commit()
+
+        with (
+            _Provider(books=False).patch(),
+            patch.object(quota, "send_zero_result_warning") as warn,
+        ):
+            for _ in range(3):
+                await _scan(factory, user_id)
+            assert warn.call_count == 1
+            r1, r2, r3 = await _zero_rows(factory, user_id)
+            assert [r.warned for r in (r1, r2, r3)] == [False, False, True]
+
+            await age(r1.id)  # count back to 2
+            await _scan(factory, user_id)  # count 3 again: free, no warning
+            await age(r2.id)
+            await _scan(factory, user_id)  # count 3 again: free, no warning
+            assert warn.call_count == 1
+            assert await _enhanced_used(factory, user_id) == 0
+
+            await age(r3.id)  # the warned row leaves the window
+            await _scan(factory, user_id)
+            assert warn.call_count == 2
+        rows = await _zero_rows(factory, user_id)
+        assert sum(r.warned for r in rows) == 2
+
+
+class TestEnhancedRefundOnce:
+    """A give-back of the enhanced unit that commits and then loses its
+    acknowledgement is not retried (a retry would take a second unit off)."""
+
+    @pytest.fixture
+    def ack_lost(self):
+        real = quota.refund_unit
+        enhanced_calls: list = []
+
+        async def refund(db, user_id, feature, kind, start):
+            await real(db, user_id, feature, kind, start)  # commits
+            if feature == ENHANCED:
+                enhanced_calls.append(start)
+                raise ConnectionError("acknowledgement lost")
+
+        with patch.object(quota, "refund_unit", refund):
+            yield enhanced_calls
+
+    async def _one_unit_used(self, factory, user_id):
+        async with factory() as db:
+            await quota.reserve_unit(
+                db, user_id, ENHANCED, "month", quota.month_start(quota.utc_today()), 20
+            )
+
+    async def test_provider_unavailable_refund(
+        self, sessions, downstream, premium, ack_lost
+    ):
+        factory, make_user = sessions
+        user_id = await make_user()
+        _settings()
+        await self._one_unit_used(factory, user_id)
+        with (
+            _Provider(error=ScanUnavailableError("down")).patch(),
+            pytest.raises(HTTPException),
+        ):
+            await _scan(factory, user_id)
+        assert len(ack_lost) == 1
+        assert await _enhanced_used(factory, user_id) == 1
+
+    async def test_reserve_give_back_after_lost_lease(
+        self, sessions, downstream, premium, ack_lost
+    ):
+        factory, make_user = sessions
+        user_id = await make_user()
+        _settings()
+        await self._one_unit_used(factory, user_id)
+        provider = _Provider(books=True)
+        with (
+            provider.patch(),
+            patch.object(quota, "renew_lease", AsyncMock(return_value=False)),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await _scan(factory, user_id)
+        assert exc.value.detail == "scan_in_progress"
+        assert provider.calls == 0
+        assert len(ack_lost) == 1
+        assert await _enhanced_used(factory, user_id) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +741,9 @@ def _migration_cycle(connection) -> None:
             "user_id",
             "created_at",
         ]
+        columns = {c["name"]: c for c in inspect(connection).get_columns(table)}
+        assert columns["warned"]["nullable"] is False
+        assert "false" in str(columns["warned"]["default"]).lower()
         (fk,) = inspect(connection).get_foreign_keys(table)
         assert fk["referred_table"] == "users"
         assert fk["options"].get("ondelete") == "CASCADE"
