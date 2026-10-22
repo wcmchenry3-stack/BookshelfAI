@@ -326,9 +326,13 @@ def _budget_violations(tree: ast.AST) -> list[int]:
             continue
         kws = {k.arg: k.value for k in n.keywords if k.arg}
         status, detail = kws.get("status_code"), kws.get("detail")
-        if _call_name(n.func).endswith("HTTPException") and len(n.args) >= 2:
-            status = status or n.args[0]
-            detail = detail or n.args[1]
+        if _call_name(n.func).endswith("HTTPException"):
+            # Positional status and detail resolve independently, so
+            # HTTPException(503, detail=...) is read correctly.
+            if status is None and len(n.args) >= 1:
+                status = n.args[0]
+            if detail is None and len(n.args) >= 2:
+                detail = n.args[1]
         is_budget = (
             isinstance(detail, ast.Constant) and detail.value == "ai_budget_reached"
         )

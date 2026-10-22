@@ -255,6 +255,14 @@ def test_budget_httpstatus_passes():
     assert run("pass_budget_httpstatus.py.txt", APP) == []
 
 
+def test_budget_mixed_positional_status_and_keyword_detail():
+    """HTTPException(503, detail=...) is compliant; (402, detail=...) is not."""
+    ok = 'from fastapi import HTTPException\nraise HTTPException(503, detail="ai_budget_reached")\n'
+    bad = ok.replace("503", "402")
+    assert policy.check_file(APP, ok, ALLOWED) == []
+    assert checks(policy.check_file(APP, bad, ALLOWED)) == {"budget-status"}
+
+
 def test_log_content_attribute_fails():
     assert checks(run("fail_log_attr_content.py.txt", AI)) == {"log-content"}
 
