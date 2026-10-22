@@ -5,6 +5,12 @@ from urllib.parse import urlsplit
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.ai.models_allowlist import (
+    ALLOWED_MODELS,
+    MAX_TOKENS_BOUNDS,
+    TIMEOUT_S_BOUNDS,
+)
+
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
 # asyncpg's server-side prepared statements, which asyncpg uses by default. It
 # passes a single probe, then fails intermittently under concurrency with
@@ -56,8 +62,12 @@ class Settings(BaseSettings):
     # The JSON for 15 books needs far more room than openai_max_tokens allows,
     # and high-detail images take longer to process, hence separate knobs.
     scan_max_books: int = 15
-    scan_max_tokens: int = 2048
-    scan_timeout_seconds: float = 45.0
+    scan_max_tokens: int = Field(
+        default=2048, ge=MAX_TOKENS_BOUNDS[0], le=MAX_TOKENS_BOUNDS[1]
+    )
+    scan_timeout_seconds: float = Field(
+        default=45.0, ge=TIMEOUT_S_BOUNDS[0], le=TIMEOUT_S_BOUNDS[1]
+    )
     scan_model: str = "gpt-4o-mini"
     # "Enhanced" scan — a stronger model the user can opt into when the standard
     # scan misses books. Each successful enhanced scan costs one credit; new
@@ -137,6 +147,16 @@ class Settings(BaseSettings):
     def no_wildcard_origins(cls, v: list[str]) -> list[str]:
         if "*" in v:
             raise ValueError("Wildcard '*' is not permitted in CORS_ORIGINS")
+        return v
+
+    @field_validator("scan_model", "scan_enhanced_model")
+    @classmethod
+    def allowed_openai_model(cls, v: str, info) -> str:
+        if v not in ALLOWED_MODELS["openai"]:
+            raise ValueError(
+                f"{info.field_name.upper()}={v!r} is not an allowed OpenAI model; "
+                f"allowed: {', '.join(sorted(ALLOWED_MODELS['openai']))}"
+            )
         return v
 
     @field_validator("origin_auth_header")

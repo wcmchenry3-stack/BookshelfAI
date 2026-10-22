@@ -19,9 +19,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from app.ai.providers.openai_vision import OpenAIVisionProvider
+from app.ai.registry import FEATURES
 from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate
-from app.services.chatgpt_vision import ChatGPTVisionIdentifier
 from app.services.enrichment import EnrichmentService
 
 # ─── Golden dataset ────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ def _vision_candidate(entry: dict) -> BookCandidate:
 
 
 class TestIsbnExtractionAccuracy:
-    """Verify that ChatGPTVisionIdentifier returns the expected ISBN.
+    """Verify that OpenAIVisionProvider returns the expected ISBN.
 
     The vision model response is mocked — these tests validate that the
     parsing/prompt logic correctly extracts structured data from the
@@ -125,9 +126,9 @@ class TestIsbnExtractionAccuracy:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "app.services.chatgpt_vision.httpx.AsyncClient", return_value=mock_client
+            "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=mock_client
         ):
-            identifier = ChatGPTVisionIdentifier()
+            identifier = OpenAIVisionProvider(FEATURES["scan.standard"])
             results = await identifier.identify(b"fake_image_bytes")
 
         assert len(results) >= 1

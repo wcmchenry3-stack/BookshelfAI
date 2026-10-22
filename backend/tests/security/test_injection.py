@@ -173,7 +173,7 @@ class TestScanUploadValidation:
 
         with (
             patch(
-                "app.api.scan.ChatGPTVisionIdentifier.identify",
+                "app.ai.providers.openai_vision.OpenAIVisionProvider.identify",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
