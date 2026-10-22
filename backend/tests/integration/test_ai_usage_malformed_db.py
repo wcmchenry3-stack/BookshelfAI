@@ -2,23 +2,36 @@
 reply through /scan writes one ``ai_usage`` row with the real billed tokens
 and cost, refunds the units and settles the priced cost; both status CHECKs
 accept it; it rolls up into ``ai_usage_daily``; and the 0013 migration
-cycle.
+cycle, through real ``alembic`` commands: the downgrade keeps the rollup
+working and the upgrade validates both CHECKs.
 
 Skipped automatically when DATABASE_URL is the dummy URL (see conftest.py).
 """
 
-import importlib.util
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
 from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import delete, insert, inspect, select
+from sqlalchemy import (
+    Boolean,
+    Column,
+    MetaData,
+    String,
+    Table,
+    delete,
+    func,
+    insert,
+    select,
+)
+from sqlalchemy.dialects.postgresql import OID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from alembic import command
 from app.ai import ledger
 from app.ai.prices import CURRENT_PRICE_VERSION
 from app.core.config import settings
@@ -29,11 +42,15 @@ from tests.limits import _harness as h
 
 pytestmark = pytest.mark.integration
 
-MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "0013_ai_usage_malformed_status.py"
+ALEMBIC_DIR = Path(__file__).resolve().parents[2] / "alembic"
+# The catalog table, for reading a CHECK's validated flag and definition.
+pg_constraint = Table(
+    "pg_constraint",
+    MetaData(),
+    Column("oid", OID),
+    Column("conname", String),
+    Column("convalidated", Boolean),
+    schema="pg_catalog",
 )
 NOW = datetime(1991, 3, 14, 12, 0, tzinfo=UTC)
 
@@ -153,82 +170,143 @@ async def test_check_constraints_accept_malformed_and_it_rolls_up():
         await engine.dispose()
 
 
-def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0013", MIGRATION)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _alembic(action: str, revision: str) -> None:
+    """Run ``alembic <action> <revision>`` against the test database, as CI
+    and the pre-deploy step do (``env.py`` runs its own event loop, so this
+    is only called from sync code)."""
+    # No ini file: env.py would otherwise run logging.config.fileConfig, which
+    # disables every existing logger for the rest of the test session.
+    config = Config()
+    config.set_main_option("script_location", str(ALEMBIC_DIR))
+    getattr(command, action)(config, revision)
 
 
-def _status_checks(connection) -> dict[str, str]:
-    """The status CHECK of each ledger table, by name: its SQL text."""
-    found = {}
-    for table in ("ai_usage", "ai_usage_daily"):
-        for check in inspect(connection).get_check_constraints(table):
-            if check["name"].endswith("_status"):
-                found[check["name"]] = check["sqltext"]
-    return found
+def _run(coro_fn):
+    """Run one async step on a fresh engine (the tests below are sync)."""
+
+    async def _go():
+        engine = create_async_engine(settings.async_database_url)
+        try:
+            return await coro_fn(async_sessionmaker(engine, expire_on_commit=False))
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_go())
 
 
-def _malformed_row(connection) -> None:
-    connection.execute(
-        insert(AIUsage).values(
-            call_id=uuid.uuid4(),
-            feature="test.migration-0013",
-            model="gpt-4o-mini",
-            price_version=CURRENT_PRICE_VERSION,
-            input_tokens=0,
-            output_tokens=0,
-            cache_read_tokens=0,
-            cache_write_tokens=0,
-            cost_micros=0,
-            status="malformed",
+async def _revision(factory) -> str | None:
+    async with factory() as session:
+        conn = await session.connection()
+        return await conn.run_sync(
+            lambda c: MigrationContext.configure(c).get_current_revision()
         )
-    )
 
 
-def _migration_cycle(connection) -> None:
-    migration = _load_migration()
-    assert (migration.revision, migration.down_revision) == ("0013", "0012")
-    context = MigrationContext.configure(connection)
-    names = {"ck_ai_usage_status", "ck_ai_usage_daily_status"}
-    with Operations.context(context):
-        migration.downgrade()
-        migration.upgrade()
-        checks = _status_checks(connection)
-        assert set(checks) == names
-        assert all("'malformed'" in sql for sql in checks.values())
-        _malformed_row(connection)
-        # The downgrade keeps the existing malformed row (the old CHECK comes
-        # back NOT VALID, so it does not fail on it) ...
-        migration.downgrade()
-        checks = _status_checks(connection)
-        assert set(checks) == names
-        assert not any("'malformed'" in sql for sql in checks.values())
-        # ... while a new malformed row is refused again.
-        with (
-            pytest.raises(IntegrityError, match="ck_ai_usage_status"),
-            connection.begin_nested(),
-        ):
-            _malformed_row(connection)
-        # An upgrade after it validates every row again.
-        migration.upgrade()
-        assert all("'malformed'" in sql for sql in _status_checks(connection).values())
-        _malformed_row(connection)
+async def _checks(factory) -> dict[str, tuple[bool, str]]:
+    """The status CHECK of each ledger table: (validated, definition)."""
+    async with factory() as session:
+        rows = await session.execute(
+            select(
+                pg_constraint.c.conname,
+                pg_constraint.c.convalidated,
+                func.pg_get_constraintdef(pg_constraint.c.oid),
+            ).where(
+                pg_constraint.c.conname.in_(
+                    ["ck_ai_usage_status", "ck_ai_usage_daily_status"]
+                )
+            )
+        )
+        return {name: (valid, sql) for name, valid, sql in rows}
 
 
-async def test_migration_upgrade_downgrade_cycle():
-    """Runs 0013 in a transaction that is rolled back (Postgres DDL is
-    transactional), so the shared test database is left as it was."""
-    engine = create_async_engine(settings.async_database_url)
+def _usage_row(feature: str, status: str, created_at: datetime | None = None):
+    values = {
+        "call_id": uuid.uuid4(),
+        "feature": feature,
+        "model": "gpt-4o-mini",
+        "price_version": CURRENT_PRICE_VERSION,
+        "input_tokens": 1_000,
+        "output_tokens": 500,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_micros": 450,
+        "status": status,
+    }
+    if created_at is not None:
+        values["created_at"] = created_at
+    return insert(AIUsage).values(**values)
+
+
+async def _cleanup(factory, feature: str) -> None:
+    async with factory() as session:
+        await session.execute(delete(AIUsage).where(AIUsage.feature == feature))
+        await session.execute(
+            delete(AIUsageDaily).where(AIUsageDaily.feature == feature)
+        )
+        await session.commit()
+
+
+def test_downgrade_keeps_the_rollup_working_and_upgrade_validates():
+    """#572 review: after ``alembic downgrade 0012`` the raw ``malformed``
+    rows written before it still roll up (``ai_usage_daily`` keeps the
+    widened CHECK), ``ai_usage`` refuses new ``malformed`` rows again, and the
+    upgrade validates both CHECKs. Runs real ``alembic`` commands, so the
+    database must be at head (CI runs ``alembic upgrade head`` first)."""
+    head = _run(_revision)
+    if head is None:
+        pytest.skip("database not migrated with alembic (create_all only)")
+    feature = f"test.{uuid.uuid4().hex[:12]}"
+    old = NOW - timedelta(days=31)
+
+    async def _seed(factory):
+        async with factory() as session:
+            await session.execute(_usage_row(feature, "malformed", old))
+            await session.execute(_usage_row(feature, "ok", old))
+            await session.commit()
+
+    async def _rollup(factory):
+        async with factory() as session:
+            await ledger.rollup_and_purge(session, now=NOW)
+        async with factory() as session:
+            daily = (
+                await session.execute(
+                    select(AIUsageDaily.status, AIUsageDaily.calls).where(
+                        AIUsageDaily.feature == feature
+                    )
+                )
+            ).all()
+            raw = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(AIUsage)
+                    .where(AIUsage.feature == feature)
+                )
+            ).scalar_one()
+        return sorted(daily), raw
+
+    async def _new_malformed_refused(factory):
+        async with factory() as session:
+            with pytest.raises(IntegrityError, match="ck_ai_usage_status"):
+                await session.execute(_usage_row(feature, "malformed"))
+            await session.rollback()
+
     try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        async with engine.connect() as conn:
-            trans = await conn.begin()
-            try:
-                await conn.run_sync(_migration_cycle)
-            finally:
-                await trans.rollback()
+        _run(_seed)
+        _alembic("downgrade", "0012")
+        checks = _run(_checks)
+        # ai_usage: the old CHECK, NOT VALID (the kept rows do not fail it).
+        assert checks["ck_ai_usage_status"][0] is False
+        assert "'malformed'" not in checks["ck_ai_usage_status"][1]
+        # ai_usage_daily: still the widened, validated CHECK.
+        assert checks["ck_ai_usage_daily_status"][0] is True
+        assert "'malformed'" in checks["ck_ai_usage_daily_status"][1]
+
+        assert _run(_rollup) == ([("malformed", 1), ("ok", 1)], 0)
+        _run(_new_malformed_refused)
     finally:
-        await engine.dispose()
+        _alembic("upgrade", head)
+        _run(lambda factory: _cleanup(factory, feature))
+
+    checks = _run(_checks)
+    assert set(checks) == {"ck_ai_usage_status", "ck_ai_usage_daily_status"}
+    assert all(valid and "'malformed'" in sql for valid, sql in checks.values())
