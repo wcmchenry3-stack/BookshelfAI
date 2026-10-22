@@ -17,6 +17,7 @@ import sentry_sdk
 from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import ValidationError
+from sqlalchemy.dialects import postgresql
 
 from app.ai import entitlements, quota
 from app.ai import settings as ai_settings
@@ -926,6 +927,8 @@ class TestWarningClaim:
         nested.__aenter__ = AsyncMock(return_value=None)
         nested.__aexit__ = AsyncMock(return_value=False)
         db.begin_nested = MagicMock(return_value=nested)
+        # A result row for every query: the lease lock finds our lease.
+        db.execute = AsyncMock(return_value=MagicMock())
         return db
 
     @staticmethod
@@ -972,3 +975,45 @@ class TestWarningClaim:
                 recorded = await quota.record_zero_result(db, _reservation(), None)
                 warned_rows.append(recorded.warn)
         assert warned_rows == [True, False, False, False]
+
+
+class TestLeaseSerialisation:
+    """The decision runs only while the request still holds its lease (the
+    lease row is locked FOR UPDATE until the settle commits)."""
+
+    async def test_without_the_lease_it_is_charged_with_no_row(self):
+        db = TestWarningClaim()._db()
+        count = AsyncMock(return_value=0)
+        with (
+            patch.object(quota, "hold_lease_lock", AsyncMock(return_value=False)),
+            patch.object(quota, "zero_result_count", count),
+        ):
+            assert await quota.record_zero_result(db, _reservation(), None) is None
+        count.assert_not_awaited()
+        db.execute.assert_not_awaited()  # no refund, no row
+
+    async def test_lock_query_is_for_update_on_our_lease(self):
+        db = AsyncMock()
+        db.execute.return_value = MagicMock(scalar_one_or_none=lambda: None)
+        lease = uuid.uuid4()
+        assert await quota.hold_lease_lock(db, USER.id, lease) is False
+        sql = str(db.execute.await_args.args[0].compile(dialect=postgresql.dialect()))
+        assert "FROM ai_inflight" in sql and "FOR UPDATE" in sql
+        assert "lease_id" in sql.split("WHERE", 1)[1]
+
+    async def test_settle_after_the_lease_was_taken_over_is_charged(self, store):
+        """A slow request whose lease expired and was taken over: its settle
+        keeps the unit, writes no row and sends no warning."""
+        reservation = _reservation(zero_result_threshold=1)
+        key = (USER.id, quota.ENHANCED_QUOTA_FEATURE, "month", reservation.month)
+        store.rows[key] = 1
+        store.leases[USER.id] = uuid.uuid4()  # another request holds it now
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=MagicMock())
+        with patch.object(quota, "send_zero_result_warning") as warn:
+            await quota.release(
+                db, reservation, MagicMock(), None, quota.ZeroResult(None)
+            )
+        assert store.rows[key] == 1
+        assert store.zero_results.get(USER.id, []) == []
+        warn.assert_not_called()

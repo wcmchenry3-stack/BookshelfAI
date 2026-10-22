@@ -583,6 +583,19 @@ async def warned_in_window(
     return result.scalar_one_or_none() is not None
 
 
+async def hold_lease_lock(
+    db: AsyncSession, user_id: uuid.UUID, lease_id: uuid.UUID
+) -> bool:
+    """Lock the user's lease row if ``lease_id`` still holds it (no commit);
+    False when this request no longer holds the lease."""
+    result = await db.execute(
+        select(AIInflight.lease_id)
+        .where(AIInflight.user_id == user_id, AIInflight.lease_id == lease_id)
+        .with_for_update()
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def record_zero_result(
     db: AsyncSession, reservation: "Reservation", ledger_id: uuid.UUID | None
 ) -> ZeroResultRecorded | None:
@@ -595,14 +608,33 @@ async def record_zero_result(
     and no row of the user with ``warned = true`` is inside the window, the
     new row is written with ``warned = true`` and ``warn`` is returned True.
     The claim commits with the row, so at most one warning per user per
-    window; the caller sends it after the commit.
+    window; the caller sends it after the commit. If that commit's
+    acknowledgement is lost, the retried settle finds the ledger row (or no
+    lease) and records nothing, so no warning is sent: that window's warning
+    is lost (fails toward fewer alerts; "at most one" still holds).
+
+    Serialisation: before counting, the request's own lease row is locked
+    (``SELECT ... FROM ai_inflight WHERE user_id AND lease_id FOR UPDATE``).
+    The settle deletes that row later in the same transaction, so the lock
+    is held until the commit, and a second settle of the same user (a request
+    whose lease expired and was taken over) cannot find it: it is charged and
+    writes no row and sends no warning. Without its lease, a settle is always
+    charged. That includes the lease-only paths (``settle_after_lease``: a
+    retry without a ledger row, and the fallback after a rejected ledger
+    row), which delete the lease first, so they fail toward charging.
 
     Runs in a SAVEPOINT: if it fails, only it is rolled back (the unit stays
     charged, no row) and the settle still commits the usage row, the cost and
     the lease delete.
+
+    A threshold lowered below a user's current in-window count means no row
+    reaches it exactly, so no warning is sent for that user in that window
+    (they are still charged or throttled).
     """
     try:
         async with db.begin_nested():
+            if not await hold_lease_lock(db, reservation.user_id, reservation.lease_id):
+                return None
             count = await zero_result_count(
                 db, reservation.user_id, reservation.zero_result_window_hours
             )

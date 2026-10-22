@@ -81,6 +81,8 @@ class FakeQuotaStore:
         return quota.retry_after_seconds(None, window_hours)
 
     async def record_zero_result(self, _db, reservation, ledger_id):
+        if self.leases.get(reservation.user_id) != reservation.lease_id:
+            return None  # this request no longer holds the lease: charged
         rows = self.zero_results.setdefault(reservation.user_id, [])
         if quota.zero_result_charged(len(rows), reservation.zero_result_threshold):
             return None

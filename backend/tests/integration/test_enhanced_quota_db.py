@@ -214,6 +214,16 @@ async def _insert_rows(factory, user_id, ages: list[timedelta]) -> None:
         await db.commit()
 
 
+async def _expire_lease(factory, user_id) -> None:
+    async with factory() as db:
+        await db.execute(
+            update(AIInflight)
+            .where(AIInflight.user_id == user_id)
+            .values(lease_expires_at=quota._clock_timestamp() - timedelta(seconds=1))
+        )
+        await db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Allowance under concurrency
 # ---------------------------------------------------------------------------
@@ -598,6 +608,82 @@ class TestThreshold:
             assert warn.call_count == 2
         rows = await _zero_rows(factory, user_id)
         assert sum(r.warned for r in rows) == 2
+
+
+class TestTwoSettles:
+    """Two settles of the same user interleaved: a request whose lease expired
+    and was taken over settles while the new holder settles. Only the holder
+    of the lease may record (the lease row is locked FOR UPDATE until its
+    commit), so at most `threshold` rows are uncharged and at most one warning
+    is claimed, in the same month and across a UTC month boundary."""
+
+    @pytest.mark.parametrize("cross_month", [False, True])
+    @pytest.mark.parametrize("stale_first", [True, False])
+    async def test_at_most_threshold_uncharged_and_one_warning(
+        self, sessions, cross_month, stale_first
+    ):
+        factory, make_user = sessions
+        user_id = await make_user()
+        today = quota.utc_today()
+        month = quota.month_start(today)
+        other_month = quota.next_month_start(today) if cross_month else month
+        async with factory() as db:
+            stale_lease = await quota.acquire_lease(db, user_id, 60)
+            for m in {month, other_month}:
+                await quota.reserve_unit(db, user_id, ENHANCED, "month", m, 20)
+                await quota.reserve_unit(db, user_id, ENHANCED, "month", m, 20)
+        await _expire_lease(factory, user_id)
+        async with factory() as db:
+            holder_lease = await quota.acquire_lease(db, user_id, 60)
+        assert holder_lease is not None and holder_lease != stale_lease
+        await _insert_rows(factory, user_id, [timedelta(hours=2), timedelta(hours=1)])
+
+        def reservation(lease_id, m):
+            return quota.Reservation(
+                user_id=user_id,
+                feature=quota.SCAN_QUOTA_FEATURE,
+                lease_id=lease_id,
+                day=today,
+                month=m,
+                tier=Tier.PREMIUM,
+                allowance=quota.Allowance(30, 300),
+                enhanced=True,
+                enhanced_allowance=20,
+                zero_result_threshold=3,
+                zero_result_window_hours=24,
+            )
+
+        stale = reservation(stale_lease, month)
+        holder = reservation(holder_lease, other_month)
+        first, second = (stale, holder) if stale_first else (holder, stale)
+        async with factory() as db1, factory() as db2:
+            r1 = await quota.record_zero_result(db1, first, None)
+            task = asyncio.create_task(quota.record_zero_result(db2, second, None))
+            await asyncio.sleep(0.3)
+            await db1.commit()
+            r2 = await task
+            await db2.commit()
+        results = {id(first): r1, id(second): r2}
+        assert results[id(stale)] is None  # charged: no longer its lease
+        assert results[id(holder)] == quota.ZeroResultRecorded(3, warn=True)
+        rows = await _zero_rows(factory, user_id)
+        assert len(rows) == 3  # threshold, not threshold + 1
+        assert sum(r.warned for r in rows) == 1
+        async with factory() as db:
+            used = dict(
+                (
+                    await db.execute(
+                        select(AIQuota.window_start, AIQuota.units_used).where(
+                            AIQuota.user_id == user_id, AIQuota.feature == ENHANCED
+                        )
+                    )
+                ).all()
+            )
+        # Only the holder's unit was given back.
+        if cross_month:
+            assert used == {month: 2, other_month: 1}
+        else:
+            assert used == {month: 1}
 
 
 class TestEnhancedRefundOnce:
