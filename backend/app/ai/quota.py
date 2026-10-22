@@ -710,7 +710,7 @@ def send_zero_result_warning(
 # ---------------------------------------------------------------------------
 
 
-# What _give_back reports: the op succeeded, failed twice with errors, or was
+# What _give_back reports: the op succeeded, raised on every attempt, or was
 # cut off by CLEANUP_TIMEOUT_SECONDS.
 GIVE_BACK_DONE = "done"
 GIVE_BACK_FAILED = "failed"
@@ -740,7 +740,7 @@ async def _give_back(
     raise ``PendingRollbackError``. So after a timeout the session is rolled
     back (also shielded and bounded; a failure there is logged and swallowed).
 
-    Returns :data:`GIVE_BACK_DONE`, :data:`GIVE_BACK_FAILED` (both attempts
+    Returns :data:`GIVE_BACK_DONE`, :data:`GIVE_BACK_FAILED` (every attempt
     raised) or :data:`GIVE_BACK_TIMED_OUT` (the bound cut it off).
     """
     with anyio.move_on_after(CLEANUP_TIMEOUT_SECONDS, shield=True) as scope:
@@ -785,7 +785,7 @@ async def release(
     (``app.ai.ledger.usage_insert``). It is executed on the same session just
     before the lease delete, so :func:`release_lease`'s commit writes both:
     the ledger row and the settle land in one transaction. The pair is
-    bounded, shielded and retried like any give-back. If both attempts fail
+    bounded, shielded and retried like any give-back. If every attempt fails
     with an error (for example the row itself is rejected by a CHECK or FK),
     the ledger row is dropped and the lease is released on its own, so a
     ledger problem can never keep the lease held or mask the scan's outcome;
@@ -928,12 +928,17 @@ async def _refund_window(
     window_kind: str,
     start: date,
 ) -> None:
+    """Give back one daily or monthly unit. Attempted once only (#567):
+    ``refund_unit`` is not gated, so a retry after a commit whose
+    acknowledgement was lost would give a second unit back; a failure leaves
+    the user charged."""
     await _give_back(
         db,
         f"{window_kind} refund",
         lambda: refund_unit(
             db, reservation.user_id, reservation.feature, window_kind, start
         ),
+        attempts=1,
     )
 
 

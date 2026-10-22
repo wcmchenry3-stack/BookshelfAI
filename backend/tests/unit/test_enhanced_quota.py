@@ -896,9 +896,9 @@ class TestReserveEnhancedGiveBack:
         assert enhanced_calls == [month]  # one attempt
         assert store.rows[key] == 1  # exactly one unit given back
 
-    async def test_shared_refunds_still_retry(self, store, premium):
-        """Unchanged (#528): the shared daily/monthly refunds keep two
-        attempts."""
+    async def test_shared_refunds_are_attempted_once(self, store, premium):
+        """The shared daily/monthly refunds are attempted once (#567): a
+        retry after a lost acknowledgement would give a second unit back."""
         reservation = await self._reserve()
         calls = []
 
@@ -913,7 +913,7 @@ class TestReserveEnhancedGiveBack:
 
         with patch.object(quota, "refund_unit", flaky):
             await quota.refund(AsyncMock(), reservation)
-        assert calls.count((quota.SCAN_QUOTA_FEATURE, "day")) == 2
+        assert calls.count((quota.SCAN_QUOTA_FEATURE, "day")) == 1
 
 
 class TestWarningClaim:

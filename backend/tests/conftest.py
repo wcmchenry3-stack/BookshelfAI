@@ -55,6 +55,30 @@ def _reset_rate_limits():
     yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _block_real_ai_providers():
+    """Cost guard (#584): any request to a real Anthropic or OpenAI API host
+    is blocked for the whole run (``tests/_network_guard.py``)."""
+    from tests import _network_guard
+
+    with _network_guard.install():
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ai_provider_calls():
+    """Fail the test if it tried to reach a real AI provider, even if the
+    blocking exception was swallowed somewhere."""
+    from tests import _network_guard
+
+    _network_guard.attempts.clear()
+    yield
+    tried = list(_network_guard.attempts)
+    _network_guard.attempts.clear()
+    if tried:
+        pytest.fail(f"real AI provider call attempted: {tried}", pytrace=False)
+
+
 @pytest.fixture
 async def db_session():
     """Provide an async DB session with rollback-based isolation.
