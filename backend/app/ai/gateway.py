@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import entitlements
+from app.ai.entitlements import Tier
 from app.ai.providers.base import VisionProvider
 from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FeatureSpec, get_feature
@@ -34,6 +36,7 @@ class AIResult:
     provider: str
     model: str
     candidates: list[BookCandidate]
+    tier: Tier
 
 
 def _build_provider(spec: FeatureSpec) -> VisionProvider:
@@ -63,6 +66,10 @@ async def run_feature(
     if not isinstance(payload, VisionPayload):
         raise TypeError(f"{feature} expects a VisionPayload")
 
+    # Resolved server-side from the ORM user only; looked up on the module so
+    # tests can patch it. Later quota code reads it from the result.
+    tier = await entitlements.tier_for(db, user)
+
     provider = _build_provider(spec)
     candidates = await provider.identify(payload.image_bytes)
     return AIResult(
@@ -70,4 +77,5 @@ async def run_feature(
         provider=spec.provider,
         model=spec.model,
         candidates=candidates,
+        tier=tier,
     )
