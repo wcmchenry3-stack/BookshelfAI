@@ -1,0 +1,3 @@
+import anthropic
+
+DETAIL = "503 ai_budget_reached"

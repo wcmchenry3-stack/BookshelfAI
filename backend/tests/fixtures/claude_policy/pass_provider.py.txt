@@ -1,0 +1,19 @@
+import logging
+
+import anthropic
+
+logger = logging.getLogger(__name__)
+MODEL = "claude-haiku-5-5"
+RETRYABLE = {429, 500, 503, 529}
+
+
+async def call(client, request):
+    # retry-after is honoured by the caller.
+    message = await client.messages.create(model=MODEL, max_tokens=1024, **request)
+    if message.stop_reason == "refusal":
+        logger.warning("declined")
+    return len(message.content)
+
+
+def build():
+    return anthropic.AsyncAnthropic(max_retries=0)
