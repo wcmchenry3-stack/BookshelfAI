@@ -13,6 +13,7 @@ erDiagram
   USERS ||--o| AI_INFLIGHT : "call in flight"
   USERS |o--o{ AI_USAGE : "provider calls (set null on delete)"
   USERS ||--o{ AI_ENHANCED_ZERO_RESULTS : "uncharged empty enhanced scans"
+  USERS ||--o{ AI_RESULT_CACHE : "cached scan results"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
@@ -125,6 +126,17 @@ erDiagram
     uuid ledger_id "nullable, ai_usage.call_id (no FK)"
     boolean warned "row that sent the threshold warning"
   }
+  AI_RESULT_CACHE {
+    varchar cache_key PK "sha256 hex of user, image hash, feature, model, prompt version"
+    uuid user_id FK "cascade delete, indexed with created_at"
+    varchar image_sha256 "sha256 hex of the normalised JPEG"
+    varchar feature
+    varchar model
+    varchar prompt_version
+    jsonb result "validated candidates only"
+    timestamptz created_at
+    timestamptz expires_at "indexed"
+  }
   AI_SPEND_DAILY {
     date day PK "UTC"
     bigint reserved_micros "check >= 0"
@@ -139,7 +151,7 @@ erDiagram
   }
 ```
 
-All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id` (`BIGSERIAL`) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
+All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id` (`BIGSERIAL`), `ai_result_cache.cache_key` (a SHA-256 hex string) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
 
 **Deletion semantics.** Shared catalog rows (`books`, `editions`) must never take user data with them:
 
@@ -148,6 +160,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 | `user_books.user_id` → `users.id` | `CASCADE` | Deleting an account removes that user's library (intentional). |
 | `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
 | `scan_usage_daily.user_id`, `ai_quota.user_id`, `ai_inflight.user_id`, `ai_enhanced_zero_results.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters, any lease and its zero-result enhanced-scan rows. |
+| `ai_result_cache.user_id` → `users.id` | `CASCADE` | Deleting an account removes its cached scan results. |
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
@@ -310,11 +323,11 @@ The AI usage ledger: one row per paid provider call (#530). Counts and cost only
 | `cache_read_tokens` | int, not null, ≥ 0 | prompt tokens served from the provider's cache |
 | `cache_write_tokens` | int, not null, ≥ 0 | prompt tokens written to the provider's cache (0 for OpenAI) |
 | `cost_micros` | bigint, not null, ≥ 0 | cost in micro-dollars (1,000,000 = $1), each count × its list price, rounded up |
-| `status` | varchar(16), not null, check | `ok`, `refused` (a `refusal` or content filter), `truncated` (the provider answered), `timeout`, `refunded` (unavailable or never reached; the quota was refunded), `error` (anything else, including a cancelled request; the quota was kept), `cache_hit` (cost always 0; no cache yet, #534) |
+| `status` | varchar(16), not null, check | `ok`, `refused` (a `refusal` or content filter), `truncated` (the provider answered), `timeout`, `refunded` (unavailable or never reached; the quota was refunded), `error` (anything else, including a cancelled request; the quota was kept), `cache_hit` (a result-cache hit, #534: no provider call, 0 tokens, cost always 0) |
 | `request_id` | varchar(64), nullable | the server-generated `X-Request-ID`; never client-supplied |
 | `created_at` | timestamptz, not null, server default `now()` | indexed (`ix_ai_usage_created_at`) |
 
-**Writes:** `/scan` builds the row (`app/ai/ledger.py`, `usage_insert`) and hands it to `quota.release`, which executes it just before the lease delete, so the row and the settle commit in one transaction. A cancelled request still writes an `error` row (0 tokens) through the shielded settle, since its reservation is kept. A kill switch hit inside the gateway (`FeatureDisabledError`, no provider reached) writes none. If the row is rejected (CHECK or FK), it is dropped (logged, no content) and the lease is released on its own; if the settle times out, nothing more is tried and the lease expiry is the backstop. A ledger failure never fails the scan. `ledger.record` commits on its own and is only for paths with no settle (cache hits, #534). Costs come from the list-price table in `app/ai/prices.py`, keyed by `(model, price_version)`; an unknown pair raises instead of pricing at zero, and every allow-listed model must have a price at the current version (checked at import and in CI).
+**Writes:** `/scan` builds the row (`app/ai/ledger.py`, `usage_insert`) and hands it to `quota.release`, which executes it just before the lease delete, so the row and the settle commit in one transaction. A cancelled request still writes an `error` row (0 tokens) through the shielded settle, since its reservation is kept. A kill switch hit inside the gateway (`FeatureDisabledError`, no provider reached) writes none. If the row is rejected (CHECK or FK), it is dropped (logged, no content) and the lease is released on its own; if the settle times out, nothing more is tried and the lease expiry is the backstop. A ledger failure never fails the scan. `ledger.record` commits on its own and is only for paths with no settle: a result-cache hit (#534) writes its `cache_hit` row this way, with its own `call_id`. Costs come from the list-price table in `app/ai/prices.py`, keyed by `(model, price_version)`; an unknown pair raises instead of pricing at zero, and every allow-listed model must have a price at the current version (checked at import and in CI).
 
 **Keys and indexes:** `ix_ai_usage_created_at (created_at)` for the rollup; `ix_ai_usage_user_created (user_id, created_at)` for per-user lookups and the `SET NULL` on account deletion.
 
@@ -353,9 +366,33 @@ One row per uncharged enhanced scan that returned no books (#533). Used to stop 
 
 **Index:** `ix_ai_enhanced_zero_results_user_created (user_id, created_at)` serves the window count (`WHERE user_id = ? AND created_at > clock_timestamp() - window`) and the throttle's Retry-After lookup.
 
-**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row, the refund of the `scan.enhanced` month unit and the lease delete commit together. It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over is charged and writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the scan is not charged (the user was below the threshold); a charged empty scan, a scan with books and any provider error or timeout write nothing. A future result-cache hit (#534) makes no provider call and must not write one. No client-supplied value is stored: no image, hash or content.
+**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row, the refund of the `scan.enhanced` month unit and the lease delete commit together. It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over is charged and writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the scan is not charged (the user was below the threshold); a charged empty scan, a scan with books and any provider error or timeout write nothing. A result-cache hit (#534) makes no provider call and writes none. No client-supplied value is stored: no image, hash or content.
 
 **Volume and retention:** about 40 bytes per row (more with the index), bounded by the threshold per user per window (at most 20 per window at the maximum setting). Rows older than 30 days are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_zero_results`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
+
+### `ai_result_cache` (`backend/app/models/ai_result_cache.py`)
+
+Per-user scan results by normalised-image SHA-256 (#534, decision #545): a user who uploads a photo the service has already analysed for them gets the stored result, with no provider call and no allowance used (see [architecture.md](architecture.md#book-identification--dedup-pipeline)). Only `app/ai/cache.py` reads and writes it.
+
+| Column | Type | Notes |
+|---|---|---|
+| `cache_key` | varchar(64), PK | lowercase SHA-256 hex of `user_id`, `image_sha256`, `feature`, `model` and `prompt_version`, joined with an ASCII unit separator (`cache.cache_key`). Always scoped to one user: there is no shared or cross-user entry |
+| `user_id` | UUID FK → `users.id`, not null, `ON DELETE CASCADE` | |
+| `image_sha256` | varchar(64), not null | SHA-256 hex of the normalised JPEG bytes (`app/ai/images.py`), the bytes the provider would get. Never the image itself |
+| `feature` | varchar(64), not null | gateway feature (`scan.standard`, `scan.enhanced`) |
+| `model` | varchar(64), not null | the per-request resolved model (registry default or `ai_settings` override), so a provider/model switch misses |
+| `prompt_version` | varchar(32), not null | the adapter's `PROMPT_VERSION` (next to its system prompt), so a prompt change misses |
+| `result` | JSONB, not null | the validated candidate list: `title`, `author`, `confidence`, `isbn_13`, `isbn_10` per book, pre-enrichment. Never the model's raw output. Validated again on read; a row that does not validate is a miss |
+| `created_at` | timestamptz, not null | set by the app when stored |
+| `expires_at` | timestamptz, not null | `created_at + cache.ttl_days` (default 30) |
+
+Checks: `ck_ai_result_cache_hash_length` (both hashes are 64 characters), `ck_ai_result_cache_expiry` (`expires_at > created_at`).
+
+**Indexes:** `ix_ai_result_cache_user_created (user_id, created_at)` for the per-user eviction and the cascade; `ix_ai_result_cache_expires_at (expires_at)` for the purge.
+
+**Writes:** after a successful provider call (outcome `ok`, an empty list included) `/scan` stores the result after the settle, outside the lease: an upsert on `cache_key`, then the user's rows beyond `cache.max_rows_per_user` (default 500) are deleted oldest first (at most 1,000 per store), in one transaction. Re-running it (a commit whose acknowledgement was lost, then a retry) leaves the same rows. Refusals, truncated replies, errors, timeouts and unavailability are never stored. Reads serve only rows with `expires_at > now`. A cache read or write failure is logged without content and never fails the scan.
+
+**Volume and retention:** about 2–4 KB per row (up to 15 candidates). Bounded per user by `cache.max_rows_per_user` and by the TTL: expired rows are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `cache.purge_expired`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
 
 ### `ai_spend_daily` (`backend/app/models/ai_spend.py`)
 
@@ -387,7 +424,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 **Writes:** only the startup seed (insert-if-missing) and the CLI `python -m app.ai.settings set`. No endpoint reads or writes it from a request.
 
-**Volume and retention:** 17 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531, plus `quota.premium.enhanced_monthly` and the three `scan.enhanced.zero_result_*` keys from #533), each under 300 bytes. It does not grow with usage, so no retention job.
+**Volume and retention:** 20 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531, plus `quota.premium.enhanced_monthly` and the three `scan.enhanced.zero_result_*` keys from #533, plus `cache.enabled`, `cache.max_rows_per_user` and `cache.ttl_days` from #534), each under 300 bytes. It does not grow with usage, so no retention job.
 
 ## Dedup strategy — why work_id, not ISBN
 
@@ -437,6 +474,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0008_ai_usage.py` — adds `ai_usage` (one row per paid AI provider call) and `ai_usage_daily` (daily rollup) tables; additive, the downgrade drops both
 - `0009_ai_spend_daily.py` — adds `ai_spend_daily` (service-wide daily AI spend for the cost circuit breaker); additive, the downgrade drops it
 - `0010_ai_enhanced_zero_results.py` — adds `ai_enhanced_zero_results` (uncharged empty enhanced scans, #533; `warned` boolean, default false, marks the row that sent the threshold warning) with the `(user_id, created_at)` index; additive, the downgrade drops it
+- `0011_ai_result_cache.py` — adds `ai_result_cache` (per-user scan results by normalised-image SHA-256, #534) with the `(user_id, created_at)` and `(expires_at)` indexes; additive, the downgrade drops it. The `ai_usage` status check already allowed `cache_hit` (0008), so it is unchanged
 
 ### Writing a new migration
 
