@@ -51,8 +51,9 @@ key                         type     meaning
 Enhanced scans are Premium-only (#533): non-Premium tiers have no enhanced
 allowance key and are refused (403 ``enhanced_requires_premium``) before any
 reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
-code defaults (3, 24, ``charge``), not from the env, as are the three
-``cache.*`` keys (``true``, 500, 30, 20).
+code defaults (3, 24, ``charge``), not from the env, as are the four
+``cache.*`` keys (``cache.enabled`` ``true``, ``cache.max_rows_per_user``
+500, ``cache.ttl_days`` 30, ``cache.max_hits_per_day`` 20).
 
 The ``quota.*`` allowances are per tier and shared by standard and enhanced
 scans (one ``ai_quota`` counter per user and window, under
