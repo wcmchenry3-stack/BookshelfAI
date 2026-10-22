@@ -123,6 +123,7 @@ erDiagram
     uuid user_id FK "cascade delete"
     timestamptz created_at "indexed with user_id"
     uuid ledger_id "nullable, ai_usage.call_id (no FK)"
+    boolean warned "row that sent the threshold warning"
   }
   AI_SPEND_DAILY {
     date day PK "UTC"
@@ -348,10 +349,11 @@ One row per uncharged enhanced scan that returned no books (#533). Used to stop 
 | `user_id` | UUID FK → `users.id`, not null, `ON DELETE CASCADE` | |
 | `created_at` | timestamptz, not null, server default `now()` | set to `clock_timestamp()` by the insert; the window is measured on the same database clock |
 | `ledger_id` | UUID, nullable, no FK | the scan's `ai_usage.call_id`; NULL when the settle had no ledger row. No FK because `ai_usage` rows are rolled up and deleted after 30 days |
+| `warned` | boolean, not null, server default `false` | `true` on the row whose insert sent the threshold warning. A new warning is sent only while no `warned` row of the user is inside the window: at most one warning per user per window |
 
 **Index:** `ix_ai_enhanced_zero_results_user_created (user_id, created_at)` serves the window count (`WHERE user_id = ? AND created_at > clock_timestamp() - window`) and the throttle's Retry-After lookup.
 
-**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row, the refund of the `scan.enhanced` month unit and the lease delete commit together. It is applied only when that ledger insert returned a row (or, without a ledger row, only while the lease was still held), so a settle retried after a lost commit acknowledgement writes no second row. The row is written only when the scan is not charged (the user was below the threshold); a charged empty scan, a scan with books and any provider error or timeout write nothing. A future result-cache hit (#534) makes no provider call and must not write one. No client-supplied value is stored: no image, hash or content.
+**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row, the refund of the `scan.enhanced` month unit and the lease delete commit together. It is applied only when that ledger insert returned a row (or, without a ledger row, only while the lease was still held), so a settle retried after a lost commit acknowledgement writes no second row. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the scan is not charged (the user was below the threshold); a charged empty scan, a scan with books and any provider error or timeout write nothing. A future result-cache hit (#534) makes no provider call and must not write one. No client-supplied value is stored: no image, hash or content.
 
 **Volume and retention:** about 40 bytes per row (more with the index), bounded by the threshold per user per window (at most 20 per window at the maximum setting). Rows older than 30 days are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_zero_results`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
 
