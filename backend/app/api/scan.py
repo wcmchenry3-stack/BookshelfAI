@@ -192,7 +192,7 @@ async def _reserve_scan_quota(
         logger.warning("scan: daily AI cost ceiling reached; free tier paused")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ai_unavailable",
+            detail="ai_budget_reached",
         ) from None
     except quota.GlobalCapacityReached:
         logger.warning("scan: global daily limit reached")
@@ -428,7 +428,7 @@ async def scan(
     # --- Tier allowance, global count cap, daily cost ceiling (#531),
     # in-flight lease, daily, monthly ---
     # One allowance for standard and enhanced scans (quota.SCAN_QUOTA_FEATURE).
-    # At the cost ceiling Free gets 503 ai_unavailable; Premium continues.
+    # At the cost ceiling Free gets 503 ai_budget_reached; Premium continues.
     # The tier is resolved server-side inside quota.reserve; every refusal
     # here happens before the provider and gives back what it took.
     # Read before anything can roll the session back: a failed give-back

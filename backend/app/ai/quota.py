@@ -18,7 +18,7 @@ In order (#528):
    with one conditional upsert. For Free it succeeds only while the day's
    reserved plus settled spend stays within
    ``breaker.free_daily_ceiling_micros`` (:class:`CostCeilingReached`, 503
-   ``ai_unavailable``); Premium always adds its estimate (decision #544). It
+   ``ai_budget_reached``); Premium always adds its estimate (decision #544). It
    sits before the lease, so nothing per-user is taken when the service is
    out of budget, and every later refusal or error gives it back.
 4. **In-flight lease** (table ``ai_inflight``). One conditional upsert:
@@ -187,7 +187,7 @@ class GlobalCapacityReached(QuotaRefusal):
 
 
 class CostCeilingReached(QuotaRefusal):
-    """Today's AI spend is at the Free daily ceiling (503 ``ai_unavailable``)."""
+    """Today's AI spend is at the Free daily ceiling (503 ``ai_budget_reached``)."""
 
 
 class ScanInProgress(QuotaRefusal):
@@ -618,7 +618,7 @@ async def reserve(
     if not await breaker.reserve(
         db, today, est_cost_micros, ceiling, enforce=tier is not Tier.PREMIUM
     ):
-        raise CostCeilingReached("ai_unavailable")
+        raise CostCeilingReached("ai_budget_reached")
 
     async def give_back_cost() -> None:
         await _give_back(

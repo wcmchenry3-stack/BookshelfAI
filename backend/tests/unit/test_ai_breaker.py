@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy.dialects import postgresql
 
-from app.ai import breaker, entitlements, quota
+from app.ai import breaker, entitlements, ledger, quota
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
 from app.ai.providers.base import ProviderResult
@@ -599,13 +599,13 @@ def _at_ceiling(store):
 
 
 class TestScanEndpoint:
-    def test_free_at_the_ceiling_gets_503_ai_unavailable_without_provider(
+    def test_free_at_the_ceiling_gets_503_ai_budget_reached_without_provider(
         self, client, store, provider
     ):
         _at_ceiling(store)
         resp = client.post("/scan", files=_file())
         assert resp.status_code == 503
-        assert resp.json() == {"detail": "ai_unavailable"}
+        assert resp.json() == {"detail": "ai_budget_reached"}
         provider.assert_not_called()
         assert store.leases == {} and store.count() == 0
 
@@ -726,3 +726,85 @@ class TestScanEndpoint:
         ):
             assert client.post("/scan", files=_file()).status_code == 200
         assert store.spend_today() == (0, STANDARD_EST)
+
+
+# ---------------------------------------------------------------------------
+# Provider timeouts: connected (billed) vs never connected (not billed)
+# ---------------------------------------------------------------------------
+
+
+def _client_raising(exc):
+    client = AsyncMock()
+    client.post = AsyncMock(side_effect=exc)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return patch(
+        "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=client
+    )
+
+
+class TestProviderTimeoutKinds:
+    @pytest.mark.parametrize(
+        "exc", [httpx.ConnectTimeout("connect"), httpx.PoolTimeout("pool")]
+    )
+    async def test_no_connection_timeouts_are_connect_errors(self, exc):
+        from app.ai.providers.base import ProviderTimeoutError
+        from app.ai.providers.openai_vision import OpenAIVisionProvider
+
+        provider = OpenAIVisionProvider(get_feature("scan.standard"))
+        with _client_raising(exc), pytest.raises(httpx.ConnectError) as raised:
+            await provider.identify(b"img")
+        assert not isinstance(raised.value, ProviderTimeoutError)
+        assert raised.value.__cause__ is exc
+
+    @pytest.mark.parametrize(
+        "exc", [httpx.ReadTimeout("read"), httpx.WriteTimeout("write")]
+    )
+    async def test_connected_timeouts_are_provider_timeouts(self, exc):
+        from app.ai.providers.base import ProviderTimeoutError
+        from app.ai.providers.openai_vision import OpenAIVisionProvider
+
+        provider = OpenAIVisionProvider(get_feature("scan.standard"))
+        with _client_raising(exc), pytest.raises(ProviderTimeoutError):
+            await provider.identify(b"img")
+
+    @pytest.mark.parametrize(
+        "exc", [httpx.ConnectTimeout("connect"), httpx.PoolTimeout("pool")]
+    )
+    def test_no_connection_timeout_refunds_and_releases_the_estimate(
+        self, client, store, exc
+    ):
+        rows = []
+        real = ledger.usage_insert
+
+        def spy(**kw):
+            rows.append(kw["status"])
+            return real(**kw)
+
+        with (
+            _client_raising(exc),
+            patch.object(ledger, "usage_insert", spy),
+            patch("app.api.scan.EnrichmentService"),
+            patch("app.api.scan.DeduplicationService"),
+        ):
+            resp = client.post("/scan", files=_file())
+        assert resp.json() == {"detail": "scan_unavailable"}
+        assert rows == ["refunded"]
+        assert store.spend_today() == (0, 0)
+        assert store.count() == 0
+
+    @pytest.mark.parametrize(
+        "exc", [httpx.ReadTimeout("read"), httpx.WriteTimeout("write")]
+    )
+    def test_connected_timeout_refunds_units_but_keeps_the_estimate(
+        self, client, store, exc
+    ):
+        with (
+            _client_raising(exc),
+            patch("app.api.scan.EnrichmentService"),
+            patch("app.api.scan.DeduplicationService"),
+        ):
+            resp = client.post("/scan", files=_file())
+        assert resp.json() == {"detail": "scan_unavailable"}
+        assert store.spend_today() == (0, STANDARD_EST)
+        assert store.count() == 0

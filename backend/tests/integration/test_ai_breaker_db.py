@@ -274,7 +274,7 @@ class TestScan:
         patch_provider, cls = _provider(return_value=ProviderResult([DUNE]))
         with _on(day), patch_provider, pytest.raises(HTTPException) as exc:
             await _call_scan(factory, user_id)
-        assert (exc.value.status_code, exc.value.detail) == (503, "ai_unavailable")
+        assert (exc.value.status_code, exc.value.detail) == (503, "ai_budget_reached")
         cls.assert_not_called()
         assert await _totals(factory, day) == (0, 1_000_000 - EST + 1, 0)
         assert await _units(factory, user_id, day) == 0
@@ -283,7 +283,7 @@ class TestScan:
 
     async def test_concurrent_free_scans_at_the_ceiling(self, env, downstream):
         """10 users scan at once with room for 3 estimates: exactly 3 reach
-        the provider, the rest get ai_unavailable, and the refused users have
+        the provider, the rest get ai_budget_reached, and the refused users have
         no units or lease."""
         factory, make_user, make_day = env
         day = make_day()
@@ -316,7 +316,7 @@ class TestScan:
             tasks = [asyncio.create_task(one(u)) for u in users]
             await asyncio.wait_for(release_when_done(tasks), 20)
             outcomes = await asyncio.gather(*tasks)
-        assert sorted(outcomes) == ["ai_unavailable"] * 7 + ["ok"] * 3
+        assert sorted(outcomes) == ["ai_budget_reached"] * 7 + ["ok"] * 3
         assert len(reached) == 3
         assert await _totals(factory, day) == (0, 3 * USAGE_COST, 0)
         units = [await _units(factory, u, day) for u in users]

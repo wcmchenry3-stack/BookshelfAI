@@ -23,7 +23,7 @@ key                         type     meaning
 ``quota.premium.monthly``   int      0..100,000 (as above, Premium tier)
 ``breaker.free_daily_``     int      0..1,000,000,000 micro-dollars of AI spend
 ``ceiling_micros``                   per UTC day, all tiers counted, above which
-                                     Free-tier scans get 503 ``ai_unavailable``
+                                     Free-tier scans get 503 ``ai_budget_reached``
                                      (Premium continues; ``app/ai/breaker.py``)
 ==========================  =======  =========================================
 

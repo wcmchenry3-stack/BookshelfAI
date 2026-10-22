@@ -183,7 +183,14 @@ class OpenAIVisionProvider:
                     headers={"Authorization": f"Bearer {settings.openai_api_key}"},
                 )
                 resp.raise_for_status()
+        except (httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            # No connection was made, so nothing was sent or billed: the same
+            # "never connected" path as httpx.ConnectError (units refunded,
+            # cost estimate given back, #531), not a provider timeout.
+            logger.warning("OpenAI vision request could not connect: %s", exc)
+            raise httpx.ConnectError("Vision API: no connection made") from exc
         except httpx.TimeoutException as exc:
+            # Read/write timeout: the request reached the provider.
             logger.warning("OpenAI vision request timed out: %s", exc)
             raise ProviderTimeoutError("Vision API timed out") from exc
         except httpx.HTTPStatusError as exc:

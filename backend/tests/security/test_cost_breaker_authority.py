@@ -27,7 +27,7 @@ from app.core.sentry_context import set_sentry_user
 from app.main import app
 from app.models.user import User
 from tests.unit._quota_fake import FakeQuotaStore
-from tests.unit._sentry_capture import captured_events
+from tests.unit._sentry_capture import captured_app_events, captured_events
 
 pytestmark = pytest.mark.security
 
@@ -110,7 +110,7 @@ def _post(client, **kwargs):
 
 class TestAtTheCeiling:
     @pytest.mark.parametrize("enhanced", [False, True])
-    def test_free_gets_503_ai_unavailable_and_provider_never_called(
+    def test_free_gets_503_ai_budget_reached_and_provider_never_called(
         self, client, store, provider, enhanced
     ):
         USER.enhanced_scan_credits = 3 if enhanced else 0
@@ -119,7 +119,7 @@ class TestAtTheCeiling:
         finally:
             USER.enhanced_scan_credits = 0
         assert resp.status_code == 503
-        assert resp.json() == {"detail": "ai_unavailable"}
+        assert resp.json() == {"detail": "ai_budget_reached"}
         provider.assert_not_called()
         provider.return_value.identify.assert_not_called()
         assert store.leases == {} and store.count() == 0
@@ -158,7 +158,7 @@ class TestClientCannotChangeTheCeiling:
             params=_FORGED,
             headers={f"X-{k.replace('.', '-')}": v for k, v in _FORGED.items()},
         )
-        assert resp.json() == {"detail": "ai_unavailable"}
+        assert resp.json() == {"detail": "ai_budget_reached"}
         provider.return_value.identify.assert_not_called()
 
     def test_forged_values_do_not_reach_the_breaker(self, client, store, provider):
@@ -256,3 +256,62 @@ class TestAlertContent:
         assert later["tags"]["endpoint"] == "/scan"
         assert not {"feature", "model", "breaker_threshold_pct"} & set(later["tags"])
         assert "fingerprint" not in later
+
+    def test_alert_inside_a_real_request_carries_no_request_data(self):
+        """With the app's Sentry setup (Starlette/FastAPI integrations on),
+        the integration's event processor attaches the HTTP request (url,
+        headers incl. CF-Connecting-IP and User-Agent, body) to every event in
+        the request. The spend alert must carry none of it, while a later
+        ordinary event in the same request still does."""
+        from fastapi import FastAPI, Request
+
+        from app.core.sentry_context import SentryContextMiddleware
+
+        mini = FastAPI()
+        mini.add_middleware(SentryContextMiddleware)
+
+        @mini.post("/scan")
+        async def _scan(request: Request):
+            await request.form()
+            set_sentry_user(USER.id)
+            sentry_sdk.add_breadcrumb(message="lookup", category="test")
+            sentry_sdk.set_context("request_ctx", {"x": "y"})
+            breaker.send_alert(
+                day=quota.utc_today(),
+                pct=50,
+                settled_micros=5_000_000,
+                reserved_micros=10_000,
+                ceiling_micros=10_000_000,
+                settlement=breaker.Settlement(
+                    600, "scan.standard", "gpt-4o-mini", "ok"
+                ),
+            )
+            sentry_sdk.capture_message("later in the same request")
+            return {"ok": True}
+
+        with captured_app_events() as events:
+            resp = TestClient(mini).post(
+                "/scan",
+                headers={
+                    "CF-Connecting-IP": "198.51.100.7",
+                    "User-Agent": "Probe/1.0 (iPhone)",
+                    "Accept-Language": "he-IL",
+                },
+                data={"enhanced": "true", "note": "shelf by the window"},
+            )
+        assert resp.status_code == 200
+        alert, later = events
+        assert alert["fingerprint"][0] == "ai-breaker"
+        for key in ("request", "user", "breadcrumbs"):
+            assert key not in alert, key
+        assert set(alert.get("contexts", {})) <= {"trace", "runtime", "os"}
+        text = json.dumps(alert)
+        for leak in ("198.51.100.7", "Probe/1.0", "he-IL", "shelf by the window"):
+            assert leak not in text
+        assert str(USER.id) not in text
+        # The request's own later event is unaffected.
+        assert later["request"]["headers"]["cf-connecting-ip"] == "198.51.100.7"
+        assert later["request"]["headers"]["user-agent"] == "Probe/1.0 (iPhone)"
+        assert later["user"] == {"id": str(USER.id)}
+        assert later["breadcrumbs"]["values"]
+        assert "request_ctx" in later["contexts"]

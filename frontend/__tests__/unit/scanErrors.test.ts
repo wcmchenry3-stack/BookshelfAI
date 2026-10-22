@@ -40,6 +40,7 @@ describe('classifyScanError: every backend code maps to exactly one UI state', (
     ],
     ['503 scan_capacity', err(503, 'scan_capacity'), { kind: 'paused' }],
     ['503 ai_unavailable', err(503, 'ai_unavailable'), { kind: 'paused' }],
+    ['503 ai_budget_reached', err(503, 'ai_budget_reached'), { kind: 'paused' }],
     ['503 scan_unavailable', err(503, 'scan_unavailable'), { kind: 'paused' }],
     ['503 unknown detail', err(503, 'mystery'), { kind: 'generic' }],
     ['500', err(500, 'boom'), { kind: 'generic' }],

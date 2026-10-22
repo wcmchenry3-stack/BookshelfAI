@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # Cost circuit breaker (#531). INITIAL DEFAULT ONLY: seeds the ai_settings
     # row breaker.free_daily_ceiling_micros (same bounds): the service-wide
     # spend per UTC day, in micro-dollars (1,000,000 = $1), above which
-    # Free-tier scans are refused with 503 ai_unavailable. Premium is not
+    # Free-tier scans are refused with 503 ai_budget_reached. Premium is not
     # paused (#544). 0 pauses every Free scan. Default $10/day.
     scan_free_daily_ceiling_micros: int = Field(
         default=10_000_000, ge=0, le=1_000_000_000

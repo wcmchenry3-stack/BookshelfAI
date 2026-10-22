@@ -21,7 +21,7 @@ away (as the quota primitives do). It is one conditional upsert:
   still pass it only by what in-flight calls actually cost over their
   estimate (settled at the real cost) and by Premium spend, which is not
   gated. A
-  refusal changes nothing and becomes ``503 ai_unavailable`` before the
+  refusal changes nothing and becomes ``503 ai_budget_reached`` before the
   provider is called. The ceiling is the ``ai_settings`` key
   ``breaker.free_daily_ceiling_micros``; 0 pauses every Free scan.
 - Premium (``enforce=False``, decision #544): always adds its estimate, so
@@ -40,11 +40,13 @@ the reservation) and commits.
 What a call settles (``app/api/scan.py``):
 
 - the provider answered (``ok``/``refused``/``truncated``): its priced cost;
-- the provider timed out (``timeout``; the user's units are refunded): the
+- the provider timed out after connecting (``timeout``: a read/write
+  timeout or the gateway deadline; the user's units are refunded): the
   estimate, because the request reached the provider and is likely billed;
-- the provider was unavailable or never reached (``refunded``, or the
-  gateway kill switch; the user's units are refunded too): nothing, the
-  estimate is given back;
+- the provider was unavailable or never reached (``refunded``: including a
+  connect or pool timeout, raised as ``httpx.ConnectError``; or the gateway
+  kill switch; the user's units are refunded too): nothing, the estimate is
+  given back;
 - any other error after the reservation, or a cancelled request (``error``;
   the units are kept because the provider may have been paid): the estimate
   is kept as settled spend. The ledger records 0 for these (and ``timeout``)
@@ -55,7 +57,9 @@ Idempotency: the settle is executed only when the usage-ledger row was
 actually inserted in that transaction (``ON CONFLICT (call_id) DO NOTHING
 RETURNING``). A retry after a commit whose acknowledgement was lost finds the
 row already there, which proves the earlier attempt (spend and lease delete)
-committed, so the spend is not added twice.
+committed, so the spend is not added twice. Known limit: if that first
+attempt committed and the retry then fails with an error, the lease-only
+fallback settles again without this check.
 
 Alerts
 ------
@@ -68,7 +72,10 @@ fingerprint ``["ai-breaker", "<day>", "<pct>"]``, tags ``feature``, ``model``
 and ``status`` of the call that crossed it, and the day's totals and ceiling
 as extras. Never a user id or any content: the event is captured in a forked,
 emptied Sentry scope, so the request's user and tags are not attached (and the
-alert's are not left on the request). The event is sent only after the
+alert's are not left on the request), and an event processor added to that
+scope strips what the Starlette/FastAPI integration's own processor would
+still add from the request (the ``request`` block with url, headers, client
+IP and body, plus ``user``, breadcrumbs and request contexts). The event is sent only after the
 bit is committed, so it is sent at most once. The thresholds are fixed in code;
 the ceiling they are a percentage of is the ``ai_settings`` dial. With a
 ceiling of 0 no alerts are sent (Free is paused on purpose).
@@ -286,6 +293,11 @@ def send_alert(
             scope.clear()
             current = sentry_sdk.get_current_scope()
             current.clear()
+            # clear() keeps the scopes' event processors, and the
+            # Starlette/FastAPI integration's processor would still attach
+            # the HTTP request (url, headers incl. client IP, body). Added
+            # last, so it runs after the integration's.
+            current.add_event_processor(_strip_request_data)
             for key, value in {
                 "feature": settlement.feature,
                 "model": settlement.model,
@@ -313,6 +325,24 @@ def send_alert(
         )
     except Exception:  # an alert must never fail a request
         logger.exception("ai_breaker: could not send the %d%% alert", pct)
+
+
+def _strip_request_data(event: dict, _hint: dict) -> dict:
+    """Event processor for spend alerts: drop everything that came from the
+    request (the HTTP ``request`` block, ``user``, breadcrumbs, and any
+    context other than the trace/runtime ones the SDK adds)."""
+    for key in ("request", "user", "breadcrumbs"):
+        event.pop(key, None)
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        event["contexts"] = {
+            k: v for k, v in contexts.items() if k in _KEPT_ALERT_CONTEXTS
+        }
+    return event
+
+
+# SDK-generated contexts that say nothing about the request or the user.
+_KEPT_ALERT_CONTEXTS = frozenset({"trace", "runtime", "os"})
 
 
 # ---------------------------------------------------------------------------

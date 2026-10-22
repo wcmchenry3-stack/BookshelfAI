@@ -50,7 +50,10 @@ class VisionProvider(Protocol):
 
     Raises ``ProviderTimeoutError`` (a ``ScanUnavailableError``) when the
     provider times out and ``ScanUnavailableError`` when it returns an HTTP
-    error. ``httpx.ConnectError`` (never connected) propagates as-is.
+    error. ``httpx.ConnectError`` (never connected) propagates as-is; a
+    connect or pool timeout (no connection made, nothing billed) is raised as
+    ``httpx.ConnectError`` too, while a read or write timeout is a
+    ``ProviderTimeoutError``.
     """
 
     async def identify(self, image_bytes: bytes) -> ProviderResult: ...

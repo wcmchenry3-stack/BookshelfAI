@@ -58,6 +58,9 @@ export const PAUSED_CODES: readonly string[] = [
   'enhanced_scan_disabled',
   'scan_capacity',
   'ai_unavailable',
+  // The service's daily AI budget is used up; Free scans pause until UTC
+  // midnight (#531).
+  'ai_budget_reached',
   'scan_unavailable',
 ];
 
