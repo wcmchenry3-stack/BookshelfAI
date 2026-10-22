@@ -79,6 +79,9 @@ Every user has a monthly and a daily scan allowance (standard and enhanced scans
 - 402 `no_enhanced_credits` is unchanged (enhanced re-scan falls back to the standard results).
 - **Refused scans wait in the queue.** A scan refused for a monthly or daily limit, a paused service or "still processing" is not lost or marked failed: it goes back to `queued`, so it shows in the "Pending uploads" badge, survives an app restart and is sent by the next queue drain (reconnect or app launch). The drain stops at the first refusal, so a refusal costs at most one request and the remaining scans stay queued.
 - **Try again:** the notice has a "Try again" button next to "Dismiss" whenever scans are waiting. It clears the notice and sends all queued scans in order, stopping at the next refusal. It is not shown when a refused enhanced re-scan has put the earlier results back on screen (those results are restored, nothing is queued).
+- **Send now:** the "Pending uploads: N" badge has a "Send now" button (online only) that does the same as "Try again", whether or not a notice is showing. Offline, "Try again" keeps the notice and shows the "requires an internet connection" message.
+- **Automatic resume:** when a new scan succeeds, any scans that were refused earlier are sent right after (the service is evidently accepting scans again).
+- **Queue full during a limit:** if the 50-photo queue is full while scanning is limited or paused, the capture-blocked message reads "You've reached your scan limit. Your saved photos will be sent when scanning is available again." instead of "Wait for pending scans to upload".
 - Offline capture and the upload queue otherwise behave as before.
 
 ### Auth flow — Google SSO → rotating refresh tokens

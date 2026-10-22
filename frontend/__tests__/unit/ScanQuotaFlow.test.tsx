@@ -139,6 +139,7 @@ describe('scan refusals', () => {
     });
     const before = result.current.usageRefreshKey;
     mockPost.mockResolvedValueOnce(OK);
+    mockPost.mockResolvedValueOnce(OK); // the automatic resend of the refused photo
     await act(async () => {
       await result.current.startScan('image', 'file:///b.jpg');
     });
@@ -449,5 +450,61 @@ describe('Try again resumes the queue', () => {
     });
     await waitFor(() => expect(result.current.jobs[0].status).toBe('complete'));
     expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumeQueue during a running drain does not start a second drain', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1), queuedJob(2)]);
+    let release: (v: unknown) => void = () => {};
+    mockPost.mockImplementationOnce(() => new Promise((res) => (release = res)));
+    mockPost.mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+    });
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    jest.useFakeTimers();
+    await act(async () => {
+      result.current.resumeQueue();
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    // Job 1 is still in flight; a second drain would have sent job 2 already.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release(OK);
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refused job that had used retries ends with a fresh retry budget', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1, { retryCount: 2 })]);
+    mockPost.mockRejectedValue(refusal(503, 'scan_disabled'));
+    const { result } = await setup();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+    });
+    await waitFor(() => expect(result.current.scanNotice?.kind).toBe('paused'));
+    expect(result.current.jobs[0]).toEqual(
+      expect.objectContaining({ status: 'queued', retryCount: 0 })
+    );
+  });
+
+  it('a later successful scan sends the earlier refused photo automatically', async () => {
+    const { result } = await setup();
+    mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    expect(result.current.jobs[0].status).toBe('queued');
+    mockPost.mockResolvedValue(OK);
+    await act(async () => {
+      await result.current.startScan('image', 'file:///b.jpg');
+    });
+    // A (refused), B (ok), then A again from the automatic drain.
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(result.current.jobs.map((j) => j.status)).toEqual(['complete', 'complete'])
+    );
+    expect(mockPost).toHaveBeenCalledTimes(3);
   });
 });

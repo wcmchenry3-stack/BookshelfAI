@@ -118,7 +118,9 @@
   "addedMessage": {
     "description": "Alert message confirming which book was added. {{title}} is the book title.",
     "tone": "friendly",
-    "placeholders": ["{{title}}"]
+    "placeholders": [
+      "{{title}}"
+    ]
   },
   "couldNotSaveTitle": {
     "description": "Alert title when saving to wishlist fails",
@@ -202,6 +204,16 @@
   },
   "tryAgainNotice": {
     "description": "Button on the scan notice card that retries the refused scan",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "queueFullLimited": {
+    "description": "Error banner when the offline queue is full while scanning is limited or paused; saved photos are sent later. No upsell.",
+    "tone": "neutral",
+    "characterLimit": 120
+  },
+  "sendPendingNow": {
+    "description": "Button next to the pending-uploads badge that sends the waiting scans now",
     "tone": "neutral",
     "characterLimit": 20
   }

@@ -10,13 +10,19 @@ jest.mock('../../lib/api', () => ({ api: { get: (...a: unknown[]) => mockGet(...
 let mockNotice: unknown = null;
 const mockResume = jest.fn();
 let mockPending = 0;
+let mockQueueFull = false;
+let mockJobs: unknown[] = [];
+const mockShowBanner = jest.fn();
+jest.mock('../../hooks/useBanner', () => ({
+  useBanner: () => ({ showBanner: (...a: unknown[]) => mockShowBanner(...a) }),
+}));
 const mockDismiss = jest.fn();
 let mockRefreshKey = 0;
 jest.mock('../../hooks/useScanJobs', () => ({
   useScanJobs: () => ({
-    jobs: [],
+    jobs: mockJobs,
     pendingCount: mockPending,
-    isQueueFull: false,
+    isQueueFull: mockQueueFull,
     startScan: jest.fn(),
     resumeQueue: mockResume,
     scanNotice: mockNotice,
@@ -50,6 +56,8 @@ beforeEach(() => {
   mockNotice = null;
   mockRefreshKey = 0;
   mockPending = 0;
+  mockQueueFull = false;
+  mockJobs = [];
   mockConnected = true;
 });
 
@@ -169,5 +177,87 @@ describe('notice actions and refresh', () => {
     mockRefreshKey = 1;
     await view.rerender(<SettingsScreen />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('queue-full message and offline Try again', () => {
+  async function trySearch(view: Awaited<ReturnType<typeof render>>) {
+    await fireEvent.press(view.getByLabelText('Text search mode'));
+    await fireEvent.changeText(view.getByLabelText('Book title or author search'), 'Dune');
+    await fireEvent.press(view.getByLabelText('Search for book'));
+  }
+
+  it('says wait for uploads when the queue is full and nothing is limited', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    mockQueueFull = true;
+    const view = await render(<ScanScreen />);
+    await trySearch(view);
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Queue full. Wait for pending scans to upload before adding more.',
+      })
+    );
+  });
+
+  it('does not say wait for uploads while the scan limit is the reason', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    mockQueueFull = true;
+    mockNotice = { kind: 'monthly_limit', limit: 5 };
+    const view = await render(<ScanScreen />);
+    await trySearch(view);
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "You've reached your scan limit. Your saved photos will be sent when scanning is available again.",
+      })
+    );
+  });
+
+  it('uses the limit message when queued jobs carry a refusal and the notice is gone', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    mockQueueFull = true;
+    mockJobs = [{ id: 'a', status: 'queued', error: 'daily_limit' }];
+    const view = await render(<ScanScreen />);
+    await trySearch(view);
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('scan limit') })
+    );
+  });
+
+  it('Try again while offline shows the offline message and keeps the notice', async () => {
+    mockConnected = false;
+    mockNotice = { kind: 'paused' };
+    mockPending = 2;
+    const { findByText, getByTestId } = await render(<ScanScreen />);
+    fireEvent.press(await findByText('Try again'));
+    expect(mockResume).not.toHaveBeenCalled();
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'This action requires an internet connection.' })
+    );
+    expect(getByTestId('scan-notice')).toBeTruthy();
+  });
+});
+
+describe('Send now button', () => {
+  it('shows with pending scans and no notice, and resumes the queue', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    mockPending = 2;
+    const { findByText, queryByTestId } = await render(<ScanScreen />);
+    expect(queryByTestId('scan-notice')).toBeNull();
+    fireEvent.press(await findByText('Send now'));
+    expect(mockResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('is hidden offline', async () => {
+    mockConnected = false;
+    mockPending = 2;
+    const { queryByText } = await render(<ScanScreen />);
+    expect(queryByText('Send now')).toBeNull();
+  });
+
+  it('is hidden with nothing pending', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    const { queryByText } = await render(<ScanScreen />);
+    expect(queryByText('Send now')).toBeNull();
   });
 });

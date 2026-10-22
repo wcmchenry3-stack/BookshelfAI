@@ -36,5 +36,7 @@
   "stillProcessing": "処理中です。しばらくしてからもう一度お試しください。",
   "scanPaused": "スキャンは一時停止中です。しばらくしてからもう一度お試しください。",
   "dismissNotice": "閉じる",
-  "tryAgainNotice": "もう一度試す"
+  "tryAgainNotice": "もう一度試す",
+  "queueFullLimited": "スキャンの上限に達しました。保存した写真は、スキャンが再び利用できるようになったときに送信されます。",
+  "sendPendingNow": "今すぐ送信"
 }

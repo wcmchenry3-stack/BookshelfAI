@@ -38,5 +38,7 @@
   "stillProcessing": "Todavía se está procesando. Inténtalo de nuevo en un momento.",
   "scanPaused": "El escaneo está en pausa. Inténtalo de nuevo más tarde.",
   "dismissNotice": "Cerrar",
-  "tryAgainNotice": "Intentar de nuevo"
+  "tryAgainNotice": "Intentar de nuevo",
+  "queueFullLimited": "Has alcanzado tu límite de escaneos. Tus fotos guardadas se enviarán cuando el escaneo vuelva a estar disponible.",
+  "sendPendingNow": "Enviar ahora"
 }

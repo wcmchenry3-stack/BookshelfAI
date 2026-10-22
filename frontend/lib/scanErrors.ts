@@ -32,6 +32,19 @@ export type ScanNotice =
   | { kind: 'still_processing' }
   | { kind: 'paused' };
 
+/** `error` values a refused (re-queued) job carries. */
+export const REFUSAL_ERRORS: readonly string[] = [
+  'monthly_limit',
+  'daily_limit',
+  'paused',
+  'in_progress',
+];
+
+/** True when any queued job is waiting because the server refused it. */
+export function hasRefusedJobs(jobs: readonly { status: string; error?: string }[]): boolean {
+  return jobs.some((j) => j.status === 'queued' && !!j.error && REFUSAL_ERRORS.includes(j.error));
+}
+
 /** Silent retries for 429 scan_in_progress before showing "Still processing". */
 export const MAX_IN_PROGRESS_RETRIES = 3;
 /** Used when Retry-After is missing or unusable. */

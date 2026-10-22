@@ -37,5 +37,7 @@
   "stillProcessing": "Wird noch verarbeitet. Bitte versuche es gleich noch einmal.",
   "scanPaused": "Das Scannen ist pausiert. Bitte versuche es später erneut.",
   "dismissNotice": "Schließen",
-  "tryAgainNotice": "Erneut versuchen"
+  "tryAgainNotice": "Erneut versuchen",
+  "queueFullLimited": "Du hast dein Scan-Limit erreicht. Deine gespeicherten Fotos werden gesendet, sobald Scannen wieder möglich ist.",
+  "sendPendingNow": "Jetzt senden"
 }

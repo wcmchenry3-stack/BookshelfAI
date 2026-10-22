@@ -38,5 +38,7 @@
   "stillProcessing": "עדיין בעיבוד. נסה שוב בעוד רגע.",
   "scanPaused": "הסריקה מושהית. נסה שוב מאוחר יותר.",
   "dismissNotice": "סגור",
-  "tryAgainNotice": "נסה שוב"
+  "tryAgainNotice": "נסה שוב",
+  "queueFullLimited": "הגעת למגבלת הסריקות. התמונות ששמרת יישלחו כשהסריקה תהיה זמינה שוב.",
+  "sendPendingNow": "שלח עכשיו"
 }

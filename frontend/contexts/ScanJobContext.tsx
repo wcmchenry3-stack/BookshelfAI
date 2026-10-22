@@ -10,6 +10,7 @@ import { api } from '../lib/api';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
+  hasRefusedJobs,
   MAX_IN_PROGRESS_RETRIES,
   toScanNotice,
   type ScanNotice,
@@ -220,7 +221,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         // persisting a capture, but a stale render could still get here.
         if (jobsRef.current.filter(isPendingUpload).length >= MAX_QUEUE_SIZE) {
           if (imageUri) deleteScanImage(imageUri);
-          showBanner({ message: t('queueFull'), type: 'error', duration: 4000 });
+          showBanner({
+            message: t(hasRefusedJobs(jobsRef.current) ? 'queueFullLimited' : 'queueFull'),
+            type: 'error',
+            duration: 4000,
+          });
           return;
         }
 
@@ -523,10 +528,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           // wait Retry-After and retry silently, at most MAX_IN_PROGRESS_RETRIES
           // times. If it persists the error propagates and the catch below
           // shows the neutral "Still processing" notice.
-          let response: Awaited<ReturnType<typeof postScan>> | undefined;
-          for (let attempt = 0; response === undefined; attempt++) {
+          let response!: Awaited<ReturnType<typeof postScan>>;
+          for (let attempt = 0, done = false; !done; attempt++) {
             try {
               response = await postScan();
+              done = true;
             } catch (postErr) {
               const state = classifyScanError(postErr);
               if (state.kind !== 'in_progress' || attempt >= MAX_IN_PROGRESS_RETRIES) {
@@ -538,6 +544,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           // A scan reached the server, so the usage counters are stale.
           bumpUsage();
           setScanNotice(null);
+          // The service evidently accepts scans again: send any scans that were
+          // refused earlier. Never re-entrant (drainingRef), and a drain sends
+          // each job once and stops at the first refusal, so this can't loop.
+          const waiting = jobsRef.current.some(
+            (j) =>
+              j.id !== job.id &&
+              (j.status === 'queued' || j.status === 'pending') &&
+              !inFlightRef.current.has(j.id)
+          );
+          if (waiting && !drainingRef.current) void drainQueue();
           results = response.data?.books ?? [];
           const credits = response.data?.enhanced_scan_credits;
           if (typeof credits === 'number') {

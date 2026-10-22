@@ -38,5 +38,7 @@
   "stillProcessing": "Traitement en cours. Veuillez réessayer dans un instant.",
   "scanPaused": "La numérisation est en pause. Veuillez réessayer plus tard.",
   "dismissNotice": "Fermer",
-  "tryAgainNotice": "Réessayer"
+  "tryAgainNotice": "Réessayer",
+  "queueFullLimited": "Vous avez atteint votre limite de numérisations. Vos photos enregistrées seront envoyées lorsque la numérisation sera de nouveau disponible.",
+  "sendPendingNow": "Envoyer maintenant"
 }

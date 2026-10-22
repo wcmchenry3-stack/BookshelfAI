@@ -37,5 +37,7 @@
   "stillProcessing": "Nog bezig met verwerken. Probeer het zo meteen opnieuw.",
   "scanPaused": "Scannen is gepauzeerd. Probeer het later opnieuw.",
   "dismissNotice": "Sluiten",
-  "tryAgainNotice": "Opnieuw proberen"
+  "tryAgainNotice": "Opnieuw proberen",
+  "queueFullLimited": "Je hebt je scanlimiet bereikt. Je opgeslagen foto's worden verzonden zodra scannen weer beschikbaar is.",
+  "sendPendingNow": "Nu verzenden"
 }

@@ -36,5 +36,7 @@
   "stillProcessing": "아직 처리 중입니다. 잠시 후 다시 시도해 주세요.",
   "scanPaused": "스캔이 일시 중지되었습니다. 나중에 다시 시도해 주세요.",
   "dismissNotice": "닫기",
-  "tryAgainNotice": "다시 시도"
+  "tryAgainNotice": "다시 시도",
+  "queueFullLimited": "스캔 한도에 도달했습니다. 저장된 사진은 스캔을 다시 사용할 수 있을 때 전송됩니다.",
+  "sendPendingNow": "지금 보내기"
 }
