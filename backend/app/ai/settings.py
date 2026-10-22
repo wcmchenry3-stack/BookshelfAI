@@ -43,13 +43,16 @@ key                         type     meaning
 ``cache.max_rows_per_user`` int      1..10,000 cached results per user; the
                                      oldest are evicted first
 ``cache.ttl_days``          int      1..30 days a cached result is served
+``cache.max_hits_per_day``  int      0..1,000 cache hits served per user per
+                                     UTC day; past it a re-upload takes the
+                                     normal path (0: hits never served)
 ==========================  =======  =========================================
 
 Enhanced scans are Premium-only (#533): non-Premium tiers have no enhanced
 allowance key and are refused (403 ``enhanced_requires_premium``) before any
 reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
 code defaults (3, 24, ``charge``), not from the env, as are the three
-``cache.*`` keys (``true``, 500, 30).
+``cache.*`` keys (``true``, 500, 30, 20).
 
 The ``quota.*`` allowances are per tier and shared by standard and enhanced
 scans (one ``ai_quota`` counter per user and window, under
@@ -179,6 +182,9 @@ DEFAULT_ZERO_RESULT_ACTION = ZERO_RESULT_ACTION_CHARGE
 CACHE_ENABLED_KEY = "cache.enabled"
 CACHE_MAX_ROWS_PER_USER_KEY = "cache.max_rows_per_user"
 CACHE_TTL_DAYS_KEY = "cache.ttl_days"
+CACHE_MAX_HITS_PER_DAY_KEY = "cache.max_hits_per_day"
+CACHE_MAX_HITS_PER_DAY_BOUNDS = (0, 1_000)
+DEFAULT_CACHE_MAX_HITS_PER_DAY = 20
 CACHE_MAX_ROWS_PER_USER_BOUNDS = (1, 10_000)
 CACHE_TTL_DAYS_BOUNDS = (1, 30)
 DEFAULT_CACHE_ENABLED = True
@@ -269,6 +275,7 @@ _zero_result_threshold = _bounded_int(ZERO_RESULT_THRESHOLD_BOUNDS)
 _zero_result_window_hours = _bounded_int(ZERO_RESULT_WINDOW_HOURS_BOUNDS)
 _cache_max_rows_per_user = _bounded_int(CACHE_MAX_ROWS_PER_USER_BOUNDS)
 _cache_ttl_days = _bounded_int(CACHE_TTL_DAYS_BOUNDS)
+_cache_max_hits_per_day = _bounded_int(CACHE_MAX_HITS_PER_DAY_BOUNDS)
 
 
 def _zero_result_action(value: Any) -> str:
@@ -406,6 +413,13 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             _cache_ttl_days,
             lambda: DEFAULT_CACHE_TTL_DAYS,
             "days a cached scan result is served (seed: code default 30)",
+        ),
+        SettingDefinition(
+            CACHE_MAX_HITS_PER_DAY_KEY,
+            _cache_max_hits_per_day,
+            lambda: DEFAULT_CACHE_MAX_HITS_PER_DAY,
+            "cache hits served per user per UTC day; past it a re-upload "
+            "takes the normal path, 0 serves none (seed: code default 20)",
         ),
     ]
     return MappingProxyType({d.key: d for d in defs})
@@ -578,6 +592,10 @@ class AISettings:
     @property
     def cache_ttl_days(self) -> int:
         return self.get(CACHE_TTL_DAYS_KEY)
+
+    @property
+    def cache_max_hits_per_day(self) -> int:
+        return self.get(CACHE_MAX_HITS_PER_DAY_KEY)
 
     def allowance(self, tier: str) -> tuple[int, int]:
         """``(daily, monthly)`` scans for ``tier`` (``"free"`` or ``"premium"``)."""

@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("image_sha256", sa.String(64), nullable=False),
         sa.Column("feature", sa.String(64), nullable=False),
         sa.Column("model", sa.String(64), nullable=False),
-        sa.Column("prompt_version", sa.String(32), nullable=False),
+        sa.Column("prompt_version", sa.String(64), nullable=False),
         sa.Column("result", postgresql.JSONB(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),

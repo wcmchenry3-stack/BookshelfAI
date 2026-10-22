@@ -623,6 +623,7 @@ _VALID = {
     "cache.enabled": [True, False],
     "cache.max_rows_per_user": [1, 500, 10_000],
     "cache.ttl_days": [1, 30],
+    "cache.max_hits_per_day": [0, 20, 1000],
 }
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
@@ -662,6 +663,7 @@ _INVALID = {
     "cache.enabled": ["true", 1, 0, None],
     "cache.max_rows_per_user": [0, -1, 10_001, True, 5.0, "500", None],
     "cache.ttl_days": [0, 31, -1, False, 30.0, "30", None],
+    "cache.max_hits_per_day": [-1, 1001, True, 2.5, "20", None],
 }
 
 
@@ -695,6 +697,7 @@ def test_initial_key_set():
         "cache.enabled",
         "cache.max_rows_per_user",
         "cache.ttl_days",
+        "cache.max_hits_per_day",
     }
 
 
@@ -870,6 +873,7 @@ class TestSeeding:
             "cache.enabled": True,
             "cache.max_rows_per_user": 500,
             "cache.ttl_days": 30,
+            "cache.max_hits_per_day": 20,
         }
 
     async def test_seed_is_insert_if_missing(self):

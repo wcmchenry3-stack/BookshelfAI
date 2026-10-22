@@ -7,20 +7,25 @@ Key
 ---
 :func:`cache_key` is the SHA-256 hex of the user id, the SHA-256 of the
 normalised JPEG (the bytes the provider would get, ``app.ai.images``), the
-gateway feature, the per-request resolved model and the adapter's prompt
-version, joined with a separator that none of them can contain. The user id
-is always part of it: there is no shared or cross-user scope. A change of
-provider/model (``ai_settings``) or of prompt version misses.
+gateway feature, the per-request resolved model and the request fingerprint
+(stored as ``prompt_version``), joined with a separator that none of them can
+contain. The user id is always part of it: there is no shared or cross-user
+scope, and :func:`lookup` also filters on the user. A change of provider or
+model (``ai_settings``), of the prompt as rendered, the output schema, the
+effort, ``max_tokens``, ``SCAN_MAX_BOOKS`` or an adapter's ``PROMPT_VERSION``
+misses.
 
 Every input is decided by the server: the user from the session, the hash
 from the bytes after normalisation, the feature from the registry, the model
-from ``gateway.resolve_spec`` and the prompt version from
-``gateway.prompt_version``. Nothing in the request names a key.
+from ``gateway.resolve_spec`` and the fingerprint from
+``gateway.request_fingerprint``. Nothing in the request names a key.
 
 What is stored
 --------------
-Only results whose provider outcome is ``ok`` (an empty list included);
-never a refusal, a truncated reply or any error. ``result`` is the validated
+Only results whose provider outcome is ``ok`` with at least one candidate
+(the caller decides; an empty ``ok`` list may come from a missing or
+unparseable reply, so it is never cached); never a refusal, a truncated
+reply or any error. At most ``SCAN_MAX_BOOKS`` candidates. ``result`` is the validated
 candidate list (title, author, confidence, ISBN-13, ISBN-10): never the raw
 model output and never image bytes. A row read back is validated again
 before it is served; one that does not validate is treated as a miss.
@@ -52,6 +57,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.ai_result_cache import AIResultCache
 from app.services.book_identifier import BookCandidate
 
@@ -66,7 +72,12 @@ PURGE_MAX_BATCHES = 20
 # What a cached candidate may hold, and how long its text fields may be.
 _FIELDS = ("title", "author", "confidence", "isbn_13", "isbn_10")
 MAX_TEXT_LENGTH = 500
-MAX_CANDIDATES = 100
+
+
+def max_candidates() -> int:
+    """The most candidates a cached result may hold: the scan's own cap
+    (``SCAN_MAX_BOOKS``), on write and on read."""
+    return settings.scan_max_books
 
 
 class CacheEntryError(ValueError):
@@ -150,19 +161,26 @@ def serialise(candidates: list[BookCandidate]) -> list[dict[str, Any]]:
 def deserialise(result: Any) -> list[BookCandidate]:
     """A stored ``result`` as candidates; :class:`CacheEntryError` if it is
     not a valid candidate list."""
-    if not isinstance(result, list) or len(result) > MAX_CANDIDATES:
+    if not isinstance(result, list) or len(result) > max_candidates():
         raise CacheEntryError("bad result")
     return [_candidate(item) for item in result]
 
 
 async def lookup(
-    db: AsyncSession, *, key: str, now: datetime | None = None
+    db: AsyncSession,
+    *,
+    key: str,
+    user_id: uuid.UUID,
+    now: datetime | None = None,
 ) -> list[BookCandidate] | None:
-    """The cached candidates for ``key`` if an unexpired row exists, else
-    None. A row that does not validate is a miss. Ends its read
-    transaction (commit), so no connection is left idle in a transaction."""
+    """The cached candidates for ``key`` if an unexpired row of ``user_id``
+    exists, else None. The user filter is defence in depth: the key already
+    contains the user id. A row that does not validate is a miss. Ends its
+    read transaction (commit), so no connection is left idle in a
+    transaction."""
     query = select(AIResultCache.result).where(
         AIResultCache.cache_key == key,
+        AIResultCache.user_id == user_id,
         AIResultCache.expires_at > (now or utc_now()),
     )
     row = (await db.execute(query)).first()

@@ -127,7 +127,7 @@ erDiagram
     boolean warned "row that sent the threshold warning"
   }
   AI_RESULT_CACHE {
-    varchar cache_key PK "sha256 hex of user, image hash, feature, model, prompt version"
+    varchar cache_key PK "sha256 hex of user, image hash, feature, model, request fingerprint"
     uuid user_id FK "cascade delete, indexed with created_at"
     varchar image_sha256 "sha256 hex of the normalised JPEG"
     varchar feature
@@ -281,7 +281,7 @@ Per-user count of AI calls reserved, per quota key and window (#528). Backs the 
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
-| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`), and `scan.enhanced` for the Premium enhanced monthly allowance (#533; month rows only, `quota.ENHANCED_QUOTA_FEATURE`) |
+| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`), `scan.enhanced` for the Premium enhanced monthly allowance (#533; month rows only, `quota.ENHANCED_QUOTA_FEATURE`), and `scan.cache_hit` for result-cache hits served per user per UTC day (#534, `cache.max_hits_per_day`; day rows only, `quota.CACHE_HIT_QUOTA_FEATURE`; excluded from the global daily sum) |
 | `window_kind` | varchar(8), PK part, CHECK `IN ('day', 'month')` | |
 | `window_start` | date, PK part | the UTC day, or the 1st of the UTC calendar month |
 | `units_used` | int, not null, server default 0, CHECK `>= 0` | incremented by the reservation upsert, decremented (never below 0) on a refund |
@@ -381,7 +381,7 @@ Per-user scan results by normalised-image SHA-256 (#534, decision #545): a user 
 | `image_sha256` | varchar(64), not null | SHA-256 hex of the normalised JPEG bytes (`app/ai/images.py`), the bytes the provider would get. Never the image itself |
 | `feature` | varchar(64), not null | gateway feature (`scan.standard`, `scan.enhanced`) |
 | `model` | varchar(64), not null | the per-request resolved model (registry default or `ai_settings` override), so a provider/model switch misses |
-| `prompt_version` | varchar(32), not null | the adapter's `PROMPT_VERSION` (next to its system prompt), so a prompt change misses |
+| `prompt_version` | varchar(64), not null | the request fingerprint (`gateway.request_fingerprint`): SHA-256 hex of the provider, the adapter's `PROMPT_VERSION`, `effort`, `max_tokens` and the request shape it builds (prompt as rendered with `SCAN_MAX_BOOKS`, user text, schema), so any change to what is sent misses |
 | `result` | JSONB, not null | the validated candidate list: `title`, `author`, `confidence`, `isbn_13`, `isbn_10` per book, pre-enrichment. Never the model's raw output. Validated again on read; a row that does not validate is a miss |
 | `created_at` | timestamptz, not null | set by the app when stored |
 | `expires_at` | timestamptz, not null | `created_at + cache.ttl_days` (default 30) |
@@ -390,7 +390,7 @@ Checks: `ck_ai_result_cache_hash_length` (both hashes are 64 characters), `ck_ai
 
 **Indexes:** `ix_ai_result_cache_user_created (user_id, created_at)` for the per-user eviction and the cascade; `ix_ai_result_cache_expires_at (expires_at)` for the purge.
 
-**Writes:** after a successful provider call (outcome `ok`, an empty list included) `/scan` stores the result after the settle, outside the lease: an upsert on `cache_key`, then the user's rows beyond `cache.max_rows_per_user` (default 500) are deleted oldest first (at most 1,000 per store), in one transaction. Re-running it (a commit whose acknowledgement was lost, then a retry) leaves the same rows. Refusals, truncated replies, errors, timeouts and unavailability are never stored. Reads serve only rows with `expires_at > now`. A cache read or write failure is logged without content and never fails the scan.
+**Writes:** after a successful provider call that found at least one book (outcome `ok`; an empty list is never stored, since it may come from a missing or unparseable reply) `/scan` stores the result after the settle, outside the lease: an upsert on `cache_key`, then the user's rows beyond `cache.max_rows_per_user` (default 500) are deleted oldest first (at most 1,000 per store), in one transaction. Re-running it (a commit whose acknowledgement was lost, then a retry) leaves the same rows. Refusals, truncated replies, errors, timeouts and unavailability are never stored. Reads serve only rows of the requesting user (`user_id` filter, on top of the key) with `expires_at > now`, and at most `SCAN_MAX_BOOKS` candidates (checked on write and read). A cache read or write failure is logged without content and never fails the scan.
 
 **Volume and retention:** about 2–4 KB per row (up to 15 candidates). Bounded per user by `cache.max_rows_per_user` and by the TTL: expired rows are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `cache.purge_expired`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
 
@@ -424,7 +424,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 **Writes:** only the startup seed (insert-if-missing) and the CLI `python -m app.ai.settings set`. No endpoint reads or writes it from a request.
 
-**Volume and retention:** 20 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531, plus `quota.premium.enhanced_monthly` and the three `scan.enhanced.zero_result_*` keys from #533, plus `cache.enabled`, `cache.max_rows_per_user` and `cache.ttl_days` from #534), each under 300 bytes. It does not grow with usage, so no retention job.
+**Volume and retention:** 21 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531, plus `quota.premium.enhanced_monthly` and the three `scan.enhanced.zero_result_*` keys from #533, plus `cache.enabled`, `cache.max_rows_per_user`, `cache.ttl_days` and `cache.max_hits_per_day` from #534), each under 300 bytes. It does not grow with usage, so no retention job.
 
 ## Dedup strategy — why work_id, not ISBN
 

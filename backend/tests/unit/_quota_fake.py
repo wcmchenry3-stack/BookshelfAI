@@ -31,7 +31,9 @@ class FakeQuotaStore:
 
     async def global_units_today(self, _db, day: date) -> int:
         return self.extra_global + sum(
-            n for (_, _, kind, d), n in self.rows.items() if kind == "day" and d == day
+            n
+            for (_, feature, kind, d), n in self.rows.items()
+            if kind == "day" and d == day and feature != quota.CACHE_HIT_QUOTA_FEATURE
         )
 
     async def acquire_lease(self, _db, user_id, seconds) -> uuid.UUID | None:

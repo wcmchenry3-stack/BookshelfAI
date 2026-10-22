@@ -16,10 +16,14 @@ class FakeResultCache:
         self.lookups: list[str] = []
         self.stores: list[dict] = []
 
-    async def lookup(self, _db, *, key: str, now: datetime | None = None):
+    async def lookup(self, _db, *, key: str, user_id, now: datetime | None = None):
         self.lookups.append(key)
         row = self.rows.get(key)
-        if row is None or row["expires_at"] <= (now or cache.utc_now()):
+        if (
+            row is None
+            or row["user_id"] != user_id
+            or row["expires_at"] <= (now or cache.utc_now())
+        ):
             return None
         return cache.deserialise(row["result"])
 

@@ -18,7 +18,7 @@ from app.ai.gateway import (
     FeatureDisabledError,
     ProviderTimeoutError,
     VisionPayload,
-    prompt_version,
+    request_fingerprint,
     resolve_spec,
     run_feature,
 )
@@ -267,7 +267,9 @@ def _cache_slot(
     """The cache slot for this request, or None when the cache is off (or
     the feature is switched off: the gateway then refuses as before). The
     model is the per-request resolved one (``ai_settings`` provider/model
-    override), so a switch misses. Never raises."""
+    override) and ``prompt_version`` is the gateway's fingerprint of the
+    request shape, so a switch of provider, model, prompt, schema, effort or
+    token cap misses. Never raises."""
     if not ai.cache_enabled:
         return None
     try:
@@ -275,7 +277,7 @@ def _cache_slot(
         if not spec.enabled:
             return None
         image_hash = cache.image_sha256(image_bytes)
-        version = prompt_version(spec)
+        version = request_fingerprint(spec)
         return _CacheSlot(
             key=cache.cache_key(
                 user_id=user_id,
@@ -316,7 +318,7 @@ async def _cache_lookup(
     if slot is None:
         return None
     try:
-        return await cache.lookup(db, key=slot.key)
+        return await cache.lookup(db, key=slot.key, user_id=user.id)
     except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
         logger.warning(
             "scan: result cache lookup failed (%s); calling the provider",
@@ -333,13 +335,16 @@ async def _cache_store(
     result: AIResult,
     ai: AISettings,
 ) -> None:
-    """Cache a provider result: only outcome ``ok`` (an empty list
-    included), never a refusal, a truncated reply or an error (those never
-    reach here). Idempotent by key; a failure is logged without content and
-    the scan still returns."""
+    """Cache a provider result: only outcome ``ok`` with at least one book.
+    Never a refusal, a truncated reply or an error (those never reach here),
+    and never an empty list: both adapters return ``ok`` with no books for a
+    reply that was missing, malformed or unparseable, and caching that would
+    pin "no books" for the photo for the whole TTL. Idempotent by key; a
+    failure is logged without content and the scan still returns."""
     if (
         slot is None
         or result.outcome != STATUS_OK
+        or not result.candidates
         or result.model != slot.model
         or result.feature != slot.feature
     ):
@@ -360,6 +365,21 @@ async def _cache_store(
     except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
         logger.warning("scan: result cache store failed (%s)", type(exc).__name__)
         await _recover_session(db)
+
+
+async def _take_cache_hit(
+    db: AsyncSession, user: User, user_id: uuid.UUID, ai: AISettings
+) -> bool:
+    """Count this hit against ``cache.max_hits_per_day`` (#534). False at
+    the cap (or cap 0), or if counting fails: the request is then a miss and
+    takes the normal path (reservation, provider call, store); this cap never
+    refuses a scan. A lost-ack double count only makes the cap stricter."""
+    try:
+        return await quota.take_cache_hit(db, user_id, ai)
+    except Exception as exc:  # noqa: BLE001 - the cache never fails a scan
+        logger.warning("scan: cache-hit count failed (%s)", type(exc).__name__)
+        await _recover_session(db, user)
+        return False
 
 
 async def _serve_cache_hit(
@@ -659,20 +679,22 @@ async def scan(
     # 0). A cache failure is a miss. Feature gating still applies: an
     # enhanced hit for a non-Premium user (e.g. one who has since left
     # Premium) gets the same 403 enhanced_requires_premium as a miss, which
-    # quota.reserve refuses before anything is taken.
+    # quota.reserve refuses before anything is taken. Then the hit is counted
+    # against cache.max_hits_per_day; past the cap it is treated as a miss.
     slot = _cache_slot(user_id, image_bytes, feature, ai)
     cached = await _cache_lookup(db, current_user, slot)
     if cached is not None and slot is not None:
         tier = await _require_enhanced_entitlement(db, current_user, enhanced)
-        return await _serve_cache_hit(
-            db,
-            user_id=user_id,
-            tier=tier,
-            enhanced=enhanced,
-            slot=slot,
-            candidates=cached,
-            ai=ai,
-        )
+        if await _take_cache_hit(db, current_user, user_id, ai):
+            return await _serve_cache_hit(
+                db,
+                user_id=user_id,
+                tier=tier,
+                enhanced=enhanced,
+                slot=slot,
+                candidates=cached,
+                ai=ai,
+            )
 
     reservation = await _reserve_scan_quota(db, current_user, feature, ai, enhanced)
 

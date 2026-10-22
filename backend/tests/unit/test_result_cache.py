@@ -7,6 +7,7 @@ behaviour is in tests/integration/test_result_cache_db.py."""
 import asyncio
 import io
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,12 +15,13 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.ai import cache, entitlements, gateway
+from app.ai import cache, entitlements, gateway, quota
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
 from app.ai.providers import anthropic_vision, openai_vision
 from app.ai.providers.base import ProviderResult, ProviderTimeoutError
 from app.ai.registry import FEATURES
+from app.core.config import settings
 from app.main import app
 from app.models.user import User
 from app.schemas.book import EnrichedBook
@@ -131,12 +133,20 @@ class TestSerialisation:
         with pytest.raises(cache.CacheEntryError):
             cache.deserialise(stored)
 
+    def test_candidate_cap_is_scan_max_books(self, monkeypatch):
+        monkeypatch.setattr(settings, "scan_max_books", 2)
+        assert len(cache.serialise([DUNE, DUNE])) == 2
+        with pytest.raises(cache.CacheEntryError):
+            cache.serialise([DUNE] * 3)
+        with pytest.raises(cache.CacheEntryError):
+            cache.deserialise(cache.serialise([DUNE]) * 3)
+
     async def test_lookup_treats_an_invalid_row_as_a_miss(self):
         db = AsyncMock()
         result = MagicMock()
         result.first.return_value = ({"not": "a list"},)
         db.execute = AsyncMock(return_value=result)
-        assert await cache.lookup(db, key="k" * 64) is None
+        assert await cache.lookup(db, key="k" * 64, user_id=USER.id) is None
         db.commit.assert_awaited()
 
 
@@ -178,22 +188,90 @@ class TestSettings:
 # ---------------------------------------------------------------------------
 
 
-class TestPromptVersion:
-    def test_each_adapter_has_its_own(self):
-        openai_spec = FEATURES["scan.standard"]
-        assert gateway.prompt_version(openai_spec) == openai_vision.PROMPT_VERSION
-        claude_spec = ai_settings.AISettings(
-            {
-                "scan.standard.provider": "anthropic",
-                "scan.standard.model": "claude-haiku-5-5",
-            }
-        ).spec_for(openai_spec)
-        assert gateway.prompt_version(claude_spec) == anthropic_vision.PROMPT_VERSION
+_CLAUDE = {
+    "scan.standard.provider": "anthropic",
+    "scan.standard.model": "claude-haiku-5-5",
+}
+
+
+def _spec(rows=None, **changes):
+    spec = ai_settings.AISettings(rows or {}).spec_for(FEATURES["scan.standard"])
+    return replace(spec, **changes) if changes else spec
+
+
+class TestRequestFingerprint:
+    """The key's prompt_version part is the gateway's fingerprint of the
+    request shape: any change to what is sent misses the cache."""
+
+    @pytest.mark.parametrize("rows", [{}, _CLAUDE])
+    def test_same_inputs_same_fingerprint(self, rows):
+        fp = gateway.request_fingerprint(_spec(rows))
+        assert len(fp) == 64 and int(fp, 16) >= 0
+        assert gateway.request_fingerprint(_spec(rows)) == fp
+
+    @pytest.mark.parametrize("rows", [{}, _CLAUDE])
+    def test_max_books_changes_it(self, rows, monkeypatch):
+        before = gateway.request_fingerprint(_spec(rows))
+        monkeypatch.setattr(settings, "scan_max_books", settings.scan_max_books + 1)
+        assert gateway.request_fingerprint(_spec(rows)) != before
+
+    @pytest.mark.parametrize("rows", [{}, _CLAUDE])
+    @pytest.mark.parametrize("change", [{"effort": "high"}, {"max_tokens": 1024}])
+    def test_effort_and_max_tokens_change_it(self, rows, change):
+        assert gateway.request_fingerprint(
+            _spec(rows, **change)
+        ) != gateway.request_fingerprint(_spec(rows))
+
+    @pytest.mark.parametrize(
+        "rows,module", [({}, openai_vision), (_CLAUDE, anthropic_vision)]
+    )
+    def test_system_prompt_text_changes_it(self, rows, module, monkeypatch):
+        before = gateway.request_fingerprint(_spec(rows))
+        monkeypatch.setattr(module, "SYSTEM_PROMPT", module.SYSTEM_PROMPT + " ")
+        assert gateway.request_fingerprint(_spec(rows)) != before
+
+    def test_claude_user_text_and_schema_change_it(self, monkeypatch):
+        before = gateway.request_fingerprint(_spec(_CLAUDE))
+        monkeypatch.setattr(anthropic_vision, "USER_TEXT", "Different.")
+        after_text = gateway.request_fingerprint(_spec(_CLAUDE))
+        assert after_text != before
+        monkeypatch.setattr(
+            anthropic_vision,
+            "output_schema",
+            lambda n: {"type": "object", "properties": {}, "required": []},
+        )
+        assert gateway.request_fingerprint(_spec(_CLAUDE)) != after_text
+
+    @pytest.mark.parametrize(
+        "rows,module", [({}, openai_vision), (_CLAUDE, anthropic_vision)]
+    )
+    def test_prompt_version_constant_changes_it(self, rows, module, monkeypatch):
+        before = gateway.request_fingerprint(_spec(rows))
+        monkeypatch.setattr(module, "PROMPT_VERSION", "2099-01-1")
+        assert gateway.request_fingerprint(_spec(rows)) != before
+
+    def test_provider_changes_it(self):
+        assert gateway.request_fingerprint(_spec()) != gateway.request_fingerprint(
+            _spec(_CLAUDE)
+        )
 
     def test_unknown_provider_raises(self):
         spec = MagicMock(provider="nope")
         with pytest.raises(ValueError):
-            gateway.prompt_version(spec)
+            gateway.request_fingerprint(spec)
+
+    def test_key_changes_with_max_books(self, monkeypatch):
+        def key():
+            return cache.cache_key(
+                **{
+                    **KEY_PARTS,
+                    "prompt_version": gateway.request_fingerprint(_spec()),
+                }
+            )
+
+        before = key()
+        monkeypatch.setattr(settings, "scan_max_books", settings.scan_max_books + 1)
+        assert key() != before
 
 
 # ---------------------------------------------------------------------------
@@ -322,9 +400,18 @@ def _post(client, image=_JPEG, enhanced=False):
     )
 
 
+def _hits(store: FakeQuotaStore, user_id=USER.id) -> int:
+    return sum(
+        n
+        for (u, feature, _, _), n in store.rows.items()
+        if u == user_id and feature == quota.CACHE_HIT_QUOTA_FEATURE
+    )
+
+
 def _snapshot(store: FakeQuotaStore):
+    """Everything a hit must leave unchanged (the hit counter aside)."""
     return (
-        dict(store.rows),
+        {k: n for k, n in store.rows.items() if k[1] != quota.CACHE_HIT_QUOTA_FEATURE},
         dict(store.leases),
         {d: list(v) for d, v in store.spend.items()},
         {u: list(v) for u, v in store.zero_results.items()},
@@ -341,15 +428,20 @@ class TestScanStoresOnlyOk:
         assert stored["user_id"] == USER.id
         assert stored["feature"] == "scan.standard"
         assert stored["model"] == FEATURES["scan.standard"].model
-        assert stored["prompt_version"] == openai_vision.PROMPT_VERSION
+        assert stored["prompt_version"] == gateway.request_fingerprint(
+            FEATURES["scan.standard"]
+        )
         assert stored["ttl_days"] == 30 and stored["max_rows_per_user"] == 500
         assert stored["image_hash"] != cache.image_sha256(_JPEG)  # normalised
 
-    def test_empty_ok_result_is_stored(self, client, store, fake_cache, provider):
+    def test_empty_ok_result_is_not_stored(self, client, store, fake_cache, provider):
+        """An ok reply with no books may be a missing or unparseable body:
+        never pinned for the TTL. A re-upload calls the provider again."""
         provider.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         assert _post(client).status_code == 200
-        assert len(fake_cache.stores) == 1
-        assert fake_cache.stores[0]["candidates"] == []
+        assert fake_cache.stores == [] and fake_cache.rows == {}
+        assert _post(client).status_code == 200
+        assert provider.return_value.identify.await_count == 2
 
     @pytest.mark.parametrize("outcome", ["refused", "truncated"])
     def test_refused_or_truncated_not_stored(
@@ -420,6 +512,7 @@ class TestScanHit:
         assert row["model"] == FEATURES["scan.standard"].model
         assert isinstance(row["call_id"], uuid.UUID)
         assert "input_tokens" not in row  # 0 tokens, cost forced to 0
+        assert _hits(store) == 1  # counted against cache.max_hits_per_day
 
     def test_hit_still_returns_when_the_ledger_row_fails(
         self, client, store, fake_cache, provider
@@ -438,7 +531,6 @@ class TestScanHit:
         monkeypatch.setattr(
             entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM)
         )
-        provider.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         first = _post(client, enhanced=True)
         assert first.status_code == 200
         zero_before = {u: list(v) for u, v in store.zero_results.items()}
@@ -490,6 +582,92 @@ class TestScanHit:
         fake_cache.rows[key]["expires_at"] = cache.utc_now() - timedelta(seconds=1)
         _post(client)
         assert provider.return_value.identify.await_count == 2
+
+
+class TestDailyHitCap:
+    """cache.max_hits_per_day: hits up to the cap are free; past it a
+    re-upload takes the normal path. The cap never refuses a scan."""
+
+    def test_hits_up_to_the_cap_then_the_normal_path(
+        self, client, store, fake_cache, provider, ledger_rows
+    ):
+        ai_settings.reset_cache({"cache.max_hits_per_day": 2})
+        _post(client)  # miss: provider, one unit, stored
+        after_miss = _snapshot(store)
+        for _ in range(2):
+            assert _post(client).status_code == 200
+        assert provider.return_value.identify.await_count == 1
+        assert _snapshot(store) == after_miss
+        assert _hits(store) == 2
+        # Third hit is past the cap: provider called, allowance used.
+        resp = _post(client)
+        assert resp.status_code == 200
+        assert resp.json()["books"][0]["title"] == "Dune"
+        assert provider.return_value.identify.await_count == 2
+        day_units = [
+            n for (u, f, k, _), n in store.rows.items() if f == "scan" and k == "day"
+        ]
+        assert day_units == [2]
+        assert _hits(store) == 2
+        assert [r["status"] for r in ledger_rows] == ["cache_hit", "cache_hit"]
+
+    def test_cap_zero_makes_every_request_a_miss(
+        self, client, store, fake_cache, provider, ledger_rows
+    ):
+        ai_settings.reset_cache({"cache.max_hits_per_day": 0})
+        for _ in range(3):
+            assert _post(client).status_code == 200
+        assert provider.return_value.identify.await_count == 3
+        assert ledger_rows == []
+        assert _hits(store) == 0
+
+    def test_counter_is_per_user(self, store, fake_cache, provider, ledger_rows):
+        from app.auth.dependencies import get_current_user
+        from app.core.database import get_db
+
+        other = User(id=uuid.UUID("00000000-0000-0000-0000-00000000534c"), email="o@x")
+        current = {"user": USER}
+
+        async def _fake_db():
+            yield AsyncMock()
+
+        app.dependency_overrides[get_current_user] = lambda: current["user"]
+        app.dependency_overrides[get_db] = _fake_db
+        ai_settings.reset_cache({"cache.max_hits_per_day": 1})
+        try:
+            c = TestClient(app)
+            _post(c)
+            _post(c)  # USER: hit 1 of 1
+            current["user"] = other
+            _post(c)
+            _post(c)  # other: own hit 1 of 1, not blocked by USER's
+        finally:
+            app.dependency_overrides.clear()
+        assert provider.return_value.identify.await_count == 2
+        assert (_hits(store), _hits(store, other.id)) == (1, 1)
+
+    def test_counting_failure_is_a_miss(
+        self, client, store, fake_cache, provider, ledger_rows
+    ):
+        _post(client)
+        with patch(
+            "app.api.scan.quota.take_cache_hit",
+            AsyncMock(side_effect=RuntimeError("x")),
+        ):
+            assert _post(client).status_code == 200
+        assert provider.return_value.identify.await_count == 2
+        assert ledger_rows == []
+
+    def test_non_premium_enhanced_refused_before_counting(
+        self, client, store, fake_cache, provider, monkeypatch
+    ):
+        monkeypatch.setattr(
+            entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM)
+        )
+        _post(client, enhanced=True)
+        monkeypatch.setattr(entitlements, "tier_for", AsyncMock(return_value=Tier.FREE))
+        assert _post(client, enhanced=True).status_code == 403
+        assert _hits(store) == 0
 
 
 class TestCacheFailureNeverFailsAScan:

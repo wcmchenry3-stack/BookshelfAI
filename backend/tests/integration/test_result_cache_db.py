@@ -274,7 +274,7 @@ class TestHit:
     ):
         factory, make_user = sessions
         user_id = await make_user()
-        provider = _Provider(books=False)
+        provider = _Provider()
         ai_settings.reset_cache({"quota.premium.enhanced_monthly": 20})
         with provider.patch():
             first = await _scan(factory, user_id, enhanced=True)
@@ -282,9 +282,9 @@ class TestHit:
             second = await _scan(factory, user_id, enhanced=True)
             after = await _state(factory, user_id)
         assert provider.calls == 1
-        assert before["zero_results"] == 1  # the miss, below the threshold
         assert after == before
-        assert second.books == []
+        assert after["zero_results"] == 0
+        assert [b.title for b in second.books] == ["Dune"]
         assert second.enhanced is True
         assert second.enhanced_scans_remaining == first.enhanced_scans_remaining
         assert second.enhanced_scans_remaining == (
@@ -312,6 +312,58 @@ class TestHit:
         )
         assert provider.calls == 1
         assert [r.call_id for r in await _ledger(factory, user_id)] == before
+
+
+class TestDailyHitCap:
+    async def test_hits_up_to_the_cap_then_the_normal_path(self, sessions, downstream):
+        factory, make_user = sessions
+        user_id = await make_user()
+        provider = _Provider()
+        ai_settings.reset_cache({"cache.max_hits_per_day": 2})
+        with provider.patch():
+            await _scan(factory, user_id)
+            before = await _state(factory, user_id)
+            await _scan(factory, user_id)
+            await _scan(factory, user_id)
+            assert await _state(factory, user_id) == before
+            assert provider.calls == 1
+            resp = await _scan(factory, user_id)  # third hit: past the cap
+        assert [b.title for b in resp.books] == ["Dune"]
+        assert provider.calls == 2
+        after = await _state(factory, user_id)
+        assert after["usage"].used_today == before["usage"].used_today + 1
+        assert after["global"] == before["global"] + 1
+        statuses = [r.status for r in await _ledger(factory, user_id)]
+        assert statuses == ["ok", "cache_hit", "cache_hit", "ok"]
+        async with factory() as db:
+            hits = await quota.units_used(
+                db, user_id, quota.CACHE_HIT_QUOTA_FEATURE, "day", quota.utc_today()
+            )
+        assert hits == 2
+
+    async def test_cap_zero_every_request_is_a_miss(self, sessions, downstream):
+        factory, make_user = sessions
+        user_id = await make_user()
+        provider = _Provider()
+        ai_settings.reset_cache({"cache.max_hits_per_day": 0})
+        with provider.patch():
+            for _ in range(3):
+                await _scan(factory, user_id)
+        assert provider.calls == 3
+        assert (await _usage(factory, user_id)).used_today == 3
+
+    async def test_counter_is_per_user(self, sessions, downstream):
+        factory, make_user = sessions
+        alice, bob = await make_user(), await make_user()
+        provider = _Provider()
+        ai_settings.reset_cache({"cache.max_hits_per_day": 1})
+        with provider.patch():
+            for user_id in (alice, alice, bob, bob):
+                await _scan(factory, user_id)
+        assert provider.calls == 2
+        for user_id in (alice, bob):
+            statuses = [r.status for r in await _ledger(factory, user_id)]
+            assert statuses == ["ok", "cache_hit"]
 
 
 class TestMiss:
@@ -357,17 +409,38 @@ class TestMiss:
             await _scan(factory, user_id)
         assert provider.calls == 2
 
-    async def test_prompt_version_change_misses(self, sessions, downstream):
+    @pytest.mark.parametrize(
+        "target,attr,value",
+        [
+            ("app.ai.providers.openai_vision", "PROMPT_VERSION", "2099-01-1"),
+            ("app.ai.providers.openai_vision", "SYSTEM_PROMPT", "Other {max_books}"),
+            ("app.core.config.settings", "scan_max_books", 3),
+        ],
+    )
+    async def test_request_shape_change_misses(
+        self, sessions, downstream, target, attr, value
+    ):
         factory, make_user = sessions
         user_id = await make_user()
         provider = _Provider()
         with provider.patch():
             await _scan(factory, user_id)
-            with patch.dict("app.ai.gateway._PROMPT_VERSIONS", {"openai": "2099-01-1"}):
+            with patch(f"{target}.{attr}", value):
                 await _scan(factory, user_id)
+            await _scan(factory, user_id)  # back to the first shape: a hit
         assert provider.calls == 2
         versions = {r.prompt_version for r in await _rows(factory, user_id)}
-        assert "2099-01-1" in versions and len(versions) == 2
+        assert len(versions) == 2
+
+    async def test_empty_ok_result_is_not_cached(self, sessions, downstream):
+        factory, make_user = sessions
+        user_id = await make_user()
+        provider = _Provider(books=False)
+        with provider.patch():
+            await _scan(factory, user_id)
+            await _scan(factory, user_id)
+        assert provider.calls == 2
+        assert await _rows(factory, user_id) == []
 
     async def test_cache_disabled_calls_the_provider_every_time(
         self, sessions, downstream
@@ -457,11 +530,11 @@ class TestModule:
         old = await _store(factory, user_id, 1, now=now - timedelta(days=30, seconds=1))
         fresh = await _store(factory, user_id, 2, now=now - timedelta(days=29))
         async with factory() as db:
-            assert await cache.lookup(db, key=old, now=now) is None
-            assert await cache.lookup(db, key=fresh, now=now) == [DUNE]
+            assert await cache.lookup(db, key=old, user_id=user_id, now=now) is None
+            assert await cache.lookup(db, key=fresh, user_id=user_id, now=now) == [DUNE]
             # Exactly at expires_at: not served either.
             edge = now - timedelta(days=30, seconds=1) + timedelta(days=30)
-            assert await cache.lookup(db, key=old, now=edge) is None
+            assert await cache.lookup(db, key=old, user_id=user_id, now=edge) is None
         async with factory() as db:
             purged = await cache.purge_expired(db, now=now)
         assert purged >= 1
@@ -498,6 +571,33 @@ class TestModule:
         assert remaining == keys[2:]
         # Another user's rows are never evicted.
         assert len(await _rows(factory, other)) == 1
+
+    async def test_lookup_filters_on_the_user(self, sessions):
+        """A row whose key matches but whose user differs is never served."""
+        factory, make_user = sessions
+        owner, other = await make_user(), await make_user()
+        key = await _store(factory, owner, 3)
+        async with factory() as db:
+            assert await cache.lookup(db, key=key, user_id=owner) == [DUNE]
+            assert await cache.lookup(db, key=key, user_id=other) is None
+
+    async def test_candidate_cap_follows_scan_max_books(self, sessions):
+        factory, make_user = sessions
+        user_id = await make_user()
+        parts = _key(user_id, 4)
+        many = [DUNE] * (settings.scan_max_books + 1)
+        async with factory() as db:
+            with pytest.raises(cache.CacheEntryError):
+                await cache.store(
+                    db, **parts, candidates=many, ttl_days=30, max_rows_per_user=500
+                )
+        async with factory() as db:
+            await cache.store(
+                db, **parts, candidates=many[:-1], ttl_days=30, max_rows_per_user=500
+            )
+        async with factory() as db:
+            with patch.object(settings, "scan_max_books", 2):
+                assert await cache.lookup(db, key=parts["key"], user_id=user_id) is None
 
     async def test_store_twice_is_one_row(self, sessions):
         """A store whose commit landed but raised, then retried, adds nothing."""

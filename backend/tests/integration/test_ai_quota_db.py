@@ -54,15 +54,6 @@ MIGRATION = (
 )
 
 
-def _jpeg() -> bytes:
-    buf = io.BytesIO()
-    Image.new("RGB", (32, 24), (10, 120, 30)).save(buf, format="JPEG")
-    return buf.getvalue()
-
-
-_JPEG = _jpeg()
-
-
 def _distinct_jpeg() -> bytes:
     buf = io.BytesIO()
     Image.frombytes("RGB", (32, 24), os.urandom(32 * 24 * 3)).save(buf, format="JPEG")

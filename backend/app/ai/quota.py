@@ -147,6 +147,10 @@ SCAN_QUOTA_FEATURE = "scan"
 # The ai_quota counter key for the Premium enhanced monthly allowance (#533),
 # reserved on top of the shared SCAN_QUOTA_FEATURE units.
 ENHANCED_QUOTA_FEATURE = "scan.enhanced"
+# Result-cache hits served per user per UTC day (#534, cache.max_hits_per_day).
+# Day rows only; not an allowance: never counted by the global count cap and
+# not shown by GET /scan/usage.
+CACHE_HIT_QUOTA_FEATURE = "scan.cache_hit"
 # The Sentry tag for the zero-result warning (the gateway feature name).
 ENHANCED_FEATURE_TAG = "scan.enhanced"
 
@@ -476,10 +480,13 @@ async def units_used(
 
 
 async def global_units_today(db: AsyncSession, day: date) -> int:
-    """Units reserved on ``day`` across all users and features."""
+    """Units reserved on ``day`` across all users and features, except the
+    result-cache hit counter (#534): a hit is not a provider call."""
     result = await db.execute(
         select(func.coalesce(func.sum(AIQuota.units_used), 0)).where(
-            AIQuota.window_kind == WINDOW_DAY, AIQuota.window_start == day
+            AIQuota.window_kind == WINDOW_DAY,
+            AIQuota.window_start == day,
+            AIQuota.feature != CACHE_HIT_QUOTA_FEATURE,
         )
     )
     return int(result.scalar_one())
@@ -1205,6 +1212,26 @@ async def enhanced_remaining(db: AsyncSession, reservation: Reservation) -> int 
     finally:
         await db.commit()
     return max(0, reservation.enhanced_allowance - used)
+
+
+async def take_cache_hit(
+    db: AsyncSession, user_id: uuid.UUID, ai: AISettings, now: datetime | None = None
+) -> bool:
+    """Count one result-cache hit for today (UTC) against
+    ``cache.max_hits_per_day`` (#534); False at the cap (or a cap of 0), when
+    nothing changes and the caller takes the normal path. Commits. A commit
+    whose acknowledgement was lost and is retried counts the hit twice,
+    which only makes the cap stricter (more requests take the paid path),
+    never looser."""
+    used = await reserve_unit(
+        db,
+        user_id,
+        CACHE_HIT_QUOTA_FEATURE,
+        WINDOW_DAY,
+        utc_today(now),
+        ai.cache_max_hits_per_day,
+    )
+    return used is not None
 
 
 async def enhanced_remaining_for(

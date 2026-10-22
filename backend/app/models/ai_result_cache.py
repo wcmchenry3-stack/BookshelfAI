@@ -52,7 +52,9 @@ class AIResultCache(Base):
     image_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     feature: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(64), nullable=False)
-    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    # SHA-256 hex of the request shape (``gateway.request_fingerprint``):
+    # provider, prompt as rendered, schema, effort, max_tokens, PROMPT_VERSION.
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
     # A JSON array of validated candidates; JSONB on Postgres, plain JSON
     # elsewhere so the model still loads on SQLite.
     result: Mapped[Any] = mapped_column(
