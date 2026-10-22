@@ -102,6 +102,21 @@ class TestUsage:
             result.cache_write_tokens,
         ) == (0, 0, 0, 0)
 
+    @pytest.mark.parametrize(
+        ("reported", "stored"),
+        [
+            (2_147_483_647, 2_147_483_647),
+            (2_147_483_648, 2_147_483_647),
+            (10**30, 2_147_483_647),
+            (-1, 0),
+        ],
+    )
+    async def test_counts_clamped_to_the_integer_column(self, reported, stored):
+        result = await _identify(
+            _body(usage={"prompt_tokens": reported, "completion_tokens": reported})
+        )
+        assert (result.input_tokens, result.output_tokens) == (stored, stored)
+
     async def test_usage_kept_when_body_is_not_a_dict(self):
         result = await _identify(None)
         assert result.candidates == []
@@ -137,9 +152,39 @@ class TestOutcome:
         result = await _identify(_body(content=None, finish_reason="content_filter"))
         assert result.outcome == "refused"
 
-    @pytest.mark.parametrize("body", [{"choices": []}, {"error": {}}, [], None])
-    async def test_no_content_is_refused(self, body):
-        assert (await _identify(body)).outcome == "refused"
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"choices": []},
+            {"choices": [{}]},
+            {"error": {}},
+            [],
+            None,
+            {"choices": [{"message": {"content": None}, "finish_reason": "stop"}]},
+            {"choices": [{"message": {"content": ["not", "text"]}}]},
+            {"choices": [{"message": {"content": "not json"}}]},
+            {"choices": [{"message": {"content": '{"books": "none"}'}}]},
+            {"choices": [{"message": {"content": None, "refusal": ""}}]},
+        ],
+    )
+    async def test_no_or_unusable_content_without_refusal_is_ok(self, body):
+        """Only a refusal field or a content filter is a refusal; a 200 with
+        no usable content is an answered call with no books."""
+        result = await _identify(body)
+        assert result.outcome == "ok"
+        assert result.candidates == []
+
+    async def test_no_content_keeps_the_real_usage(self):
+        body = {
+            "choices": [{"message": {"content": None}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1_500, "completion_tokens": 3},
+        }
+        result = await _identify(body)
+        assert (result.outcome, result.input_tokens, result.output_tokens) == (
+            "ok",
+            1_500,
+            3,
+        )
 
     async def test_parsing_unchanged_for_valid_reply(self):
         result = await _identify(_body(usage={"prompt_tokens": 1}))
@@ -161,3 +206,38 @@ class TestErrors:
                 )
             )
         assert not isinstance(exc_info.value, ProviderTimeoutError)
+
+
+def test_parse_uses_the_max_books_it_is_given():
+    """identify reads settings.scan_max_books once and passes it on."""
+    content = json.dumps(
+        {"books": [{"title": f"Book {i}", "author": "A"} for i in range(5)]}
+    )
+    provider = OpenAIVisionProvider(FEATURES["scan.standard"])
+    assert len(provider._parse(content, "stop", 2)) == 2
+
+
+async def test_identify_reads_max_books_once():
+    reads = []
+
+    class CountingSettings:
+        openai_api_key = "k"
+
+        @property
+        def scan_max_books(self):
+            reads.append(1)
+            return 1
+
+    body = json.dumps(
+        {"books": [{"title": "A", "author": "X"}, {"title": "B", "author": "Y"}]}
+    )
+    with (
+        patch("app.ai.providers.openai_vision.settings", CountingSettings()),
+        patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient",
+            return_value=_client(_body(content=body)),
+        ),
+    ):
+        result = await OpenAIVisionProvider(FEATURES["scan.standard"]).identify(b"i")
+    assert len(result.candidates) == 1
+    assert reads == [1]

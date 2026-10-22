@@ -14,6 +14,7 @@ from sqlalchemy.sql import Executable
 from app.ai import ledger, quota
 from app.ai.gateway import (
     AIResult,
+    FeatureDisabledError,
     ProviderTimeoutError,
     VisionPayload,
     resolve_spec,
@@ -221,6 +222,7 @@ async def _release_scan_lease(
 
 def _usage_row(
     *,
+    call_id: uuid.UUID,
     user_id: uuid.UUID,
     feature: str,
     ai: AISettings,
@@ -238,6 +240,7 @@ def _usage_row(
     try:
         if result is not None:
             return ledger.usage_insert(
+                call_id=call_id,
                 user_id=user_id,
                 feature=result.feature,
                 model=result.model,
@@ -249,6 +252,7 @@ def _usage_row(
                 request_id=ledger.current_request_id(),
             )
         return ledger.usage_insert(
+            call_id=call_id,
             user_id=user_id,
             feature=feature,
             # The same resolution run_feature used (same settings snapshot).
@@ -389,10 +393,13 @@ async def scan(
     # once the provider call is over (settle), even on cancellation.
     #
     # Usage ledger (#530): every outcome of the provider call writes one
-    # ai_usage row, committed with the lease release. A cancelled request
-    # (CancelledError is not an Exception) writes none: the shielded lease
-    # release stays its only cleanup.
+    # ai_usage row, committed with the lease release. call_id is generated
+    # once per call, so a retried settle cannot write it twice. A kill switch
+    # hit (FeatureDisabledError) never reached a provider and writes none.
+    call_id = uuid.uuid4()
+    row = partial(_usage_row, call_id=call_id, user_id=user_id, feature=feature, ai=ai)
     ledger_row: Executable | None = None
+    ledger_decided = False
     try:
         try:
             result = await run_feature(
@@ -407,16 +414,15 @@ async def scan(
             # ConnectError: the connection to the provider was never
             # established, so nothing was billed; treat it like any other
             # unavailability.
-            ledger_row = _usage_row(
-                user_id=user_id,
-                feature=feature,
-                ai=ai,
-                status=(
-                    STATUS_TIMEOUT
-                    if isinstance(exc, ProviderTimeoutError)
-                    else STATUS_REFUNDED
-                ),
-            )
+            if not isinstance(exc, FeatureDisabledError):
+                ledger_row = row(
+                    status=(
+                        STATUS_TIMEOUT
+                        if isinstance(exc, ProviderTimeoutError)
+                        else STATUS_REFUNDED
+                    )
+                )
+            ledger_decided = True
             await _refund_scan_quota(db, reservation)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -424,12 +430,17 @@ async def scan(
             ) from None
         except Exception:
             # The reservation is kept (the provider may have been paid).
-            ledger_row = _usage_row(
-                user_id=user_id, feature=feature, ai=ai, status=STATUS_ERROR
-            )
+            ledger_row = row(status=STATUS_ERROR)
+            ledger_decided = True
             raise
-        ledger_row = _usage_row(user_id=user_id, feature=feature, ai=ai, result=result)
+        ledger_row = row(result=result)
+        ledger_decided = True
     finally:
+        if not ledger_decided:
+            # The call did not complete: the request was cancelled (or a
+            # BaseException) mid-call. The reservation is kept, so record it
+            # as an error with 0 tokens; the shielded settle writes it.
+            ledger_row = row(status=STATUS_ERROR)
         await _release_scan_lease(db, reservation, ledger_row)
     candidates = result.candidates
 

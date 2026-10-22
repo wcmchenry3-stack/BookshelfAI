@@ -69,11 +69,16 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     return content, finish_reason
 
 
+# The ledger's token columns are Postgres INTEGER.
+MAX_TOKEN_COUNT = 2_147_483_647
+
+
 def _token_count(value: object) -> int:
-    """A token count from the usage block: a non-negative int, else 0."""
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    """A token count from the usage block: an int clamped to
+    ``[0, MAX_TOKEN_COUNT]``; anything else is 0."""
+    if isinstance(value, bool) or not isinstance(value, int):
         return 0
-    return value
+    return min(max(value, 0), MAX_TOKEN_COUNT)
 
 
 def _usage(body: object) -> tuple[int, int, int]:
@@ -105,13 +110,12 @@ def _has_refusal(body: object) -> bool:
     return isinstance(refusal, str) and bool(refusal)
 
 
-def _outcome(
-    body: object, content: str | None, finish_reason: str | None
-) -> ProviderOutcome:
-    """``refused`` when the model declined (a ``refusal``, a content filter
-    stop, or no text at all), ``truncated`` when it hit ``max_tokens``,
-    else ``ok``."""
-    if content is None or finish_reason == "content_filter" or _has_refusal(body):
+def _outcome(body: object, finish_reason: str | None) -> ProviderOutcome:
+    """``refused`` only when the model declined (a ``refusal`` field or a
+    ``content_filter`` stop), ``truncated`` when it hit ``max_tokens``, else
+    ``ok``: a 200 with missing, malformed or shapeless content is still an
+    answered (and billed) call, just with no books."""
+    if finish_reason == "content_filter" or _has_refusal(body):
         return "refused"
     if finish_reason == "length":
         return "truncated"
@@ -199,19 +203,18 @@ class OpenAIVisionProvider:
         content, finish_reason = _message_content(body)
         input_tokens, output_tokens, cache_read = _usage(body)
         return ProviderResult(
-            candidates=self._parse(content, finish_reason),
+            candidates=self._parse(content, finish_reason, max_books),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read,
             cache_write_tokens=0,
-            outcome=_outcome(body, content, finish_reason),
+            outcome=_outcome(body, finish_reason),
         )
 
     def _parse(
-        self, content: str | None, finish_reason: str | None
+        self, content: str | None, finish_reason: str | None, max_books: int
     ) -> list[BookCandidate]:
         """The candidates in the model's reply (empty when unparseable)."""
-        max_books = settings.scan_max_books
         if content is None:
             # No text to parse (refusal or unexpected body). Treated as an empty
             # result; the response itself is not logged.

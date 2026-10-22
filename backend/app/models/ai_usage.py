@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -61,6 +62,9 @@ class AIUsage(Base):
             "AND cache_write_tokens >= 0 AND cost_micros >= 0",
             name="ck_ai_usage_non_negative",
         ),
+        # One row per provider call even if the settle is retried after a
+        # commit whose acknowledgement was lost (ON CONFLICT DO NOTHING).
+        UniqueConstraint("call_id", name="uq_ai_usage_call_id"),
         # The rollup scans by age.
         Index("ix_ai_usage_created_at", "created_at"),
         # Per-user lookups, and the ON DELETE SET NULL scan on account delete.
@@ -68,6 +72,9 @@ class AIUsage(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # Server-generated once per provider call (uuid4); makes the insert
+    # idempotent.
+    call_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

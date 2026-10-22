@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import httpx
 import pytest
 from alembic.autogenerate import compare_metadata
@@ -250,20 +251,22 @@ class TestSingleCommitSettle:
         factory, make_user, _ = sessions
         user_id = await make_user()
         real_release = quota.release_lease
-        seen = []
+        facts: list[tuple] = []
 
         async def fail_before_commit(db, uid, lease_id):
-            seen.append(1)
-            if len(seen) == 1:
+            async def count() -> int:
+                return (
+                    await db.execute(
+                        select(func.count())
+                        .select_from(AIUsage)
+                        .where(AIUsage.user_id == uid)
+                    )
+                ).scalar_one()
+
+            facts.append(("row on this session", await count()))
+            if len(facts) == 1:
                 await db.execute(delete(AIInflight).where(AIInflight.user_id == uid))
-                # Inside the same transaction, the row is visible...
-                visible = await db.execute(
-                    select(func.count())
-                    .select_from(AIUsage)
-                    .where(AIUsage.user_id == uid)
-                )
-                assert visible.scalar_one() == 1
-                # ...then the transaction fails before it commits.
+                # The transaction fails before it commits.
                 await db.execute(select(func.sqrt(-1)))
             return await real_release(db, uid, lease_id)
 
@@ -272,30 +275,40 @@ class TestSingleCommitSettle:
             patch.object(quota, "release_lease", fail_before_commit),
         ):
             await _call_scan(factory, user_id)
-        assert len(seen) == 2
+        # Attempt 1 saw its row; after the rollback attempt 2 saw exactly one
+        # (its own re-executed insert), not two.
+        assert facts == [("row on this session", 1), ("row on this session", 1)]
         assert len(await _rows(factory, user_id=user_id)) == 1
         async with factory() as db:
             assert await db.get(AIInflight, user_id) is None
 
     async def test_row_and_lease_release_commit_together(self, sessions, downstream):
-        """Seen from another connection, the row appears exactly when the
-        lease disappears: never one without the other."""
+        """Just before the lease delete commits, the row is visible on the
+        request session but not on another connection, and the lease still
+        is: the row is committed by the same COMMIT as the release."""
         factory, make_user, _ = sessions
         user_id = await make_user()
         real_release = quota.release_lease
-        observed = {}
+        facts: dict[str, object] = {}
 
         async def observe(db, uid, lease_id):
-            # Row already executed on this session, not yet committed.
+            def count_stmt():
+                return (
+                    select(func.count())
+                    .select_from(AIUsage)
+                    .where(AIUsage.user_id == uid)
+                )
+
+            facts["row on request session"] = (
+                await db.execute(count_stmt())
+            ).scalar_one()
             async with factory() as other:
-                observed["row_before"] = (
-                    await other.execute(
-                        select(func.count())
-                        .select_from(AIUsage)
-                        .where(AIUsage.user_id == uid)
-                    )
+                facts["row on other connection"] = (
+                    await other.execute(count_stmt())
                 ).scalar_one()
-                observed["lease_before"] = await other.get(AIInflight, uid) is not None
+                facts["lease on other connection"] = (
+                    await other.get(AIInflight, uid) is not None
+                )
             return await real_release(db, uid, lease_id)
 
         with (
@@ -303,10 +316,61 @@ class TestSingleCommitSettle:
             patch.object(quota, "release_lease", observe),
         ):
             await _call_scan(factory, user_id)
-        assert observed == {"row_before": 0, "lease_before": True}
+        assert facts == {
+            "row on request session": 1,
+            "row on other connection": 0,
+            "lease on other connection": True,
+        }
         assert len(await _rows(factory, user_id=user_id)) == 1
         async with factory() as db:
             assert await db.get(AIInflight, user_id) is None
+
+    async def test_same_row_executed_twice_leaves_one_row(self, sessions):
+        """A settle retried after a commit whose acknowledgement was lost
+        re-executes the same statement: ON CONFLICT (call_id) DO NOTHING."""
+        factory, make_user, _ = sessions
+        user_id = await make_user()
+        stmt = ledger.usage_insert(
+            call_id=uuid.uuid4(),
+            user_id=user_id,
+            feature="scan.standard",
+            model="gpt-4o-mini",
+            status="ok",
+            input_tokens=5,
+        )
+        for _ in range(2):
+            async with factory() as db:
+                await db.execute(stmt)
+                await db.commit()
+        assert len(await _rows(factory, user_id=user_id)) == 1
+
+    async def test_cancelled_scan_writes_one_error_row(self, sessions, downstream):
+        factory, make_user, _ = sessions
+        user_id = await make_user()
+
+        async def hung(_image):
+            await anyio.sleep(10)
+
+        cls = MagicMock()
+        cls.return_value.identify = hung
+        with (
+            patch("app.ai.gateway.OpenAIVisionProvider", cls),
+            anyio.move_on_after(0.5) as scope,
+        ):
+            await _call_scan(factory, user_id)
+        assert scope.cancelled_caught
+        (row,) = await _rows(factory, user_id=user_id)
+        assert (row.status, row.input_tokens, row.cost_micros) == ("error", 0, 0)
+        async with factory() as db:
+            assert await db.get(AIInflight, user_id) is None
+        today = quota.utc_today()
+        async with factory() as db:
+            assert (
+                await quota.units_used(
+                    db, user_id, quota.SCAN_QUOTA_FEATURE, "day", today
+                )
+                == 1
+            )  # the reservation is kept
 
     async def test_rejected_row_does_not_fail_the_scan_or_hold_the_lease(
         self, sessions
@@ -314,6 +378,7 @@ class TestSingleCommitSettle:
         factory, make_user, _ = sessions
         user_id = await make_user()
         bad_row = insert(AIUsage).values(
+            call_id=uuid.uuid4(),
             user_id=user_id,
             feature="scan.standard",
             model="gpt-4o-mini",
@@ -387,10 +452,16 @@ async def test_check_constraints(sessions):
     for bad in ({"status": "weird"}, {"cost_micros": -1}, {"output_tokens": -1}):
         async with factory() as db:
             with pytest.raises(Exception, match="ck_ai_usage"):
-                await db.execute(insert(AIUsage).values(**{**base, **bad}))
+                await db.execute(
+                    insert(AIUsage).values(**{**base, **bad, "call_id": uuid.uuid4()})
+                )
                 await db.commit()
     async with factory() as db:
-        await db.execute(insert(AIUsage).values(**{**base, "status": "cache_hit"}))
+        await db.execute(
+            insert(AIUsage).values(
+                **{**base, "status": "cache_hit", "call_id": uuid.uuid4()}
+            )
+        )
         await db.commit()
 
 
@@ -417,6 +488,7 @@ async def _seed(
         for _ in range(n):
             await db.execute(
                 insert(AIUsage).values(
+                    call_id=uuid.uuid4(),
                     user_id=None,
                     feature=feature,
                     model="gpt-4o",

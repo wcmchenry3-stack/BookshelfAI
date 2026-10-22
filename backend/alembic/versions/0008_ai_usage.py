@@ -31,6 +31,7 @@ def upgrade() -> None:
     op.create_table(
         "ai_usage",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column("call_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column(
             "user_id",
             postgresql.UUID(as_uuid=True),
@@ -54,6 +55,8 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
+        # Makes the ledger insert idempotent (ON CONFLICT (call_id) DO NOTHING).
+        sa.UniqueConstraint("call_id", name="uq_ai_usage_call_id"),
         sa.CheckConstraint(_STATUS_IN, name="ck_ai_usage_status"),
         sa.CheckConstraint(
             "input_tokens >= 0 AND output_tokens >= 0 AND cache_read_tokens >= 0 "

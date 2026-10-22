@@ -38,6 +38,7 @@ USER = User(
     enhanced_scan_credits=3,
 )
 DUNE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
+CALL_ID = uuid.UUID("00000000-0000-0000-0000-00000000ca11")
 USAGE = {
     "input_tokens": 900,
     "output_tokens": 120,
@@ -72,6 +73,7 @@ def _params(stmt) -> dict:
 class TestUsageInsert:
     def test_cost_computed_from_price_table(self):
         stmt = ledger.usage_insert(
+            call_id=CALL_ID,
             user_id=USER.id,
             feature="scan.enhanced",
             model="gpt-4o",
@@ -86,10 +88,24 @@ class TestUsageInsert:
         assert params["status"] == "ok"
         assert params["request_id"] == "rid-1"
         assert params["user_id"] == USER.id
+        assert params["call_id"] == CALL_ID
+
+    def test_insert_is_idempotent_on_call_id(self):
+        sql = str(
+            ledger.usage_insert(
+                call_id=CALL_ID,
+                user_id=None,
+                feature="scan.standard",
+                model="gpt-4o",
+                status="ok",
+            ).compile(dialect=postgresql.dialect())
+        )
+        assert "ON CONFLICT (call_id) DO NOTHING" in sql
 
     def test_cache_hit_costs_zero(self):
         params = _params(
             ledger.usage_insert(
+                call_id=CALL_ID,
                 user_id=USER.id,
                 feature="scan.standard",
                 model="gpt-4o-mini",
@@ -102,12 +118,17 @@ class TestUsageInsert:
     def test_unknown_status_rejected(self):
         with pytest.raises(ValueError):
             ledger.usage_insert(
-                user_id=None, feature="scan.standard", model="gpt-4o", status="weird"
+                call_id=CALL_ID,
+                user_id=None,
+                feature="scan.standard",
+                model="gpt-4o",
+                status="weird",
             )
 
     def test_unknown_price_version_fails_loudly(self):
         with pytest.raises(UnknownPriceError):
             ledger.usage_insert(
+                call_id=CALL_ID,
                 user_id=None,
                 feature="scan.standard",
                 model="gpt-4o",
@@ -122,6 +143,8 @@ class TestUsageInsert:
         )
         db.execute.assert_awaited_once()
         db.commit.assert_awaited_once()
+        params = _params(db.execute.await_args.args[0])
+        assert isinstance(params["call_id"], uuid.UUID)
 
     def test_request_id_is_the_servers_or_none(self):
         assert ledger.current_request_id() is None  # outside a request: "-"
@@ -241,10 +264,43 @@ class TestSettle:
                 raise OSError("blip")
             return True
 
+        row = object()
         with patch.object(quota, "release_lease", flaky):
-            await quota.release(db, _reservation(), object())
+            await quota.release(db, _reservation(), row)
         # The row was re-executed on the retry, right before the release.
         assert attempts == [1, 2]
+        # The SAME statement (so the same call_id) both times: if the first
+        # commit had landed, the retry's insert is a no-op.
+        assert [c.args[0] for c in db.execute.await_args_list] == [row, row]
+
+    async def test_timed_out_settle_does_not_run_the_fallback(self, caplog):
+        """A settle cut off by the bound means a slow database, not a bad
+        row: no extra lease-only attempt (the lease expiry is the backstop)."""
+        db = AsyncMock()
+
+        async def hang(_stmt):
+            await anyio.sleep(5)
+
+        db.execute.side_effect = hang
+        release_lease = AsyncMock(return_value=True)
+        with (
+            patch.object(quota, "release_lease", release_lease),
+            patch.object(quota, "CLEANUP_TIMEOUT_SECONDS", 0.05),
+            anyio.fail_after(2),
+        ):
+            await quota.release(db, _reservation(), object())
+        release_lease.assert_not_awaited()
+        assert db.execute.await_count == 1
+        assert "settle timed out" in caplog.text
+        assert "usage row dropped" not in caplog.text
+
+    async def test_failed_settle_runs_the_fallback(self):
+        db = AsyncMock()
+        db.execute.side_effect = RuntimeError("CHECK violated")
+        release_lease = AsyncMock(return_value=True)
+        with patch.object(quota, "release_lease", release_lease):
+            await quota.release(db, _reservation(), object())
+        release_lease.assert_awaited_once()
 
     async def test_never_raises(self):
         db = AsyncMock()
@@ -408,14 +464,58 @@ class TestScanRecordsUsage:
         assert row["status"] == "error"
         assert store.count() == 1
 
-    async def test_cancelled_call_records_no_row(self, store, provider, rows):
+    async def test_cancelled_call_records_an_error_row(self, store, provider, rows):
+        """The reservation is kept on cancellation, so the call is recorded
+        (as error, 0 tokens) by the shielded settle."""
         provider.return_value.identify = AsyncMock(side_effect=asyncio.CancelledError())
         with pytest.raises(asyncio.CancelledError):
             await _call_scan()
+        row = _one(rows)
+        assert row["status"] == "error"
+        params = _params(row["stmt"])
+        assert params["input_tokens"] == params["output_tokens"] == 0
+        assert store.count() == 1
+        assert store.leases == {}
+
+    async def test_anyio_cancelled_scan_records_an_error_row(
+        self, store, provider, rows
+    ):
+        async def hung(_image):
+            await anyio.sleep(5)
+
+        provider.return_value.identify = hung
+        with anyio.move_on_after(0.2) as scope:
+            await _call_scan()
+        assert scope.cancelled_caught
+        assert _one(rows)["status"] == "error"
+        assert store.leases == {}
+
+    def test_kill_switch_in_the_gateway_records_no_row(
+        self, client, store, provider, rows
+    ):
+        """FeatureDisabledError never reached a provider: refunded, same
+        response as before, and no ledger row."""
+        from app.ai.registry import FEATURES
+
+        def disabled(name):
+            return dataclasses.replace(FEATURES[name], enabled=False)
+
+        with patch("app.ai.gateway.get_feature", disabled):
+            resp = client.post("/scan", files=_file())
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "scan_unavailable"}
         built, settled = rows
         assert built == []
-        assert settled == [None]  # the lease is still released
-        assert store.leases == {}
+        assert settled == [None]
+        assert store.count() == 0 and store.count(kind="month") == 0
+        provider.return_value.identify.assert_not_called()
+
+    def test_each_call_gets_its_own_call_id(self, client, store, provider, rows):
+        client.post("/scan", files=_file())
+        client.post("/scan", files=_file())
+        ids = [r["call_id"] for r in rows[0]]
+        assert len(ids) == 2 and len(set(ids)) == 2
+        assert all(isinstance(i, uuid.UUID) for i in ids)
 
     def test_ledger_build_failure_still_returns_the_books(
         self, client, store, provider, rows, caplog

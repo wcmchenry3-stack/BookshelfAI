@@ -34,6 +34,7 @@ FORBIDDEN_FRAGMENTS = (
 def test_ai_usage_columns_are_exactly_counts_and_metadata():
     assert {c.name for c in AIUsage.__table__.columns} == {
         "id",
+        "call_id",
         "user_id",
         "feature",
         "model",
@@ -93,9 +94,18 @@ def test_ledger_never_emits_per_call_sentry_events():
     assert "sentry_sdk" not in imported
 
 
+def test_call_id_is_server_generated_in_scan():
+    """call_id comes from uuid.uuid4() in /scan, never from the request."""
+    from app.api import scan
+
+    source = inspect.getsource(scan.scan)
+    assert "call_id = uuid.uuid4()" in source
+
+
 def test_usage_insert_accepts_no_content_arguments():
     params = set(inspect.signature(ledger.usage_insert).parameters)
     assert params == {
+        "call_id",
         "user_id",
         "feature",
         "model",
