@@ -36,7 +36,7 @@ class AIResult:
     provider: str
     model: str
     candidates: list[BookCandidate]
-    tier: Tier = Tier.FREE
+    tier: Tier
 
 
 def _build_provider(spec: FeatureSpec) -> VisionProvider:

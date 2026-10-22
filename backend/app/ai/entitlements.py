@@ -23,5 +23,10 @@ class Tier(enum.Enum):
 
 
 async def tier_for(db: AsyncSession, user: User) -> Tier:
-    """Return the user's tier. Always ``Tier.FREE`` for now."""
+    """Return the user's tier. Always ``Tier.FREE`` for now.
+
+    Never add request-derived inputs (headers, form fields, query params, JWT
+    claims) here: the tier must come only from the server-verified entitlement
+    stored in the database.
+    """
     return Tier.FREE
