@@ -177,13 +177,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         if (
           !current ||
           (current.status !== 'queued' && current.status !== 'pending') ||
-          inFlightRef.current.has(job.id)
+          inFlightRef.current.has(job.id) ||
+          // A refusal (limit, paused) applies to photo uploads only (POST
+          // /scan); queued text searches still go through.
+          (stopDrainRef.current && current.type === 'image')
         ) {
           continue;
         }
         await executeScanRef.current(current);
-        // Monthly/daily limit or scanning paused: leave the rest queued.
-        if (stopDrainRef.current) break;
         // Delay between jobs to avoid API burst.
         if (queuedJobs.indexOf(job) < queuedJobs.length - 1) {
           await new Promise((r) => setTimeout(r, QUEUE_DRAIN_DELAY));

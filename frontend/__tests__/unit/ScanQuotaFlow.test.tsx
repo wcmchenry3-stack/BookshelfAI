@@ -336,6 +336,51 @@ describe('refusal follow-ups', () => {
     const statuses = result.current.jobs.map((j) => j.status).sort();
     expect(statuses).toEqual(['queued', 'queued', 'queued']);
   });
+
+  it('a photo refusal still lets queued text searches through', async () => {
+    const { api } = jest.requireMock('../../lib/api') as { api: { get: jest.Mock } };
+    api.get.mockResolvedValue({ data: [] });
+    mockLoadJobs.mockResolvedValue([
+      {
+        id: 'q-img',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 1,
+        imageUri: 'file:///q.jpg',
+        retryCount: 0,
+      },
+      {
+        id: 'q-img-2',
+        type: 'image' as const,
+        status: 'queued' as const,
+        createdAt: 2,
+        imageUri: 'file:///q2.jpg',
+        retryCount: 0,
+      },
+      {
+        id: 'q-text',
+        type: 'text' as const,
+        status: 'queued' as const,
+        createdAt: 3,
+        query: 'Dune',
+        retryCount: 0,
+      },
+    ]);
+    mockPost.mockRejectedValue(refusal(402, 'scan_limit_reached', { limit: 5 }));
+    const { result } = await setup();
+    jest.useFakeTimers();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    // One refused photo, the second photo skipped, the text search sent.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledWith('/books/search', expect.anything());
+    const byId = Object.fromEntries(result.current.jobs.map((j) => [j.id, j.status]));
+    expect(byId['q-img']).toBe('queued');
+    expect(byId['q-img-2']).toBe('queued');
+    expect(byId['q-text']).not.toBe('queued');
+  });
 });
 
 describe('drain races', () => {
