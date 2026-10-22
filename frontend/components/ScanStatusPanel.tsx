@@ -6,12 +6,9 @@ import { useTheme } from '../hooks/useTheme';
 import type { ScanUsage } from '../hooks/useScanUsage';
 import { scanNoticeMessage, type ScanNotice } from '../lib/scanErrors';
 
-/** Scans left today: the tighter of the daily and the monthly allowance. */
+/** Scans left today (there is no monthly allowance, #582); never negative. */
 export function remainingToday(usage: ScanUsage): number {
-  return Math.max(
-    0,
-    Math.min(usage.daily_limit - usage.used_today, usage.monthly_limit - usage.used_month)
-  );
+  return Math.max(0, usage.daily_limit - usage.used_today);
 }
 
 interface Props {
@@ -23,8 +20,8 @@ interface Props {
 }
 
 /**
- * Usage counter ("X of Y scans used this month", scans left today) plus the
- * refusal notice (monthly/daily limit, still processing, paused). Each part
+ * Usage counter (scans left today) plus the refusal notice (daily limit,
+ * still processing, paused). Each part
  * renders only when it has data, so an offline or failed usage request just
  * hides the counter.
  */
@@ -77,9 +74,6 @@ export function ScanStatusPanel({ usage, notice, onDismissNotice, onRetryNotice 
           testID="scan-usage"
         >
           <Text style={[styles.usageText, { color: theme.colors.onSurface }]}>
-            {t('usageMonth', { used: usage.used_month, limit: usage.monthly_limit })}
-          </Text>
-          <Text style={[styles.usageSub, { color: theme.colors.onSurfaceVariant }]}>
             {t('usageToday', { count: remainingToday(usage) })}
           </Text>
         </View>
@@ -104,5 +98,4 @@ const styles = StyleSheet.create({
   dismiss: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   dismissText: { fontSize: 14, fontWeight: '600' },
   usageText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
-  usageSub: { fontSize: 12, textAlign: 'center' },
 });

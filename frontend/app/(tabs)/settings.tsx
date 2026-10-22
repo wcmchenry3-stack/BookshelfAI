@@ -4,11 +4,13 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useScanUsage } from '../../hooks/useScanUsage';
+import { remainingToday } from '../../components/ScanStatusPanel';
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
-  const { t } = useTranslation('settings');
+  // The usage figure reuses the scan screen's "scans left today" string.
+  const { t } = useTranslation(['settings', 'scan']);
   const { usageRefreshKey } = useScanJobs();
   const usage = useScanUsage(usageRefreshKey ?? 0);
   return (
@@ -22,7 +24,7 @@ export default function SettingsScreen() {
             {t('scanUsageLabel')}
           </Text>
           <Text style={[styles.usageValue, { color: theme.colors.text }]}>
-            {t('scanUsageMonth', { used: usage.used_month, limit: usage.monthly_limit })}
+            {t('usageToday', { ns: 'scan', count: remainingToday(usage) })}
           </Text>
         </View>
       ) : null}

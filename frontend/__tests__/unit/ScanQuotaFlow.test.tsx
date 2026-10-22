@@ -76,20 +76,24 @@ afterEach(() => {
 });
 
 describe('scan refusals', () => {
-  it('402 scan_limit_reached sets the monthly notice and stops the job', async () => {
-    const { result } = await setup();
+  it('402 scan_limit_reached from an older server is a generic failure, not a notice', async () => {
+    // #582: there is no monthly limit; the generic failure banner (retry /
+    // save for later) is the fallback for a 402 an older server still sends.
+    const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
+      wrapper,
+    });
+    await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
+    const { result } = hook;
     mockPost.mockRejectedValueOnce(
       refusal(402, 'scan_limit_reached', { limit: 5, used: 5, period_end: '2026-11-01' })
     );
     await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
+      await result.current.scan.startScan('image', 'file:///a.jpg');
     });
-    expect(result.current.scanNotice).toEqual({
-      kind: 'monthly_limit',
-      limit: 5,
-      periodEnd: '2026-11-01',
-    });
-    expect(result.current.jobs[0].status).toBe('queued');
+    expect(result.current.scan.scanNotice).toBeNull();
+    expect(result.current.scan.jobs[0].status).toBe('failed');
+    expect(result.current.banner.banner?.message).toBe('Scan failed');
+    expect(result.current.banner.banner?.message).not.toMatch(/month/i);
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
@@ -121,11 +125,6 @@ describe('scan refusals', () => {
   // #533 replaced 402 no_enhanced_credits with these enhanced-only refusals.
   const ENHANCED_REFUSALS: [string, ReturnType<typeof refusal>, string][] = [
     ['403 enhanced_requires_premium', refusal(403, 'enhanced_requires_premium'), 'Premium'],
-    [
-      '402 enhanced_limit_reached',
-      refusal(402, 'enhanced_limit_reached', { limit: 20, used: 20, period_end: '2026-11-01' }),
-      'this month',
-    ],
     [
       '429 enhanced_throttled',
       refusal(429, 'enhanced_throttled', {}, { 'retry-after': '3600' }),
@@ -213,14 +212,6 @@ describe('scan refusals', () => {
       await result.current.scan.startScan('image', 'file:///c.jpg');
     });
     expect(result.current.banner.banner?.actions).toBeUndefined();
-  });
-
-  it('syncs the enhanced scans left from the usage counters', async () => {
-    const { result } = await setup();
-    await act(async () => {
-      result.current.syncEnhancedScansRemaining(7);
-    });
-    expect(result.current.enhancedScansRemaining).toBe(7);
   });
 
   it('a successful scan clears the notice and bumps the usage refresh key', async () => {
@@ -365,7 +356,7 @@ describe('refusal follow-ups', () => {
     await act(async () => {
       await result.current.startScan('image', 'file:///a.jpg');
     });
-    mockPost.mockRejectedValueOnce(refusal(402, 'scan_limit_reached', { limit: 5 }));
+    mockPost.mockRejectedValueOnce(refusal(429, 'daily_scan_limit', {}, { 'retry-after': '60' }));
     await act(async () => {
       await result.current.requestEnhancedScan(result.current.jobs[0].id);
     });
@@ -374,7 +365,7 @@ describe('refusal follow-ups', () => {
     );
     expect(result.current.jobs[0].results).toHaveLength(1);
     expect(result.current.reviewingJob?.id).toBe(result.current.jobs[0].id);
-    expect(result.current.scanNotice?.kind).toBe('monthly_limit');
+    expect(result.current.scanNotice?.kind).toBe('daily_limit');
   });
 
   it('daily limit without Retry-After resets at the next UTC midnight', async () => {
@@ -405,7 +396,7 @@ describe('refusal follow-ups', () => {
     expect(mockPost).toHaveBeenCalledTimes(2);
   });
 
-  it('stops draining on a monthly limit and leaves the rest queued', async () => {
+  it('stops draining on the daily limit and leaves the rest queued', async () => {
     const queued = [1, 2, 3].map((i) => ({
       id: `q-${i}`,
       type: 'image' as const,
@@ -415,7 +406,7 @@ describe('refusal follow-ups', () => {
       retryCount: 0,
     }));
     mockLoadJobs.mockResolvedValue(queued);
-    mockPost.mockRejectedValue(refusal(402, 'scan_limit_reached', { limit: 5 }));
+    mockPost.mockRejectedValue(refusal(429, 'daily_scan_limit', {}, { 'retry-after': '60' }));
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
@@ -423,7 +414,7 @@ describe('refusal follow-ups', () => {
       // Well past the 2 s delay between drained jobs.
       await jest.advanceTimersByTimeAsync(10000);
     });
-    expect(result.current.scanNotice?.kind).toBe('monthly_limit');
+    expect(result.current.scanNotice?.kind).toBe('daily_limit');
     expect(mockPost).toHaveBeenCalledTimes(1);
     const statuses = result.current.jobs.map((j) => j.status).sort();
     expect(statuses).toEqual(['queued', 'queued', 'queued']);
@@ -476,7 +467,6 @@ describe('refusal follow-ups', () => {
 
   it.each([
     ['403 enhanced_requires_premium', refusal(403, 'enhanced_requires_premium')],
-    ['402 enhanced_limit_reached', refusal(402, 'enhanced_limit_reached')],
     ['429 enhanced_throttled', refusal(429, 'enhanced_throttled', {}, { 'retry-after': '60' })],
   ])('%s still lets queued standard photos through', async (_name, err) => {
     mockLoadJobs.mockResolvedValue([
@@ -553,7 +543,7 @@ describe('refusal follow-ups', () => {
         retryCount: 0,
       },
     ]);
-    mockPost.mockRejectedValue(refusal(402, 'scan_limit_reached', { limit: 5 }));
+    mockPost.mockRejectedValue(refusal(429, 'daily_scan_limit', {}, { 'retry-after': '60' }));
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
@@ -635,7 +625,7 @@ describe('Try again resumes the queue', () => {
 
   it('resumes the remaining queued jobs after a drain stopped on a refusal', async () => {
     mockLoadJobs.mockResolvedValue(three());
-    mockPost.mockRejectedValueOnce(refusal(402, 'scan_limit_reached', { limit: 5 }));
+    mockPost.mockRejectedValueOnce(refusal(429, 'daily_scan_limit', {}, { 'retry-after': '60' }));
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {

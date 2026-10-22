@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Directory, File, Paths } from 'expo-file-system';
@@ -8,7 +8,7 @@ import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useBanner } from '../../hooks/useBanner';
-import { enhancedScansLeft, useScanUsage } from '../../hooks/useScanUsage';
+import { useScanUsage } from '../../hooks/useScanUsage';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { hasRefusedJobs } from '../../lib/scanErrors';
 import { ScanStatusPanel } from '../../components/ScanStatusPanel';
@@ -31,24 +31,16 @@ export default function ScanScreen() {
     scanNotice,
     dismissScanNotice,
     usageRefreshKey,
-    syncEnhancedScansRemaining,
   } = useScanJobs();
+  // The enhanced re-scan offer uses `enhanced_scans_remaining` from scan
+  // responses (#582: the usage counters no longer carry an enhanced count).
   const usage = useScanUsage(usageRefreshKey ?? 0);
-  // The usage counters also say how many enhanced scans are left (#533), so
-  // the enhanced re-scan offer is right even before this session's first scan.
-  const enhancedLeft = enhancedScansLeft(usage);
-  useEffect(() => {
-    if (enhancedLeft !== null) syncEnhancedScansRemaining?.(enhancedLeft);
-  }, [enhancedLeft, syncEnhancedScansRemaining]);
   const { isConnected } = useNetworkStatus();
   // While scanning is limited or paused, a full queue is not "wait for uploads":
   // the saved photos go out once scanning is available again.
   function queueFullMessage(): string {
     const limited =
-      (scanNotice &&
-        (scanNotice.kind === 'monthly_limit' ||
-          scanNotice.kind === 'daily_limit' ||
-          scanNotice.kind === 'paused')) ||
+      (scanNotice && (scanNotice.kind === 'daily_limit' || scanNotice.kind === 'paused')) ||
       hasRefusedJobs(jobs ?? []);
     return t(limited ? 'queueFullLimited' : 'queueFull');
   }

@@ -1,5 +1,4 @@
 {
   "heading": "Configuración",
-  "scanUsageLabel": "Uso de escaneos",
-  "scanUsageMonth": "{{used}} de {{limit}} escaneos usados este mes"
+  "scanUsageLabel": "Uso de escaneos"
 }

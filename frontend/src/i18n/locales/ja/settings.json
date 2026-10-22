@@ -1,5 +1,4 @@
 {
   "heading": "設定",
-  "scanUsageLabel": "スキャン使用状況",
-  "scanUsageMonth": "今月 {{limit}} 回中 {{used}} 回スキャン済み"
+  "scanUsageLabel": "スキャン使用状況"
 }

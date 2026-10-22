@@ -27,11 +27,7 @@
   "couldNotSaveMessage": "本をウィッシュリストに追加できませんでした。再試行してください。",
   "queueFull": "キューがいっぱいです。保留中のスキャンのアップロードが完了してから追加してください。",
   "pendingUploads": "アップロード待ち: {{count}}",
-  "usageMonth": "今月使用したスキャン: {{used}} / {{limit}}",
   "usageToday": "本日の残りスキャン: {{count}}",
-  "monthlyLimit_other": "今月のスキャン {{count}} 回分をすべて使用しました。",
-  "monthlyLimitAny": "今月のスキャンをすべて使用しました。",
-  "monthlyResets": "スキャン回数は {{date}} にリセットされます。",
   "dailyLimit": "1日の上限に達しました。スキャンはUTCの午前0時にリセットされます（お住まいの地域では {{time}}）。",
   "stillProcessing": "処理中です。しばらくしてからもう一度お試しください。",
   "scanPaused": "スキャンは一時停止中です。しばらくしてからもう一度お試しください。",
@@ -40,7 +36,6 @@
   "queueFullLimited": "スキャンの上限に達しました。保存した写真は、スキャンが再び利用できるようになったときに送信されます。",
   "sendPendingNow": "今すぐ送信",
   "enhancedRequiresPremium": "強化スキャンはPremiumの機能です。",
-  "enhancedLimitReached": "今月の強化スキャンをすべて使用しました。",
   "enhancedThrottled": "最近の強化スキャンで本が見つからないことが続きました。{{time}} 以降にもう一度お試しください。",
   "enhancedThrottledLater": "最近の強化スキャンで本が見つからないことが続きました。しばらくしてからもう一度お試しください。"
 }

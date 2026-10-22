@@ -155,30 +155,10 @@
     "tone": "neutral",
     "characterLimit": 30
   },
-  "usageMonth": {
-    "description": "Counter on the scan screen: scans used this month out of the monthly limit. Limits come from the server; do not hardcode numbers.",
-    "tone": "neutral",
-    "characterLimit": 60
-  },
   "usageToday": {
     "description": "Counter on the scan screen: scans left today (daily allowance). {{count}} is a number.",
     "tone": "neutral",
     "characterLimit": 45
-  },
-  "monthlyLimit": {
-    "description": "Plural forms. Shown when the monthly scan allowance is used up. {{count}} is the monthly limit; reads 'You've used your N scans for this month'. No upsell, neutral tone.",
-    "tone": "neutral",
-    "characterLimit": 70
-  },
-  "monthlyLimitAny": {
-    "description": "Fallback when the server did not report the monthly limit number.",
-    "tone": "neutral",
-    "characterLimit": 70
-  },
-  "monthlyResets": {
-    "description": "Follows the monthly-limit message. {{date}} is a locale-formatted calendar date (UTC month boundary).",
-    "tone": "neutral",
-    "characterLimit": 60
   },
   "dailyLimit": {
     "description": "Shown when the daily scan limit is reached. Keep 'UTC' and keep {{time}}, the reset time in the user's local time.",
@@ -219,11 +199,6 @@
     "description": "Info banner when a user who is not Premium asks for an enhanced scan (enhanced scans are Premium-only). Keep 'Premium' as the product name. No upsell.",
     "tone": "neutral",
     "characterLimit": 70
-  },
-  "enhancedLimitReached": {
-    "description": "Info banner when the user has used this month's enhanced-scan allowance; the standard results stay available.",
-    "tone": "neutral",
-    "characterLimit": 80
   },
   "enhancedThrottled": {
     "description": "Info banner when enhanced scans are paused for the user because several recent enhanced scans found no books. Keep {{time}}, the local time enhanced scans are allowed again. Not an accusation.",

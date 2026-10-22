@@ -46,9 +46,6 @@ jest.mock('../../hooks/useNetworkStatus', () => ({
 const USAGE = {
   used_today: 2,
   daily_limit: 5,
-  used_month: 3,
-  monthly_limit: 5,
-  period_end: '2026-11-01',
 };
 
 beforeEach(() => {
@@ -62,18 +59,28 @@ beforeEach(() => {
 });
 
 describe('scan screen usage counter', () => {
-  it('renders monthly usage and scans left today from /scan/usage', async () => {
+  it('renders scans left today from /scan/usage, and no month counter (#582)', async () => {
     mockGet.mockResolvedValue({ data: USAGE });
-    const { findByText } = await render(<ScanScreen />);
-    expect(await findByText('Scans used this month: 3 of 5')).toBeTruthy();
-    expect(await findByText('Scans left today: 2')).toBeTruthy();
+    const { findByText, queryByText } = await render(<ScanScreen />);
+    expect(await findByText('Scans left today: 3')).toBeTruthy();
+    expect(queryByText(/month/i)).toBeNull();
     expect(mockGet).toHaveBeenCalledWith('/scan/usage');
   });
 
-  it('left today is capped by what remains this month', async () => {
-    mockGet.mockResolvedValue({ data: { ...USAGE, used_today: 0, used_month: 4 } });
+  it('left today is the daily allowance only; the null monthly fields are ignored', async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        used_today: 0,
+        daily_limit: 5,
+        used_month: null,
+        monthly_limit: null,
+        period_end: null,
+        enhanced_used_month: null,
+        enhanced_monthly_limit: null,
+      },
+    });
     const { findByText } = await render(<ScanScreen />);
-    expect(await findByText('Scans left today: 1')).toBeTruthy();
+    expect(await findByText('Scans left today: 5')).toBeTruthy();
   });
 
   it('hides the counter when the request fails', async () => {
@@ -88,18 +95,6 @@ describe('scan screen usage counter', () => {
     const { queryByTestId } = await render(<ScanScreen />);
     expect(mockGet).not.toHaveBeenCalled();
     expect(queryByTestId('scan-usage')).toBeNull();
-  });
-
-  it('renders the monthly limit notice with a localized reset date and no upgrade CTA', async () => {
-    mockGet.mockResolvedValue({ data: USAGE });
-    mockNotice = { kind: 'monthly_limit', limit: 5, periodEnd: '2026-11-01' };
-    const { findByText, queryByText } = await render(<ScanScreen />);
-    expect(
-      await findByText(
-        "You've used your 5 scans for this month. Your scans reset on November 1, 2026."
-      )
-    ).toBeTruthy();
-    expect(queryByText(/upgrade/i)).toBeNull();
   });
 
   it('renders the daily limit notice with the local reset time', async () => {
@@ -127,10 +122,11 @@ describe('scan screen usage counter', () => {
 });
 
 describe('settings usage row', () => {
-  it('renders used and limit this month', async () => {
+  it('renders scans left today, and no month figure (#582)', async () => {
     mockGet.mockResolvedValue({ data: USAGE });
-    const { findByText } = await render(<SettingsScreen />);
-    expect(await findByText('3 of 5 scans used this month')).toBeTruthy();
+    const { findByText, queryByText } = await render(<SettingsScreen />);
+    expect(await findByText('Scans left today: 3')).toBeTruthy();
+    expect(queryByText(/month/i)).toBeNull();
   });
 
   it('is hidden when the request fails', async () => {
@@ -162,12 +158,12 @@ describe('notice actions and refresh', () => {
   it('keeps the last usage when a refetch fails', async () => {
     mockGet.mockResolvedValueOnce({ data: USAGE });
     const view = await render(<SettingsScreen />);
-    expect(await view.findByText('3 of 5 scans used this month')).toBeTruthy();
+    expect(await view.findByText('Scans left today: 3')).toBeTruthy();
     mockGet.mockRejectedValueOnce(new Error('blip'));
     mockRefreshKey = 1;
     await view.rerender(<SettingsScreen />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
-    expect(view.getByText('3 of 5 scans used this month')).toBeTruthy();
+    expect(view.getByText('Scans left today: 3')).toBeTruthy();
   });
 
   it('settings refetches when the usage refresh key changes', async () => {
@@ -202,7 +198,7 @@ describe('queue-full message and offline Try again', () => {
   it('does not say wait for uploads while the scan limit is the reason', async () => {
     mockGet.mockResolvedValue({ data: USAGE });
     mockQueueFull = true;
-    mockNotice = { kind: 'monthly_limit', limit: 5 };
+    mockNotice = { kind: 'daily_limit', resetsAt: Date.UTC(2026, 9, 23) };
     const view = await render(<ScanScreen />);
     await trySearch(view);
     expect(mockShowBanner).toHaveBeenCalledWith(

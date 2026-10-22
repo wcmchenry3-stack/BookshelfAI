@@ -44,7 +44,7 @@ interface Props {
   preselect?: boolean;
   /** When set, offers a re-scan with the stronger model. */
   onEnhance?: () => void;
-  /** Enhanced scans left this month; null when not known. */
+  /** Enhanced scans left today (the daily allowance left, #582); null when not known. */
   enhancedScansRemaining?: number | null;
 }
 

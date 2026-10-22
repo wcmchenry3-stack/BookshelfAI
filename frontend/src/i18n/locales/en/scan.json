@@ -49,12 +49,7 @@
   "enhancedNoBooksFound": "Enhanced scan couldn't find any books either",
   "enhancedNoNewBooks": "Enhanced scan didn't find any more books. Showing your earlier results.",
   "enhancedFailed": "Enhanced scan failed. Showing your earlier results.",
-  "usageMonth": "Scans used this month: {{used}} of {{limit}}",
   "usageToday": "Scans left today: {{count}}",
-  "monthlyLimit_one": "You've used your {{count}} scan for this month.",
-  "monthlyLimit_other": "You've used your {{count}} scans for this month.",
-  "monthlyLimitAny": "You've used all your scans for this month.",
-  "monthlyResets": "Your scans reset on {{date}}.",
   "dailyLimit": "Daily limit reached. Scanning resets at midnight UTC ({{time}} your time).",
   "stillProcessing": "Still processing. Please try again in a moment.",
   "scanPaused": "Scanning is paused. Please try again later.",
@@ -63,7 +58,6 @@
   "queueFullLimited": "You've reached your scan limit. Your saved photos will be sent when scanning is available again.",
   "sendPendingNow": "Send now",
   "enhancedRequiresPremium": "Enhanced scans are part of Premium.",
-  "enhancedLimitReached": "You've used all your enhanced scans for this month.",
   "enhancedThrottled": "Several recent enhanced scans found no books. Try again after {{time}}.",
   "enhancedThrottledLater": "Several recent enhanced scans found no books. Please try again later."
 }

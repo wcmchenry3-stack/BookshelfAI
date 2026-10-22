@@ -1,5 +1,4 @@
 {
   "heading": "الإعدادات",
-  "scanUsageLabel": "استخدام المسح",
-  "scanUsageMonth": "{{used}} من {{limit}} عملية مسح مستخدمة هذا الشهر"
+  "scanUsageLabel": "استخدام المسح"
 }
