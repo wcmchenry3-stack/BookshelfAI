@@ -286,9 +286,9 @@ class TestRefund:
         with (
             patch.object(quota, "global_units_today", AsyncMock(return_value=0)),
             patch.object(quota, "acquire_lease", AsyncMock(return_value=uuid.uuid4())),
-            patch.object(quota, "reserve_unit", AsyncMock(return_value=1)),
+            patch.object(quota, "take_unit", AsyncMock(return_value=1)),
             patch.object(
-                quota, "refund_unit", AsyncMock(side_effect=OSError("db down"))
+                quota, "give_back_unit", AsyncMock(side_effect=OSError("db down"))
             ),
             patch.object(quota, "release_lease", AsyncMock(return_value=True)),
         ):
@@ -313,9 +313,7 @@ class TestFailClosed:
                 patch.object(
                     quota, "acquire_lease", AsyncMock(return_value=uuid.uuid4())
                 ),
-                patch.object(
-                    quota, "reserve_unit", AsyncMock(side_effect=OSError("db"))
-                ),
+                patch.object(quota, "take_unit", AsyncMock(side_effect=OSError("db"))),
                 patch.object(quota, "release_lease", AsyncMock(return_value=True)),
             ):
                 resp = TestClient(app, raise_server_exceptions=False).post(
@@ -378,8 +376,8 @@ class TestRequestSession:
             "acquire_lease",
             "renew_lease",
             "release_lease",
-            "reserve_unit",
-            "refund_unit",
+            "take_unit",
+            "give_back_unit",
         )
         with contextlib.ExitStack() as stack:
             for name in names:

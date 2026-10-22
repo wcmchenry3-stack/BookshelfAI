@@ -17,6 +17,8 @@ class FakeQuotaStore:
         self.default_user = default_user
         self.rows: dict[tuple[uuid.UUID, str, str, date], int] = {}
         self.leases: dict[uuid.UUID, uuid.UUID] = {}
+        # The lease row's unit flags (#590): user_id -> flags set.
+        self.flags: dict[uuid.UUID, set[str]] = {}
         self.expired: set[uuid.UUID] = set()
         self.extra_global = 0
         self.releases = 0
@@ -40,6 +42,7 @@ class FakeQuotaStore:
             return None
         self.expired.discard(user_id)
         self.leases[user_id] = lease_id = uuid.uuid4()
+        self.flags[user_id] = set()  # a takeover resets them
         return lease_id
 
     async def renew_lease(self, _db, user_id, lease_id, seconds) -> bool:
@@ -53,6 +56,7 @@ class FakeQuotaStore:
         self.releases += 1
         if self.leases.get(user_id) == lease_id:
             del self.leases[user_id]
+            self.flags.pop(user_id, None)
             return True
         return False
 
@@ -68,6 +72,30 @@ class FakeQuotaStore:
         key = (user_id, feature, kind, start)
         if key in self.rows:
             self.rows[key] = max(0, self.rows[key] - 1)
+
+    async def take_unit(
+        self, _db, user_id, lease_id, flag, feature, kind, start, limit
+    ):
+        assert flag in quota.UNIT_FLAGS
+        if limit <= 0:
+            return None
+        if self.leases.get(user_id) != lease_id:
+            raise quota.ScanInProgress("scan_in_progress")
+        used = await self.reserve_unit(_db, user_id, feature, kind, start, limit)
+        if used is not None:
+            self.flags.setdefault(user_id, set()).add(flag)
+        return used
+
+    async def give_back_unit(self, _db, user_id, lease_id, flag, feature, kind, start):
+        assert flag in quota.UNIT_FLAGS
+        if self.leases.get(user_id) != lease_id:
+            return quota.UNIT_LEASE_LOST
+        flags = self.flags.setdefault(user_id, set())
+        if flag not in flags:
+            return quota.UNIT_NOT_TAKEN
+        flags.discard(flag)
+        await self.refund_unit(_db, user_id, feature, kind, start)
+        return quota.UNIT_GIVEN_BACK
 
     async def units_used(self, _db, user_id, feature, kind, start) -> int:
         return self.rows.get((user_id, feature, kind, start), 0)
@@ -154,6 +182,8 @@ class FakeQuotaStore:
             "release_lease",
             "reserve_unit",
             "refund_unit",
+            "take_unit",
+            "give_back_unit",
             "units_used",
             "zero_result_throttle",
             "record_zero_result",

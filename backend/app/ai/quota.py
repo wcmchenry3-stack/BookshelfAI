@@ -42,6 +42,25 @@ In order (#528):
    :data:`SCAN_QUOTA_FEATURE`. The ``feature`` column stays so later AI
    features can have their own allowance.
 
+**Unit flags (#590).** Each unit is taken by :func:`take_unit`: the
+``ai_quota`` increment and a flag on the request's own lease row
+(``ai_inflight.daily_taken`` / ``monthly_taken`` / ``enhanced_taken``, matched
+on ``lease_id``) commit together; if the lease is no longer ours nothing is
+taken (:class:`ScanInProgress`). So after a commit whose acknowledgement was
+lost, the flag shows whether the unit landed. Every give-back of a unit
+(:func:`refund`, and the ``except`` in :func:`reserve`, which covers a lost
+acknowledgement on a take) goes through :func:`give_back_unit`: it clears the
+flag and takes the unit off in one commit, only if the flag was set, so a
+retry gives nothing back twice; the give-backs are therefore retried like
+the others (#567 had made them one-shot when nothing gated them). The settle
+in :func:`release` needs no flag: it deletes the lease row, flags and all, in
+the same commit as its own give-back (the zero-result decision). If another
+request took over the expired lease, the takeover resets the flags (they
+belong to the new lease): a unit this request knows it took (its take was
+acknowledged) is then given back once without the gate, on the first attempt
+only; a unit whose take was never acknowledged stays charged (fails toward
+charging).
+
 **Enhanced scans (#533).** ``reserve(..., enhanced=True)`` adds three steps:
 
 - right after the tier is resolved, a non-Premium tier is refused
@@ -74,9 +93,8 @@ When a row brings the count to the threshold and no row of the user with
 true`` (the claim commits with it) and one Sentry warning is sent after the
 commit (:func:`send_zero_result_warning`): at most one per user per window.
 Every other give-back of the enhanced unit (:func:`refund`, a refusal in
-:func:`reserve`) is attempted once only: ``refund_unit`` cannot show whether a
-failed attempt committed, and a repeat would take a second unit off, so a
-failure leaves the user charged. Threshold 0: with
+:func:`reserve`) goes through the same gate as the shared units (see
+**Unit flags** below). Threshold 0: with
 ``charge`` every zero-result enhanced scan is charged (no rows, no warning);
 with ``throttle`` every enhanced scan is refused. A repeat served from a
 scan record (#585) makes no provider call and must not pass a
@@ -95,9 +113,9 @@ the usage-ledger row for the call (#530) and the call's
 are committed together with the lease delete. Without a settlement the cost
 estimate is given back. On
 ``ScanUnavailableError`` / ``httpx.ConnectError`` it first calls
-:func:`refund`, which gives back the daily and monthly units, never below
-zero. Any other outcome (success, an empty result, another error, a cancelled
-request) keeps the reservation: the provider may have been paid.
+:func:`refund`, which gives back the daily and monthly units (and the
+enhanced unit) at most once each, never below zero. Any other outcome
+(success, an empty result, another error, a cancelled request) keeps the reservation: the provider may have been paid.
 
 Windows are UTC: the day window starts at UTC midnight, the month window on
 the 1st of the UTC calendar month (OD-10). ``period_end`` is the first day of
@@ -165,6 +183,16 @@ PURGE_BATCH_SIZE = 5_000
 # Upper bound on batches per window kind per cleanup run.
 PURGE_MAX_BATCHES = 20
 ZERO_RESULT_RETENTION_DAYS = 30
+
+# The ai_inflight flags (#590): which units the lease holder took.
+FLAG_DAILY = "daily_taken"
+FLAG_MONTHLY = "monthly_taken"
+FLAG_ENHANCED = "enhanced_taken"
+UNIT_FLAGS = (FLAG_DAILY, FLAG_MONTHLY, FLAG_ENHANCED)
+# What give_back_unit reports.
+UNIT_GIVEN_BACK = "given_back"
+UNIT_NOT_TAKEN = "not_taken"
+UNIT_LEASE_LOST = "lease_lost"
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +384,9 @@ async def acquire_lease(
         set_={
             "lease_id": stmt.excluded.lease_id,
             "lease_expires_at": stmt.excluded.lease_expires_at,
+            # The old holder's unit flags (#590) do not carry over to the
+            # new lease: the new holder has taken nothing yet.
+            **{flag: False for flag in UNIT_FLAGS},
         },
         where=AIInflight.lease_expires_at < _clock_timestamp(),
     ).returning(AIInflight.lease_id)
@@ -394,21 +425,16 @@ async def release_lease(
     return bool(result.rowcount)
 
 
-async def reserve_unit(
-    db: AsyncSession,
+def _unit_upsert(
     user_id: uuid.UUID,
     feature: str,
     window_kind: str,
     window_start: date,
     limit: int,
-) -> int | None:
-    """Reserve one unit in the window if under ``limit``; return the new count,
-    or ``None`` when the limit is reached (nothing changes then)."""
-    if limit <= 0:
-        # The insert path would create the row at 1; a zero allowance must
-        # refuse without writing.
-        return None
-    stmt = (
+):
+    """``units_used + 1`` only while under ``limit`` (#509), returning the new
+    count, or no row when the limit is reached."""
+    return (
         insert(AIQuota)
         .values(
             user_id=user_id,
@@ -429,10 +455,133 @@ async def reserve_unit(
         )
         .returning(AIQuota.units_used)
     )
-    result = await db.execute(stmt)
+
+
+async def reserve_unit(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    feature: str,
+    window_kind: str,
+    window_start: date,
+    limit: int,
+) -> int | None:
+    """Reserve one unit in the window if under ``limit``; return the new count,
+    or ``None`` when the limit is reached (nothing changes then). Not tied to
+    a lease: :func:`reserve` uses :func:`take_unit`."""
+    if limit <= 0:
+        # The insert path would create the row at 1; a zero allowance must
+        # refuse without writing.
+        return None
+    result = await db.execute(
+        _unit_upsert(user_id, feature, window_kind, window_start, limit)
+    )
     used = result.scalar_one_or_none()
     await db.commit()
     return int(used) if used is not None else None
+
+
+def _flag_column(flag: str):
+    if flag not in UNIT_FLAGS:
+        raise ValueError(f"unknown unit flag: {flag}")
+    return getattr(AIInflight, flag)
+
+
+def _held(user_id: uuid.UUID, lease_id: uuid.UUID):
+    return and_(AIInflight.user_id == user_id, AIInflight.lease_id == lease_id)
+
+
+async def take_unit(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    lease_id: uuid.UUID,
+    flag: str,
+    feature: str,
+    window_kind: str,
+    window_start: date,
+    limit: int,
+) -> int | None:
+    """Reserve one unit under the lease ``lease_id`` (#590): the ``ai_quota``
+    increment and the lease row's ``flag`` are written in one transaction, so
+    after a commit whose acknowledgement was lost the flag shows whether the
+    unit landed. Returns the new count, or ``None`` when the limit is reached
+    (nothing changes then). Raises :class:`ScanInProgress` without taking
+    anything when ``lease_id`` no longer holds the lease (fails closed)."""
+    _flag_column(flag)
+    if limit <= 0:
+        # Refuses without writing, as reserve_unit.
+        return None
+    marked = await db.execute(
+        update(AIInflight)
+        .where(_held(user_id, lease_id))
+        .values({flag: True})
+        .returning(AIInflight.lease_id)
+    )
+    if marked.scalar_one_or_none() is None:
+        await db.commit()  # nothing was written
+        raise ScanInProgress("scan_in_progress")
+    result = await db.execute(
+        _unit_upsert(user_id, feature, window_kind, window_start, limit)
+    )
+    used = result.scalar_one_or_none()
+    if used is None:
+        # Refused: clear the flag again in the same transaction (each unit is
+        # taken at most once per lease, so it was clear before). Not a
+        # rollback, which would expire the caller's ORM objects.
+        await db.execute(
+            update(AIInflight).where(_held(user_id, lease_id)).values({flag: False})
+        )
+        await db.commit()
+        return None
+    await db.commit()
+    return int(used)
+
+
+async def give_back_unit(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    lease_id: uuid.UUID,
+    flag: str,
+    feature: str,
+    window_kind: str,
+    window_start: date,
+) -> str:
+    """The gated give-back (#590): clear the lease row's ``flag`` (only while
+    ``lease_id`` holds the lease and the flag is set) and, only if it was
+    cleared, take one unit off in the same transaction, never below zero. A
+    retry after a commit whose acknowledgement was lost finds the flag clear
+    and gives nothing back, so a unit comes back at most once.
+
+    Returns :data:`UNIT_GIVEN_BACK`, :data:`UNIT_NOT_TAKEN` (the lease is
+    held but the flag is clear: never taken, or already given back) or
+    :data:`UNIT_LEASE_LOST` (another request holds the lease now; nothing
+    changes)."""
+    column = _flag_column(flag)
+    cleared = await db.execute(
+        update(AIInflight)
+        .where(_held(user_id, lease_id), column.is_(True))
+        .values({flag: False})
+        .returning(AIInflight.lease_id)
+    )
+    if cleared.scalar_one_or_none() is None:
+        held = await db.execute(
+            select(AIInflight.lease_id).where(_held(user_id, lease_id))
+        )
+        still_held = held.scalar_one_or_none() is not None
+        await db.commit()
+        return UNIT_NOT_TAKEN if still_held else UNIT_LEASE_LOST
+    await db.execute(
+        update(AIQuota)
+        .where(
+            AIQuota.user_id == user_id,
+            AIQuota.feature == feature,
+            AIQuota.window_kind == window_kind,
+            AIQuota.window_start == window_start,
+            AIQuota.units_used > 0,
+        )
+        .values(units_used=AIQuota.units_used - 1)
+    )
+    await db.commit()
+    return UNIT_GIVEN_BACK
 
 
 async def refund_unit(
@@ -922,53 +1071,143 @@ async def _alert(
         )
 
 
-async def _refund_window(
-    db: AsyncSession,
-    reservation: Reservation,
-    window_kind: str,
-    start: date,
-) -> None:
-    """Give back one daily or monthly unit. Attempted once only (#567):
-    ``refund_unit`` is not gated, so a retry after a commit whose
-    acknowledgement was lost would give a second unit back; a failure leaves
-    the user charged."""
-    await _give_back(
-        db,
-        f"{window_kind} refund",
-        lambda: refund_unit(
-            db, reservation.user_id, reservation.feature, window_kind, start
+@dataclass(frozen=True)
+class _Unit:
+    """One unit a scan takes: its lease-row flag and its ai_quota key."""
+
+    flag: str
+    feature: str
+    window_kind: str
+    window_start: date
+    what: str
+
+
+def _units(reservation: Reservation) -> tuple[_Unit, _Unit, _Unit]:
+    """The daily, monthly and enhanced month units of ``reservation``."""
+    return (
+        _Unit(
+            FLAG_DAILY,
+            reservation.feature,
+            WINDOW_DAY,
+            reservation.day,
+            "daily",
         ),
-        attempts=1,
-    )
-
-
-async def _refund_enhanced(db: AsyncSession, reservation: Reservation) -> None:
-    """Give back the enhanced month unit (#533). Attempted once only:
-    ``refund_unit`` has nothing to show whether a failed attempt committed (an
-    acknowledgement lost), and a repeat would take a second unit off. A
-    failure leaves the user charged (fails safe)."""
-    await _give_back(
-        db,
-        "enhanced month refund",
-        lambda: refund_unit(
-            db,
-            reservation.user_id,
+        _Unit(
+            FLAG_MONTHLY,
+            reservation.feature,
+            WINDOW_MONTH,
+            reservation.month,
+            "monthly",
+        ),
+        _Unit(
+            FLAG_ENHANCED,
             ENHANCED_QUOTA_FEATURE,
             WINDOW_MONTH,
             reservation.month,
+            "enhanced month",
         ),
-        attempts=1,
     )
+
+
+async def _return_unit(
+    db: AsyncSession, reservation: Reservation, unit: _Unit, *, taken: bool
+) -> None:
+    """Give back one unit at most once (#590), bounded and retried like any
+    give-back (:func:`_give_back`).
+
+    The gate is :func:`give_back_unit`: the flag on the request's lease row
+    is cleared in the same commit as the decrement, so a retry after a lost
+    acknowledgement finds it clear and gives nothing back, and a unit whose
+    take was never acknowledged is given back only if its flag shows it
+    landed. That is why the refunds retry again (#567 had made them
+    one-shot because nothing gated them).
+
+    ``taken`` means this request knows the unit was taken (its take was
+    acknowledged). If another request took over the expired lease, the
+    flags belong to the new lease (the takeover resets them), so the gate
+    cannot show anything: on the first attempt only, a known-taken unit is
+    then given back once without the gate (:func:`refund_unit`, as before
+    #590). A later attempt never does that, since the first may have
+    committed. A unit whose take was not acknowledged and whose lease was
+    taken over stays charged (fails toward charging)."""
+    attempts = 0
+    last_outcome: str | None = None
+    fallback_done = False
+
+    async def op() -> None:
+        nonlocal attempts, last_outcome, fallback_done
+        attempts += 1
+        last_outcome = None
+        outcome = await give_back_unit(
+            db,
+            reservation.user_id,
+            reservation.lease_id,
+            unit.flag,
+            unit.feature,
+            unit.window_kind,
+            unit.window_start,
+        )
+        last_outcome = outcome
+        if outcome == UNIT_LEASE_LOST and taken and attempts == 1:
+            await refund_unit(
+                db,
+                reservation.user_id,
+                unit.feature,
+                unit.window_kind,
+                unit.window_start,
+            )
+            fallback_done = True
+
+    result = await _give_back(db, f"{unit.what} refund", op)
+    # An accepted exception (#590), tracked: a unit left charged.
+    if result != GIVE_BACK_DONE:
+        send_unit_kept_warning(unit, UNIT_KEPT_GIVE_BACK_FAILED)
+    elif last_outcome == UNIT_LEASE_LOST and not taken:
+        send_unit_kept_warning(unit, UNIT_KEPT_LEASE_LOST_UNACKNOWLEDGED)
+    elif last_outcome == UNIT_LEASE_LOST and not fallback_done:
+        send_unit_kept_warning(unit, UNIT_KEPT_FALLBACK_FAILED)
+
+
+# Why a unit the request attempted to take was left charged (the fingerprint's
+# second element and the ``reason`` tag of the Sentry warning).
+UNIT_KEPT_LEASE_LOST_UNACKNOWLEDGED = "lease_lost_unacknowledged"
+UNIT_KEPT_FALLBACK_FAILED = "fallback_failed"
+UNIT_KEPT_GIVE_BACK_FAILED = "give_back_failed"
+_UNIT_TAGS = {
+    FLAG_DAILY: "daily",
+    FLAG_MONTHLY: "monthly",
+    FLAG_ENHANCED: "enhanced",
+}
+
+
+def send_unit_kept_warning(unit: _Unit, reason: str) -> None:
+    """One Sentry warning and one log line: a unit this request attempted to
+    take is left charged. Only the unit and the reason: no user id, email,
+    lease id or content (emptied, stripped scopes, :mod:`app.ai.alerts`).
+    Never raises, never changes the give-back's outcome."""
+    unit_tag = _UNIT_TAGS.get(unit.flag, "unknown")
+    try:
+        alerts.capture_service_warning(
+            "ai-quota: a reserved unit could not be given back",
+            fingerprint=["ai-quota-unit-kept", reason],
+            tags={"unit": unit_tag, "reason": reason},
+            extras={"unit": unit_tag, "reason": reason},
+        )
+    except Exception:  # a warning must never fail a request
+        logger.exception("ai_quota: could not send the unit-kept warning")
+    logger.warning("ai_quota: unit kept (unit=%s, reason=%s)", unit_tag, reason)
 
 
 async def refund(db: AsyncSession, reservation: Reservation) -> None:
     """Give back the daily and monthly units, and the enhanced month unit of
-    an enhanced reservation (provider unavailable or never reached). Never
-    raises; does not release the lease (call :func:`release`)."""
-    await _refund_window(db, reservation, WINDOW_DAY, reservation.day)
-    await _refund_window(db, reservation, WINDOW_MONTH, reservation.month)
+    an enhanced reservation (provider unavailable or never reached), each at
+    most once (:func:`_return_unit`). Never raises; does not release the
+    lease (call :func:`release`)."""
+    daily, monthly, enhanced = _units(reservation)
+    await _return_unit(db, reservation, daily, taken=True)
+    await _return_unit(db, reservation, monthly, taken=True)
     if reservation.enhanced:
-        await _refund_enhanced(db, reservation)
+        await _return_unit(db, reservation, enhanced, taken=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1067,7 +1306,32 @@ async def reserve(
         zero_result_action=ai.zero_result_action,
     )
 
-    daily_taken = monthly_taken = enhanced_taken = False
+    daily, monthly, enhanced_unit = _units(reservation)
+    # Units whose take was attempted, and whether it was acknowledged. After
+    # a lost acknowledgement the local state says "attempted, not taken"; the
+    # flag on the lease row is the truth (#590).
+    attempted: list[_Unit] = []
+    taken: set[str] = set()
+
+    async def take(unit: _Unit, limit: int) -> int | None:
+        attempted.append(unit)
+        used = await take_unit(
+            db,
+            user.id,
+            lease_id,
+            unit.flag,
+            unit.feature,
+            unit.window_kind,
+            unit.window_start,
+            limit,
+        )
+        if used is None:
+            # Refused, and the refusal was acknowledged: nothing was taken.
+            attempted.remove(unit)
+        else:
+            taken.add(unit.flag)
+        return used
+
     try:
         if enhanced and reservation.zero_result_action == ZERO_RESULT_ACTION_THROTTLE:
             retry_after = await zero_result_throttle(
@@ -1078,57 +1342,37 @@ async def reserve(
             )
             if retry_after is not None:
                 raise EnhancedThrottled(retry_after)
-        if (
-            await reserve_unit(db, user.id, feature, WINDOW_DAY, today, allowance.daily)
-            is None
-        ):
+        if await take(daily, allowance.daily) is None:
             raise DailyLimitReached(retry_after=seconds_until_utc_midnight(now))
-        daily_taken = True
-        if (
-            await reserve_unit(
-                db, user.id, feature, WINDOW_MONTH, month, allowance.monthly
-            )
-            is None
-        ):
+        if await take(monthly, allowance.monthly) is None:
             used = await units_used(db, user.id, feature, WINDOW_MONTH, month)
             raise MonthlyLimitReached(
                 limit=allowance.monthly, used=used, period_end=period_end(today)
             )
-        monthly_taken = True
-        if enhanced:
-            if (
-                await reserve_unit(
-                    db,
-                    user.id,
-                    ENHANCED_QUOTA_FEATURE,
-                    WINDOW_MONTH,
-                    month,
-                    reservation.enhanced_allowance,
-                )
-                is None
-            ):
-                used = await units_used(
-                    db, user.id, ENHANCED_QUOTA_FEATURE, WINDOW_MONTH, month
-                )
-                raise EnhancedLimitReached(
-                    limit=reservation.enhanced_allowance,
-                    used=used,
-                    period_end=period_end(today),
-                )
-            enhanced_taken = True
+        if (
+            enhanced
+            and await take(enhanced_unit, reservation.enhanced_allowance) is None
+        ):
+            used = await units_used(
+                db, user.id, ENHANCED_QUOTA_FEATURE, WINDOW_MONTH, month
+            )
+            raise EnhancedLimitReached(
+                limit=reservation.enhanced_allowance,
+                used=used,
+                period_end=period_end(today),
+            )
         # The upserts above are unbounded, and the lease aged while they ran.
         # Restart its clock so the whole timeout_s + 30 s covers the provider
         # call, and stop if a stall let it expire and another request take it.
         if not await renew_lease(db, user.id, lease_id, seconds):
             raise ScanInProgress("scan_in_progress")
     except BaseException:
-        # Includes CancelledError: give back what was taken, then propagate.
-        if enhanced_taken:
-            await _refund_enhanced(db, reservation)
-        if monthly_taken:
-            await _refund_window(db, reservation, WINDOW_MONTH, month)
-        if daily_taken:
-            await _refund_window(db, reservation, WINDOW_DAY, today)
+        # Includes CancelledError and a take whose commit acknowledgement was
+        # lost: give back every unit whose take was attempted, newest first,
+        # gated on the lease row's flags (a refused or never-landed take
+        # gives nothing back), then propagate.
+        for unit in reversed(attempted):
+            await _return_unit(db, reservation, unit, taken=unit.flag in taken)
         # Releases the lease and gives back the cost estimate.
         await release(db, reservation)
         raise
