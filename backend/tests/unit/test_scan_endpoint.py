@@ -627,7 +627,7 @@ class TestNormaliseConcurrencySetting:
     def test_default_is_2(self):
         from app.core.config import Settings
 
-        assert Settings(database_url=self._DB).scan_normalise_concurrency == 2
+        assert Settings(database_url=self._DB).scan_normalise_concurrency == 1
 
     @pytest.mark.parametrize("value", [0, 9])
     def test_out_of_bounds_rejected(self, value):

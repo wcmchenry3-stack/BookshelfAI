@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     # How many /scan image normalisations (decode + resize) may run at once in
     # worker threads, per process. Each can hold a few hundred MB for a
     # full-size image, so this bounds peak memory; extra requests wait.
-    scan_normalise_concurrency: int = Field(default=2, ge=1, le=8)
+    scan_normalise_concurrency: int = Field(default=1, ge=1, le=8)
     google_books_api_key: str = ""
     open_library_base_url: str = "https://openlibrary.org"
 
