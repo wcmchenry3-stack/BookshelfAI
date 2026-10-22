@@ -103,10 +103,15 @@ def build_registry(specs: list[FeatureSpec]) -> MappingProxyType[str, FeatureSpe
 
 
 # max_image_long_edge_px is enforced by the scan path (app.ai.images, #529).
-# Not yet enforced: max_images, effort and est_cost_ceiling_micros are declared
-# here so later stories (ledger, usage) have one source of truth.
-# est_cost_ceiling_micros is a rough upper estimate of one call at list prices
-# (image tokens at "high" detail plus a full max_tokens reply).
+# Not yet enforced: max_images and effort are declared here so later stories
+# have one source of truth.
+# est_cost_ceiling_micros is the admission estimate for the daily cost
+# breaker (app.ai.breaker, #531): it is reserved against the Free daily
+# ceiling before the provider is called, and settled at the real cost after.
+# It is a rough upper estimate of one call at list prices (image tokens at
+# "high" detail plus a full max_tokens reply), so changing a feature's model
+# (env or ai_settings override), max_tokens or image size needs a new
+# estimate here.
 FEATURES: MappingProxyType[str, FeatureSpec] = build_registry(
     [
         FeatureSpec(

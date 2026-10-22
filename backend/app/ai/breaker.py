@@ -16,8 +16,11 @@ away (as the quota primitives do). It is one conditional upsert:
 
 - Free (``enforce=True``): ``INSERT ... ON CONFLICT (day) DO UPDATE SET
   reserved = reserved + est WHERE reserved + settled + est <= ceiling``.
-  Postgres serialises upserts on the same key, so the day's reserved plus
-  settled spend can never pass the ceiling through Free reservations. A
+  Postgres serialises upserts on the same key, so Free reservations cannot
+  take the day's reserved plus settled spend past the ceiling. The total can
+  still pass it only by what in-flight calls actually cost over their
+  estimate (settled at the real cost) and by Premium spend, which is not
+  gated. A
   refusal changes nothing and becomes ``503 ai_unavailable`` before the
   provider is called. The ceiling is the ``ai_settings`` key
   ``breaker.free_daily_ceiling_micros``; 0 pauses every Free scan.
@@ -37,14 +40,22 @@ the reservation) and commits.
 What a call settles (``app/api/scan.py``):
 
 - the provider answered (``ok``/``refused``/``truncated``): its priced cost;
-- the provider was unavailable, never reached or timed out (``refunded``/
-  ``timeout``; the user's units are refunded too): nothing, the estimate is
-  given back;
+- the provider timed out (``timeout``; the user's units are refunded): the
+  estimate, because the request reached the provider and is likely billed;
+- the provider was unavailable or never reached (``refunded``, or the
+  gateway kill switch; the user's units are refunded too): nothing, the
+  estimate is given back;
 - any other error after the reservation, or a cancelled request (``error``;
   the units are kept because the provider may have been paid): the estimate
-  is kept as settled spend. The ledger records 0 for these rows because the
-  real cost is unknown; the breaker counts the estimate so it errs on the
-  safe side.
+  is kept as settled spend. The ledger records 0 for these (and ``timeout``)
+  rows because the real cost is unknown; the breaker counts the estimate so
+  it errs on the safe side.
+
+Idempotency: the settle is executed only when the usage-ledger row was
+actually inserted in that transaction (``ON CONFLICT (call_id) DO NOTHING
+RETURNING``). A retry after a commit whose acknowledgement was lost finds the
+row already there, which proves the earlier attempt (spend and lease delete)
+committed, so the spend is not added twice.
 
 Alerts
 ------
@@ -55,7 +66,9 @@ bit WHERE alerted_mask & bit = 0 RETURNING``. Only one request can win each
 bit per day; the winner sends ONE Sentry event (level ``warning``) with
 fingerprint ``["ai-breaker", "<day>", "<pct>"]``, tags ``feature``, ``model``
 and ``status`` of the call that crossed it, and the day's totals and ceiling
-as extras. Never a user id or any content. The event is sent only after the
+as extras. Never a user id or any content: the event is captured in a forked,
+emptied Sentry scope, so the request's user and tags are not attached (and the
+alert's are not left on the request). The event is sent only after the
 bit is committed, so it is sent at most once. The thresholds are fixed in code;
 the ceiling they are a percentage of is the ``ai_settings`` dial. With a
 ceiling of 0 no alerts are sent (Free is paused on purpose).
@@ -264,24 +277,35 @@ def send_alert(
 ) -> None:
     """One Sentry warning for ``pct`` on ``day``. Never raises."""
     try:
-        sentry_sdk.capture_message(
-            f"ai-breaker: AI spend reached {pct}% of the Free daily ceiling",
-            level="warning",
-            fingerprint=["ai-breaker", day.isoformat(), str(pct)],
-            tags={
+        # The request's scopes carry the user id (set_sentry_user in
+        # get_current_user), tags and breadcrumbs. The alert is about the
+        # service, not a user: fork both scopes, empty them, and capture there,
+        # so nothing of the request leaks in and nothing of the alert leaks
+        # into later events of the same request.
+        with sentry_sdk.isolation_scope() as scope:
+            scope.clear()
+            current = sentry_sdk.get_current_scope()
+            current.clear()
+            for key, value in {
                 "feature": settlement.feature,
                 "model": settlement.model,
                 "status": settlement.status,
                 "breaker_threshold_pct": str(pct),
-            },
-            extras={
+            }.items():
+                current.set_tag(key, value)
+            for key, value in {
                 "day": day.isoformat(),
                 "threshold_pct": pct,
                 "settled_micros": settled_micros,
                 "reserved_micros": reserved_micros,
                 "ceiling_micros": ceiling_micros,
-            },
-        )
+            }.items():
+                current.set_extra(key, value)
+            current.fingerprint = ["ai-breaker", day.isoformat(), str(pct)]
+            sentry_sdk.capture_message(
+                f"ai-breaker: AI spend reached {pct}% of the Free daily ceiling",
+                level="warning",
+            )
         logger.warning(
             "ai_breaker: spend reached %d%% of the Free daily ceiling (%s)",
             pct,

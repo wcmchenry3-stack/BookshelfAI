@@ -5,6 +5,7 @@ tests/integration/test_ai_breaker_db.py runs them against Postgres."""
 
 import asyncio
 import io
+import json
 import uuid
 from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import anyio
 import httpx
 import pytest
+import sentry_sdk
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy.dialects import postgresql
@@ -26,6 +28,7 @@ from app.main import app
 from app.models.user import User
 from app.services.book_identifier import ScanUnavailableError
 from tests.unit._quota_fake import FakeQuotaStore
+from tests.unit._sentry_capture import captured_events
 
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-000000000531"),
@@ -349,7 +352,12 @@ class TestSettle:
         r = await _reserve()
         calls = []
         db = AsyncMock()
-        db.execute.side_effect = lambda stmt: calls.append("ledger row")
+
+        def execute(stmt):
+            calls.append("ledger row")
+            return MagicMock()  # RETURNING call_id: a row came back (inserted)
+
+        db.execute.side_effect = execute
         real_settle, real_release = breaker.settle, quota.release_lease
 
         async def settle(*a):
@@ -394,6 +402,40 @@ class TestSettle:
         assert store.leases == {}
 
 
+class TestSettleIdempotency:
+    """quota.release settles the spend only when the ledger row was inserted
+    by this execution (RETURNING call_id); a conflict means an earlier attempt
+    already committed the row, the spend and the lease delete."""
+
+    @staticmethod
+    def _db(inserted: bool):
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = uuid.uuid4() if inserted else None
+        db.execute.return_value = result
+        return db
+
+    async def test_inserted_row_settles(self, store):
+        r = await _reserve()
+        await quota.release(self._db(True), r, object(), _settlement(600))
+        assert store.spend[TODAY] == [0, 600, 0]
+
+    async def test_conflicting_row_skips_the_settle_but_releases_the_lease(self, store):
+        r = await _reserve()
+        capture = MagicMock()
+        store.spend[TODAY][1] = 499_500  # this settle would cross 50 %
+        with patch.object(breaker.sentry_sdk, "capture_message", capture):
+            await quota.release(self._db(False), r, object(), _settlement(600))
+        assert store.spend[TODAY] == [EST, 499_500, 0]  # untouched
+        assert store.leases == {}
+        capture.assert_not_called()
+
+    async def test_no_ledger_row_still_settles(self, store):
+        r = await _reserve()
+        await quota.release(AsyncMock(), r, None, _settlement(600))
+        assert store.spend[TODAY] == [0, 600, 0]
+
+
 class TestAlerts:
     async def _settle_at(self, store, settled_before, cost, capture):
         store.spend.setdefault(TODAY, [0, 0, 0])[1] = settled_before
@@ -402,33 +444,54 @@ class TestAlerts:
             await quota.release(AsyncMock(), r, None, _settlement(cost))
         return r
 
+    async def _settle_real(self, store, settled_before, cost):
+        """Settle through a real SDK client; return the captured events."""
+        store.spend.setdefault(TODAY, [0, 0, 0])[1] = settled_before
+        r = await _reserve()
+        with captured_events() as events:
+            sentry_sdk.set_user({"id": str(USER.id)})  # as get_current_user
+            sentry_sdk.set_tag("request_tag", "x")
+            await quota.release(AsyncMock(), r, None, _settlement(cost))
+        return events
+
     async def test_crossing_50_sends_one_event_with_fingerprint_and_tags(self, store):
-        capture = MagicMock()
-        await self._settle_at(store, 499_000, 1_000, capture)
-        capture.assert_called_once()
-        kwargs = capture.call_args.kwargs
-        assert kwargs["level"] == "warning"
-        assert kwargs["fingerprint"] == ["ai-breaker", "2026-10-21", "50"]
-        assert kwargs["tags"]["feature"] == "scan.standard"
-        assert kwargs["tags"]["model"] == "gpt-4o-mini"
-        assert kwargs["tags"]["status"] == "ok"
-        assert kwargs["extras"]["settled_micros"] == 500_000
-        assert kwargs["extras"]["ceiling_micros"] == CEILING
+        (event,) = await self._settle_real(store, 499_000, 1_000)
+        assert event["level"] == "warning"
+        assert event["fingerprint"] == ["ai-breaker", "2026-10-21", "50"]
+        assert event["tags"]["feature"] == "scan.standard"
+        assert event["tags"]["model"] == "gpt-4o-mini"
+        assert event["tags"]["status"] == "ok"
+        assert event["extra"]["settled_micros"] == 500_000
+        assert event["extra"]["ceiling_micros"] == CEILING
         assert store.spend[TODAY][2] == 0b001
 
-    async def test_event_carries_no_user_id_or_content(self, store):
-        capture = MagicMock()
-        await self._settle_at(store, 499_000, 1_000, capture)
-        text = repr(capture.call_args)
+    async def test_event_carries_no_user_id_or_request_scope(self, store):
+        (event,) = await self._settle_real(store, 499_000, 1_000)
+        assert "user" not in event
+        assert "request_tag" not in event["tags"]
+        text = json.dumps(event)
         assert str(USER.id) not in text
         assert USER.email not in text
-        assert "user" not in capture.call_args.kwargs
+
+    async def test_alert_scope_does_not_leak_into_later_request_events(self, store):
+        """Isolation both ways: a later event in the same request still has
+        the user, and none of the alert's tags or fingerprint."""
+        store.spend[TODAY] = [0, 499_000, 0]
+        r = await _reserve()
+        with captured_events() as events:
+            sentry_sdk.set_user({"id": str(USER.id)})
+            await quota.release(AsyncMock(), r, None, _settlement(1_000))
+            sentry_sdk.capture_message("a later request event")
+        alert, later = events
+        assert "user" not in alert
+        assert later["user"] == {"id": str(USER.id)}
+        assert "feature" not in later.get("tags", {})
+        assert "fingerprint" not in later
+        assert "settled_micros" not in later.get("extra", {})
 
     async def test_one_settle_crossing_several_thresholds_sends_each_once(self, store):
-        capture = MagicMock()
-        await self._settle_at(store, 0, 950_000, capture)
-        pcts = [c.kwargs["fingerprint"][2] for c in capture.call_args_list]
-        assert pcts == ["50", "75", "90"]
+        events = await self._settle_real(store, 0, 950_000)
+        assert [e["fingerprint"][2] for e in events] == ["50", "75", "90"]
         assert store.spend[TODAY][2] == 0b111
 
     async def test_second_settle_above_the_same_threshold_sends_nothing(self, store):
@@ -593,14 +656,19 @@ class TestScanEndpoint:
         assert store.spend_today() == (0, 0)
         assert store.count() == 0  # the count is refunded too
 
-    def test_provider_timeout_releases_the_estimate(self, client, store, provider):
+    def test_provider_timeout_keeps_the_estimate_as_spend(
+        self, client, store, provider
+    ):
+        """The request reached the provider and is likely billed: the units
+        are refunded but the estimate is settled."""
         from app.ai.providers.base import ProviderTimeoutError
 
         provider.return_value.identify = AsyncMock(
             side_effect=ProviderTimeoutError("slow")
         )
         assert client.post("/scan", files=_file()).status_code == 503
-        assert store.spend_today() == (0, 0)
+        assert store.spend_today() == (0, STANDARD_EST)
+        assert store.count() == 0
 
     def test_kill_switch_in_the_gateway_releases_the_estimate(
         self, client, store, provider

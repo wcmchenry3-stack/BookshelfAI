@@ -473,9 +473,12 @@ async def release(
     After the commit, any spend alert threshold the settle crossed is claimed
     and sent (:func:`_alert`).
 
-    The ledger insert is idempotent (``ON CONFLICT (call_id) DO NOTHING``),
-    so a retry after a commit whose acknowledgement was lost adds no second
-    row.
+    The ledger insert is idempotent (``ON CONFLICT (call_id) DO NOTHING
+    RETURNING call_id``), so a retry after a commit whose acknowledgement was
+    lost adds no second row; when it returns no row the cost settle is
+    skipped too, since it was committed with that row (#531). The paths
+    without a ledger row (the lease-only fallback, refusals in
+    :func:`reserve`) are not idempotent this way.
     """
     est = reservation.est_cost_micros
     cost = settlement.cost_micros if settlement is not None else 0
@@ -487,9 +490,19 @@ async def release(
             settled.append(await breaker.settle(db, reservation.day, est, cost))
 
     async def settle() -> None:
+        inserted = True
         if ledger_row is not None:
-            await db.execute(ledger_row)
-        await settle_spend()
+            result = await db.execute(ledger_row)
+            if est or cost:
+                # ON CONFLICT (call_id) DO NOTHING RETURNING call_id: no row
+                # back means an earlier attempt already committed this call's
+                # row, and with it the spend settle and the lease delete (a
+                # commit whose acknowledgement was lost). Do not add it again.
+                inserted = result.scalar_one_or_none() is not None
+        if inserted:
+            await settle_spend()
+        else:
+            settled.clear()
         await release_lease(db, reservation.user_id, reservation.lease_id)
 
     async def settle_without_row() -> None:

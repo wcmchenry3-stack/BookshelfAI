@@ -29,18 +29,20 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from app.ai import breaker, entitlements, quota
+from app.ai import breaker, entitlements, ledger, quota
 from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
-from app.ai.providers.base import ProviderResult
+from app.ai.providers.base import ProviderResult, ProviderTimeoutError
 from app.ai.registry import get_feature
 from app.api import scan as scan_api
 from app.core.config import settings
 from app.core.database import Base
 from app.models.ai_quota import AIInflight, AIQuota
 from app.models.ai_spend import AISpendDaily
+from app.models.ai_usage import AIUsage
 from app.models.user import User
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
+from tests.unit._sentry_capture import captured_events
 
 pytestmark = pytest.mark.integration
 
@@ -95,6 +97,7 @@ async def env():
 
     async with factory() as db:
         await db.execute(delete(AISpendDaily).where(AISpendDaily.day.in_(days)))
+        await db.execute(delete(AIUsage).where(AIUsage.user_id.in_(users)))
         await db.execute(delete(User).where(User.id.in_(users)))
         await db.commit()
     await engine.dispose()
@@ -378,6 +381,63 @@ class TestScan:
         assert exc.value.detail == "scan_in_progress"
         assert await _totals(factory, day) == (0, 0, 0)
 
+    async def test_provider_timeout_settles_the_estimate(self, env, downstream):
+        """Units are refunded, but the call reached the provider and is
+        likely billed: the estimate stays as spend."""
+        factory, make_user, make_day = env
+        day = make_day()
+        user_id = await make_user()
+        patch_provider, _ = _provider(side_effect=ProviderTimeoutError("slow"))
+        with _on(day), patch_provider, pytest.raises(HTTPException) as exc:
+            await _call_scan(factory, user_id)
+        assert exc.value.detail == "scan_unavailable"
+        assert await _totals(factory, day) == (0, EST, 0)
+        assert await _units(factory, user_id, day) == 0
+
+    async def test_retried_settle_after_a_lost_commit_ack_adds_cost_once(self, env):
+        """The settle runs twice with the same ledger row, the first one
+        committed (as when its acknowledgement was lost and the give-back
+        retried): the ledger insert conflicts, so the spend is not settled
+        again."""
+        factory, make_user, make_day = env
+        day = make_day()
+        user_id = await make_user()
+        async with factory() as db:
+            user = await db.get(User, user_id)
+            with _on(day):
+                reservation = await quota.reserve(
+                    db,
+                    user=user,
+                    feature=quota.SCAN_QUOTA_FEATURE,
+                    timeout_s=30,
+                    ai=ai_settings.AISettings({}),
+                    est_cost_micros=EST,
+                )
+            await breaker.reserve(db, day, EST, 10**9, enforce=True)  # another
+            row = ledger.usage_insert(
+                call_id=uuid.uuid4(),
+                user_id=user_id,
+                feature="scan.standard",
+                model="gpt-4o-mini",
+                status="ok",
+                **USAGE,
+            )
+            settlement = breaker.Settlement(
+                USAGE_COST, "scan.standard", "gpt-4o-mini", "ok"
+            )
+            await quota.release(db, reservation, row, settlement)
+            assert await _totals(factory, day) == (EST, USAGE_COST, 0)
+            await quota.release(db, reservation, row, settlement)
+        # Without the gate the retry would take the other call's estimate out
+        # of reserved and add the cost a second time.
+        assert await _totals(factory, day) == (EST, USAGE_COST, 0)
+        async with factory() as db:
+            assert await db.get(AIInflight, user_id) is None
+            rows = (
+                await db.execute(select(AIUsage).where(AIUsage.user_id == user_id))
+            ).all()
+        assert len(rows) == 1
+
     async def test_count_backstop_refuses_even_with_cost_room(self, env, downstream):
         """The global count cap is a second, independent limit, checked
         before the cost ceiling: nothing is added to the spend."""
@@ -439,15 +499,10 @@ class TestScan:
         users = [await make_user() for _ in range(12)]
         _ceiling(1_000_000)
         await _set(factory, day, settled=500_000 - USAGE_COST)
-        capture = MagicMock()
         patch_provider, _ = _provider(return_value=ProviderResult([], **USAGE))
-        with (
-            _on(day),
-            patch_provider,
-            patch.object(breaker.sentry_sdk, "capture_message", capture),
-        ):
+        with _on(day), patch_provider, captured_events() as events:
             await asyncio.gather(*(_call_scan(factory, u) for u in users))
-        fingerprints = [c.kwargs["fingerprint"] for c in capture.call_args_list]
+        fingerprints = [e["fingerprint"] for e in events]
         assert fingerprints == [["ai-breaker", day.isoformat(), "50"]]
         settled = 500_000 - USAGE_COST + 12 * USAGE_COST
         assert await _totals(factory, day) == (0, settled, 0b001)

@@ -8,11 +8,13 @@ Run on its own with:  pytest -m security tests/security/test_cost_breaker_author
 
 import ast
 import io
+import json
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+import sentry_sdk
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -21,9 +23,11 @@ from app.ai import breaker, entitlements, quota
 from app.ai.entitlements import Tier
 from app.ai.providers.base import ProviderResult
 from app.core.config import settings
+from app.core.sentry_context import set_sentry_user
 from app.main import app
 from app.models.user import User
 from tests.unit._quota_fake import FakeQuotaStore
+from tests.unit._sentry_capture import captured_events
 
 pytestmark = pytest.mark.security
 
@@ -209,10 +213,15 @@ class TestClientCannotChangeTheCeiling:
 
 
 class TestAlertContent:
-    async def test_alert_event_has_no_user_or_content(self, store):
-        capture = MagicMock()
+    def test_alert_event_has_no_user_or_request_context(self):
+        """Through a real SDK client: the request's user (set by
+        get_current_user) and tags never reach the alert event, and the
+        alert's fields are only the fixed tags and extras."""
         day = quota.utc_today()
-        with patch.object(breaker.sentry_sdk, "capture_message", capture):
+        with captured_events() as events:
+            set_sentry_user(USER.id)
+            sentry_sdk.set_tag("endpoint", "/scan")
+            sentry_sdk.add_breadcrumb(message=f"user {USER.email}")
             breaker.send_alert(
                 day=day,
                 pct=90,
@@ -223,18 +232,27 @@ class TestAlertContent:
                     600, "scan.standard", "gpt-4o-mini", "ok"
                 ),
             )
-        kwargs = capture.call_args.kwargs
-        assert set(kwargs) == {"level", "fingerprint", "tags", "extras"}
-        assert set(kwargs["tags"]) == {
+            sentry_sdk.capture_message("later")
+        alert, later = events
+        assert "user" not in alert
+        assert str(USER.id) not in json.dumps(alert)
+        assert USER.email not in json.dumps(alert)
+        assert alert["fingerprint"] == ["ai-breaker", day.isoformat(), "90"]
+        assert set(alert["tags"]) == {
             "feature",
             "model",
             "status",
             "breaker_threshold_pct",
         }
-        assert set(kwargs["extras"]) == {
+        assert set(alert["extra"]) == {
             "day",
             "threshold_pct",
             "settled_micros",
             "reserved_micros",
             "ceiling_micros",
         }
+        # The request's own later events are unchanged.
+        assert later["user"] == {"id": str(USER.id)}
+        assert later["tags"]["endpoint"] == "/scan"
+        assert not {"feature", "model", "breaker_threshold_pct"} & set(later["tags"])
+        assert "fingerprint" not in later

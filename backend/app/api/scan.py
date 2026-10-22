@@ -177,14 +177,15 @@ async def _reserve_scan_quota(
     is back in the pool during the provider call. A refusal has already given
     back anything taken.
     """
+    spec = get_feature(feature)
     try:
         return await quota.reserve(
             db,
             user=user,
             feature=quota.SCAN_QUOTA_FEATURE,
-            timeout_s=get_feature(feature).timeout_s,
+            timeout_s=spec.timeout_s,
             ai=ai,
-            est_cost_micros=get_feature(feature).est_cost_ceiling_micros,
+            est_cost_micros=spec.est_cost_ceiling_micros,
         )
     except quota.CostCeilingReached:
         # Free tier paused for the rest of the UTC day (#531, #544).
@@ -240,8 +241,9 @@ def _settlement(
     result: AIResult | None = None,
 ) -> breaker.Settlement:
     """What this call adds to the day's spend (#531). With ``result`` (the
-    provider answered) its priced cost; otherwise (``error``: kept, real cost
-    unknown) the reservation's estimate, so the breaker errs on the safe side.
+    provider answered) its priced cost; otherwise (``error`` or ``timeout``:
+    real cost unknown) the reservation's estimate, so the breaker errs on the
+    safe side.
     A call whose cost cannot be priced also settles the estimate. Never
     raises."""
     estimate = reservation.est_cost_micros
@@ -446,9 +448,10 @@ async def scan(
     # hit (FeatureDisabledError) never reached a provider and writes none.
     #
     # Cost (#531): the settle also moves the estimate out of today's reserved
-    # spend. A refunded call (unavailable, never reached, timed out) settles
-    # nothing; an answered call settles its priced cost; an error or a
-    # cancelled call keeps the estimate as spend (real cost unknown).
+    # spend. A refunded call (unavailable, never reached, kill switch)
+    # settles nothing; an answered call settles its priced cost; a timed-out,
+    # failed or cancelled call keeps the estimate as spend (real cost
+    # unknown, likely billed).
     call_id = uuid.uuid4()
     row = partial(_usage_row, call_id=call_id, user_id=user_id, feature=feature, ai=ai)
     ledger_row: Executable | None = None
@@ -470,14 +473,14 @@ async def scan(
             # ConnectError: the connection to the provider was never
             # established, so nothing was billed; treat it like any other
             # unavailability.
-            if not isinstance(exc, FeatureDisabledError):
-                ledger_row = row(
-                    status=(
-                        STATUS_TIMEOUT
-                        if isinstance(exc, ProviderTimeoutError)
-                        else STATUS_REFUNDED
-                    )
-                )
+            if isinstance(exc, ProviderTimeoutError):
+                ledger_row = row(status=STATUS_TIMEOUT)
+                # The request reached the provider and is likely billed even
+                # though the user's units are refunded: keep the estimate as
+                # spend (#531). Other unavailability gives it back.
+                settlement = spend(status=STATUS_TIMEOUT)
+            elif not isinstance(exc, FeatureDisabledError):
+                ledger_row = row(status=STATUS_REFUNDED)
             ledger_decided = True
             await _refund_scan_quota(db, reservation)
             raise HTTPException(
