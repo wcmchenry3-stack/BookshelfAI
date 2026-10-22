@@ -233,6 +233,32 @@ class TestReserveFlow:
         assert store.leases == {}
         assert store.rows == {(USER.id, FEATURE, "day", TODAY): 0}
 
+    async def test_lease_lost_during_reservation_gives_everything_back(self, store):
+        """A reservation that stalled past the lease (Codex P2 on #559): another
+        request took the lease meanwhile, so this one must not call the
+        provider, and must give back both units without touching the new
+        holder's lease."""
+        real = store.reserve_unit
+        taken_over = {}
+
+        async def stall_then_reserve(db, user_id, feature, kind, start, limit):
+            got = await real(db, user_id, feature, kind, start, limit)
+            if kind == "month":
+                store.expire_lease(user_id)
+                taken_over["id"] = await store.acquire_lease(db, user_id, 90)
+            return got
+
+        with (
+            patch.object(quota, "reserve_unit", stall_then_reserve),
+            pytest.raises(quota.ScanInProgress),
+        ):
+            await _reserve()
+        assert store.rows == {
+            (USER.id, FEATURE, "day", TODAY): 0,
+            (USER.id, FEATURE, "month", MONTH): 0,
+        }
+        assert store.leases == {USER.id: taken_over["id"]}
+
     async def test_cancellation_during_reservation_releases_lease(self, store):
         with (
             patch.object(

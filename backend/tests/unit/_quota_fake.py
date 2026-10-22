@@ -33,6 +33,13 @@ class FakeQuotaStore:
         self.leases[user_id] = lease_id = uuid.uuid4()
         return lease_id
 
+    async def renew_lease(self, _db, user_id, lease_id, seconds) -> bool:
+        assert seconds > 0
+        if self.leases.get(user_id) != lease_id:
+            return False
+        self.expired.discard(user_id)
+        return True
+
     async def release_lease(self, _db, user_id, lease_id) -> bool:
         self.releases += 1
         if self.leases.get(user_id) == lease_id:
@@ -66,6 +73,7 @@ class FakeQuotaStore:
         names = (
             "global_units_today",
             "acquire_lease",
+            "renew_lease",
             "release_lease",
             "reserve_unit",
             "refund_unit",

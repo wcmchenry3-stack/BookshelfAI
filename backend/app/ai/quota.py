@@ -21,7 +21,10 @@ In order (#528):
    ``timeout_s + 30`` seconds, so a crashed request frees it. Each lease has a
    random ``lease_id``; :func:`release` deletes the row only while it still
    holds that id, so a slow request whose lease expired and was taken over
-   cannot delete the new holder's lease.
+   cannot delete the new holder's lease. After the reservations below the
+   lease is renewed (:func:`renew_lease`), so the provider call gets the full
+   lease; if a stall let another request take it over, the reservation is
+   given back and :class:`ScanInProgress` raised.
 4. **Daily, then monthly reservation** (table ``ai_quota``). The
    same exact conditional upsert as #509: ``units_used = units_used + 1 WHERE
    units_used < limit``. Postgres serialises upserts on the same key, so no
@@ -243,6 +246,22 @@ async def acquire_lease(
     return acquired if acquired == lease_id else None
 
 
+async def renew_lease(
+    db: AsyncSession, user_id: uuid.UUID, lease_id: uuid.UUID, seconds: int
+) -> bool:
+    """Restart the lease's clock only if ``lease_id`` still holds it; True if
+    renewed. False means the lease expired and another request took it."""
+    result = await db.execute(
+        update(AIInflight)
+        .where(AIInflight.user_id == user_id, AIInflight.lease_id == lease_id)
+        .values(lease_expires_at=_clock_timestamp() + timedelta(seconds=seconds))
+        .returning(AIInflight.lease_id)
+    )
+    renewed = result.scalar_one_or_none() is not None
+    await db.commit()
+    return renewed
+
+
 async def release_lease(
     db: AsyncSession, user_id: uuid.UUID, lease_id: uuid.UUID
 ) -> bool:
@@ -449,7 +468,8 @@ async def reserve(
     if await global_units_today(db, today) >= ai.global_daily_limit:
         raise GlobalCapacityReached("scan_capacity")
 
-    lease_id = await acquire_lease(db, user.id, lease_seconds(timeout_s))
+    seconds = lease_seconds(timeout_s)
+    lease_id = await acquire_lease(db, user.id, seconds)
     if lease_id is None:
         raise ScanInProgress("scan_in_progress")
     reservation = Reservation(
@@ -462,7 +482,7 @@ async def reserve(
         allowance=allowance,
     )
 
-    daily_taken = False
+    daily_taken = monthly_taken = False
     try:
         if (
             await reserve_unit(db, user.id, feature, WINDOW_DAY, today, allowance.daily)
@@ -480,8 +500,16 @@ async def reserve(
             raise MonthlyLimitReached(
                 limit=allowance.monthly, used=used, period_end=period_end(today)
             )
+        monthly_taken = True
+        # The upserts above are unbounded, and the lease aged while they ran.
+        # Restart its clock so the whole timeout_s + 30 s covers the provider
+        # call, and stop if a stall let it expire and another request take it.
+        if not await renew_lease(db, user.id, lease_id, seconds):
+            raise ScanInProgress("scan_in_progress")
     except BaseException:
         # Includes CancelledError: give back what was taken, then propagate.
+        if monthly_taken:
+            await _refund_window(db, reservation, WINDOW_MONTH, month)
         if daily_taken:
             await _refund_window(db, reservation, WINDOW_DAY, today)
         await release(db, reservation)

@@ -324,6 +324,31 @@ class TestLease:
             assert await quota.release_lease(db, user_id, fresh) is True
         assert await _lease(factory, user_id) is None
 
+    async def test_renew_restarts_the_clock_of_an_aged_lease(self, sessions):
+        factory, make_user = sessions
+        user_id = await make_user()
+        async with factory() as db:
+            lease_id = await quota.acquire_lease(db, user_id, 5)
+            assert await quota.renew_lease(db, user_id, lease_id, 90) is True
+            now = (await db.execute(select(quota._clock_timestamp()))).scalar_one()
+        lease = await _lease(factory, user_id)
+        assert lease.lease_id == lease_id
+        assert 88 <= (lease.lease_expires_at - now).total_seconds() <= 90
+
+    async def test_renew_of_a_lease_taken_over_is_refused(self, sessions):
+        factory, make_user = sessions
+        user_id = await make_user()
+        async with factory() as db:
+            slow = await quota.acquire_lease(db, user_id, 60)
+        await _expire_lease(factory, user_id)
+        async with factory() as db:
+            fresh = await quota.acquire_lease(db, user_id, 60)
+        before = (await _lease(factory, user_id)).lease_expires_at
+        async with factory() as db:
+            assert await quota.renew_lease(db, user_id, slow, 600) is False
+        after = await _lease(factory, user_id)
+        assert (after.lease_id, after.lease_expires_at) == (fresh, before)
+
     async def test_reserve_and_release_reuse_the_request_session(self, sessions):
         """With a one-connection pool, a request session that already holds a
         connection can reserve and release (no second checkout), and every
@@ -376,6 +401,37 @@ class TestReserveFlow:
         assert await _units(factory, user_id, "day", today) == 2
         assert await _units(factory, user_id, "month", month) == 2
         assert await _lease(factory, user_id) is None
+
+    async def test_lease_lost_during_reservation_refuses_and_gives_back(self, sessions):
+        """Codex P2 on #559: the upserts stalled past the lease and another
+        request took it, so reserve must refuse instead of letting two
+        provider calls run, and give back both units."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        today = quota.utc_today()
+        real = quota.reserve_unit
+        taken_over = {}
+
+        async def stall_then_reserve(db, uid, feature, kind, start, limit):
+            got = await real(db, uid, feature, kind, start, limit)
+            if kind == "month":
+                await _expire_lease(factory, uid)
+                async with factory() as other:
+                    taken_over["id"] = await quota.acquire_lease(other, uid, 60)
+            return got
+
+        async with factory() as db:
+            user = await db.get(User, user_id)
+            with (
+                patch.object(quota, "reserve_unit", stall_then_reserve),
+                pytest.raises(quota.ScanInProgress),
+            ):
+                await quota.reserve(
+                    db, user=user, feature=FEATURE, timeout_s=30, ai=AISettings({})
+                )
+        assert await _units(factory, user_id, "day", today) == 0
+        assert await _units(factory, user_id, "month", quota.month_start(today)) == 0
+        assert (await _lease(factory, user_id)).lease_id == taken_over["id"]
 
     async def test_daily_refusal_releases_lease(self, sessions):
         factory, make_user = sessions
