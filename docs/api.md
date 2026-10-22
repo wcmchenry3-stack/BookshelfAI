@@ -202,7 +202,7 @@ curl "https://bookshelfapi.buffingchi.com/books/search?q=dune+herbert" \
 
 ### `POST /scan` — identify book cover from image
 
-Multipart upload → optional Cloudflare Turnstile bot check → file validation (extension + MIME + size, read in chunks + magic bytes) → image normalisation (full decode, pixel cap, EXIF orientation, metadata stripped, long edge ≤ 1568 px, JPEG quality 85) → ChatGPT Vision identification (`gpt-4o-mini`) → Google Books + Open Library enrichment → per-user deduplication flagging. Returns up to 3 `EnrichedBook` candidates.
+Multipart upload → optional Cloudflare Turnstile bot check → file validation (extension + MIME + size, read in chunks + magic bytes) → image normalisation (full decode, pixel cap, EXIF orientation, metadata stripped, long edge ≤ 1568 px, JPEG quality 85) → ChatGPT Vision identification (`gpt-4o-mini`) → Google Books + Open Library enrichment → per-user deduplication flagging. Returns a `ScanResponse` whose `books` holds up to 15 `EnrichedBook` entries (`SCAN_MAX_BOOKS`), one per distinct book found in the photo.
 
 **Auth:** required
 **Rate limit:** `rate_limit_scan` (10/min default)
@@ -212,25 +212,32 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `file` (required) — image, max 5 MB, extensions `.jpg` / `.jpeg` / `.png` / `.webp` / `.heic` / `.heif`, `Content-Type` must start with `image/`, magic bytes must match the declared extension
 - `cf-turnstile-response` (required iff `TURNSTILE_SECRET_KEY` is set on the server) — Turnstile token from the client widget
 
-**Response `200`:** array of 0–3 `EnrichedBook` objects:
+**Response `200`:** a `ScanResponse` object (`backend/app/schemas/book.py`):
+- `books` — array of 0–15 `EnrichedBook` objects (at most `SCAN_MAX_BOOKS`), one per distinct book in the photo
+- `enhanced` — `true` when the enhanced model was used
+- `enhanced_scan_credits` — the user's enhanced-scan credits remaining after this scan
 ```json
-[
-  {
-    "book_id": null,
-    "open_library_work_id": "OL45804W",
-    "google_books_id": "B1hSG45JCX4C",
-    "title": "Dune",
-    "author": "Frank Herbert",
-    "description": "A mesmerizing space opera...",
-    "cover_url": "https://books.google.com/...",
-    "subjects": ["Science fiction", "Arrakis"],
-    "confidence": 0.92,
-    "already_in_library": false,
-    "editions": [
-      { "isbn_13": "9780441013593", "publisher": "Ace", "publish_year": 2005, "format": "paperback", "page_count": 688 }
-    ]
-  }
-]
+{
+  "books": [
+    {
+      "book_id": null,
+      "open_library_work_id": "OL45804W",
+      "google_books_id": "B1hSG45JCX4C",
+      "title": "Dune",
+      "author": "Frank Herbert",
+      "description": "A mesmerizing space opera...",
+      "cover_url": "https://books.google.com/...",
+      "subjects": ["Science fiction", "Arrakis"],
+      "confidence": 0.92,
+      "already_in_library": false,
+      "editions": [
+        { "isbn_13": "9780441013593", "publisher": "Ace", "publish_year": 2005, "format": "paperback", "page_count": 688 }
+      ]
+    }
+  ],
+  "enhanced": false,
+  "enhanced_scan_credits": 0
+}
 ```
 
 `book_id` is `null` when the work isn't yet in the `books` table — it's created on `POST /wishlist` or `POST /purchased`. `already_in_library` is `true` when the user already has a `UserBook` for this work (dedup keyed on work_id / volume_id — see [data-model.md](data-model.md#dedup-strategy--why-work_id-not-isbn)).

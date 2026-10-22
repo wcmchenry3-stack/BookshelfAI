@@ -40,7 +40,7 @@ Every step runs before the enhanced-credit check and the daily-cap reservation, 
 
 1. Kill switches (`SCAN_ENABLED`, `SCAN_ENHANCED_ENABLED`) → Turnstile.
 2. Extension and `Content-Type` → `415`.
-3. **Streaming read with cap.** The handler reads the upload in 64 KB chunks and stops as soon as it has more than 5 MB (`MAX_IMAGE_BYTES`); at most 5 MB + 1 byte is ever read → `413 "Image must be 5MB or smaller"`. (`RequestSizeLimitMiddleware` separately rejects any request whose `Content-Length` is above 10 MB.)
+3. **Streaming read with cap.** The handler reads the upload in 64 KB chunks and stops as soon as it has more than 5 MB (`MAX_IMAGE_BYTES`) → `413 "Image must be 5MB or smaller"`. The handler reads and holds at most 5 MB + 1 byte, but the framework has already received the whole multipart body before the handler runs (spooled to a temp file past 1 MB). `RequestSizeLimitMiddleware` rejects a request whose `Content-Length` is above 10 MB, but it checks only that header, so a chunked body (no `Content-Length`) is not capped yet — see #557.
 4. **Magic bytes** (`app/core/file_validation.py`) must match the declared extension → `415`. This runs before anything decodes the bytes.
 5. **ClamAV** (optional, `CLAMAV_ENABLED`) on the original bytes.
 6. **Normalisation** (`app/ai/images.py`, called through `sanitize_image` in `app/core/file_security.py`):
@@ -48,11 +48,15 @@ Every step runs before the enhanced-credit check and the daily-cap reservation, 
    - **Decompression-bomb guard:** the pixel count declared in the header is checked before any pixel data is decoded. Above `SCAN_MAX_IMAGE_PIXELS` (default 40 MP, range 1–100 MP) → `413 image_too_large_pixels`. Pillow's own `DecompressionBombError` maps to the same response.
    - **Decode or reject:** the image is fully decoded; anything Pillow cannot decode (truncated, corrupt, wrong format behind valid magic bytes) → `415 image_undecodable`. There is no raw-bytes fallback: undecodable bytes never reach the provider.
    - EXIF orientation is applied, then a fresh image is built so all metadata (EXIF including GPS, XMP, IPTC, ICC profiles, comments) is dropped. Re-encoding also removes polyglot payloads (scripts in comment segments, archives after the end-of-image marker).
-   - The long edge is shrunk to the feature's `max_image_long_edge_px` (registry, 1568 px for `scan.standard` and `scan.enhanced`); smaller images are never upscaled. Alpha is flattened onto white and every mode is converted to RGB.
+   - It runs in a worker thread, at most `SCAN_NORMALISE_CONCURRENCY` (default 2, range 1–8) at once per process, so a burst of large images cannot block the event loop or multiply peak memory.
+   - The long edge is shrunk to the feature's `max_image_long_edge_px` (registry, 1568 px for `scan.standard` and `scan.enhanced`); smaller images are never upscaled. Shrinking happens before alpha is flattened onto white; every mode is converted to RGB, with 16-bit greyscale scaled to 8-bit rather than clipped.
    - Output is always JPEG, quality 85. Only these bytes are sent to the provider, which caps the input cost per image (about 3,000 tokens at 1568 px).
    - The log line carries numbers only (output width × height and byte counts), never the image, a filename or any metadata value.
 
 Library pins: `Pillow` and `pillow-heif` are pinned exactly in `backend/requirements.txt`.
+
+- **Bundled native decoders:** the `pillow-heif` wheel bundles native libheif (1.23.4 in `pillow-heif` 1.8.0) and libde265 (1.1.3). CVEs in those C libraries are not visible to `pip-audit` or Trivy through PyPI advisories, so when updating `pillow-heif`, read each release's changelog for libheif/libde265 bumps (and check their upstream advisories) rather than relying on CI to flag them.
+- **Licences:** the `pillow-heif` wheel bundles libheif/libde265 (LGPL-3.0) and x265 (GPL-2.0+); they are used server-side only and not distributed.
 
 ## Client IP and origin lockdown
 
