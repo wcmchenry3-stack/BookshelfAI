@@ -92,6 +92,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const drainingRef = useRef(false);
   // Set when a scan is refused for a reason that applies to every queued job.
   const stopDrainRef = useRef(false);
+  // Ids of jobs being sent right now, so a drain can't send the same job twice.
+  const inFlightRef = useRef<Set<string>>(new Set());
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
   // Set when the initial load fails, so the persist effect below doesn't
   // immediately overwrite storage with the empty `jobs` state it starts
@@ -165,7 +167,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       for (const job of queuedJobs) {
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) break;
-        await executeScanRef.current(job);
+        // The list above is a snapshot: skip jobs dismissed, sent or being
+        // sent (startScan/retryScan) since.
+        const current = jobsRef.current.find((j) => j.id === job.id);
+        if (
+          !current ||
+          (current.status !== 'queued' && current.status !== 'pending') ||
+          inFlightRef.current.has(job.id)
+        ) {
+          continue;
+        }
+        await executeScanRef.current(current);
         // Monthly/daily limit or scanning paused: leave the rest queued.
         if (stopDrainRef.current) break;
         // Delay between jobs to avoid API burst.
@@ -194,6 +206,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
   const startScan = useCallback(
     async (type: ScanJobType, imageUri?: string, query?: string) => {
+      let startedId: string | null = null;
       try {
         // Backstop for the cap — the scan screen checks isQueueFull before
         // persisting a capture, but a stale render could still get here.
@@ -222,6 +235,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         });
 
         setJobs((prev) => [job, ...prev]);
+        // Held across the connectivity check below, where the job is already
+        // 'pending' but not yet sent: a reconnect drain must skip it.
+        startedId = job.id;
+        inFlightRef.current.add(job.id);
 
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) {
@@ -242,6 +259,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           type: 'error',
           duration: 4000,
         });
+      } finally {
+        if (startedId) inFlightRef.current.delete(startedId);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -295,6 +314,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     (jobId: string) => {
       setJobs((prev) => prev.filter((j) => j.id !== jobId));
       if (reviewingJobId === jobId) setReviewingJobId(null);
+      // A notice that offers "Try again" for this job has nothing to retry now.
+      setScanNotice((n) => (n?.jobId === jobId ? null : n));
 
       // Clean up persisted image if it exists.
       const job = jobs.find((j) => j.id === jobId);
@@ -441,6 +462,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     }
 
     executeScanRef.current = async function executeScan(job: ScanJob) {
+      // Synchronous (before any await) so a drain can't start the same job.
+      inFlightRef.current.add(job.id);
+      try {
+        await runScan(job);
+      } finally {
+        inFlightRef.current.delete(job.id);
+      }
+    };
+
+    async function runScan(job: ScanJob) {
       updateJob(job.id, { status: 'searching' });
       // Credits reported by this response (the state update lands next render).
       let reportedCredits: number | null = enhancedCredits;
@@ -627,7 +658,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           duration: 8000,
         });
       }
-    };
+    }
   }, [showBanner, t, bumpUsage, retryScan, queueForLater, requestEnhancedScan, enhancedCredits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reviewingJob = useMemo(

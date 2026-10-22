@@ -12,6 +12,7 @@ jest.mock('../../lib/api', () => ({
 
 const mockSaveJobs = jest.fn();
 const mockLoadJobs = jest.fn();
+const mockNetFetch = jest.fn();
 let mockNetListener: ((s: { isConnected: boolean }) => void) | null = null;
 jest.mock('../../lib/scanJobStorage', () => ({
   loadJobs: () => mockLoadJobs(),
@@ -24,7 +25,7 @@ jest.mock('../../lib/scanJobStorage', () => ({
 jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: {
-    fetch: () => Promise.resolve({ isConnected: true }),
+    fetch: () => mockNetFetch(),
     addEventListener: (cb: (s: { isConnected: boolean }) => void) => {
       mockNetListener = cb;
       return () => {};
@@ -66,6 +67,7 @@ beforeEach(() => {
   mockUuid = 0;
   mockSaveJobs.mockResolvedValue(undefined);
   mockLoadJobs.mockResolvedValue([]);
+  mockNetFetch.mockResolvedValue({ isConnected: true });
 });
 
 afterEach(() => {
@@ -319,5 +321,69 @@ describe('refusal follow-ups', () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
     const statuses = result.current.jobs.map((j) => j.status).sort();
     expect(statuses).toEqual(['failed', 'queued', 'queued']);
+  });
+});
+
+describe('drain races', () => {
+  const queuedJob = (i: number) => ({
+    id: `q-${i}`,
+    type: 'image' as const,
+    status: 'queued' as const,
+    createdAt: i,
+    imageUri: `file:///q${i}.jpg`,
+    retryCount: 0,
+  });
+
+  it('a reconnect drain does not send a job startScan is still checking connectivity for', async () => {
+    const { result } = await setup();
+    let release: (v: { isConnected: boolean }) => void = () => {};
+    mockNetFetch.mockImplementationOnce(() => new Promise((res) => (release = res)));
+    mockPost.mockResolvedValue(OK);
+    let started: Promise<void> | void;
+    await act(async () => {
+      started = result.current.startScan('image', 'file:///a.jpg');
+    });
+    // Job is pending, NetInfo.fetch is still unresolved; reconnect fires.
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+    });
+    await act(async () => {
+      release({ isConnected: true });
+      await started;
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a queued job dismissed mid-drain', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1), queuedJob(2)]);
+    mockPost.mockResolvedValue(OK);
+    const { result } = await setup();
+    jest.useFakeTimers();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    // Job 2 is waiting out the delay between drained jobs; the user dismisses it.
+    await act(async () => {
+      result.current.dismissJob('q-2');
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('dismissing the refused job clears its notice', async () => {
+    const { result } = await setup();
+    mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///a.jpg');
+    });
+    expect(result.current.scanNotice).not.toBeNull();
+    await act(async () => {
+      result.current.dismissJob(result.current.jobs[0].id);
+    });
+    expect(result.current.scanNotice).toBeNull();
   });
 });
