@@ -60,7 +60,9 @@ class OriginAuthMiddleware:
                 ],
             }
         )
-        await send({"type": "http.response.body", "body": _FORBIDDEN_BODY})
+        await send(
+            {"type": "http.response.body", "body": _FORBIDDEN_BODY, "more_body": False}
+        )
 
 
 def _is_allowed(scope: Scope) -> bool:

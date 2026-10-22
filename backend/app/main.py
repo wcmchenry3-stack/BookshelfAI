@@ -151,9 +151,18 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).
 #
-# OriginAuthMiddleware is innermost: it rejects requests that lack the origin
-# header before routing (so no handler, DB query or rate-limit counter runs),
-# while its 403 still passes back through SecurityHeadersMiddleware.
+# Execution order (outermost → innermost):
+#   TrustedHostMiddleware → RequestSizeLimitMiddleware → CORSMiddleware
+#   → RequestIdMiddleware → SentryContextMiddleware → SecurityHeadersMiddleware
+#   → OriginAuthMiddleware
+#
+# OriginAuthMiddleware is innermost so its 403 passes back through all outer
+# layers: SecurityHeadersMiddleware adds CSP/X-Frame-Options, CORSMiddleware
+# adds access-control headers so browsers can read the error body.
+# Known limitation: CORSMiddleware short-circuits OPTIONS preflights before
+# OriginAuthMiddleware runs, allowing endpoint enumeration via preflight from
+# a CORS-allowed origin without the origin-auth header. Actual GET/POST/etc.
+# are always checked; no data is exposed via the preflight path.
 # The client IP used for rate limiting is not set by a middleware: the
 # limiter's key function calls app.core.client_ip directly.
 app.add_middleware(OriginAuthMiddleware)
