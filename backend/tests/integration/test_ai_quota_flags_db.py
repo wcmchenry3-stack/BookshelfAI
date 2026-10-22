@@ -186,6 +186,22 @@ class TestGiveBackUnit:
             assert await _give_back(db, user_id, lease_id) == quota.UNIT_NOT_TAKEN
         assert await _units(factory, user_id) == 1
 
+    async def test_the_count_never_goes_below_zero(self, sessions):
+        """Flag set but ``units_used`` already 0 (e.g. reset by hand): the
+        flag is cleared, nothing is decremented, no error."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        async with factory() as db:
+            lease_id = await quota.acquire_lease(db, user_id, 60)
+            assert await _take(db, user_id, lease_id) == 1
+            await db.execute(
+                update(AIQuota).where(AIQuota.user_id == user_id).values(units_used=0)
+            )
+            await db.commit()
+            assert await _give_back(db, user_id, lease_id) == quota.UNIT_GIVEN_BACK
+        assert await _units(factory, user_id) == 0
+        assert await _flags(factory, user_id) == set()
+
     async def test_after_a_takeover_the_old_give_back_does_nothing(self, sessions):
         """The stalled request took a unit, its lease expired and another
         request took it over (the takeover resets the flags) and took its own
