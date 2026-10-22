@@ -14,16 +14,20 @@ Design goals:
 Expand GOLDEN_DATASET as you scan more books.
 """
 
+import dataclasses
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from app.ai.providers.anthropic_vision import AnthropicVisionProvider
 from app.ai.providers.openai_vision import OpenAIVisionProvider
-from app.ai.registry import FEATURES
+from app.ai.registry import FEATURES, default_model
 from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate
 from app.services.enrichment import EnrichmentService
+from tests._claude_fake import fake_claude, message
 
 # ─── Golden dataset ────────────────────────────────────────────────────────────
 #
@@ -98,22 +102,41 @@ def _vision_candidate(entry: dict) -> BookCandidate:
 
 
 class TestIsbnExtractionAccuracy:
-    """Verify that OpenAIVisionProvider returns the expected ISBN.
+    """Verify that each vision provider returns the expected ISBN.
 
-    The vision model response is mocked — these tests validate that the
-    parsing/prompt logic correctly extracts structured data from the
-    model's text response.
+    The vision model response is mocked (OpenAI at its HTTP client, Claude
+    at its SDK client, #532) — these tests validate that the parsing logic
+    correctly extracts structured data from the model's reply. The parsing
+    assertions are identical for both providers.
     """
 
+    @pytest.mark.parametrize("provider", ["openai", "anthropic"])
     @pytest.mark.parametrize(
         "entry", GOLDEN_DATASET, ids=[e["isbn"] for e in GOLDEN_DATASET]
     )
-    async def test_identifies_expected_isbn(self, entry):
-        json_response = (
-            f'[{{"title":"{entry["title"]}","author":"{entry["author"]}",'
-            f'"confidence":0.97,"isbn_13":"{entry["isbn"]}","isbn_10":null}}]'
-        )
+    async def test_identifies_expected_isbn(self, entry, provider):
+        book = {
+            "title": entry["title"],
+            "author": entry["author"],
+            "confidence": 0.97,
+            "isbn_13": entry["isbn"],
+            "isbn_10": None,
+        }
+        if provider == "openai":
+            results = await self._identify_openai(json.dumps([book]))
+        else:
+            results = await self._identify_claude(json.dumps({"books": [book]}))
 
+        assert len(results) >= 1
+        isbns = [r.isbn_13 for r in results if r.isbn_13]
+        assert (
+            entry["isbn"] in isbns
+        ), f"Expected ISBN {entry['isbn']} not found in results: {isbns}"
+        assert results[0].title == entry["title"]
+        assert results[0].author == entry["author"]
+
+    @staticmethod
+    async def _identify_openai(json_response: str) -> list[BookCandidate]:
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = {
@@ -129,13 +152,18 @@ class TestIsbnExtractionAccuracy:
             "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=mock_client
         ):
             identifier = OpenAIVisionProvider(FEATURES["scan.standard"])
-            results = (await identifier.identify(b"fake_image_bytes")).candidates
+            return (await identifier.identify(b"fake_image_bytes")).candidates
 
-        assert len(results) >= 1
-        isbns = [r.isbn_13 for r in results if r.isbn_13]
-        assert (
-            entry["isbn"] in isbns
-        ), f"Expected ISBN {entry['isbn']} not found in results: {isbns}"
+    @staticmethod
+    async def _identify_claude(json_response: str) -> list[BookCandidate]:
+        spec = dataclasses.replace(
+            FEATURES["scan.standard"],
+            provider="anthropic",
+            model=default_model("scan.standard", "anthropic"),
+        )
+        with fake_claude(message(json_response)):
+            identifier = AnthropicVisionProvider(spec)
+            return (await identifier.identify(b"fake_image_bytes")).candidates
 
 
 # ─── Enrichment accuracy ───────────────────────────────────────────────────────
