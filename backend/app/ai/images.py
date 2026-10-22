@@ -54,10 +54,55 @@ class ImageTooLargePixelsError(ImageNormalisationError):
     code = "image_too_large_pixels"
 
 
+_SIXTEEN_BIT_MODES = frozenset({"I;16", "I;16B", "I;16L", "I;16N"})
+
+
+def _int_to_l(img: Image.Image) -> Image.Image:
+    """Scale a 16-bit or 32-bit greyscale image down to 8-bit ``L``.
+
+    ``convert("L")`` / ``convert("RGB")`` clip these modes at 255 instead of
+    scaling, so a 16-bit photo would come out almost all white. ``I;16*``
+    covers 0-65535 and maps to 0-255. Mode ``I`` (32-bit signed) is scaled by
+    what it holds: values already in 0-255 are kept, values in 0-65535 are
+    treated as 16-bit, and anything else is stretched from its own min-max.
+    """
+    as_i = img if img.mode == "I" else img.convert("I")  # lossless widening
+    if img.mode in _SIXTEEN_BIT_MODES:
+        lo, scale = 0, 255 / 65535
+    else:
+        lo, hi = as_i.getextrema()
+        if lo >= 0 and hi <= 255:
+            lo, scale = 0, 1.0
+        elif lo >= 0 and hi <= 65535:
+            lo, scale = 0, 255 / 65535
+        else:
+            scale = 255 / (hi - lo) if hi > lo else 0.0
+    # point() on mode I applies v * scale + offset in C; convert("L") then
+    # only clips rounding at the ends.
+    return as_i.point(lambda v: v * scale - lo * scale).convert("L")
+
+
+def _to_resizable(img: Image.Image) -> Image.Image:
+    """Return ``img`` in a mode that resizes well, without flattening alpha.
+
+    Palette and 1-bit images would be resized with nearest-neighbour, and
+    16/32-bit greyscale would be clipped later, so those are converted here.
+    Everything else (RGB, RGBA, L, LA, CMYK, ...) is resized as-is; Pillow
+    resizes alpha modes premultiplied, so transparent pixels do not bleed.
+    """
+    if img.mode in _SIXTEEN_BIT_MODES or img.mode == "I":
+        return _int_to_l(img)
+    if img.mode in ("P", "PA"):
+        has_alpha = img.mode == "PA" or "transparency" in img.info
+        return img.convert("RGBA" if has_alpha else "RGB")
+    if img.mode == "1":
+        return img.convert("L")
+    return img
+
+
 def _to_rgb(img: Image.Image) -> Image.Image:
     """Return an RGB copy of ``img``, flattening any alpha onto white."""
-    if img.mode == "P" and "transparency" in img.info:
-        img = img.convert("RGBA")
+    img = _to_resizable(img)
     if img.mode in _ALPHA_MODES:
         rgba = img.convert("RGBA")
         background = Image.new("RGB", rgba.size, (255, 255, 255))
@@ -82,7 +127,7 @@ def normalise_image(data: bytes, *, max_long_edge_px: int, max_pixels: int) -> b
         # is decoded. Pillow raises its own DecompressionBombError here for
         # images far above Image.MAX_IMAGE_PIXELS; that is mapped to 413 too.
         img = Image.open(io.BytesIO(data), formats=ALLOWED_FORMATS)
-    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+    except Image.DecompressionBombError:
         raise ImageTooLargePixelsError("image pixel count is above the cap") from None
     except Exception:  # noqa: BLE001 - anything Pillow raises means "not an image"
         raise ImageUndecodableError("image could not be decoded") from None
@@ -103,10 +148,13 @@ def normalise_image(data: bytes, *, max_long_edge_px: int, max_pixels: int) -> b
         # Orientation first (it lives in EXIF), then build a fresh image so no
         # metadata (EXIF, XMP, IPTC, ICC, comments) is carried into the output.
         img = ImageOps.exif_transpose(img)
-        img = _to_rgb(img)
+        # Shrink before flattening alpha, so the RGBA -> RGB copy is made at
+        # the output size rather than the full decoded size.
+        img = _to_resizable(img)
         img.thumbnail(
             (max_long_edge_px, max_long_edge_px), Image.Resampling.LANCZOS
         )  # shrinks only; never upscales
+        img = _to_rgb(img)
         clean = Image.new("RGB", img.size)
         clean.paste(img)
 
@@ -115,7 +163,7 @@ def normalise_image(data: bytes, *, max_long_edge_px: int, max_pixels: int) -> b
         result = out.getvalue()
     except ImageNormalisationError:
         raise
-    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+    except Image.DecompressionBombError:
         raise ImageTooLargePixelsError("image pixel count is above the cap") from None
     except Exception:  # noqa: BLE001 - any decode/convert failure is a 415
         raise ImageUndecodableError("image could not be decoded") from None

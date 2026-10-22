@@ -10,12 +10,14 @@ from unittest.mock import patch
 import pillow_heif
 import pytest
 from fastapi import HTTPException
-from PIL import Image
+from PIL import Image, ImageStat
+from PIL.JpegImagePlugin import JpegImageFile
 
 from app.ai.images import (
     JPEG_QUALITY,
     ImageTooLargePixelsError,
     ImageUndecodableError,
+    _to_rgb,
     normalise_image,
 )
 from app.core.file_security import sanitize_image
@@ -130,7 +132,22 @@ class TestDownscale:
 
     def test_large_jpeg_uses_reduced_decode_and_still_caps(self):
         src = _encode(Image.new("RGB", (6000, 4000), (5, 6, 7)), "JPEG")
-        out = _open(_norm(src))
+        real_draft = JpegImageFile.draft
+        reduced = []
+
+        def spy(self, mode, size):
+            result = real_draft(self, mode, size)
+            reduced.append(self.size)  # size after draft picked a scale
+            return result
+
+        with patch.object(
+            JpegImageFile, "draft", autospec=True, side_effect=spy
+        ) as draft:
+            out = _open(_norm(src))
+        # The first draft() call is normalise_image's own, with the long edge.
+        assert draft.call_args_list[0].args[1:] == ("RGB", (LONG_EDGE, LONG_EDGE))
+        # libjpeg was asked for a 1/2 scale decode: 6000x4000 -> 3000x2000.
+        assert reduced[0] == (3000, 2000)
         assert max(out.size) == LONG_EDGE
 
 
@@ -170,6 +187,27 @@ class TestOutputFormat:
         out = _open(_norm(src))
         assert out.mode == "RGB"
 
+    def test_rgba_thumbnail_runs_before_alpha_flatten(self):
+        """The alpha flatten happens at output size, not full decoded size."""
+        img = Image.new("RGBA", (4000, 2000), (0, 0, 0, 0))
+        img.paste((0, 0, 255, 255), (0, 0, 2000, 2000))  # left half opaque blue
+        sizes = []
+        real_new = Image.new
+
+        def spy(mode, size, *args, **kw):
+            sizes.append((mode, tuple(size)))
+            return real_new(mode, size, *args, **kw)
+
+        with patch("app.ai.images.Image.new", side_effect=spy):
+            out = _open(_norm(_encode(img, "PNG")))
+        # Every RGB canvas (white background, clean copy) is output-sized.
+        assert all(max(size) <= LONG_EDGE for _, size in sizes), sizes
+        assert out.size == (LONG_EDGE, LONG_EDGE // 2)
+        right = out.getpixel((LONG_EDGE * 3 // 4, 100))
+        left = out.getpixel((LONG_EDGE // 4, 100))
+        assert min(right) > 240, right  # transparent -> white
+        assert left[2] > 200 and left[0] < 60, left
+
     def test_palette_with_transparency_flattens_on_white(self):
         img = Image.new("P", (10, 10), 0)
         img.putpalette([0, 0, 0] * 256)
@@ -186,6 +224,67 @@ class TestOutputFormat:
         kwargs = save.call_args.kwargs
         assert kwargs["format"] == "JPEG"
         assert kwargs["quality"] == 85
+
+
+def _gradient_values(width: int, height: int, top: int) -> list[int]:
+    """A left-to-right 0..``top`` gradient, row-major."""
+    row = [round(x * top / (width - 1)) for x in range(width)]
+    return row * height
+
+
+def _assert_mid_tone(out: Image.Image) -> None:
+    assert out.mode == "RGB"
+    mean = ImageStat.Stat(out.convert("L")).mean[0]
+    assert 20 < mean < 235, mean
+    lo, hi = out.convert("L").getextrema()
+    assert lo < 30 and hi > 225, (lo, hi)  # the full range survives
+    assert lo != 255  # not all white
+
+
+class TestHighBitDepthGreyscale:
+    """16-bit greyscale is scaled to 8-bit, not clipped to white."""
+
+    def test_sixteen_bit_png_gradient_keeps_its_mid_tones(self):
+        img = Image.new("I;16", (512, 64))
+        img.putdata(_gradient_values(512, 64, 65535))
+        src = _encode(img, "PNG")
+        assert _open(src).mode == "I;16"  # what Pillow decodes it as
+        _assert_mid_tone(_open(_norm(src)))
+
+    def test_sixteen_bit_png_is_not_clipped_when_downscaled(self):
+        img = Image.new("I;16", (3200, 100))
+        img.putdata(_gradient_values(3200, 100, 65535))
+        out = _open(_norm(_encode(img, "PNG")))
+        assert max(out.size) == LONG_EDGE
+        _assert_mid_tone(out)
+
+    # Pillow 13 cannot write mode I to PNG (and no allowed decoder yields it),
+    # so mode I and the other I;16 byte orders are exercised on the converter.
+    @pytest.mark.parametrize(
+        ("mode", "top"),
+        [
+            ("I;16", 65535),
+            ("I;16B", 65535),
+            ("I;16L", 65535),
+            ("I;16N", 65535),
+            ("I", 65535),  # 16-bit data held in a 32-bit image
+            ("I", 255),  # 8-bit data held in a 32-bit image: kept as-is
+            ("I", 1_000_000),  # beyond 16 bits: scaled by its own range
+        ],
+    )
+    def test_int_modes_are_scaled_not_clipped(self, mode, top):
+        img = Image.new(mode, (256, 16))
+        img.putdata(_gradient_values(256, 16, top))
+        _assert_mid_tone(_to_rgb(img))
+
+    def test_signed_int_mode_is_scaled_by_its_range(self):
+        img = Image.new("I", (256, 16))
+        img.putdata([v - 40_000 for v in _gradient_values(256, 16, 80_000)])
+        _assert_mid_tone(_to_rgb(img))
+
+    def test_constant_int_image_does_not_divide_by_zero(self):
+        img = Image.new("I", (8, 8), -5)
+        assert _to_rgb(img).mode == "RGB"
 
 
 class TestDecodeOrReject:
