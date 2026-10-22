@@ -1,4 +1,10 @@
-"""Daily scan caps: per-user reservation, global ceiling, refund and retention.
+"""LEGACY (#509) daily scan caps: per-user reservation, global ceiling, refund
+and retention.
+
+Since #528 ``/scan`` no longer calls this module: allowances, the in-flight
+lease and the daily/monthly windows live in ``app/ai/quota.py`` (table
+``ai_quota``). It is kept, with its ``scan_usage_daily`` table and purge, until
+#540 deletes it.
 
 Every scan that reaches the vision provider is counted in ``scan_usage_daily``
 (one row per user per UTC day).
@@ -20,14 +26,19 @@ Every scan that reaches the vision provider is counted in ``scan_usage_daily``
   ``RETENTION_DAYS`` in bounded batches; it runs from the daily cleanup task.
 """
 
+import logging
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
 
+from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.scan_usage import ScanUsageDaily
+
+logger = logging.getLogger(__name__)
 
 RETENTION_DAYS = 90
 PURGE_BATCH_SIZE = 5_000
@@ -116,3 +127,41 @@ async def purge_old_scan_usage(db: AsyncSession, today: date | None = None) -> i
         if deleted < PURGE_BATCH_SIZE:
             break
     return total
+
+
+async def reserve_daily_scan(db: AsyncSession, user, usage_day: date) -> None:
+    """LEGACY (moved from ``app/api/scan.py`` in #528; not called by /scan).
+
+    Enforce the global and per-user daily caps, reserving one scan, on the
+    caller's session. ``reserve_scan`` commits, which makes the reservation
+    visible to concurrent requests and hands the connection back to the pool.
+    """
+    used_globally = await global_scans_today(db, usage_day)
+    if used_globally >= settings.scan_global_daily_limit:
+        logger.warning("scan: global daily limit reached (%d)", used_globally)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="scan_capacity",
+        )
+    reserved = await reserve_scan(
+        db, user.id, usage_day, settings.scan_daily_limit_per_user
+    )
+    if reserved is None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="daily_scan_limit",
+            headers={"Retry-After": str(seconds_until_utc_midnight())},
+        )
+
+
+async def refund_daily_scan(db: AsyncSession, user, usage_day: date) -> None:
+    """LEGACY (moved from ``app/api/scan.py`` in #528). Give back a
+    reservation; a failure here must not mask the original error."""
+    try:
+        await refund_scan(db, user.id, usage_day)
+    except Exception:
+        logger.exception("scan: failed to refund daily scan reservation")
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("scan: rollback after failed refund also failed")

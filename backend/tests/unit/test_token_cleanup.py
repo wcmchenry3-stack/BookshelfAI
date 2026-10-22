@@ -174,3 +174,58 @@ class TestScanUsagePurge:
 
         assert "scan usage" in caplog.text
         mock_session.execute.assert_awaited()
+
+
+class TestAIQuotaPurge:
+    """#528: the daily run also purges old ai_quota rows, and a failure there
+    does not skip the other cleanups."""
+
+    @pytest.mark.asyncio
+    async def test_run_purges_ai_quota(self) -> None:
+        mock_factory, _mock_session, _ = _make_db_mock()
+        purge = AsyncMock(return_value=2)
+
+        with (
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.purge_old_scan_usage", AsyncMock()),
+            patch("app.services.token_cleanup.purge_old_quota", purge),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            task = asyncio.create_task(cleanup_expired_tokens())
+            for _ in range(4):
+                await asyncio.sleep(0)
+            task.cancel()
+            await task
+
+        purge.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ai_quota_purge_failure_does_not_skip_token_cleanup(
+        self, caplog
+    ) -> None:
+        import logging
+
+        mock_factory, mock_session, _ = _make_db_mock()
+
+        with (
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.purge_old_scan_usage", AsyncMock()),
+            patch(
+                "app.services.token_cleanup.purge_old_quota",
+                AsyncMock(side_effect=ConnectionError("db down")),
+            ),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
+            caplog.at_level(logging.ERROR, logger="app.services.token_cleanup"),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            task = asyncio.create_task(cleanup_expired_tokens())
+            for _ in range(4):
+                await asyncio.sleep(0)
+            task.cancel()
+            await task
+
+        assert "ai quota" in caplog.text
+        assert "refresh_tokens" in str(mock_session.execute.call_args[0][0])

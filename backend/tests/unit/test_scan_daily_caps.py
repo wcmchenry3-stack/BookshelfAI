@@ -1,6 +1,8 @@
-"""POST /scan kill switches and daily caps — provider mocked, quota store in memory."""
+"""POST /scan kill switches and quota checks — provider mocked, quota store in
+memory (the ai_quota / ai_inflight primitives of app/ai/quota.py, #528)."""
 
 import asyncio
+import contextlib
 import io
 import uuid
 from datetime import UTC, date, datetime
@@ -13,6 +15,7 @@ from pydantic import ValidationError
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.ai import quota
 from app.ai.registry import FEATURES
 from app.api import scan as scan_module
 from app.core.config import Settings
@@ -20,6 +23,7 @@ from app.main import app
 from app.models.user import User
 from app.services import scan_quota
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
+from tests.unit._quota_fake import FakeQuotaStore
 
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-0000000005a9"),
@@ -43,39 +47,10 @@ def _file():
     return {"file": ("scan.jpg", io.BytesIO(_JPEG), "image/jpeg")}
 
 
-class FakeQuotaStore:
-    """In-memory stand-in for scan_usage_daily with the same semantics."""
-
-    def __init__(self) -> None:
-        self.rows: dict[tuple[uuid.UUID, date], int] = {}
-        self.extra_global = 0
-
-    async def global_scans_today(self, _db, day: date) -> int:
-        return self.extra_global + sum(n for (_, d), n in self.rows.items() if d == day)
-
-    async def reserve_scan(self, _db, user_id, day, limit) -> int | None:
-        current = self.rows.get((user_id, day), 0)
-        if current >= limit:
-            return None
-        self.rows[(user_id, day)] = current + 1
-        return current + 1
-
-    async def refund_scan(self, _db, user_id, day) -> None:
-        key = (user_id, day)
-        self.rows[key] = max(0, self.rows.get(key, 0) - 1)
-
-    def count(self, user_id=USER.id) -> int:
-        return self.rows.get((user_id, scan_quota.utc_today()), 0)
-
-
 @pytest.fixture
 def store():
-    s = FakeQuotaStore()
-    with (
-        patch.object(scan_quota, "global_scans_today", s.global_scans_today),
-        patch.object(scan_quota, "reserve_scan", s.reserve_scan),
-        patch.object(scan_quota, "refund_scan", s.refund_scan),
-    ):
+    s = FakeQuotaStore(default_user=USER.id)
+    with s.installed():
         yield s
 
 
@@ -168,7 +143,9 @@ class TestKillSwitches:
 
 class TestPerUserDailyLimit:
     def test_allows_limit_then_429_with_retry_after(self, client, store, provider):
-        with _set(scan_daily_limit_per_user=3):
+        # Since #528 the per-user daily cap is the ai_settings key
+        # quota.free.daily (seeded from SCAN_FREE_DAILY_LIMIT).
+        with _set(scan_free_daily_limit=3):
             codes = [client.post("/scan", files=_file()).status_code for _ in range(3)]
             resp = client.post("/scan", files=_file())
 
@@ -301,11 +278,13 @@ class TestRefund:
             side_effect=ScanUnavailableError("timeout")
         )
         with (
-            patch.object(scan_quota, "global_scans_today", AsyncMock(return_value=0)),
-            patch.object(scan_quota, "reserve_scan", AsyncMock(return_value=1)),
+            patch.object(quota, "global_units_today", AsyncMock(return_value=0)),
+            patch.object(quota, "acquire_lease", AsyncMock(return_value=uuid.uuid4())),
+            patch.object(quota, "reserve_unit", AsyncMock(return_value=1)),
             patch.object(
-                scan_quota, "refund_scan", AsyncMock(side_effect=OSError("db down"))
+                quota, "refund_unit", AsyncMock(side_effect=OSError("db down"))
             ),
+            patch.object(quota, "release_lease", AsyncMock(return_value=True)),
         ):
             resp = client.post("/scan", files=_file())
         assert resp.status_code == 503
@@ -324,12 +303,14 @@ class TestFailClosed:
         app.dependency_overrides[get_db] = _fake_db
         try:
             with (
+                patch.object(quota, "global_units_today", AsyncMock(return_value=0)),
                 patch.object(
-                    scan_quota, "global_scans_today", AsyncMock(return_value=0)
+                    quota, "acquire_lease", AsyncMock(return_value=uuid.uuid4())
                 ),
                 patch.object(
-                    scan_quota, "reserve_scan", AsyncMock(side_effect=OSError("db"))
+                    quota, "reserve_unit", AsyncMock(side_effect=OSError("db"))
                 ),
+                patch.object(quota, "release_lease", AsyncMock(return_value=True)),
             ):
                 resp = TestClient(app, raise_server_exceptions=False).post(
                     "/scan", files=_file()
@@ -351,7 +332,7 @@ class TestFailClosed:
         app.dependency_overrides[get_db] = _fake_db
         try:
             with patch.object(
-                scan_quota, "global_scans_today", AsyncMock(side_effect=OSError("db"))
+                quota, "global_units_today", AsyncMock(side_effect=OSError("db"))
             ):
                 resp = TestClient(app, raise_server_exceptions=False).post(
                     "/scan", files=_file()
@@ -386,18 +367,26 @@ class TestRequestSession:
 
             return wrapper
 
-        with (
-            patch.object(
-                scan_quota, "global_scans_today", _record(store.global_scans_today)
-            ),
-            patch.object(scan_quota, "reserve_scan", _record(store.reserve_scan)),
-            patch.object(scan_quota, "refund_scan", _record(store.refund_scan)),
-            patch("app.core.database.AsyncSessionLocal") as other_sessions,
-        ):
+        names = (
+            "global_units_today",
+            "acquire_lease",
+            "release_lease",
+            "reserve_unit",
+            "refund_unit",
+        )
+        with contextlib.ExitStack() as stack:
+            for name in names:
+                stack.enter_context(
+                    patch.object(quota, name, _record(getattr(store, name)))
+                )
+            other_sessions = stack.enter_context(
+                patch("app.core.database.AsyncSessionLocal")
+            )
             resp = client.post("/scan", files=_file())
 
         assert resp.status_code == 503
-        assert len(seen) == 3
+        # global, lease, daily, monthly, daily refund, monthly refund, release
+        assert len(seen) == 7
         assert all(db is request_db for db in seen)
         other_sessions.assert_not_called()
 

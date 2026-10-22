@@ -88,8 +88,9 @@ def provider():
         patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),
-        patch("app.api.scan._reserve_daily_scan", new=AsyncMock()),
-        patch("app.api.scan._refund_daily_scan", new=AsyncMock()),
+        patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._refund_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._release_scan_lease", new=AsyncMock()),
     ):
         provider_cls.return_value.identify = AsyncMock(return_value=[])
         yield provider_cls
@@ -604,6 +605,12 @@ _VALID = {
     "scan.standard.model": ["gpt-4o-mini", "gpt-4o"],
     "scan.enhanced.model": ["gpt-4o", "gpt-4o-2024-08-06"],
     "scan.max_image_pixels": [1_000_000, 40_000_000, 100_000_000],
+    # #528 allowance keys and the global ceiling.
+    "scan.global_daily_limit": [1, 2000, 1_000_000],
+    "quota.free.daily": [0, 5, 1000],
+    "quota.free.monthly": [0, 5, 100_000],
+    "quota.premium.daily": [0, 30, 1000],
+    "quota.premium.monthly": [0, 300, 100_000],
 }
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
@@ -613,6 +620,11 @@ _INVALID = {
     "scan.standard.model": ["gpt-5", "", None, 4, "x" * 200, "gpt-4o "],
     "scan.enhanced.model": ["claude-3", None],
     "scan.max_image_pixels": [999_999, 100_000_001, 0, -1, True, 1e7, "4e7", None],
+    "scan.global_daily_limit": [0, -1, 1_000_001, True, 2.5, "2000", None],
+    "quota.free.daily": [-1, 1001, True, False, 5.0, "5", None],
+    "quota.free.monthly": [-1, 100_001, True, 5.5, "5", None],
+    "quota.premium.daily": [-1, 1001, True, None],
+    "quota.premium.monthly": [-1, 100_001, False, None],
 }
 
 
@@ -629,6 +641,12 @@ def test_initial_key_set():
         "scan.standard.model",
         "scan.enhanced.model",
         "scan.max_image_pixels",
+        # #528
+        "scan.global_daily_limit",
+        "quota.free.daily",
+        "quota.free.monthly",
+        "quota.premium.daily",
+        "quota.premium.monthly",
     }
 
 
@@ -767,6 +785,12 @@ class TestSeeding:
             patch.object(ai_settings.settings, "scan_enabled", False),
             patch.object(ai_settings.settings, "scan_enhanced_enabled", True),
             patch.object(ai_settings.settings, "scan_max_image_pixels", 2_000_000),
+            # #528 seeds
+            patch.object(ai_settings.settings, "scan_global_daily_limit", 77),
+            patch.object(ai_settings.settings, "scan_free_daily_limit", 4),
+            patch.object(ai_settings.settings, "scan_free_monthly_limit", 6),
+            patch.object(ai_settings.settings, "scan_premium_daily_limit", 31),
+            patch.object(ai_settings.settings, "scan_premium_monthly_limit", 301),
         ):
             values = ai_settings.seed_values()
         assert values == {
@@ -777,6 +801,11 @@ class TestSeeding:
             "scan.standard.model": FEATURES["scan.standard"].model,
             "scan.enhanced.model": FEATURES["scan.enhanced"].model,
             "scan.max_image_pixels": 2_000_000,
+            "scan.global_daily_limit": 77,
+            "quota.free.daily": 4,
+            "quota.free.monthly": 6,
+            "quota.premium.daily": 31,
+            "quota.premium.monthly": 301,
         }
 
     async def test_seed_is_insert_if_missing(self):

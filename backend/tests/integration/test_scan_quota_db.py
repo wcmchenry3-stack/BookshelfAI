@@ -14,7 +14,6 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api import scan as scan_api
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, Base
 from app.models.scan_usage import ScanUsageDaily
@@ -147,12 +146,12 @@ class TestScanQuotaDb:
                 user = await db.get(User, user_id)  # transaction open, conn held
                 assert engine.pool.checkedout() == 1
 
-                await scan_api._reserve_daily_scan(db, user, DAY)
+                await scan_quota.reserve_daily_scan(db, user, DAY)
                 # Committed: connection returned during the provider call.
                 assert engine.pool.checkedout() == 0
                 assert user.id == user_id  # not expired by the commit
 
-                await scan_api._refund_daily_scan(db, user, DAY)
+                await scan_quota.refund_daily_scan(db, user, DAY)
                 assert engine.pool.checkedout() == 0
         finally:
             await engine.dispose()

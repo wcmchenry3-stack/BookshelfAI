@@ -159,8 +159,9 @@ def scan_client():
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = _fake_db
     with (
-        patch("app.api.scan._reserve_daily_scan", new=AsyncMock()) as reserve,
-        patch("app.api.scan._refund_daily_scan", new=AsyncMock()),
+        patch("app.api.scan._reserve_scan_quota", new=AsyncMock()) as reserve,
+        patch("app.api.scan._refund_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._release_scan_lease", new=AsyncMock()),
         patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),

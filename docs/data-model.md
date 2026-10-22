@@ -8,7 +8,9 @@ PostgreSQL schema, entity reference, and the dedup strategy that makes the colle
 erDiagram
   USERS ||--o{ USER_BOOKS : owns
   USERS ||--o{ REFRESH_TOKENS : issued
-  USERS ||--o{ SCAN_USAGE_DAILY : "scans per day"
+  USERS ||--o{ SCAN_USAGE_DAILY : "scans per day (legacy)"
+  USERS ||--o{ AI_QUOTA : "AI calls per window"
+  USERS ||--o| AI_INFLIGHT : "call in flight"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
@@ -75,6 +77,18 @@ erDiagram
     date usage_date PK "UTC, indexed"
     int scans
   }
+  AI_QUOTA {
+    uuid user_id PK,FK "cascade delete"
+    varchar feature PK "scan.standard / scan.enhanced"
+    varchar window_kind PK "day | month"
+    date window_start PK "UTC day / 1st of UTC month"
+    int units_used ">= 0"
+  }
+  AI_INFLIGHT {
+    uuid user_id PK,FK "cascade delete"
+    uuid lease_id
+    timestamptz lease_expires_at
+  }
   AI_SETTINGS {
     text key PK
     jsonb value
@@ -91,6 +105,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 |---|---|---|
 | `user_books.user_id` → `users.id` | `CASCADE` | Deleting an account removes that user's library (intentional). |
 | `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
+| `scan_usage_daily.user_id`, `ai_quota.user_id`, `ai_inflight.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters and any lease. |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
 | `user_books.edition_id` → `editions.id` | none (`NO ACTION`) | An edition referenced by a `UserBook` cannot be deleted. |
@@ -188,7 +203,9 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 
 ### `scan_usage_daily` (`backend/app/models/scan_usage.py`)
 
-Counts scans that reached the vision provider, per user per UTC day. Backs the per-user and global daily scan caps ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
+**Legacy since #528:** `/scan` no longer reads or writes it (the caps moved to `ai_quota` below). The table, `app/services/scan_quota.py` and its purge stay until #540 removes them; existing rows age out through the purge.
+
+Counts scans that reached the vision provider, per user per UTC day. Backed the per-user and global daily scan caps of #509.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -199,6 +216,38 @@ Counts scans that reached the vision provider, per user per UTC day. Backs the p
 **Keys:** the composite primary key `(user_id, usage_date)` is the unique key the reservation upsert targets. The `usage_date` index serves the global daily sum and the retention purge.
 
 **Volume and retention:** one row per active user per day (~40 bytes of data, roughly 100 bytes on disk with the indexes). The daily cleanup task (`app/services/token_cleanup.py`, calling `scan_quota.purge_old_scan_usage`) deletes rows with `usage_date` older than 90 days, in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade.
+
+### `ai_quota` (`backend/app/models/ai_quota.py`)
+
+Per-user count of AI calls reserved, per feature and window (#528). Backs the daily and monthly scan allowances and the global daily ceiling ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
+| `feature` | varchar(64), PK part | the gateway feature: `scan.standard` or `scan.enhanced` (counted separately) |
+| `window_kind` | varchar(8), PK part, CHECK `IN ('day', 'month')` | |
+| `window_start` | date, PK part | the UTC day, or the 1st of the UTC calendar month |
+| `units_used` | int, not null, server default 0, CHECK `>= 0` | incremented by the reservation upsert, decremented (never below 0) on a refund |
+
+**Keys and indexes:** the composite primary key `(user_id, feature, window_kind, window_start)` is the unique key the reservation upsert targets (`INSERT … ON CONFLICT … DO UPDATE SET units_used = units_used + 1 WHERE units_used < limit`). `ix_ai_quota_window (window_kind, window_start)` serves the global daily sum and the retention purge.
+
+**Writes:** only `app/ai/quota.py` (reserve, refund, purge), from the request's server-side user and the server's feature name. No client-supplied value is stored.
+
+**Volume and retention:** about 70 bytes per row. Per active user, one day row per scan feature used that day plus one month row per feature per month: roughly 140 bytes per active user per day. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month, in batches of 5,000 and at most 20 batches per window kind per run.
+
+### `ai_inflight` (`backend/app/models/ai_quota.py`)
+
+The per-user lease that allows one paid AI call in flight at a time (#528).
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | UUID FK → `users.id`, cascade delete, PK | at most one row per user |
+| `lease_id` | UUID, not null | random per acquisition; the release deletes the row only while it still holds this id, so a slow request whose lease expired and was taken over cannot release the new holder's lease |
+| `lease_expires_at` | timestamptz, not null | `clock_timestamp()` + the feature's `timeout_s` + 30 s; an expired lease can be taken over |
+
+**Writes:** acquired with `INSERT … ON CONFLICT (user_id) DO UPDATE … WHERE ai_inflight.lease_expires_at < clock_timestamp()`, deleted when the call settles or is refunded (always, in a `finally`).
+
+**Volume and retention:** at most one row per user with a call in flight (~60 bytes). Rows are deleted on release; a row left by a crashed request stays until that user's next scan takes it over (it is harmless once expired), or the user is deleted.
 
 ### `ai_settings` (`backend/app/models/ai_settings.py`)
 
@@ -213,7 +262,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 **Writes:** only the startup seed (insert-if-missing) and the CLI `python -m app.ai.settings set`. No endpoint reads or writes it from a request.
 
-**Volume and retention:** 7 rows today (about 8 expected), each under 300 bytes. It does not grow with usage, so no retention job.
+**Volume and retention:** 12 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528), each under 300 bytes. It does not grow with usage, so no retention job.
 
 ## Dedup strategy — why work_id, not ISBN
 
@@ -259,6 +308,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0004_restrict_catalog_deletes.py` — `user_books.book_id` and `editions.book_id` FKs become `ON DELETE RESTRICT`
 - `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps)
 - `0006_ai_settings.py` — adds `ai_settings` table (DB-backed AI dials and kill switches; rows are seeded at app startup, not by the migration)
+- `0007_ai_quota.py` — adds `ai_quota` (per-user daily/monthly AI allowance counters) and `ai_inflight` (one call in flight per user) tables; additive, the downgrade drops both
 
 ### Writing a new migration
 

@@ -182,7 +182,7 @@ class TestScanUploadValidation:
                 return_value=[],
             ),
             # No database here: stub the daily-cap reservation.
-            patch("app.api.scan._reserve_daily_scan", new=AsyncMock()),
+            patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
         ):
             response = client.post(
                 "/scan",

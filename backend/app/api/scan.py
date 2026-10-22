@@ -1,4 +1,5 @@
 import logging
+import uuid
 from datetime import date
 from functools import partial
 
@@ -9,9 +10,10 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import quota
 from app.ai.gateway import VisionPayload, run_feature
 from app.ai.registry import get_feature
-from app.ai.settings import AISettingsUnavailableError, get_ai_settings
+from app.ai.settings import AISettings, AISettingsUnavailableError, get_ai_settings
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -20,7 +22,7 @@ from app.core.file_validation import validate_magic_bytes
 from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.book import EnrichedBook, ScanResponse
-from app.services import scan_quota
+from app.schemas.scan import ScanUsageResponse
 from app.services.book_identifier import ScanUnavailableError
 from app.services.deduplication import DeduplicationService
 from app.services.enrichment import EnrichmentService
@@ -103,7 +105,7 @@ def _dedupe_enriched(books: list[EnrichedBook]) -> list[EnrichedBook]:
     return unique
 
 
-async def _spend_enhanced_credit(db: AsyncSession, user: User) -> int:
+async def _spend_enhanced_credit(db: AsyncSession, user_id: uuid.UUID) -> int:
     """Atomically decrement the user's enhanced-scan credits; return the balance.
 
     The ``> 0`` guard makes two concurrent enhanced scans unable to drive the
@@ -111,7 +113,7 @@ async def _spend_enhanced_credit(db: AsyncSession, user: User) -> int:
     """
     result = await db.execute(
         update(User)
-        .where(User.id == user.id, User.enhanced_scan_credits > 0)
+        .where(User.id == user_id, User.enhanced_scan_credits > 0)
         .values(enhanced_scan_credits=User.enhanced_scan_credits - 1)
         .returning(User.enhanced_scan_credits)
     )
@@ -120,43 +122,80 @@ async def _spend_enhanced_credit(db: AsyncSession, user: User) -> int:
     return int(remaining) if remaining is not None else 0
 
 
-async def _reserve_daily_scan(db: AsyncSession, user: User, usage_day: date) -> None:
-    """Enforce the global and per-user daily caps, reserving one scan.
+class ScanLimitReachedError(HTTPException):
+    """402 ``scan_limit_reached``: the monthly allowance is used.
 
-    Runs on the request's own session, so no second pool connection is needed.
-    ``reserve_scan`` commits, which makes the reservation visible to concurrent
-    requests and hands the connection back to the pool before the provider is
-    called; the session factory uses ``expire_on_commit=False``, so ``user``
-    stays loaded after the commit.
+    Rendered by the handler in ``app.main`` as
+    ``{"detail": "scan_limit_reached", "limit": N, "used": N,
+    "period_end": "YYYY-MM-DD"}``, so ``detail`` stays the same string code
+    every other scan error uses.
     """
-    used_globally = await scan_quota.global_scans_today(db, usage_day)
-    if used_globally >= settings.scan_global_daily_limit:
-        logger.warning("scan: global daily limit reached (%d)", used_globally)
+
+    def __init__(self, limit: int, used: int, period_end: date) -> None:
+        super().__init__(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="scan_limit_reached"
+        )
+        self.limit = limit
+        self.used = used
+        self.period_end = period_end
+
+    def body(self) -> dict:
+        return {
+            "detail": self.detail,
+            "limit": self.limit,
+            "used": self.used,
+            "period_end": self.period_end.isoformat(),
+        }
+
+
+async def _reserve_scan_quota(
+    db: AsyncSession, user: User, feature: str, ai: AISettings
+) -> quota.Reservation:
+    """Global ceiling, then the in-flight lease, then the daily and monthly
+    reservations (``app/ai/quota.py``), mapped to HTTP refusals.
+
+    Runs on the request's own session; each step commits, so the connection
+    is back in the pool during the provider call. A refusal has already given
+    back anything taken.
+    """
+    try:
+        return await quota.reserve(
+            db,
+            user=user,
+            feature=feature,
+            timeout_s=get_feature(feature).timeout_s,
+            ai=ai,
+        )
+    except quota.GlobalCapacityReached:
+        logger.warning("scan: global daily limit reached")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="scan_capacity",
-        )
-    reserved = await scan_quota.reserve_scan(
-        db, user.id, usage_day, settings.scan_daily_limit_per_user
-    )
-    if reserved is None:
+        ) from None
+    except quota.ScanInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="scan_in_progress",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    except quota.DailyLimitReached as exc:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="daily_scan_limit",
-            headers={"Retry-After": str(scan_quota.seconds_until_utc_midnight())},
-        )
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    except quota.MonthlyLimitReached as exc:
+        raise ScanLimitReachedError(exc.limit, exc.used, exc.period_end) from None
 
 
-async def _refund_daily_scan(db: AsyncSession, user: User, usage_day: date) -> None:
-    """Give back a reservation; a failure here must not mask the original error."""
-    try:
-        await scan_quota.refund_scan(db, user.id, usage_day)
-    except Exception:
-        logger.exception("scan: failed to refund daily scan reservation")
-        try:
-            await db.rollback()
-        except Exception:
-            logger.exception("scan: rollback after failed refund also failed")
+async def _refund_scan_quota(db: AsyncSession, reservation: quota.Reservation) -> None:
+    """Give back the daily and monthly units; never raises."""
+    await quota.refund(db, reservation)
+
+
+async def _release_scan_lease(db: AsyncSession, reservation: quota.Reservation) -> None:
+    """Release the in-flight lease (settle); never raises, shielded."""
+    await quota.release(db, reservation)
 
 
 @router.post("/scan", response_model=ScanResponse)
@@ -263,6 +302,7 @@ async def scan(
         limiter=_NORMALISE_LIMITER,
     )
 
+    # --- Entitlement: enhanced credits (#533 replaces this with its quota) ---
     credits = current_user.enhanced_scan_credits or 0
     if enhanced and credits <= 0:
         raise HTTPException(
@@ -270,31 +310,40 @@ async def scan(
             detail="no_enhanced_credits",
         )
 
-    # --- Daily caps: global ceiling, then an exact per-user reservation ---
-    usage_day = scan_quota.utc_today()
-    await _reserve_daily_scan(db, current_user, usage_day)
+    # --- Tier allowance, global ceiling, in-flight lease, daily, monthly ---
+    # The tier is resolved server-side inside quota.reserve; every refusal
+    # here happens before the provider and gives back what it took.
+    # Read before anything can roll the session back: a failed give-back
+    # (refund or lease release) rolls back, which expires current_user.
+    user_id = current_user.id
+    reservation = await _reserve_scan_quota(db, current_user, feature, ai)
 
     # The reservation is given back only when the provider reports itself
     # unavailable or was never reached (connection not established). Any other
     # failure (or a cancelled request) keeps it: the provider may already have
-    # been paid. An empty result also counts.
+    # been paid. An empty result also counts. The lease is always released
+    # once the provider call is over (settle), even on cancellation.
     try:
-        result = await run_feature(
-            feature,
-            user=current_user,
-            db=db,
-            payload=VisionPayload(image_bytes=image_bytes),
-            # The settings read above, so one request uses one view of them.
-            settings_snapshot=ai,
-        )
-    except (ScanUnavailableError, httpx.ConnectError):
-        # ConnectError: the connection to the provider was never established,
-        # so nothing was billed; treat it like any other unavailability.
-        await _refund_daily_scan(db, current_user, usage_day)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="scan_unavailable",
-        ) from None
+        try:
+            result = await run_feature(
+                feature,
+                user=current_user,
+                db=db,
+                payload=VisionPayload(image_bytes=image_bytes),
+                # The settings read above, so one request uses one view of them.
+                settings_snapshot=ai,
+            )
+        except (ScanUnavailableError, httpx.ConnectError):
+            # ConnectError: the connection to the provider was never
+            # established, so nothing was billed; treat it like any other
+            # unavailability.
+            await _refund_scan_quota(db, reservation)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="scan_unavailable",
+            ) from None
+    finally:
+        await _release_scan_lease(db, reservation)
     candidates = result.candidates
 
     if not candidates:
@@ -305,13 +354,38 @@ async def scan(
     enriched = _dedupe_enriched(enriched)
 
     dedup = DeduplicationService()
-    enriched = await dedup.check(db, str(current_user.id), enriched)
+    enriched = await dedup.check(db, str(user_id), enriched)
 
     # Charge only once there are books to hand back: an enhanced scan that
     # yields nothing — no candidates, or every lookup failed — is free.
     if enhanced and enriched:
-        credits = await _spend_enhanced_credit(db, current_user)
+        credits = await _spend_enhanced_credit(db, user_id)
 
     return ScanResponse(
         books=enriched, enhanced=enhanced, enhanced_scan_credits=credits
+    )
+
+
+@router.get("/scan/usage", response_model=ScanUsageResponse)
+@limiter.limit(settings.rate_limit_reads)
+async def scan_usage(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ScanUsageResponse:
+    """The current user's standard-scan usage and allowance (read only)."""
+    try:
+        ai = await get_ai_settings(db)
+    except AISettingsUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ai_unavailable",
+        ) from None
+    usage = await quota.usage_for(db, user=current_user, feature="scan.standard", ai=ai)
+    return ScanUsageResponse(
+        used_today=usage.used_today,
+        daily_limit=usage.daily_limit,
+        used_month=usage.used_month,
+        monthly_limit=usage.monthly_limit,
+        period_end=usage.period_end,
     )

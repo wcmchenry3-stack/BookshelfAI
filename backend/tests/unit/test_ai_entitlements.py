@@ -102,15 +102,12 @@ def test_scan_ignores_forged_client_tier(client):
         patch("app.ai.gateway.OpenAIVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
-        patch("app.api.scan.scan_quota") as quota,
+        patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._release_scan_lease", new=AsyncMock()),
     ):
         cls.return_value.identify = AsyncMock(return_value=[])
         enrich.return_value.enrich = AsyncMock(return_value=[])
         dedup.return_value.check = AsyncMock(return_value=[])
-        quota.global_scans_today = AsyncMock(return_value=0)
-        quota.reserve_scan = AsyncMock(return_value=1)
-        quota.refund_scan = AsyncMock()
-        quota.utc_today = MagicMock()
         resp = client.post(
             "/scan?tier=premium",
             files={"file": ("s.jpg", io.BytesIO(_JPEG), "image/jpeg")},

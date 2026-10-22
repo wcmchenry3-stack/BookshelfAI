@@ -15,19 +15,31 @@ key                         type     meaning
 ``scan.standard.model``     str      a model in the provider's allow-list
 ``scan.enhanced.model``     str      a model in the provider's allow-list
 ``scan.max_image_pixels``   int      1,000,000..100,000,000 decoded pixels
+``scan.global_daily_limit`` int      1..1,000,000 scans per UTC day, all users
+                                     (503 ``scan_capacity``)
+``quota.free.daily``        int      0..1,000 scans per user per UTC day
+``quota.free.monthly``      int      0..100,000 scans per user per UTC month
+``quota.premium.daily``     int      0..1,000 (as above, Premium tier)
+``quota.premium.monthly``   int      0..100,000 (as above, Premium tier)
 ==========================  =======  =========================================
+
+The ``quota.*`` allowances are per tier and apply to each scan feature
+separately (``scan.standard`` and ``scan.enhanced`` each have their own
+counters in ``ai_quota``); see ``app/ai/quota.py``.
 
 **Seeding.** At startup :func:`seed_ai_settings_at_startup` inserts every key
 that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
-``SCAN_MAX_IMAGE_PIXELS``) and the registry defaults (``SCAN_MODEL``,
+``SCAN_MAX_IMAGE_PIXELS``, ``SCAN_GLOBAL_DAILY_LIMIT``, ``SCAN_FREE_DAILY_LIMIT``,
+``SCAN_FREE_MONTHLY_LIMIT``, ``SCAN_PREMIUM_DAILY_LIMIT``,
+``SCAN_PREMIUM_MONTHLY_LIMIT``) and the registry defaults (``SCAN_MODEL``,
 ``SCAN_ENHANCED_MODEL``). Existing rows are never touched, so after the first
 boot the row is the source of truth and the env vars are initial defaults
 only. A key with no row (deleted by hand, or seeding failed while the DB was
 down) falls back to that same env/registry default.
 
 **Validation.** Writes (the CLI below) are validated against the same rules
-and refused when invalid. On read, an invalid provider, model or pixel cap is
-ignored with a warning (log + Sentry) and the default is used, so a bad hand
+and refused when invalid. On read, an invalid provider, model, pixel cap,
+global cap or allowance is ignored with a warning (log + Sentry) and the default is used, so a bad hand
 edit can never widen what the registry allows: a model must be in the
 allow-list of the provider it is paired with, and the registry still
 re-validates the per-request spec. An invalid ``*.enabled`` row (anything but
@@ -99,6 +111,13 @@ SCAN_FEATURES = ("scan.standard", "scan.enhanced")
 MASTER_SWITCH = "scan.standard.enabled"
 
 MAX_IMAGE_PIXELS_BOUNDS = (1_000_000, 100_000_000)
+GLOBAL_DAILY_LIMIT_BOUNDS = (1, 1_000_000)
+DAILY_ALLOWANCE_BOUNDS = (0, 1_000)
+MONTHLY_ALLOWANCE_BOUNDS = (0, 100_000)
+# Tiers with allowance keys: quota.<tier>.daily / quota.<tier>.monthly. Plain
+# strings (the Tier enum values) so this module stays free of request-side
+# imports; app/ai/quota.py maps a Tier to its keys.
+QUOTA_TIERS = ("free", "premium")
 MAX_MODEL_NAME_LENGTH = 100
 MAX_UPDATED_BY_LENGTH = 100
 SEED_ACTOR = "seed"
@@ -156,14 +175,24 @@ def _model(value: Any) -> str:
     return value
 
 
-def _max_image_pixels(value: Any) -> int:
-    low, high = MAX_IMAGE_PIXELS_BOUNDS
-    # bool is an int subclass; never accept it as a number.
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise AISettingValueError("must be a JSON integer")
-    if not low <= value <= high:
-        raise AISettingValueError(f"must be between {low:,} and {high:,}")
-    return value
+def _bounded_int(bounds: tuple[int, int]) -> Callable[[Any], int]:
+    low, high = bounds
+
+    def validate(value: Any) -> int:
+        # bool is an int subclass; never accept it as a number.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise AISettingValueError("must be a JSON integer")
+        if not low <= value <= high:
+            raise AISettingValueError(f"must be between {low:,} and {high:,}")
+        return value
+
+    return validate
+
+
+_max_image_pixels = _bounded_int(MAX_IMAGE_PIXELS_BOUNDS)
+_global_daily_limit = _bounded_int(GLOBAL_DAILY_LIMIT_BOUNDS)
+_daily_allowance = _bounded_int(DAILY_ALLOWANCE_BOUNDS)
+_monthly_allowance = _bounded_int(MONTHLY_ALLOWANCE_BOUNDS)
 
 
 @dataclass(frozen=True)
@@ -214,6 +243,31 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             "decoded pixel cap for /scan uploads (seed: SCAN_MAX_IMAGE_PIXELS)",
         )
     )
+    defs.append(
+        SettingDefinition(
+            "scan.global_daily_limit",
+            _global_daily_limit,
+            lambda: settings.scan_global_daily_limit,
+            "scans per UTC day across all users (seed: SCAN_GLOBAL_DAILY_LIMIT)",
+        )
+    )
+    for tier in QUOTA_TIERS:
+        defs += [
+            SettingDefinition(
+                f"quota.{tier}.daily",
+                _daily_allowance,
+                lambda t=tier: getattr(settings, f"scan_{t}_daily_limit"),
+                f"{tier} scans per user per UTC day, per scan feature "
+                f"(seed: SCAN_{tier.upper()}_DAILY_LIMIT)",
+            ),
+            SettingDefinition(
+                f"quota.{tier}.monthly",
+                _monthly_allowance,
+                lambda t=tier: getattr(settings, f"scan_{t}_monthly_limit"),
+                f"{tier} scans per user per UTC calendar month, per scan "
+                f"feature (seed: SCAN_{tier.upper()}_MONTHLY_LIMIT)",
+            ),
+        ]
     return MappingProxyType({d.key: d for d in defs})
 
 
@@ -345,6 +399,14 @@ class AISettings:
     @property
     def max_image_pixels(self) -> int:
         return self.get("scan.max_image_pixels")
+
+    @property
+    def global_daily_limit(self) -> int:
+        return self.get("scan.global_daily_limit")
+
+    def allowance(self, tier: str) -> tuple[int, int]:
+        """``(daily, monthly)`` scans for ``tier`` (``"free"`` or ``"premium"``)."""
+        return self.get(f"quota.{tier}.daily"), self.get(f"quota.{tier}.monthly")
 
     def feature_enabled(self, feature: str) -> bool:
         """``scan.standard.enabled`` is the master switch for every scan."""

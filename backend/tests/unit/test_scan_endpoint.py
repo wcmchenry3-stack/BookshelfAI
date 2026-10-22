@@ -48,8 +48,9 @@ def _allow_daily_scan_quota():
     """These tests use a fake DB; the daily-cap store is covered separately
     (test_scan_daily_caps.py, integration/test_scan_quota_db.py)."""
     with (
-        patch("app.api.scan._reserve_daily_scan", new=AsyncMock()),
-        patch("app.api.scan._refund_daily_scan", new=AsyncMock()),
+        patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._refund_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._release_scan_lease", new=AsyncMock()),
     ):
         yield
 
@@ -433,7 +434,7 @@ class TestImageNormalisationOnScan:
 
     @pytest.fixture
     def reserve(self):
-        with patch("app.api.scan._reserve_daily_scan", new=AsyncMock()) as r:
+        with patch("app.api.scan._reserve_scan_quota", new=AsyncMock()) as r:
             yield r
 
     def test_undecodable_image_returns_415_without_using_a_scan(self, client, reserve):
