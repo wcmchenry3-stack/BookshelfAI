@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import ValidationError
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -25,7 +26,17 @@ USER = User(
     email="caps@example.com",
     enhanced_scan_credits=3,
 )
-_JPEG = b"\xff\xd8\xff\xe0" + b"x" * 96
+
+
+def _real_jpeg() -> bytes:
+    # A real, decodable JPEG: since #529 an undecodable upload is rejected
+    # with 415 image_undecodable before the reservation.
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 24), (200, 30, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+_JPEG = _real_jpeg()
 
 
 def _file():

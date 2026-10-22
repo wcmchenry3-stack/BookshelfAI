@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.ai.registry import FEATURES
 from app.main import app
@@ -25,14 +26,21 @@ ENRICHED_BOOK = EnrichedBook(
 )
 
 
-_JPEG_MAGIC = b"\xff\xd8\xff\xe0"
+def _real_jpeg() -> bytes:
+    # A real, decodable JPEG: since #529 an undecodable upload is rejected
+    # with 415 image_undecodable instead of being passed through.
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 24), (200, 30, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+_JPEG = _real_jpeg()
 
 
 def _image_file(size_bytes: int = 100, content_type: str = "image/jpeg"):
-    # Prepend valid JPEG magic bytes so the file passes magic bytes validation.
-    # Pad to the requested size with neutral bytes.
-    padding = b"x" * max(0, size_bytes - len(_JPEG_MAGIC))
-    return ("scan.jpg", io.BytesIO(_JPEG_MAGIC + padding), content_type)
+    # A real JPEG, padded after its end marker to the requested size.
+    padding = b"x" * max(0, size_bytes - len(_JPEG))
+    return ("scan.jpg", io.BytesIO(_JPEG + padding), content_type)
 
 
 @pytest.fixture(autouse=True)
@@ -405,3 +413,137 @@ class TestTurnstileProtection:
 
         app.dependency_overrides.clear()
         assert resp.status_code == 200
+
+
+def _png_with_declared_size(width: int, height: int) -> bytes:
+    """A tiny PNG whose header claims ``width`` x ``height`` pixels."""
+    import struct
+    import zlib
+
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(buf, format="PNG")
+    png = bytearray(buf.getvalue())
+    png[16:24] = struct.pack(">II", width, height)
+    png[29:33] = struct.pack(">I", zlib.crc32(bytes(png[12:29])) & 0xFFFFFFFF)
+    return bytes(png)
+
+
+class TestImageNormalisationOnScan:
+    """#529: decode-or-reject and the pixel cap run before credits and caps."""
+
+    @pytest.fixture
+    def reserve(self):
+        with patch("app.api.scan._reserve_daily_scan", new=AsyncMock()) as r:
+            yield r
+
+    def test_undecodable_image_returns_415_without_using_a_scan(self, client, reserve):
+        fake = b"\xff\xd8\xff\xe0" + b"x" * 200  # JPEG magic, no image
+        with patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls:
+            resp = client.post(
+                "/scan", files={"file": ("s.jpg", io.BytesIO(fake), "image/jpeg")}
+            )
+        assert resp.status_code == 415
+        assert resp.json() == {"detail": "image_undecodable"}
+        reserve.assert_not_awaited()
+        provider_cls.assert_not_called()
+
+    def test_pixel_bomb_returns_413_without_using_a_scan(self, client, reserve):
+        bomb = _png_with_declared_size(9000, 9000)  # 81 MP declared
+        with patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls:
+            resp = client.post(
+                "/scan", files={"file": ("s.png", io.BytesIO(bomb), "image/png")}
+            )
+        assert resp.status_code == 413
+        assert resp.json() == {"detail": "image_too_large_pixels"}
+        reserve.assert_not_awaited()
+        provider_cls.assert_not_called()
+
+    def test_enhanced_scan_bad_image_does_not_check_credits_first(self, reserve):
+        """Normalisation runs before the credit check too: 415, not 402."""
+        from app.auth.dependencies import get_current_user
+        from app.core.database import get_db
+
+        async def _fake_db():
+            yield AsyncMock()
+
+        app.dependency_overrides[get_current_user] = lambda: _user_with_credits(0)
+        app.dependency_overrides[get_db] = _fake_db
+        try:
+            resp = TestClient(app).post(
+                "/scan",
+                files={
+                    "file": ("s.jpg", io.BytesIO(b"\xff\xd8\xff\xe0xx"), "image/jpeg")
+                },
+                data={"enhanced": "true"},
+            )
+        finally:
+            app.dependency_overrides.clear()
+        assert resp.status_code == 415
+        reserve.assert_not_awaited()
+
+    def test_provider_receives_normalised_jpeg_not_original(self, client, reserve):
+        img = Image.new("RGB", (3000, 1500), (20, 40, 60))
+        exif = Image.Exif()
+        exif[0x010F] = "OriginalCamera"
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", exif=exif.tobytes())
+        original = buf.getvalue()
+
+        with (
+            patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            patch("app.api.scan.EnrichmentService"),
+            patch("app.api.scan.DeduplicationService"),
+        ):
+            provider_cls.return_value.identify = AsyncMock(return_value=[])
+            resp = client.post(
+                "/scan",
+                files={"file": ("s.png", io.BytesIO(original), "image/png")},
+            )
+
+        assert resp.status_code == 200
+        reserve.assert_awaited_once()
+        sent = provider_cls.return_value.identify.await_args.args[0]
+        assert sent != original
+        assert sent[:3] == b"\xff\xd8\xff"
+        assert b"OriginalCamera" not in sent
+        out = Image.open(io.BytesIO(sent))
+        assert out.format == "JPEG"
+        assert out.size == (1568, 784)
+        assert len(out.getexif()) == 0
+
+    def test_long_edge_follows_the_enhanced_feature_spec(self, reserve):
+        """The long-edge cap is read from the registry for the chosen feature."""
+        from dataclasses import replace
+
+        from app.auth.dependencies import get_current_user
+        from app.core.database import get_db
+
+        async def _fake_db():
+            yield AsyncMock()
+
+        specs = {
+            "scan.standard": FEATURES["scan.standard"],
+            "scan.enhanced": replace(
+                FEATURES["scan.enhanced"], max_image_long_edge_px=512
+            ),
+        }
+        buf = io.BytesIO()
+        Image.new("RGB", (2000, 1000)).save(buf, format="JPEG")
+        app.dependency_overrides[get_current_user] = lambda: _user_with_credits(2)
+        app.dependency_overrides[get_db] = _fake_db
+        try:
+            with (
+                patch("app.api.scan.get_feature", side_effect=specs.__getitem__),
+                patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            ):
+                provider_cls.return_value.identify = AsyncMock(return_value=[])
+                resp = TestClient(app).post(
+                    "/scan",
+                    files={"file": ("s.jpg", io.BytesIO(buf.getvalue()), "image/jpeg")},
+                    data={"enhanced": "true"},
+                )
+        finally:
+            app.dependency_overrides.clear()
+        assert resp.status_code == 200
+        sent = provider_cls.return_value.identify.await_args.args[0]
+        assert Image.open(io.BytesIO(sent)).size == (512, 256)
