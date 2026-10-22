@@ -1,3 +1,5 @@
 {
-  "heading": "Paramètres"
+  "heading": "Paramètres",
+  "scanUsageLabel": "Utilisation des numérisations",
+  "scanUsageMonth": "{{used}} sur {{limit}} numérisations utilisées ce mois-ci"
 }

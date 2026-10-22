@@ -26,5 +26,18 @@
   "couldNotSaveTitle": "Opslaan mislukt",
   "couldNotSaveMessage": "Boek toevoegen mislukt. Probeer het opnieuw.",
   "queueFull": "Wachtrij vol. Wacht tot de openstaande scans zijn geüpload voordat je meer toevoegt.",
-  "pendingUploads": "Openstaande uploads: {{count}}"
+  "pendingUploads": "Openstaande uploads: {{count}}",
+  "usageMonth": "Scans gebruikt deze maand: {{used}} van {{limit}}",
+  "usageToday": "Scans over vandaag: {{count}}",
+  "monthlyLimit_one": "Je hebt je {{count}} scan voor deze maand gebruikt.",
+  "monthlyLimit_other": "Je hebt je {{count}} scans voor deze maand gebruikt.",
+  "monthlyLimitAny": "Je hebt al je scans voor deze maand gebruikt.",
+  "monthlyResets": "Je scans worden op {{date}} opnieuw ingesteld.",
+  "dailyLimit": "Daglimiet bereikt. Scannen wordt om middernacht UTC hersteld ({{time}} jouw tijd).",
+  "stillProcessing": "Nog bezig met verwerken. Probeer het zo meteen opnieuw.",
+  "scanPaused": "Scannen is gepauzeerd. Probeer het later opnieuw.",
+  "dismissNotice": "Sluiten",
+  "tryAgainNotice": "Opnieuw proberen",
+  "queueFullLimited": "Je hebt je scanlimiet bereikt. Je opgeslagen foto's worden verzonden zodra scannen weer beschikbaar is.",
+  "sendPendingNow": "Nu verzenden"
 }
