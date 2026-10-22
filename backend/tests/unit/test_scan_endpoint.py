@@ -547,3 +547,99 @@ class TestImageNormalisationOnScan:
         assert resp.status_code == 200
         sent = provider_cls.return_value.identify.await_args.args[0]
         assert Image.open(io.BytesIO(sent)).size == (512, 256)
+
+
+class TestNormalisationRunsOffTheEventLoop:
+    """Normalisation runs in a worker thread, gated by a capacity limiter."""
+
+    @pytest.fixture
+    def provider(self):
+        with (
+            patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            patch("app.api.scan.EnrichmentService"),
+            patch("app.api.scan.DeduplicationService"),
+        ):
+            provider_cls.return_value.identify = AsyncMock(return_value=[])
+            yield provider_cls
+
+    def test_sanitize_image_goes_through_run_sync_with_the_limiter(
+        self, client, provider
+    ):
+        import anyio.to_thread
+
+        from app.api import scan as scan_module
+
+        real_run_sync = anyio.to_thread.run_sync
+        with patch.object(
+            scan_module.anyio.to_thread, "run_sync", wraps=real_run_sync
+        ) as run_sync:
+            resp = client.post("/scan", files={"file": _image_file()})
+
+        assert resp.status_code == 200
+        sanitize_calls = [
+            c
+            for c in run_sync.call_args_list
+            if getattr(c.args[0], "func", None) is scan_module.sanitize_image
+        ]
+        assert len(sanitize_calls) == 1
+        call = sanitize_calls[0]
+        assert call.kwargs["limiter"] is scan_module._NORMALISE_LIMITER
+        assert call.args[0].args == (_JPEG,)
+        assert call.args[0].keywords == {
+            "max_long_edge_px": FEATURES["scan.standard"].max_image_long_edge_px
+        }
+
+    def test_sanitize_image_runs_off_the_event_loop(self, client, provider):
+        import asyncio
+
+        from app.api import scan as scan_module
+
+        on_loop = []
+        real = scan_module.sanitize_image
+
+        def spy(*args, **kwargs):
+            try:
+                asyncio.get_running_loop()
+                on_loop.append(True)
+            except RuntimeError:  # no loop in this thread: a worker thread
+                on_loop.append(False)
+            return real(*args, **kwargs)
+
+        with patch.object(scan_module, "sanitize_image", side_effect=spy):
+            resp = client.post("/scan", files={"file": _image_file()})
+
+        assert resp.status_code == 200
+        assert on_loop == [False]
+
+    def test_limiter_size_comes_from_the_setting(self):
+        from app.api import scan as scan_module
+        from app.core.config import settings
+
+        assert (
+            scan_module._NORMALISE_LIMITER.total_tokens
+            == settings.scan_normalise_concurrency
+        )
+
+
+class TestNormaliseConcurrencySetting:
+    _DB = "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_default_is_2(self):
+        from app.core.config import Settings
+
+        assert Settings(database_url=self._DB).scan_normalise_concurrency == 2
+
+    @pytest.mark.parametrize("value", [0, 9])
+    def test_out_of_bounds_rejected(self, value):
+        from pydantic import ValidationError
+
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError):
+            Settings(database_url=self._DB, scan_normalise_concurrency=value)
+
+    def test_read_from_env(self, monkeypatch):
+        from app.core.config import Settings
+
+        monkeypatch.setenv("SCAN_NORMALISE_CONCURRENCY", "4")
+        assert Settings(database_url=self._DB).scan_normalise_concurrency == 4

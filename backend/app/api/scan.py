@@ -1,6 +1,9 @@
 import logging
 from datetime import date
+from functools import partial
 
+import anyio
+import anyio.to_thread
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import update
@@ -30,6 +33,12 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB
 READ_CHUNK_BYTES = 64 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+# Image normalisation is CPU- and memory-heavy (a 40 MP image decodes to
+# hundreds of MB), so it runs in a worker thread to keep the event loop free,
+# and at most SCAN_NORMALISE_CONCURRENCY run at once per process to bound
+# peak memory. Requests over the limit wait for a slot.
+_NORMALISE_LIMITER = anyio.CapacityLimiter(settings.scan_normalise_concurrency)
 
 
 async def _verify_turnstile(token: str) -> bool:
@@ -233,9 +242,15 @@ async def scan(
     # image_too_large_pixels), EXIF orientation, all metadata stripped, long
     # edge capped for the feature, re-encoded as JPEG quality 85. Only these
     # bytes reach the provider.
-    image_bytes = sanitize_image(
-        image_bytes,
-        max_long_edge_px=get_feature(feature).max_image_long_edge_px,
+    # Off the event loop; the 413/415 HTTPException raised in the thread
+    # propagates out of run_sync unchanged.
+    image_bytes = await anyio.to_thread.run_sync(
+        partial(
+            sanitize_image,
+            image_bytes,
+            max_long_edge_px=get_feature(feature).max_image_long_edge_px,
+        ),
+        limiter=_NORMALISE_LIMITER,
     )
 
     credits = current_user.enhanced_scan_credits or 0
