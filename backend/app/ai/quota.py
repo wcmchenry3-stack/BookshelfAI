@@ -358,8 +358,9 @@ async def _give_back(
 ) -> None:
     """Run a give-back so that it cannot mask the original outcome.
 
-    Shielded so it still runs while the request is being cancelled, and
-    bounded by ``CLEANUP_TIMEOUT_SECONDS``. A failure is logged and retried
+    Shielded so it still runs while the request is being cancelled (anyio
+    cancellation, as on the request path; a native ``asyncio`` task cancel,
+    e.g. at server shutdown, cuts through the shield), and bounded by ``CLEANUP_TIMEOUT_SECONDS``. A failure is logged and retried
     once after a rollback (the session may be in a failed transaction after
     the error being handled); a second failure is logged and swallowed: the
     lease expiry is the backstop.

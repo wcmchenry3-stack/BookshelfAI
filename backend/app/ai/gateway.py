@@ -105,13 +105,14 @@ async def run_feature(
     tier = await entitlements.tier_for(db, user)
 
     provider = _build_provider(spec)
-    try:
-        with anyio.fail_after(spec.timeout_s):
-            candidates = await provider.identify(payload.image_bytes)
-    except TimeoutError as exc:
+    # move_on_after rather than fail_after, so only this deadline (not a
+    # TimeoutError raised inside the provider) becomes ScanUnavailableError.
+    with anyio.move_on_after(spec.timeout_s) as deadline:
+        candidates = await provider.identify(payload.image_bytes)
+    if deadline.cancelled_caught:
         raise ScanUnavailableError(
             f"AI feature {spec.name!r} exceeded its {spec.timeout_s}s deadline"
-        ) from exc
+        )
     return AIResult(
         feature=spec.name,
         provider=spec.provider,

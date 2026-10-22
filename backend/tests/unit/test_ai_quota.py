@@ -291,7 +291,11 @@ class TestGiveBack:
         with anyio.CancelScope() as scope:
             scope.cancel()
             await quota._give_back(AsyncMock(), "lease release", op)
+            # The caller's cancellation is still delivered afterwards.
+            await anyio.lowlevel.checkpoint()
+            steps.append("not cancelled")
         assert steps == ["started", "checkpointed", "done"]
+        assert scope.cancelled_caught
 
     async def test_timeout_rolls_the_session_back(self, caplog):
         """A give-back cut off by the bound may leave the connection
