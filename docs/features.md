@@ -66,6 +66,19 @@ sequenceDiagram
 - Scan job IDs are minted with `Crypto.randomUUID()` from `expo-crypto` (native-backed, Hermes-safe — see the uuid regression in `frontend/.eslintrc.js`).
 - Text search (`/books/search`) uses the same `ScanJob` pipeline with `type='text'` — different input path, same state machine.
 
+### Scan limits — what users see
+
+Every user has a monthly and a daily scan allowance (standard and enhanced scans share it). The numbers come from `GET /scan/usage`; no copy hardcodes them. The month is the UTC calendar month and the reset date shown is the API's `period_end`, formatted for the user's locale.
+
+- **Counter (scan screen):** "Scans used this month: X of Y" and "Scans left today: N" (the tighter of the daily and the monthly remainder). Refetched after every scan that reaches the server. Hidden while offline or if the request fails; it never shows an error.
+- **Settings:** a "Scan usage" row with the same used / limit figure for the month. No plan label, renewal date or upgrade button.
+- **Monthly limit (402 `scan_limit_reached`):** "You've used your N scans for this month. Your scans reset on <date>." No upgrade CTA.
+- **Daily limit (429 `daily_scan_limit`):** "Daily limit reached. Scanning resets at midnight UTC (<local time> your time)."
+- **Scan already running (429 `scan_in_progress`):** the app waits `Retry-After` (default 2 s, capped at 10 s) and retries silently, up to 3 times. If it is still busy: "Still processing. Please try again in a moment." (3 retries is about 6 s, long enough to ride out a normal overlap without leaving the user waiting on a stuck lease.)
+- **Scanning off (503 `scan_disabled`, `enhanced_scan_disabled`, `scan_capacity`, `ai_unavailable`, `scan_unavailable`):** "Scanning is paused. Please try again later."
+- 402 `no_enhanced_credits` is unchanged (enhanced re-scan falls back to the standard results).
+- Offline capture and the upload queue are unchanged; a refused scan is marked failed (not queued) so it is not retried automatically.
+
 ### Auth flow — Google SSO → rotating refresh tokens
 
 ```mermaid

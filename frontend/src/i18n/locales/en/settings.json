@@ -1,3 +1,5 @@
 {
-  "heading": "Settings"
+  "heading": "Settings",
+  "scanUsageLabel": "Scan usage",
+  "scanUsageMonth": "{{used}} of {{limit}} scans used this month"
 }

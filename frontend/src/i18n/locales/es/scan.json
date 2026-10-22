@@ -26,5 +26,16 @@
   "couldNotSaveTitle": "No se pudo guardar",
   "couldNotSaveMessage": "No se pudo añadir el libro a la wishlist. Inténtalo de nuevo.",
   "queueFull": "Cola llena. Espera a que se suban los escaneos pendientes antes de añadir más.",
-  "pendingUploads": "Subidas pendientes: {{count}}"
+  "pendingUploads": "Subidas pendientes: {{count}}",
+  "usageMonth": "Escaneos usados este mes: {{used}} de {{limit}}",
+  "usageToday": "Escaneos restantes hoy: {{count}}",
+  "monthlyLimit_one": "Has usado tu {{count}} escaneo de este mes.",
+  "monthlyLimit_many": "Has usado tus {{count}} escaneos de este mes.",
+  "monthlyLimit_other": "Has usado tus {{count}} escaneos de este mes.",
+  "monthlyLimitAny": "Has usado todos tus escaneos de este mes.",
+  "monthlyResets": "Tus escaneos se restablecen el {{date}}.",
+  "dailyLimit": "Límite diario alcanzado. El escaneo se restablece a medianoche UTC ({{time}} en tu hora).",
+  "stillProcessing": "Todavía se está procesando. Inténtalo de nuevo en un momento.",
+  "scanPaused": "El escaneo está en pausa. Inténtalo de nuevo más tarde.",
+  "dismissNotice": "Cerrar"
 }

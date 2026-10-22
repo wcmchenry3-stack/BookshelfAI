@@ -26,5 +26,14 @@
   "couldNotSaveTitle": "저장 불가",
   "couldNotSaveMessage": "책을 위시리스트에 추가할 수 없습니다. 다시 시도해 주세요.",
   "queueFull": "대기열이 가득 찼습니다. 대기 중인 스캔이 업로드된 후에 추가해 주세요.",
-  "pendingUploads": "대기 중인 업로드: {{count}}"
+  "pendingUploads": "대기 중인 업로드: {{count}}",
+  "usageMonth": "이번 달 사용한 스캔: {{used}} / {{limit}}",
+  "usageToday": "오늘 남은 스캔: {{count}}",
+  "monthlyLimit_other": "이번 달 스캔 {{count}}회를 모두 사용했습니다.",
+  "monthlyLimitAny": "이번 달 스캔을 모두 사용했습니다.",
+  "monthlyResets": "스캔 횟수는 {{date}}에 초기화됩니다.",
+  "dailyLimit": "일일 한도에 도달했습니다. 스캔은 UTC 자정에 초기화됩니다(현지 시간 {{time}}).",
+  "stillProcessing": "아직 처리 중입니다. 잠시 후 다시 시도해 주세요.",
+  "scanPaused": "스캔이 일시 중지되었습니다. 나중에 다시 시도해 주세요.",
+  "dismissNotice": "닫기"
 }

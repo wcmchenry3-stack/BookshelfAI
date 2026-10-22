@@ -26,5 +26,16 @@
   "couldNotSaveTitle": "Não foi possível salvar",
   "couldNotSaveMessage": "Erro ao adicionar livro à lista. Tente novamente.",
   "queueFull": "Fila cheia. Aguarde o envio dos scans pendentes antes de adicionar mais.",
-  "pendingUploads": "Envios pendentes: {{count}}"
+  "pendingUploads": "Envios pendentes: {{count}}",
+  "usageMonth": "Escaneamentos usados neste mês: {{used}} de {{limit}}",
+  "usageToday": "Escaneamentos restantes hoje: {{count}}",
+  "monthlyLimit_one": "Você usou seu {{count}} escaneamento deste mês.",
+  "monthlyLimit_many": "Você usou seus {{count}} escaneamentos deste mês.",
+  "monthlyLimit_other": "Você usou seus {{count}} escaneamentos deste mês.",
+  "monthlyLimitAny": "Você usou todos os seus escaneamentos deste mês.",
+  "monthlyResets": "Seus escaneamentos são renovados em {{date}}.",
+  "dailyLimit": "Limite diário atingido. O escaneamento é renovado à meia-noite UTC ({{time}} no seu horário).",
+  "stillProcessing": "Ainda processando. Tente novamente em instantes.",
+  "scanPaused": "O escaneamento está pausado. Tente novamente mais tarde.",
+  "dismissNotice": "Fechar"
 }

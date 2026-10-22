@@ -26,5 +26,16 @@
   "couldNotSaveTitle": "לא ניתן לשמור",
   "couldNotSaveMessage": "הוספת הספר לרשימת המשאלות נכשלה. אנא נסה שוב.",
   "queueFull": "התור מלא. המתן להעלאת הסריקות הממתינות לפני שתוסיף עוד.",
-  "pendingUploads": "העלאות ממתינות: {{count}}"
+  "pendingUploads": "העלאות ממתינות: {{count}}",
+  "usageMonth": "סריקות שנוצלו החודש: {{used}} מתוך {{limit}}",
+  "usageToday": "סריקות שנותרו היום: {{count}}",
+  "monthlyLimit_one": "ניצלת את הסריקה ({{count}}) שלך לחודש זה.",
+  "monthlyLimit_two": "ניצלת את {{count}} הסריקות שלך לחודש זה.",
+  "monthlyLimit_other": "ניצלת את {{count}} הסריקות שלך לחודש זה.",
+  "monthlyLimitAny": "ניצלת את כל הסריקות שלך לחודש זה.",
+  "monthlyResets": "הסריקות שלך יתאפסו ב-{{date}}.",
+  "dailyLimit": "הגעת למגבלה היומית. הסריקה תתחדש בחצות UTC ({{time}} לפי השעון שלך).",
+  "stillProcessing": "עדיין בעיבוד. נסה שוב בעוד רגע.",
+  "scanPaused": "הסריקה מושהית. נסה שוב מאוחר יותר.",
+  "dismissNotice": "סגור"
 }

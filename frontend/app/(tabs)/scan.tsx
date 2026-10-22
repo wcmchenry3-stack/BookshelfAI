@@ -8,6 +8,8 @@ import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useBanner } from '../../hooks/useBanner';
+import { useScanUsage } from '../../hooks/useScanUsage';
+import { ScanStatusPanel } from '../../components/ScanStatusPanel';
 
 type InputMode = 'camera' | 'search';
 type CameraFacing = 'back' | 'front';
@@ -18,7 +20,9 @@ export default function ScanScreen() {
   // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
   const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
   const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
-  const { startScan, isQueueFull, pendingCount } = useScanJobs();
+  const { startScan, isQueueFull, pendingCount, scanNotice, dismissScanNotice, usageRefreshKey } =
+    useScanJobs();
+  const usage = useScanUsage(usageRefreshKey ?? 0);
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
   const [inputMode, setInputMode] = useState<InputMode>('camera');
@@ -209,12 +213,21 @@ export default function ScanScreen() {
       </View>
     ) : null;
 
+  const statusPanel = (
+    <ScanStatusPanel
+      usage={usage}
+      notice={scanNotice ?? null}
+      onDismissNotice={dismissScanNotice ?? (() => {})}
+    />
+  );
+
   // ── Search mode ──────────────────────────────────────────────────────────
   if (inputMode === 'search') {
     return (
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         {modeToggle}
         {pendingBadge}
+        {statusPanel}
         <View style={styles.searchContainer}>
           <TextInput
             style={[
@@ -264,6 +277,7 @@ export default function ScanScreen() {
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
           {modeToggle}
           {pendingBadge}
+          {statusPanel}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
             onPress={() => webInputRef.current?.click()}
@@ -332,6 +346,7 @@ export default function ScanScreen() {
         <View style={styles.topGroup}>
           {modeToggle}
           {pendingBadge}
+          {statusPanel}
         </View>
 
         {/* Viewfinder: corner-bracket markers + scanning line */}

@@ -1,3 +1,5 @@
 {
-  "heading": "설정"
+  "heading": "설정",
+  "scanUsageLabel": "스캔 사용량",
+  "scanUsageMonth": "이번 달 스캔 {{used}} / {{limit}}회 사용"
 }

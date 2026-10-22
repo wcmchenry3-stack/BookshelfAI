@@ -26,5 +26,14 @@
   "couldNotSaveTitle": "无法保存",
   "couldNotSaveMessage": "添加书籍失败，请重试。",
   "queueFull": "队列已满。请等待待处理的扫描上传完成后再添加。",
-  "pendingUploads": "待上传：{{count}}"
+  "pendingUploads": "待上传：{{count}}",
+  "usageMonth": "本月已用扫描：{{used}} / {{limit}}",
+  "usageToday": "今日剩余扫描：{{count}}",
+  "monthlyLimit_other": "您已用完本月的 {{count}} 次扫描。",
+  "monthlyLimitAny": "您已用完本月的所有扫描次数。",
+  "monthlyResets": "扫描次数将于 {{date}} 重置。",
+  "dailyLimit": "已达每日上限。扫描将在 UTC 午夜重置（您的当地时间 {{time}}）。",
+  "stillProcessing": "仍在处理中，请稍后再试。",
+  "scanPaused": "扫描已暂停，请稍后再试。",
+  "dismissNotice": "关闭"
 }

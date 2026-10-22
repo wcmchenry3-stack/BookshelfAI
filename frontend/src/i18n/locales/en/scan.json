@@ -49,5 +49,15 @@
   "enhancedNoBooksFound": "Enhanced scan couldn't find any books either",
   "noEnhancedCredits": "You're out of enhanced scans.",
   "enhancedNoNewBooks": "Enhanced scan didn't find any more books. Showing your earlier results.",
-  "enhancedFailed": "Enhanced scan failed. Showing your earlier results."
+  "enhancedFailed": "Enhanced scan failed. Showing your earlier results.",
+  "usageMonth": "Scans used this month: {{used}} of {{limit}}",
+  "usageToday": "Scans left today: {{count}}",
+  "monthlyLimit_one": "You've used your {{count}} scan for this month.",
+  "monthlyLimit_other": "You've used your {{count}} scans for this month.",
+  "monthlyLimitAny": "You've used all your scans for this month.",
+  "monthlyResets": "Your scans reset on {{date}}.",
+  "dailyLimit": "Daily limit reached. Scanning resets at midnight UTC ({{time}} your time).",
+  "stillProcessing": "Still processing. Please try again in a moment.",
+  "scanPaused": "Scanning is paused. Please try again later.",
+  "dismissNotice": "Dismiss"
 }

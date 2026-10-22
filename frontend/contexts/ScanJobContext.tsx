@@ -9,6 +9,14 @@ import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { Sentry } from '../lib/sentry';
 import {
+  classifyScanError,
+  MAX_IN_PROGRESS_RETRIES,
+  scanNoticeMessage,
+  toScanNotice,
+  type ScanNotice,
+  type ScanUiState,
+} from '../lib/scanErrors';
+import {
   isPendingUpload,
   MAX_QUEUE_SIZE,
   type ScanJob,
@@ -29,6 +37,11 @@ export interface ScanJobContextValue {
   reviewingJob: ScanJob | null;
   /** Enhanced-scan credits left, as last reported by the server; null until a scan reports it. */
   enhancedCredits: number | null;
+  /** Why the last scan was refused (limit reached, paused, ...); null when there is nothing to show. */
+  scanNotice: ScanNotice | null;
+  dismissScanNotice: () => void;
+  /** Changes whenever a scan reached the server; usage counters refetch on change. */
+  usageRefreshKey: number;
   startScan: (type: ScanJobType, imageUri?: string, query?: string) => void;
   retryScan: (jobId: string) => void;
   queueForLater: (jobId: string) => void;
@@ -47,6 +60,9 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   isQueueFull: false,
   reviewingJob: null,
   enhancedCredits: null,
+  scanNotice: null,
+  dismissScanNotice: () => {},
+  usageRefreshKey: 0,
   startScan: () => {},
   retryScan: () => {},
   queueForLater: () => {},
@@ -57,10 +73,8 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   handleAddBooks: async () => {},
 });
 
-/** True when the request failed because the user has no enhanced-scan credits. */
-function isOutOfCredits(err: unknown): boolean {
-  const response = (err as { response?: { status?: number } } | null)?.response;
-  return response?.status === 402;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function ScanJobProvider({ children }: { children: React.ReactNode }) {
@@ -68,6 +82,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [reviewingJobId, setReviewingJobId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [enhancedCredits, setEnhancedCredits] = useState<number | null>(null);
+  const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
+  const [usageRefreshKey, setUsageRefreshKey] = useState(0);
   const drainingRef = useRef(false);
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
   // Set when the initial load fails, so the persist effect below doesn't
@@ -75,7 +91,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // with — we don't know what was actually stored. Consumed on first fire.
   const skipNextPersistRef = useRef(false);
   const { showBanner } = useBanner();
-  const { t } = useTranslation('scan');
+  const { t, i18n } = useTranslation('scan');
+
+  const dismissScanNotice = useCallback(() => setScanNotice(null), []);
+  const bumpUsage = useCallback(() => setUsageRefreshKey((k) => k + 1), []);
 
   // Persist jobs whenever they change (after initial load).
   useEffect(() => {
@@ -391,6 +410,33 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       showBanner({ message, type, duration: 6000 });
     }
 
+    // A refusal from POST /scan (limit, busy, paused). Not a failure worth a
+    // Sentry event or a retry prompt: the screen shows a notice and the job
+    // stops (a 'failed' job is never auto-drained, so it can't spam the API).
+    function handleScanRefusal(job: ScanJob, state: ScanUiState) {
+      const notice = toScanNotice(state, Date.now(), true);
+      if (!notice) return;
+      setScanNotice(notice);
+      if (state.kind !== 'paused' && state.kind !== 'in_progress') bumpUsage();
+      Sentry.addBreadcrumb({
+        category: 'scan',
+        message: `Scan refused: ${state.kind}`,
+        level: 'info',
+        data: { jobId: job.id },
+      });
+      // A refused enhanced re-scan must not strand the standard scan's books.
+      if (job.enhanced && job.results?.length) {
+        restorePriorResults(
+          job,
+          { enhanced: false },
+          scanNoticeMessage(notice, t, i18n.language),
+          'info'
+        );
+        return;
+      }
+      updateJob(job.id, { status: 'failed', error: state.kind });
+    }
+
     executeScanRef.current = async function executeScan(job: ScanJob) {
       updateJob(job.id, { status: 'searching' });
       // Credits reported by this response (the state update lands next render).
@@ -416,19 +462,39 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               type: 'image/jpeg',
             } as unknown as Blob);
           }
-          const response = await api.post<ScanResponse>('/scan', formData, {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            transformRequest: [
-              (data: FormData, headers: any) => {
-                if (Platform.OS === 'web') {
-                  headers.delete('Content-Type');
-                } else {
-                  headers.set('Content-Type', 'multipart/form-data');
-                }
-                return data;
-              },
-            ],
-          });
+          const postScan = () =>
+            api.post<ScanResponse>('/scan', formData, {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              transformRequest: [
+                (data: FormData, headers: any) => {
+                  if (Platform.OS === 'web') {
+                    headers.delete('Content-Type');
+                  } else {
+                    headers.set('Content-Type', 'multipart/form-data');
+                  }
+                  return data;
+                },
+              ],
+            });
+          // 429 scan_in_progress means another scan holds the user's lease:
+          // wait Retry-After and retry silently, at most MAX_IN_PROGRESS_RETRIES
+          // times. If it persists the error propagates and the catch below
+          // shows the neutral "Still processing" notice.
+          let response: Awaited<ReturnType<typeof postScan>> | undefined;
+          for (let attempt = 0; response === undefined; attempt++) {
+            try {
+              response = await postScan();
+            } catch (postErr) {
+              const state = classifyScanError(postErr);
+              if (state.kind !== 'in_progress' || attempt >= MAX_IN_PROGRESS_RETRIES) {
+                throw postErr;
+              }
+              await sleep(state.retryAfterSeconds * 1000);
+            }
+          }
+          // A scan reached the server, so the usage counters are stale.
+          bumpUsage();
+          setScanNotice(null);
           results = response.data?.books ?? [];
           const credits = response.data?.enhanced_scan_credits;
           if (typeof credits === 'number') {
@@ -500,7 +566,20 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (job.enhanced && isOutOfCredits(err)) {
+        const uiState =
+          job.type === 'image' ? classifyScanError(err) : { kind: 'generic' as const };
+
+        if (
+          uiState.kind === 'monthly_limit' ||
+          uiState.kind === 'daily_limit' ||
+          uiState.kind === 'in_progress' ||
+          uiState.kind === 'paused'
+        ) {
+          handleScanRefusal(job, uiState);
+          return;
+        }
+
+        if (job.enhanced && uiState.kind === 'no_enhanced_credits') {
           setEnhancedCredits(0);
           // Fall back to whatever the standard scan found, if anything.
           if (job.results?.length) {
@@ -534,7 +613,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         });
       }
     };
-  }, [showBanner, t, retryScan, queueForLater, requestEnhancedScan, enhancedCredits]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    showBanner,
+    t,
+    i18n.language,
+    bumpUsage,
+    retryScan,
+    queueForLater,
+    requestEnhancedScan,
+    enhancedCredits,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reviewingJob = useMemo(
     () => (reviewingJobId ? (jobs.find((j) => j.id === reviewingJobId) ?? null) : null),
@@ -548,6 +636,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       isQueueFull,
       reviewingJob,
       enhancedCredits,
+      scanNotice,
+      dismissScanNotice,
+      usageRefreshKey,
       startScan,
       retryScan,
       queueForLater,
@@ -563,6 +654,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       isQueueFull,
       reviewingJob,
       enhancedCredits,
+      scanNotice,
+      dismissScanNotice,
+      usageRefreshKey,
       startScan,
       retryScan,
       queueForLater,
