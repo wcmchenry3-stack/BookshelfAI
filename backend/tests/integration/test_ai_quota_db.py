@@ -41,6 +41,7 @@ pytestmark = pytest.mark.integration
 
 # Every scan, standard or enhanced, reserves under this one key (OD-1).
 FEATURE = quota.SCAN_QUOTA_FEATURE
+EST = 10_000  # a scan.standard-sized cost estimate (#531)
 # Another feature's counter (the column allows later AI features their own).
 OTHER_FEATURE = "other.feature"
 DAY = date(2026, 10, 21)
@@ -367,7 +368,12 @@ class TestLease:
                 user = await db.get(User, user_id)
                 assert engine.pool.checkedout() == 1
                 reservation = await quota.reserve(
-                    db, user=user, feature=FEATURE, timeout_s=30, ai=AISettings({})
+                    db,
+                    user=user,
+                    feature=FEATURE,
+                    timeout_s=30,
+                    ai=AISettings({}),
+                    est_cost_micros=EST,
                 )
                 assert engine.pool.checkedout() == 0
                 assert user.id == user_id  # not expired by the commits
@@ -392,12 +398,24 @@ class TestReserveFlow:
             user = await db.get(User, user_id)
             for _ in range(2):
                 r = await quota.reserve(
-                    db, user=user, feature=FEATURE, timeout_s=30, ai=ai, now=now
+                    db,
+                    user=user,
+                    feature=FEATURE,
+                    timeout_s=30,
+                    ai=ai,
+                    now=now,
+                    est_cost_micros=EST,
                 )
                 await quota.release(db, r)
             with pytest.raises(quota.MonthlyLimitReached) as exc:
                 await quota.reserve(
-                    db, user=user, feature=FEATURE, timeout_s=30, ai=ai, now=now
+                    db,
+                    user=user,
+                    feature=FEATURE,
+                    timeout_s=30,
+                    ai=ai,
+                    now=now,
+                    est_cost_micros=EST,
                 )
         assert (exc.value.limit, exc.value.used) == (2, 2)
         assert exc.value.period_end == quota.next_month_start(today)
@@ -430,7 +448,12 @@ class TestReserveFlow:
                 pytest.raises(quota.ScanInProgress),
             ):
                 await quota.reserve(
-                    db, user=user, feature=FEATURE, timeout_s=30, ai=AISettings({})
+                    db,
+                    user=user,
+                    feature=FEATURE,
+                    timeout_s=30,
+                    ai=AISettings({}),
+                    est_cost_micros=EST,
                 )
         assert await _units(factory, user_id, "day", today) == 0
         assert await _units(factory, user_id, "month", quota.month_start(today)) == 0
@@ -443,7 +466,14 @@ class TestReserveFlow:
         async with factory() as db:
             user = await db.get(User, user_id)
             with pytest.raises(quota.DailyLimitReached):
-                await quota.reserve(db, user=user, feature=FEATURE, timeout_s=30, ai=ai)
+                await quota.reserve(
+                    db,
+                    user=user,
+                    feature=FEATURE,
+                    timeout_s=30,
+                    ai=ai,
+                    est_cost_micros=EST,
+                )
         assert await _lease(factory, user_id) is None
         assert await _units(factory, user_id, "day", quota.utc_today()) is None
 

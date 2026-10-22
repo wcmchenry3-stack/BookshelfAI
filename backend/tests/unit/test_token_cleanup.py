@@ -229,3 +229,68 @@ class TestAIQuotaPurge:
 
         assert "ai quota" in caplog.text
         assert "refresh_tokens" in str(mock_session.execute.call_args[0][0])
+
+
+class TestAISpendPurge:
+    """#531: the daily run also purges old ai_spend_daily rows, and a failure
+    there does not skip the other cleanups."""
+
+    @pytest.mark.asyncio
+    async def test_run_purges_ai_spend(self) -> None:
+        mock_factory, _mock_session, _ = _make_db_mock()
+        purge = AsyncMock(return_value=1)
+
+        with (
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.purge_old_scan_usage", AsyncMock()),
+            patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
+            patch(
+                "app.services.token_cleanup.rollup_and_purge",
+                AsyncMock(return_value=(0, 0)),
+            ),
+            patch("app.services.token_cleanup.purge_old_spend", purge),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            task = asyncio.create_task(cleanup_expired_tokens())
+            for _ in range(6):
+                await asyncio.sleep(0)
+            task.cancel()
+            await task
+
+        purge.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ai_spend_purge_failure_does_not_skip_token_cleanup(
+        self, caplog
+    ) -> None:
+        import logging
+
+        mock_factory, mock_session, _ = _make_db_mock()
+
+        with (
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.purge_old_scan_usage", AsyncMock()),
+            patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
+            patch(
+                "app.services.token_cleanup.rollup_and_purge",
+                AsyncMock(return_value=(0, 0)),
+            ),
+            patch(
+                "app.services.token_cleanup.purge_old_spend",
+                AsyncMock(side_effect=ConnectionError("db down")),
+            ),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
+            caplog.at_level(logging.ERROR, logger="app.services.token_cleanup"),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            task = asyncio.create_task(cleanup_expired_tokens())
+            for _ in range(6):
+                await asyncio.sleep(0)
+            task.cancel()
+            await task
+
+        assert "ai spend" in caplog.text
+        assert "refresh_tokens" in str(mock_session.execute.call_args[0][0])

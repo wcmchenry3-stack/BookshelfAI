@@ -11,7 +11,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
-from app.ai import ledger, quota
+from app.ai import breaker, ledger, quota
 from app.ai.gateway import (
     AIResult,
     FeatureDisabledError,
@@ -20,6 +20,7 @@ from app.ai.gateway import (
     resolve_spec,
     run_feature,
 )
+from app.ai.prices import CURRENT_PRICE_VERSION, cost_micros
 from app.ai.registry import get_feature
 from app.ai.settings import AISettings, AISettingsUnavailableError, get_ai_settings
 from app.auth.dependencies import get_current_user
@@ -164,11 +165,12 @@ class ScanLimitReachedError(HTTPException):
 async def _reserve_scan_quota(
     db: AsyncSession, user: User, feature: str, ai: AISettings
 ) -> quota.Reservation:
-    """Global ceiling, then the in-flight lease, then the daily and monthly
-    reservations (``app/ai/quota.py``), mapped to HTTP refusals.
+    """Global count cap, then the daily cost ceiling, then the in-flight
+    lease, then the daily and monthly reservations (``app/ai/quota.py``),
+    mapped to HTTP refusals.
 
-    ``feature`` (the gateway feature) only sets the lease length from its
-    timeout; the units are reserved under ``quota.SCAN_QUOTA_FEATURE``, the
+    ``feature`` (the gateway feature) sets the lease length from its timeout
+    and the cost estimate from its ``est_cost_ceiling_micros``; the units are reserved under ``quota.SCAN_QUOTA_FEATURE``, the
     one allowance standard and enhanced scans share.
 
     Runs on the request's own session; each step commits, so the connection
@@ -182,7 +184,15 @@ async def _reserve_scan_quota(
             feature=quota.SCAN_QUOTA_FEATURE,
             timeout_s=get_feature(feature).timeout_s,
             ai=ai,
+            est_cost_micros=get_feature(feature).est_cost_ceiling_micros,
         )
+    except quota.CostCeilingReached:
+        # Free tier paused for the rest of the UTC day (#531, #544).
+        logger.warning("scan: daily AI cost ceiling reached; free tier paused")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ai_unavailable",
+        ) from None
     except quota.GlobalCapacityReached:
         logger.warning("scan: global daily limit reached")
         raise HTTPException(
@@ -214,10 +224,46 @@ async def _release_scan_lease(
     db: AsyncSession,
     reservation: quota.Reservation,
     ledger_row: Executable | None = None,
+    settlement: breaker.Settlement | None = None,
 ) -> None:
     """Release the in-flight lease (settle) and commit the call's usage-ledger
-    row in the same transaction; never raises, shielded."""
-    await quota.release(db, reservation, ledger_row)
+    row and cost settle in the same transaction; never raises, shielded."""
+    await quota.release(db, reservation, ledger_row, settlement)
+
+
+def _settlement(
+    *,
+    reservation: quota.Reservation,
+    feature: str,
+    ai: AISettings,
+    status: str | None = None,
+    result: AIResult | None = None,
+) -> breaker.Settlement:
+    """What this call adds to the day's spend (#531). With ``result`` (the
+    provider answered) its priced cost; otherwise (``error``: kept, real cost
+    unknown) the reservation's estimate, so the breaker errs on the safe side.
+    A call whose cost cannot be priced also settles the estimate. Never
+    raises."""
+    estimate = reservation.est_cost_micros
+    if result is not None:
+        try:
+            cost = cost_micros(
+                result.model,
+                CURRENT_PRICE_VERSION,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                cache_read_tokens=result.cache_read_tokens,
+                cache_write_tokens=result.cache_write_tokens,
+            )
+        except Exception:
+            logger.exception("scan: could not price the call; settling the estimate")
+            cost = estimate
+        return breaker.Settlement(cost, result.feature, result.model, result.outcome)
+    try:
+        model = resolve_spec(feature, ai).model
+    except Exception:  # noqa: BLE001 - only an alert tag; never fail the settle
+        model = "unknown"
+    return breaker.Settlement(estimate, feature, model, status or STATUS_ERROR)
 
 
 def _usage_row(
@@ -377,8 +423,10 @@ async def scan(
             detail="no_enhanced_credits",
         )
 
-    # --- Tier allowance, global ceiling, in-flight lease, daily, monthly ---
+    # --- Tier allowance, global count cap, daily cost ceiling (#531),
+    # in-flight lease, daily, monthly ---
     # One allowance for standard and enhanced scans (quota.SCAN_QUOTA_FEATURE).
+    # At the cost ceiling Free gets 503 ai_unavailable; Premium continues.
     # The tier is resolved server-side inside quota.reserve; every refusal
     # here happens before the provider and gives back what it took.
     # Read before anything can roll the session back: a failed give-back
@@ -396,9 +444,17 @@ async def scan(
     # ai_usage row, committed with the lease release. call_id is generated
     # once per call, so a retried settle cannot write it twice. A kill switch
     # hit (FeatureDisabledError) never reached a provider and writes none.
+    #
+    # Cost (#531): the settle also moves the estimate out of today's reserved
+    # spend. A refunded call (unavailable, never reached, timed out) settles
+    # nothing; an answered call settles its priced cost; an error or a
+    # cancelled call keeps the estimate as spend (real cost unknown).
     call_id = uuid.uuid4()
     row = partial(_usage_row, call_id=call_id, user_id=user_id, feature=feature, ai=ai)
     ledger_row: Executable | None = None
+    # Cost settle (#531): None gives the estimate back (refunded calls).
+    spend = partial(_settlement, reservation=reservation, feature=feature, ai=ai)
+    settlement: breaker.Settlement | None = None
     ledger_decided = False
     try:
         try:
@@ -431,9 +487,11 @@ async def scan(
         except Exception:
             # The reservation is kept (the provider may have been paid).
             ledger_row = row(status=STATUS_ERROR)
+            settlement = spend(status=STATUS_ERROR)
             ledger_decided = True
             raise
         ledger_row = row(result=result)
+        settlement = spend(result=result)
         ledger_decided = True
     finally:
         if not ledger_decided:
@@ -441,7 +499,8 @@ async def scan(
             # BaseException) mid-call. The reservation is kept, so record it
             # as an error with 0 tokens; the shielded settle writes it.
             ledger_row = row(status=STATUS_ERROR)
-        await _release_scan_lease(db, reservation, ledger_row)
+            settlement = spend(status=STATUS_ERROR)
+        await _release_scan_lease(db, reservation, ledger_row, settlement)
     candidates = result.candidates
 
     if not candidates:

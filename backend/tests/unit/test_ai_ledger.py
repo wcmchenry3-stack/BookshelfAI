@@ -376,9 +376,9 @@ def rows():
         built.append({**kwargs, "stmt": stmt})
         return stmt
 
-    async def spy_release(db, reservation, ledger_row=None):
+    async def spy_release(db, reservation, ledger_row=None, *args):
         settled.append(ledger_row)
-        await real_release(db, reservation, ledger_row)
+        await real_release(db, reservation, ledger_row, *args)
 
     with (
         patch.object(ledger, "usage_insert", spy_insert),
@@ -650,6 +650,7 @@ class TestCleanupTask:
                 token_cleanup, "purge_old_scan_usage", AsyncMock(return_value=0)
             ),
             patch.object(token_cleanup, "purge_old_quota", AsyncMock(return_value=0)),
+            patch.object(token_cleanup, "purge_old_spend", AsyncMock(return_value=0)),
             patch.object(token_cleanup.asyncio, "sleep", sleeps),
             patch.multiple(token_cleanup, **patches),
             pytest.raises(_Stop),

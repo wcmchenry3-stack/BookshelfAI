@@ -612,6 +612,8 @@ _VALID = {
     "quota.free.monthly": [0, 5, 100_000],
     "quota.premium.daily": [0, 30, 1000],
     "quota.premium.monthly": [0, 300, 100_000],
+    # #531 cost ceiling (micro-dollars)
+    "breaker.free_daily_ceiling_micros": [0, 10_000_000, 1_000_000_000],
 }
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
@@ -626,6 +628,14 @@ _INVALID = {
     "quota.free.monthly": [-1, 100_001, True, 5.5, "5", None],
     "quota.premium.daily": [-1, 1001, True, None],
     "quota.premium.monthly": [-1, 100_001, False, None],
+    "breaker.free_daily_ceiling_micros": [
+        -1,
+        1_000_000_001,
+        True,
+        10.5,
+        "10000000",
+        None,
+    ],
 }
 
 
@@ -648,6 +658,8 @@ def test_initial_key_set():
         "quota.free.monthly",
         "quota.premium.daily",
         "quota.premium.monthly",
+        # #531
+        "breaker.free_daily_ceiling_micros",
     }
 
 
@@ -792,6 +804,8 @@ class TestSeeding:
             patch.object(ai_settings.settings, "scan_free_monthly_limit", 6),
             patch.object(ai_settings.settings, "scan_premium_daily_limit", 31),
             patch.object(ai_settings.settings, "scan_premium_monthly_limit", 301),
+            # #531 seed
+            patch.object(ai_settings.settings, "scan_free_daily_ceiling_micros", 42),
         ):
             values = ai_settings.seed_values()
         assert values == {
@@ -807,6 +821,7 @@ class TestSeeding:
             "quota.free.monthly": 6,
             "quota.premium.daily": 31,
             "quota.premium.monthly": 301,
+            "breaker.free_daily_ceiling_micros": 42,
         }
 
     async def test_seed_is_insert_if_missing(self):

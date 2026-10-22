@@ -13,7 +13,15 @@ In order (#528):
    capacity is gone (:class:`GlobalCapacityReached`). Concurrent requests can
    overshoot by at most the number in flight; the lease bounds that to one per
    user.
-3. **In-flight lease** (table ``ai_inflight``). One conditional upsert:
+3. **Daily cost ceiling** (#531, ``app/ai/breaker.py``). The feature's
+   estimate (``est_cost_micros``) is added to today's ``ai_spend_daily`` row
+   with one conditional upsert. For Free it succeeds only while the day's
+   reserved plus settled spend stays within
+   ``breaker.free_daily_ceiling_micros`` (:class:`CostCeilingReached`, 503
+   ``ai_unavailable``); Premium always adds its estimate (decision #544). It
+   sits before the lease, so nothing per-user is taken when the service is
+   out of budget, and every later refusal or error gives it back.
+4. **In-flight lease** (table ``ai_inflight``). One conditional upsert:
    ``INSERT ... ON CONFLICT (user_id) DO UPDATE ... WHERE
    ai_inflight.lease_expires_at < clock_timestamp()``. It succeeds only when
    the user has no row or the old lease has expired, so at most one paid call
@@ -25,7 +33,7 @@ In order (#528):
    lease is renewed (:func:`renew_lease`), so the provider call gets the full
    lease; if a stall let another request take it over, the reservation is
    given back and :class:`ScanInProgress` raised.
-4. **Daily, then monthly reservation** (table ``ai_quota``). The
+5. **Daily, then monthly reservation** (table ``ai_quota``). The
    same exact conditional upsert as #509: ``units_used = units_used + 1 WHERE
    units_used < limit``. Postgres serialises upserts on the same key, so no
    more than ``limit`` reservations can succeed (:class:`DailyLimitReached`,
@@ -37,13 +45,15 @@ In order (#528):
 Every step commits straight away, on the request's own session: the
 reservation is visible to concurrent requests and the connection goes back to
 the pool before the provider is called (as in #509/#519). A refusal or an
-error at any step gives back what was already taken (the daily reservation,
-the lease) before it propagates.
+error at any step gives back what was already taken (the cost estimate, the
+daily reservation, the lease) before it propagates.
 
 After the provider call the caller must always :func:`release` the lease (in a
 ``finally``, even on cancellation; the release is shielded). The caller passes
-the usage-ledger row for the call (#530), which is committed together with the
-lease delete. On
+the usage-ledger row for the call (#530) and the call's
+:class:`~app.ai.breaker.Settlement` (#531); the ledger row and the cost settle
+are committed together with the lease delete. Without a settlement the cost
+estimate is given back. On
 ``ScanUnavailableError`` / ``httpx.ConnectError`` it first calls
 :func:`refund`, which gives back the daily and monthly units, never below
 zero. Any other outcome (success, an empty result, another error, a cancelled
@@ -73,7 +83,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
-from app.ai import entitlements
+from app.ai import breaker, entitlements
 from app.ai.entitlements import Tier
 from app.ai.settings import AISettings
 from app.models.ai_quota import WINDOW_DAY, WINDOW_MONTH, AIInflight, AIQuota
@@ -176,6 +186,10 @@ class GlobalCapacityReached(QuotaRefusal):
     """The service-wide daily ceiling is used up (503 ``scan_capacity``)."""
 
 
+class CostCeilingReached(QuotaRefusal):
+    """Today's AI spend is at the Free daily ceiling (503 ``ai_unavailable``)."""
+
+
 class ScanInProgress(QuotaRefusal):
     """Another paid call for this user holds the lease (429 ``scan_in_progress``)."""
 
@@ -211,6 +225,10 @@ class Reservation:
     month: date
     tier: Tier
     allowance: Allowance
+    # The cost estimate added to ai_spend_daily for ``day`` (#531), and the
+    # Free ceiling read for this request (for the alert percentages).
+    est_cost_micros: int = 0
+    ceiling_micros: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +448,7 @@ async def release(
     db: AsyncSession,
     reservation: Reservation,
     ledger_row: Executable | None = None,
+    settlement: breaker.Settlement | None = None,
 ) -> None:
     """Release the lease held by ``reservation`` (settle). Never raises.
 
@@ -446,34 +465,85 @@ async def release(
     is made (the settle stays within one bound) and the lease expiry is the
     backstop.
 
+    The cost settle (#531, :func:`app.ai.breaker.settle`) is executed in the
+    same transaction: the reservation's estimate leaves ``reserved`` and
+    ``settlement.cost_micros`` (0 without a settlement: the estimate is
+    given back) is added to ``settled``. It also runs in the lease-only
+    fallback, so a dropped ledger row never leaves the estimate reserved.
+    After the commit, any spend alert threshold the settle crossed is claimed
+    and sent (:func:`_alert`).
+
     The ledger insert is idempotent (``ON CONFLICT (call_id) DO NOTHING``),
     so a retry after a commit whose acknowledgement was lost adds no second
     row.
     """
+    est = reservation.est_cost_micros
+    cost = settlement.cost_micros if settlement is not None else 0
+    settled: list[tuple[int, int, int] | None] = []
+
+    async def settle_spend() -> None:
+        settled.clear()
+        if est or cost:
+            settled.append(await breaker.settle(db, reservation.day, est, cost))
 
     async def settle() -> None:
         if ledger_row is not None:
             await db.execute(ledger_row)
+        await settle_spend()
+        await release_lease(db, reservation.user_id, reservation.lease_id)
+
+    async def settle_without_row() -> None:
+        await settle_spend()
         await release_lease(db, reservation.user_id, reservation.lease_id)
 
     if ledger_row is None:
-        await _give_back(db, "lease release", settle)
+        outcome = await _give_back(db, "lease release", settle)
+    else:
+        outcome = await _give_back(db, "lease release with usage row", settle)
+        if outcome == GIVE_BACK_TIMED_OUT:
+            logger.error(
+                "ai_quota: settle timed out; the lease is left to expire, "
+                "and the usage row may be missing"
+            )
+            return
+        if outcome == GIVE_BACK_FAILED:
+            logger.error("ai_quota: usage row dropped; releasing the lease without it")
+            outcome = await _give_back(db, "lease release", settle_without_row)
+    if outcome == GIVE_BACK_DONE and settlement is not None and settled:
+        await _alert(db, reservation, settlement, settled[0])
+
+
+async def _alert(
+    db: AsyncSession,
+    reservation: Reservation,
+    settlement: breaker.Settlement,
+    totals: tuple[int, int, int] | None,
+) -> None:
+    """Claim and send each spend alert this settle crossed (#531). Never
+    raises; bounded and shielded like a give-back. A threshold already sent
+    today is skipped without a query."""
+    if totals is None:
         return
-    outcome = await _give_back(db, "lease release with usage row", settle)
-    if outcome == GIVE_BACK_DONE:
+    settled_micros, reserved_micros, mask = totals
+    pending = breaker.pending_alerts(settled_micros, reservation.ceiling_micros, mask)
+    if not pending:
         return
-    if outcome == GIVE_BACK_TIMED_OUT:
-        logger.error(
-            "ai_quota: settle timed out; the lease is left to expire, "
-            "and the usage row may be missing"
+    won: list[int] = []
+
+    async def claim() -> None:
+        won[:] = await breaker.claim_alerts(db, reservation.day, pending)
+
+    if await _give_back(db, "spend alert claim", claim) != GIVE_BACK_DONE:
+        return
+    for pct in won:
+        breaker.send_alert(
+            day=reservation.day,
+            pct=pct,
+            settled_micros=settled_micros,
+            reserved_micros=reserved_micros,
+            ceiling_micros=reservation.ceiling_micros,
+            settlement=settlement,
         )
-        return
-    logger.error("ai_quota: usage row dropped; releasing the lease without it")
-    await _give_back(
-        db,
-        "lease release",
-        lambda: release_lease(db, reservation.user_id, reservation.lease_id),
-    )
 
 
 async def _refund_window(
@@ -507,9 +577,14 @@ async def reserve(
     feature: str,
     timeout_s: float,
     ai: AISettings,
+    est_cost_micros: int,
     now: datetime | None = None,
 ) -> Reservation:
-    """Check the allowances and take the lease, a daily and a monthly unit.
+    """Check the allowances and take the cost estimate, the lease, a daily
+    and a monthly unit.
+
+    ``est_cost_micros`` is the gateway feature's
+    ``FeatureSpec.est_cost_ceiling_micros`` (server-side registry value).
 
     Raises a :class:`QuotaRefusal` (after giving back whatever was taken) when
     the call must not go ahead. Any other exception also gives back what was
@@ -524,9 +599,27 @@ async def reserve(
     if await global_units_today(db, today) >= ai.global_daily_limit:
         raise GlobalCapacityReached("scan_capacity")
 
+    # Free pauses at the ceiling; Premium (and only Premium) is not gated by
+    # it but still adds its estimate (#544). Any other tier is gated.
+    ceiling = ai.free_daily_ceiling_micros
+    if not await breaker.reserve(
+        db, today, est_cost_micros, ceiling, enforce=tier is not Tier.PREMIUM
+    ):
+        raise CostCeilingReached("ai_unavailable")
+
+    async def give_back_cost() -> None:
+        await _give_back(
+            db, "cost release", lambda: breaker.release(db, today, est_cost_micros)
+        )
+
     seconds = lease_seconds(timeout_s)
-    lease_id = await acquire_lease(db, user.id, seconds)
+    try:
+        lease_id = await acquire_lease(db, user.id, seconds)
+    except BaseException:
+        await give_back_cost()
+        raise
     if lease_id is None:
+        await give_back_cost()
         raise ScanInProgress("scan_in_progress")
     reservation = Reservation(
         user_id=user.id,
@@ -536,6 +629,8 @@ async def reserve(
         month=month,
         tier=tier,
         allowance=allowance,
+        est_cost_micros=est_cost_micros,
+        ceiling_micros=ceiling,
     )
 
     daily_taken = monthly_taken = False
@@ -568,6 +663,7 @@ async def reserve(
             await _refund_window(db, reservation, WINDOW_MONTH, month)
         if daily_taken:
             await _refund_window(db, reservation, WINDOW_DAY, today)
+        # Releases the lease and gives back the cost estimate.
         await release(db, reservation)
         raise
     return reservation

@@ -1,6 +1,7 @@
 # Import all models here so Alembic's env.py sees them via Base.metadata
 from app.models.ai_quota import AIInflight, AIQuota
 from app.models.ai_settings import AISetting
+from app.models.ai_spend import AISpendDaily
 from app.models.ai_usage import AIUsage, AIUsageDaily
 from app.models.book import Book
 from app.models.edition import Edition
@@ -13,6 +14,7 @@ __all__ = [
     "AIInflight",
     "AIQuota",
     "AISetting",
+    "AISpendDaily",
     "AIUsage",
     "AIUsageDaily",
     "Book",
