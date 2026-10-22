@@ -38,5 +38,9 @@
   "dismissNotice": "閉じる",
   "tryAgainNotice": "もう一度試す",
   "queueFullLimited": "スキャンの上限に達しました。保存した写真は、スキャンが再び利用できるようになったときに送信されます。",
-  "sendPendingNow": "今すぐ送信"
+  "sendPendingNow": "今すぐ送信",
+  "enhancedRequiresPremium": "強化スキャンはPremiumの機能です。",
+  "enhancedLimitReached": "今月の強化スキャンをすべて使用しました。",
+  "enhancedThrottled": "最近の強化スキャンで本が見つからないことが続きました。{{time}} 以降にもう一度お試しください。",
+  "enhancedThrottledLater": "最近の強化スキャンで本が見つからないことが続きました。しばらくしてからもう一度お試しください。"
 }

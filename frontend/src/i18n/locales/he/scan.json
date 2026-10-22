@@ -40,5 +40,9 @@
   "dismissNotice": "סגור",
   "tryAgainNotice": "נסה שוב",
   "queueFullLimited": "הגעת למגבלת הסריקות. התמונות ששמרת יישלחו כשהסריקה תהיה זמינה שוב.",
-  "sendPendingNow": "שלח עכשיו"
+  "sendPendingNow": "שלח עכשיו",
+  "enhancedRequiresPremium": "סריקות משופרות הן חלק מ-Premium.",
+  "enhancedLimitReached": "השתמשת בכל הסריקות המשופרות של החודש.",
+  "enhancedThrottled": "כמה סריקות משופרות אחרונות לא מצאו ספרים. נסה שוב אחרי {{time}}.",
+  "enhancedThrottledLater": "כמה סריקות משופרות אחרונות לא מצאו ספרים. נסה שוב מאוחר יותר."
 }

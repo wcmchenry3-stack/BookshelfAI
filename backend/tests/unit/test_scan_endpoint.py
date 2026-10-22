@@ -1,12 +1,13 @@
 """Unit tests for POST /scan — services mocked, no real DB or HTTP."""
 
 import io
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from app.ai import quota
 from app.ai.providers.base import ProviderResult
 from app.ai.registry import FEATURES
 from app.main import app
@@ -114,7 +115,8 @@ class TestScanEndpoint:
         assert resp.json() == {
             "books": [],
             "enhanced": False,
-            "enhanced_scan_credits": 0,
+            # #533: replaces enhanced_scan_credits; None for non-Premium.
+            "enhanced_scans_remaining": None,
         }
 
     def test_returns_enriched_candidates(self, client):
@@ -213,146 +215,144 @@ class TestScanEndpoint:
         assert [b["title"] for b in resp.json()["books"]] == ["Dune"]
 
 
-def _user_with_credits(credits: int) -> User:
-    return User(
-        id="00000000-0000-0000-0000-000000000002",
-        email="credits@example.com",
-        enhanced_scan_credits=credits,
-    )
+def _plain_user() -> User:
+    return User(id="00000000-0000-0000-0000-000000000002", email="u@example.com")
+
+
+_DUNE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 
 
 class TestEnhancedScan:
+    """Wiring of the #533 charge decision in the handler. The quota steps
+    themselves (Premium-only refusal, enhanced unit, zero-result record) are
+    covered in test_scan_quota_refusals.py, test_enhanced_quota.py and the
+    integration tests."""
+
     @pytest.fixture
-    def make_client(self):
-        from app.auth.dependencies import get_current_user
-        from app.core.database import get_db
-
-        db = AsyncMock()
-
-        def _make(user: User, remaining_after_spend: int | None = None):
-            result = MagicMock()
-            result.scalar_one_or_none.return_value = remaining_after_spend
-            db.execute = AsyncMock(return_value=result)
-
-            async def _fake_db():
-                yield db
-
-            app.dependency_overrides[get_current_user] = lambda: user
-            app.dependency_overrides[get_db] = _fake_db
-            return TestClient(app), db
-
-        yield _make
-        app.dependency_overrides.clear()
-
-    def test_returns_402_when_out_of_credits(self, make_client):
-        client, _ = make_client(_user_with_credits(0))
-        with patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls:
-            resp = client.post(
-                "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
-            )
-        assert resp.status_code == 402
-        assert resp.json()["detail"] == "no_enhanced_credits"
-        mock_id_cls.return_value.identify.assert_not_called()
-
-    def test_uses_enhanced_model_and_spends_a_credit(self, make_client):
-        client, db = make_client(_user_with_credits(3), remaining_after_spend=2)
+    def calls(self):
+        """Patch the settle and the remaining-allowance read; record the order
+        of enrichment and settle."""
+        order: list[str] = []
+        release = AsyncMock(side_effect=lambda *a, **k: order.append("settle"))
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
-            patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
-            patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
+            patch("app.api.scan._release_scan_lease", new=release),
+            patch(
+                "app.api.scan.quota.enhanced_remaining",
+                new=AsyncMock(return_value=4),
+            ) as remaining,
+            patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            patch("app.api.scan.EnrichmentService") as enrich_cls,
+            patch("app.api.scan.DeduplicationService") as dedup_cls,
         ):
-            mock_id_cls.return_value.identify = AsyncMock(
-                return_value=ProviderResult(
-                    [
-                        BookCandidate(
-                            title="Dune", author="Frank Herbert", confidence=0.9
-                        )
-                    ]
-                )
-            )
-            mock_enrich_cls.return_value.enrich = AsyncMock(
-                return_value=[ENRICHED_BOOK]
-            )
-            mock_dedup_cls.return_value.check = AsyncMock(return_value=[ENRICHED_BOOK])
-            resp = client.post(
-                "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
-            )
 
+            async def enrich(candidates, limit):
+                order.append("enrich")
+                return [ENRICHED_BOOK] if candidates else []
+
+            enrich_cls.return_value.enrich = AsyncMock(side_effect=enrich)
+            dedup_cls.return_value.check = AsyncMock(side_effect=lambda _d, _u, b: b)
+            yield {
+                "order": order,
+                "release": release,
+                "remaining": remaining,
+                "provider_cls": provider_cls,
+                "enrich": enrich_cls.return_value.enrich,
+            }
+
+    def _post(self, client, enhanced=True):
+        data = {"enhanced": "true"} if enhanced else {}
+        return client.post("/scan", files={"file": _image_file()}, data=data)
+
+    @staticmethod
+    def _zero_result(release):
+        args = release.await_args.args
+        return args[4] if len(args) > 4 else None
+
+    def test_uses_enhanced_model_and_keeps_the_unit_when_books_found(
+        self, client, calls
+    ):
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            return_value=ProviderResult([_DUNE])
+        )
+        resp = self._post(client)
         assert resp.status_code == 200
         body = resp.json()
         assert body["enhanced"] is True
-        assert body["enhanced_scan_credits"] == 2
-        mock_id_cls.assert_called_once_with(FEATURES["scan.enhanced"])
-        db.commit.assert_awaited_once()
+        assert body["enhanced_scans_remaining"] == 4
+        assert "enhanced_scan_credits" not in body
+        calls["provider_cls"].assert_called_once_with(FEATURES["scan.enhanced"])
+        # Books to hand back: no zero-result decision (the unit is kept).
+        assert self._zero_result(calls["release"]) is None
+        # Enriched after the settle, like a standard scan: the lease covers
+        # only the provider call.
+        assert calls["order"] == ["settle", "enrich"]
 
-    def test_enhanced_scan_finding_nothing_is_free(self, make_client):
-        client, db = make_client(_user_with_credits(3))
-        with patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls:
-            mock_id_cls.return_value.identify = AsyncMock(
-                return_value=ProviderResult([])
-            )
-            resp = client.post(
-                "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
-            )
-
-        assert resp.status_code == 200
-        assert resp.json()["enhanced_scan_credits"] == 3
-        db.execute.assert_not_called()
-        db.commit.assert_not_called()
-
-    def test_enhanced_scan_is_free_when_enrichment_yields_nothing(self, make_client):
-        client, db = make_client(_user_with_credits(3))
-        with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
-            patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
-            patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
-        ):
-            mock_id_cls.return_value.identify = AsyncMock(
-                return_value=ProviderResult(
-                    [
-                        BookCandidate(
-                            title="Dune", author="Frank Herbert", confidence=0.9
-                        )
-                    ]
-                )
-            )
-            # Every Open Library / Google Books lookup failed.
-            mock_enrich_cls.return_value.enrich = AsyncMock(return_value=[])
-            mock_dedup_cls.return_value.check = AsyncMock(return_value=[])
-            resp = client.post(
-                "/scan", files={"file": _image_file()}, data={"enhanced": "true"}
-            )
-
+    def test_enhanced_scan_finding_nothing_settles_a_zero_result(self, client, calls):
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            return_value=ProviderResult([])
+        )
+        resp = self._post(client)
         assert resp.status_code == 200
         assert resp.json()["books"] == []
-        assert resp.json()["enhanced_scan_credits"] == 3
-        db.execute.assert_not_called()
-        db.commit.assert_not_called()
+        zero = self._zero_result(calls["release"])
+        assert isinstance(zero, quota.ZeroResult)
+        assert zero.ledger_id is not None  # the usage row's call_id
 
-    def test_standard_scan_does_not_spend_credits(self, make_client):
-        client, db = make_client(_user_with_credits(3))
-        with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
-            patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
-            patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
-        ):
-            mock_id_cls.return_value.identify = AsyncMock(
-                return_value=ProviderResult(
-                    [
-                        BookCandidate(
-                            title="Dune", author="Frank Herbert", confidence=0.9
-                        )
-                    ]
-                )
-            )
-            mock_enrich_cls.return_value.enrich = AsyncMock(
-                return_value=[ENRICHED_BOOK]
-            )
-            mock_dedup_cls.return_value.check = AsyncMock(return_value=[ENRICHED_BOOK])
-            resp = client.post("/scan", files={"file": _image_file()})
+    def test_decision_is_on_the_providers_candidates(self, client, calls):
+        """The provider returned books, so it is charged even if enrichment
+        then yields nothing (the decision is made at the settle, before
+        enrichment)."""
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            return_value=ProviderResult([_DUNE])
+        )
+        calls["enrich"].side_effect = (
+            lambda c, limit: calls["order"].append("enrich") or []
+        )
+        resp = self._post(client)
+        assert resp.json()["books"] == []
+        assert self._zero_result(calls["release"]) is None
+        assert calls["order"] == ["settle", "enrich"]
 
-        assert resp.json()["enhanced_scan_credits"] == 3
-        db.commit.assert_not_called()
+    def test_standard_scan_never_settles_a_zero_result(self, client, calls):
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            return_value=ProviderResult([])
+        )
+        resp = self._post(client, enhanced=False)
+        assert resp.status_code == 200
+        assert self._zero_result(calls["release"]) is None
+
+    def test_standard_scan_enriches_after_the_settle(self, client, calls):
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            return_value=ProviderResult([_DUNE])
+        )
+        self._post(client, enhanced=False)
+        assert calls["order"] == ["settle", "enrich"]
+
+    def test_provider_error_is_not_a_zero_result(self, client, calls):
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            side_effect=ScanUnavailableError("down")
+        )
+        assert self._post(client).status_code == 503
+        assert self._zero_result(calls["release"]) is None
+        calls["enrich"].assert_not_awaited()
+
+    def test_enrichment_error_is_not_a_zero_result(self, client, calls):
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            return_value=ProviderResult([_DUNE])
+        )
+        calls["enrich"].side_effect = RuntimeError("lookup crashed")
+        with pytest.raises(RuntimeError):
+            self._post(client)
+        assert self._zero_result(calls["release"]) is None
+
+    def test_allowance_read_failure_does_not_fail_the_scan(self, client, calls):
+        calls["provider_cls"].return_value.identify = AsyncMock(
+            return_value=ProviderResult([_DUNE])
+        )
+        calls["remaining"].side_effect = RuntimeError("db blip")
+        resp = self._post(client)
+        assert resp.status_code == 200
+        assert resp.json()["enhanced_scans_remaining"] is None
 
 
 class TestTurnstileProtection:
@@ -489,14 +489,15 @@ class TestImageNormalisationOnScan:
         provider_cls.assert_not_called()
 
     def test_enhanced_scan_bad_image_does_not_check_credits_first(self, reserve):
-        """Normalisation runs before the credit check too: 415, not 402."""
+        """Normalisation runs before the enhanced entitlement check too (a Free
+        user, #533): 415, not 403."""
         from app.auth.dependencies import get_current_user
         from app.core.database import get_db
 
         async def _fake_db():
             yield AsyncMock()
 
-        app.dependency_overrides[get_current_user] = lambda: _user_with_credits(0)
+        app.dependency_overrides[get_current_user] = lambda: _plain_user()
         app.dependency_overrides[get_db] = _fake_db
         try:
             resp = TestClient(app).post(
@@ -561,7 +562,7 @@ class TestImageNormalisationOnScan:
         }
         buf = io.BytesIO()
         Image.new("RGB", (2000, 1000)).save(buf, format="JPEG")
-        app.dependency_overrides[get_current_user] = lambda: _user_with_credits(2)
+        app.dependency_overrides[get_current_user] = lambda: _plain_user()
         app.dependency_overrides[get_db] = _fake_db
         try:
             with (

@@ -6,15 +6,20 @@
  * Backend contract: backend/app/api/scan.py, docs/api.md.
  *
  *   402 scan_limit_reached     -> monthly_limit   (body: limit, used, period_end)
- *   402 no_enhanced_credits    -> no_enhanced_credits (pre-existing handling)
+ *   402 enhanced_limit_reached -> enhanced_refused (limit_reached; enhanced only)
+ *   403 enhanced_requires_premium -> enhanced_refused (premium_required)
  *   429 daily_scan_limit       -> daily_limit     (Retry-After: s to UTC midnight)
  *   429 scan_in_progress       -> in_progress     (Retry-After: 2)
+ *   429 enhanced_throttled     -> enhanced_refused (throttled; Retry-After: s
+ *                                 until enough empty enhanced scans age out)
  *   503 scan_disabled | enhanced_scan_disabled | scan_capacity |
  *       ai_budget_reached | ai_unavailable | scan_unavailable -> paused
  *   anything else              -> generic
  *
- * A bare 402 with no `detail` predates the coded responses and always meant
- * "out of enhanced credits", so it keeps that meaning.
+ * The `enhanced_refused` refusals (#533) only ever answer an enhanced scan:
+ * like `enhanced_scan_disabled` they stop only enhanced photos in the queue
+ * drain, and an enhanced re-scan falls back to the standard scan's books.
+ * The old `402 no_enhanced_credits` (and a bare 402) no longer exist.
  */
 
 export type ScanUiState =
@@ -22,8 +27,16 @@ export type ScanUiState =
   | { kind: 'daily_limit'; retryAfterSeconds?: number }
   | { kind: 'in_progress'; retryAfterSeconds: number }
   | { kind: 'paused'; enhancedOnly?: boolean }
-  | { kind: 'no_enhanced_credits' }
+  | {
+      kind: 'enhanced_refused';
+      reason: EnhancedRefusalReason;
+      /** Seconds until enhanced scans are allowed again (throttled only). */
+      retryAfterSeconds?: number;
+    }
   | { kind: 'generic' };
+
+/** Why the server refused an enhanced scan (#533). */
+export type EnhancedRefusalReason = 'premium_required' | 'limit_reached' | 'throttled';
 
 /** What the scan screen shows. `in_progress` becomes `still_processing` once retries run out. */
 export type ScanNotice =
@@ -103,14 +116,20 @@ export function classifyScanError(err: unknown): ScanUiState {
         periodEnd: typeof periodEnd === 'string' ? periodEnd : undefined,
       };
     }
-    if (detail === undefined || detail === 'no_enhanced_credits') {
-      return { kind: 'no_enhanced_credits' };
+    if (detail === 'enhanced_limit_reached') {
+      return { kind: 'enhanced_refused', reason: 'limit_reached' };
     }
     return { kind: 'generic' };
+  }
+  if (status === 403 && detail === 'enhanced_requires_premium') {
+    return { kind: 'enhanced_refused', reason: 'premium_required' };
   }
   if (status === 429) {
     const retryAfterSeconds = parseSeconds(readHeader(response.headers, 'retry-after'));
     if (detail === 'daily_scan_limit') return { kind: 'daily_limit', retryAfterSeconds };
+    if (detail === 'enhanced_throttled') {
+      return { kind: 'enhanced_refused', reason: 'throttled', retryAfterSeconds };
+    }
     if (detail === 'scan_in_progress') {
       const wait = retryAfterSeconds ?? DEFAULT_IN_PROGRESS_RETRY_SECONDS;
       return {
@@ -135,7 +154,8 @@ export function nextUtcMidnight(now: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
 }
 
-/** The screen notice for a UI state, or null when the state has none (generic, credits). */
+/** The screen notice for a UI state, or null when the state has none (generic,
+ * enhanced_refused: a banner speaks for those). */
 export function toScanNotice(
   state: ScanUiState,
   now: number = Date.now(),
@@ -183,6 +203,31 @@ export function formatLocalTime(epochMs: number, locale: string): string {
 }
 
 type TFn = (key: string, options?: Record<string, unknown>) => string;
+
+/**
+ * Localised banner text for a refused enhanced scan. `t` must be bound to the
+ * `scan` namespace. A throttle names the local time enhanced scans are allowed
+ * again (from Retry-After) when the server sent one.
+ */
+export function enhancedRefusalMessage(
+  state: { reason: EnhancedRefusalReason; retryAfterSeconds?: number },
+  t: TFn,
+  locale: string,
+  now: number = Date.now()
+): string {
+  switch (state.reason) {
+    case 'premium_required':
+      return t('enhancedRequiresPremium');
+    case 'limit_reached':
+      return t('enhancedLimitReached');
+    case 'throttled':
+      return state.retryAfterSeconds != null && state.retryAfterSeconds > 0
+        ? t('enhancedThrottled', {
+            time: formatLocalTime(now + state.retryAfterSeconds * 1000, locale),
+          })
+        : t('enhancedThrottledLater');
+  }
+}
 
 /** Localised message for a notice. `t` must be bound to the `scan` namespace. */
 export function scanNoticeMessage(notice: ScanNotice, t: TFn, locale: string): string {

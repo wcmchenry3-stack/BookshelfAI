@@ -614,6 +614,11 @@ _VALID = {
     "quota.premium.monthly": [0, 300, 100_000],
     # #531 cost ceiling (micro-dollars)
     "breaker.free_daily_ceiling_micros": [0, 10_000_000, 1_000_000_000],
+    # #533 enhanced allowance and zero-result limits
+    "quota.premium.enhanced_monthly": [0, 20, 10_000],
+    "scan.enhanced.zero_result_threshold": [0, 3, 20],
+    "scan.enhanced.zero_result_window_hours": [1, 24, 720],
+    "scan.enhanced.zero_result_action": ["charge", "throttle"],
 }
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
@@ -634,6 +639,19 @@ _INVALID = {
         True,
         10.5,
         "10000000",
+        None,
+    ],
+    "quota.premium.enhanced_monthly": [-1, 10_001, True, 2.5, "20", None],
+    "scan.enhanced.zero_result_threshold": [-1, 21, True, 3.0, "3", None],
+    "scan.enhanced.zero_result_window_hours": [0, 721, -1, False, 24.5, "24", None],
+    "scan.enhanced.zero_result_action": [
+        "Charge",
+        "THROTTLE",
+        "block",
+        "",
+        " charge",
+        True,
+        1,
         None,
     ],
 }
@@ -660,6 +678,11 @@ def test_initial_key_set():
         "quota.premium.monthly",
         # #531
         "breaker.free_daily_ceiling_micros",
+        # #533
+        "quota.premium.enhanced_monthly",
+        "scan.enhanced.zero_result_threshold",
+        "scan.enhanced.zero_result_window_hours",
+        "scan.enhanced.zero_result_action",
     }
 
 
@@ -806,6 +829,10 @@ class TestSeeding:
             patch.object(ai_settings.settings, "scan_premium_monthly_limit", 301),
             # #531 seed
             patch.object(ai_settings.settings, "scan_free_daily_ceiling_micros", 42),
+            # #533 seed
+            patch.object(
+                ai_settings.settings, "scan_premium_enhanced_monthly_limit", 21
+            ),
         ):
             values = ai_settings.seed_values()
         assert values == {
@@ -822,6 +849,11 @@ class TestSeeding:
             "quota.premium.daily": 31,
             "quota.premium.monthly": 301,
             "breaker.free_daily_ceiling_micros": 42,
+            # #533: env seed, then code defaults
+            "quota.premium.enhanced_monthly": 21,
+            "scan.enhanced.zero_result_threshold": 3,
+            "scan.enhanced.zero_result_window_hours": 24,
+            "scan.enhanced.zero_result_action": "charge",
         }
 
     async def test_seed_is_insert_if_missing(self):

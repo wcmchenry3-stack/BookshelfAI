@@ -208,7 +208,7 @@ describe('BookCandidatePicker', () => {
         onConfirm={onConfirm}
         onDismiss={onDismiss}
         onEnhance={onEnhance}
-        enhancedCredits={3}
+        enhancedScansRemaining={3}
       />
     );
     expect(getByText('3 enhanced scans left')).toBeTruthy();
@@ -225,7 +225,7 @@ describe('BookCandidatePicker', () => {
         onConfirm={onConfirm}
         onDismiss={onDismiss}
         onEnhance={onEnhance}
-        enhancedCredits={0}
+        enhancedScansRemaining={0}
       />
     );
     expect(getByText('No enhanced scans left')).toBeTruthy();

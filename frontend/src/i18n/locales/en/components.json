@@ -16,8 +16,8 @@
     "alreadyOwned": "Already owned",
     "enhance": "Missing books? Try enhanced scan",
     "enhanceA11y": "Try enhanced scan",
-    "enhanceHint": "Re-scans this photo with a more powerful AI model. Uses one credit if it finds books.",
-    "enhanceCostsCredit": "Uses 1 enhanced scan credit",
+    "enhanceHint": "Re-scans this photo with a more powerful AI model. Uses one of your enhanced scans only if it finds books.",
+    "enhanceCostsCredit": "Uses 1 enhanced scan if it finds books",
     "creditsLeft_one": "{{count}} enhanced scan left",
     "creditsLeft_other": "{{count}} enhanced scans left",
     "noCreditsLeft": "No enhanced scans left"

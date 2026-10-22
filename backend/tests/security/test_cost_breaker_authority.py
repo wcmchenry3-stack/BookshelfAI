@@ -113,13 +113,16 @@ class TestAtTheCeiling:
     def test_free_gets_503_ai_budget_reached_and_provider_never_called(
         self, client, store, provider, enhanced
     ):
-        USER.enhanced_scan_credits = 3 if enhanced else 0
-        try:
-            resp = _post(client, data={"enhanced": "true"} if enhanced else {})
-        finally:
-            USER.enhanced_scan_credits = 0
-        assert resp.status_code == 503
-        assert resp.json() == {"detail": "ai_budget_reached"}
+        resp = _post(client, data={"enhanced": "true"} if enhanced else {})
+        if enhanced:
+            # #533: enhanced scans are Premium-only; a Free enhanced request
+            # is refused before it reaches the breaker.
+            assert resp.status_code == 403
+            assert resp.json() == {"detail": "enhanced_requires_premium"}
+            assert store.cost_refusals == 0  # never reached the breaker
+        else:
+            assert resp.status_code == 503
+            assert resp.json() == {"detail": "ai_budget_reached"}
         provider.assert_not_called()
         provider.return_value.identify.assert_not_called()
         assert store.leases == {} and store.count() == 0

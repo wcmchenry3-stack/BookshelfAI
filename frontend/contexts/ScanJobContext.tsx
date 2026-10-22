@@ -10,6 +10,7 @@ import { api } from '../lib/api';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
+  enhancedRefusalMessage,
   hasRefusedJobs,
   MAX_IN_PROGRESS_RETRIES,
   toScanNotice,
@@ -35,8 +36,14 @@ export interface ScanJobContextValue {
   /** True when the queue is at MAX_QUEUE_SIZE and no more captures can be accepted. */
   isQueueFull: boolean;
   reviewingJob: ScanJob | null;
-  /** Enhanced-scan credits left, as last reported by the server; null until a scan reports it. */
-  enhancedCredits: number | null;
+  /**
+   * Premium enhanced scans left this month, as last reported by the server
+   * (a scan response or the usage counters); null when unknown or the user is
+   * not Premium. The enhanced re-scan is offered only when this is > 0.
+   */
+  enhancedScansRemaining: number | null;
+  /** Record the enhanced scans left according to GET /scan/usage. */
+  syncEnhancedScansRemaining: (remaining: number | null) => void;
   /** Why the last scan was refused (limit reached, paused, ...); null when there is nothing to show. */
   scanNotice: ScanNotice | null;
   dismissScanNotice: () => void;
@@ -50,7 +57,7 @@ export interface ScanJobContextValue {
   reviewJob: (jobId: string) => void;
   dismissReview: () => void;
   dismissJob: (jobId: string) => void;
-  /** Re-run an image scan with the stronger model (costs one credit if it finds books). */
+  /** Re-run an image scan with the stronger model (uses an enhanced scan if it finds books). */
   requestEnhancedScan: (jobId: string) => void;
   /** Add the books ticked in the review checklist to the wishlist. */
   handleAddBooks: (books: EnrichedBook[]) => Promise<void>;
@@ -61,7 +68,8 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   pendingCount: 0,
   isQueueFull: false,
   reviewingJob: null,
-  enhancedCredits: null,
+  enhancedScansRemaining: null,
+  syncEnhancedScansRemaining: () => {},
   scanNotice: null,
   dismissScanNotice: () => {},
   resumeQueue: () => {},
@@ -84,7 +92,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [jobs, setJobs] = useState<ScanJob[]>([]);
   const [reviewingJobId, setReviewingJobId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [enhancedCredits, setEnhancedCredits] = useState<number | null>(null);
+  const [enhancedScansRemaining, setEnhancedScansRemaining] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const [usageRefreshKey, setUsageRefreshKey] = useState(0);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
@@ -105,9 +113,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // with — we don't know what was actually stored. Consumed on first fire.
   const skipNextPersistRef = useRef(false);
   const { showBanner } = useBanner();
-  const { t } = useTranslation('scan');
+  const { t, i18n } = useTranslation('scan');
 
   const dismissScanNotice = useCallback(() => setScanNotice(null), []);
+  const syncEnhancedScansRemaining = useCallback(
+    (remaining: number | null) => setEnhancedScansRemaining(remaining),
+    []
+  );
   const bumpUsage = useCallback(() => setUsageRefreshKey((k) => k + 1), []);
 
   // Persist jobs whenever they change (after initial load).
@@ -482,6 +494,33 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       updateJob(job.id, { status: 'queued', error: state.kind, retryCount: 0 });
     }
 
+    // An enhanced scan the server refused (#533: not Premium, enhanced
+    // allowance used, or throttled after repeated empty enhanced scans). Only
+    // enhanced photos are affected: the drain stops sending enhanced photos
+    // (standard ones still go), the offer is hidden until the server reports
+    // enhanced scans left again, and the standard scan's books come back.
+    function handleEnhancedRefusal(
+      job: ScanJob,
+      state: Extract<ScanUiState, { kind: 'enhanced_refused' }>
+    ) {
+      if (stopDrainRef.current === 'none') stopDrainRef.current = 'enhanced';
+      setEnhancedScansRemaining(0);
+      Sentry.addBreadcrumb({
+        category: 'scan',
+        message: `Enhanced scan refused: ${state.reason}`,
+        level: 'info',
+        data: { jobId: job.id },
+      });
+      const message = enhancedRefusalMessage(state, t, i18n.language);
+      // Fall back to whatever the standard scan found, if anything.
+      if (job.results?.length) {
+        restorePriorResults(job, { enhanced: false }, message, 'info');
+      } else {
+        updateJob(job.id, { status: 'failed', enhanced: false, error: 'no_results' });
+        showBanner({ message, type: 'info', duration: 6000 });
+      }
+    }
+
     executeScanRef.current = async function executeScan(job: ScanJob) {
       // Synchronous (before any await) so a drain can't start the same job.
       inFlightRef.current.add(job.id);
@@ -494,8 +533,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
     async function runScan(job: ScanJob) {
       updateJob(job.id, { status: 'searching' });
-      // Credits reported by this response (the state update lands next render).
-      let reportedCredits: number | null = enhancedCredits;
+      // Enhanced scans left as reported by this response (the state update
+      // lands next render).
+      let reportedRemaining: number | null = enhancedScansRemaining;
 
       try {
         let results: EnrichedBook[];
@@ -562,10 +602,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           );
           if (waiting && !drainingRef.current) void drainQueue();
           results = response.data?.books ?? [];
-          const credits = response.data?.enhanced_scan_credits;
-          if (typeof credits === 'number') {
-            reportedCredits = credits;
-            setEnhancedCredits(credits);
+          // A number for Premium, null otherwise (enhanced is Premium-only).
+          const remaining = response.data?.enhanced_scans_remaining;
+          if (typeof remaining === 'number' || remaining === null) {
+            reportedRemaining = remaining;
+            setEnhancedScansRemaining(remaining);
           }
         }
 
@@ -577,8 +618,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           }
           updateJob(job.id, { status: 'failed', error: 'no_results' });
           // Offer the stronger model once, unless this already was the enhanced
-          // pass or the server told us the user is out of credits.
-          const canEnhance = job.type === 'image' && !job.enhanced && reportedCredits !== 0;
+          // pass, and only when the server says the user has enhanced scans
+          // left (never for Free users, who have none).
+          const canEnhance =
+            job.type === 'image' &&
+            !job.enhanced &&
+            reportedRemaining !== null &&
+            reportedRemaining > 0;
           showBanner({
             message: job.enhanced ? t('enhancedNoBooksFound') : t('noBooksFoundTitle'),
             type: 'info',
@@ -642,7 +688,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           job.type === 'image' &&
           (err as { response?: unknown } | null)?.response != null &&
           uiState.kind !== 'paused' &&
-          uiState.kind !== 'in_progress'
+          uiState.kind !== 'in_progress' &&
+          uiState.kind !== 'enhanced_refused'
         ) {
           bumpUsage();
         }
@@ -657,15 +704,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (job.enhanced && uiState.kind === 'no_enhanced_credits') {
-          setEnhancedCredits(0);
-          // Fall back to whatever the standard scan found, if anything.
-          if (job.results?.length) {
-            restorePriorResults(job, { enhanced: false }, t('noEnhancedCredits'), 'error');
-          } else {
-            updateJob(job.id, { status: 'failed', enhanced: false, error: 'no_results' });
-            showBanner({ message: t('noEnhancedCredits'), type: 'error', duration: 6000 });
-          }
+        if (job.enhanced && uiState.kind === 'enhanced_refused') {
+          handleEnhancedRefusal(job, uiState);
           return;
         }
 
@@ -691,7 +731,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         });
       }
     }
-  }, [showBanner, t, bumpUsage, retryScan, queueForLater, requestEnhancedScan, enhancedCredits]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    showBanner,
+    t,
+    i18n,
+    bumpUsage,
+    retryScan,
+    queueForLater,
+    requestEnhancedScan,
+    enhancedScansRemaining,
+  ]);
 
   const reviewingJob = useMemo(
     () => (reviewingJobId ? (jobs.find((j) => j.id === reviewingJobId) ?? null) : null),
@@ -704,7 +754,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       pendingCount,
       isQueueFull,
       reviewingJob,
-      enhancedCredits,
+      enhancedScansRemaining,
+      syncEnhancedScansRemaining,
       scanNotice,
       dismissScanNotice,
       resumeQueue,
@@ -723,7 +774,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       pendingCount,
       isQueueFull,
       reviewingJob,
-      enhancedCredits,
+      enhancedScansRemaining,
+      syncEnhancedScansRemaining,
       scanNotice,
       dismissScanNotice,
       resumeQueue,
