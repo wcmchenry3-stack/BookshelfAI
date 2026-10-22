@@ -1131,10 +1131,13 @@ async def _return_unit(
     committed. A unit whose take was not acknowledged and whose lease was
     taken over stays charged (fails toward charging)."""
     attempts = 0
+    last_outcome: str | None = None
+    fallback_done = False
 
     async def op() -> None:
-        nonlocal attempts
+        nonlocal attempts, last_outcome, fallback_done
         attempts += 1
+        last_outcome = None
         outcome = await give_back_unit(
             db,
             reservation.user_id,
@@ -1144,6 +1147,7 @@ async def _return_unit(
             unit.window_kind,
             unit.window_start,
         )
+        last_outcome = outcome
         if outcome == UNIT_LEASE_LOST and taken and attempts == 1:
             await refund_unit(
                 db,
@@ -1152,8 +1156,46 @@ async def _return_unit(
                 unit.window_kind,
                 unit.window_start,
             )
+            fallback_done = True
 
-    await _give_back(db, f"{unit.what} refund", op)
+    result = await _give_back(db, f"{unit.what} refund", op)
+    # An accepted exception (#590), tracked: a unit left charged.
+    if result != GIVE_BACK_DONE:
+        send_unit_kept_warning(unit, UNIT_KEPT_GIVE_BACK_FAILED)
+    elif last_outcome == UNIT_LEASE_LOST and not taken:
+        send_unit_kept_warning(unit, UNIT_KEPT_LEASE_LOST_UNACKNOWLEDGED)
+    elif last_outcome == UNIT_LEASE_LOST and not fallback_done:
+        send_unit_kept_warning(unit, UNIT_KEPT_FALLBACK_FAILED)
+
+
+# Why a unit the request attempted to take was left charged (the fingerprint's
+# second element and the ``reason`` tag of the Sentry warning).
+UNIT_KEPT_LEASE_LOST_UNACKNOWLEDGED = "lease_lost_unacknowledged"
+UNIT_KEPT_FALLBACK_FAILED = "fallback_failed"
+UNIT_KEPT_GIVE_BACK_FAILED = "give_back_failed"
+_UNIT_TAGS = {
+    FLAG_DAILY: "daily",
+    FLAG_MONTHLY: "monthly",
+    FLAG_ENHANCED: "enhanced",
+}
+
+
+def send_unit_kept_warning(unit: _Unit, reason: str) -> None:
+    """One Sentry warning and one log line: a unit this request attempted to
+    take is left charged. Only the unit and the reason: no user id, email,
+    lease id or content (emptied, stripped scopes, :mod:`app.ai.alerts`).
+    Never raises, never changes the give-back's outcome."""
+    unit_tag = _UNIT_TAGS.get(unit.flag, "unknown")
+    try:
+        alerts.capture_service_warning(
+            "ai-quota: a reserved unit could not be given back",
+            fingerprint=["ai-quota-unit-kept", reason],
+            tags={"unit": unit_tag, "reason": reason},
+            extras={"unit": unit_tag, "reason": reason},
+        )
+    except Exception:  # a warning must never fail a request
+        logger.exception("ai_quota: could not send the unit-kept warning")
+    logger.warning("ai_quota: unit kept (unit=%s, reason=%s)", unit_tag, reason)
 
 
 async def refund(db: AsyncSession, reservation: Reservation) -> None:
