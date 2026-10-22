@@ -87,6 +87,18 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-openai-policy.yml@main
     secrets: inherit
 
+  # In-repo (not a called-* org workflow): the check lives in
+  # scripts/policy/check_claude_policy.py and mirrors .claude/policies/claude.md.
+  claude-policy:
+    needs: [lint-python, lint-frontend, secret-scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/policy/check_claude_policy.py
+
   provenance-coverage:
     needs: [lint-python, lint-frontend, secret-scan]
     uses: wcmchenry3-stack/.github/.github/workflows/called-provenance-coverage.yml@main
