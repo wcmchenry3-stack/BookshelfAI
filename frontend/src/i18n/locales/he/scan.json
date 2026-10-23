@@ -48,5 +48,21 @@
   "repeatReAdd": "הוסף שוב",
   "repeatNoMatch": "לא מצאנו ספר בתמונה הזו בעבר. נסה תמונה ברורה יותר או זווית אחרת.",
   "scanFailedFinal": "הסריקה נכשלה. הקש על ״נסה שוב״ כדי לסרוק מחדש.",
-  "scanFailedFinalRetry": "נסה שוב"
+  "scanFailedFinalRetry": "נסה שוב",
+  "queueTitle": "תור סריקה",
+  "queueBack": "חזרה",
+  "queueWaitingTitle": "ממתינות לסריקה",
+  "queueWaitingEmpty": "אין תמונות שממתינות.",
+  "queueFailedTitle": "סריקות שנכשלו",
+  "queueFailedEmpty": "אין סריקות שנכשלו.",
+  "queueFailedNote": "סריקות שנכשלו נמחקות אחרי 7 ימים.",
+  "queueStateWaiting": "ממתין לחיבור",
+  "queueStateNextTry": "ניסיון הבא ב-{{time}}",
+  "queueStateSending": "שולח…",
+  "queueFailedAt": "נכשלה: {{time}}",
+  "queueRetry": "נסה שוב",
+  "queueDelete": "מחק",
+  "queuePhotoA11y": "תמונת סריקה",
+  "viewQueue": "הצג תור",
+  "scanFailedFinalViewQueue": "הצג תור"
 }

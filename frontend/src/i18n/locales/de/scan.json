@@ -48,5 +48,21 @@
   "repeatReAdd": "Neu hinzufügen",
   "repeatNoMatch": "Auf diesem Foto haben wir zuvor kein Buch gefunden. Versuche ein klareres Foto oder einen anderen Winkel.",
   "scanFailedFinal": "Scan fehlgeschlagen. Tippe auf „Wiederholen“, um es erneut zu versuchen.",
-  "scanFailedFinalRetry": "Wiederholen"
+  "scanFailedFinalRetry": "Wiederholen",
+  "queueTitle": "Scan-Warteschlange",
+  "queueBack": "Zurück",
+  "queueWaitingTitle": "Warten auf Scan",
+  "queueWaitingEmpty": "Keine Fotos in der Warteschlange.",
+  "queueFailedTitle": "Fehlgeschlagene Scans",
+  "queueFailedEmpty": "Keine fehlgeschlagenen Scans.",
+  "queueFailedNote": "Fehlgeschlagene Scans werden nach 7 Tagen gelöscht.",
+  "queueStateWaiting": "Warte auf Verbindung",
+  "queueStateNextTry": "Nächster Versuch um {{time}}",
+  "queueStateSending": "Wird gesendet…",
+  "queueFailedAt": "Fehlgeschlagen: {{time}}",
+  "queueRetry": "Wiederholen",
+  "queueDelete": "Löschen",
+  "queuePhotoA11y": "Scan-Foto",
+  "viewQueue": "Warteschlange",
+  "scanFailedFinalViewQueue": "Warteschlange"
 }

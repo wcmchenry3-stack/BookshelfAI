@@ -48,5 +48,21 @@
   "repeatReAdd": "إعادة الإضافة",
   "repeatNoMatch": "لم نجد كتابًا في هذه الصورة من قبل. جرّب صورة أوضح أو زاوية مختلفة.",
   "scanFailedFinal": "فشل هذا المسح. اضغط على «إعادة المحاولة» للمحاولة مرة أخرى.",
-  "scanFailedFinalRetry": "إعادة المحاولة"
+  "scanFailedFinalRetry": "إعادة المحاولة",
+  "queueTitle": "قائمة المسح",
+  "queueBack": "رجوع",
+  "queueWaitingTitle": "بانتظار المسح",
+  "queueWaitingEmpty": "لا توجد صور قيد الانتظار.",
+  "queueFailedTitle": "عمليات المسح الفاشلة",
+  "queueFailedEmpty": "لا توجد عمليات مسح فاشلة.",
+  "queueFailedNote": "تُحذف عمليات المسح الفاشلة بعد 7 أيام.",
+  "queueStateWaiting": "بانتظار الاتصال",
+  "queueStateNextTry": "المحاولة التالية: {{time}}",
+  "queueStateSending": "جارٍ الإرسال…",
+  "queueFailedAt": "فشلت: {{time}}",
+  "queueRetry": "إعادة المحاولة",
+  "queueDelete": "حذف",
+  "queuePhotoA11y": "صورة المسح",
+  "viewQueue": "عرض القائمة",
+  "scanFailedFinalViewQueue": "عرض القائمة"
 }

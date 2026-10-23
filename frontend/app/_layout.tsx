@@ -71,6 +71,7 @@ function InnerStack() {
       }}
     >
       <Stack.Screen name="(tabs)" options={{ title: '' }} />
+      <Stack.Screen name="scan-queue" options={{ title: '' }} />
     </Stack>
   );
 }

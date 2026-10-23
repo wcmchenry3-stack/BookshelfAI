@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
+import { openScanQueue } from '../lib/scanQueueNav';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
@@ -22,6 +23,7 @@ import {
 } from '../lib/scanErrors';
 import {
   isAwaitingRetry,
+  isFailedScanExpired,
   isPendingUpload,
   MAX_QUEUE_SIZE,
   noMatchMessage,
@@ -68,6 +70,10 @@ export interface ScanJobContextValue {
   reviewJob: (jobId: string) => void;
   dismissReview: () => void;
   dismissJob: (jobId: string) => void;
+  /** Send a failed photo again now, with the retry schedule restarted at attempt 1 (#605). */
+  restartScanSchedule: (jobId: string) => Promise<void>;
+  /** Remove failed scans older than 7 days, with their images (#605). */
+  purgeExpiredFailedJobs: () => void;
   /** Re-run an image scan with the stronger model (uses an enhanced scan if it finds books). */
   requestEnhancedScan: (jobId: string) => void;
   /** Add the books ticked in the review checklist to the wishlist. */
@@ -90,6 +96,8 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   reviewJob: () => {},
   dismissReview: () => {},
   dismissJob: () => {},
+  restartScanSchedule: async () => {},
+  purgeExpiredFailedJobs: () => {},
   requestEnhancedScan: () => {},
   handleAddBooks: async () => {},
 });
@@ -179,15 +187,31 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             ? { ...j, nextAttemptAt: latestRetryAt }
             : j
         );
-      setJobsAndRef(() => restored);
+      // Failed scans older than 7 days are removed with their images (#605).
+      const expired = restored.filter((j) => isFailedScanExpired(j, launchedAt));
+      const kept = expired.length ? restored.filter((j) => !expired.includes(j)) : restored;
+      for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
+      setJobsAndRef(() => kept);
       setLoaded(true);
-      await sweepOrphanedScanFiles(restored, launchedAt);
+      await sweepOrphanedScanFiles(kept, launchedAt);
     })();
   }, [setJobsAndRef]);
 
   const updateJob = useCallback(
     (jobId: string, updates: Partial<ScanJob>) =>
-      setJobsAndRef((list) => list.map((j) => (j.id === jobId ? { ...j, ...updates } : j))),
+      setJobsAndRef((list) =>
+        list.map((j) => {
+          if (j.id !== jobId) return j;
+          // Record when a job became failed (#605); a job that leaves `failed` loses it.
+          const failedAt =
+            updates.status === 'failed'
+              ? (updates.failedAt ?? Date.now())
+              : updates.status
+                ? undefined
+                : j.failedAt;
+          return { ...j, ...updates, failedAt };
+        })
+      ),
     [setJobsAndRef]
   );
 
@@ -444,6 +468,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         retryCount: job.retryCount + 1,
         status: 'pending' as const,
         error: undefined,
+        failedAt: undefined,
       };
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
       await executeScanRef.current(updated);
@@ -462,6 +487,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         ...job,
         status: 'pending',
         error: undefined,
+        failedAt: undefined,
         retryCount: 0,
         attempts: undefined,
         nextAttemptAt: undefined,
@@ -471,6 +497,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     },
     [setJobsAndRef]
   );
+
+  // Failed scans are kept 7 days (#605): on launch (the load above) and when
+  // the queue screen opens, older ones are removed with their images.
+  const purgeExpiredFailedJobs = useCallback(() => {
+    const now = Date.now();
+    const expired = jobsRef.current.filter((j) => isFailedScanExpired(j, now));
+    if (expired.length === 0) return;
+    const ids = new Set(expired.map((j) => j.id));
+    setJobsAndRef((prev) => prev.filter((j) => !ids.has(j.id)));
+    for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
+  }, [setJobsAndRef]);
 
   const queueForLater = useCallback(
     (jobId: string) => {
@@ -701,6 +738,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           duration: 8000,
           actions: [
             { label: t('scanFailedFinalRetry'), onPress: () => restartScanSchedule(job.id) },
+            { label: t('scanFailedFinalViewQueue'), onPress: openScanQueue },
           ],
         });
         return;
@@ -1089,6 +1127,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       reviewJob,
       dismissReview,
       dismissJob,
+      restartScanSchedule,
+      purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
     }),
@@ -1108,6 +1148,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       reviewJob,
       dismissReview,
       dismissJob,
+      restartScanSchedule,
+      purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
     ]

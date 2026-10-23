@@ -48,5 +48,21 @@
   "repeatReAdd": "Volver a añadir",
   "repeatNoMatch": "Antes no encontramos ningún libro en esta foto. Prueba con una foto más nítida o desde otro ángulo.",
   "scanFailedFinal": "Este escaneo falló. Toca «Reintentar» para volver a intentarlo.",
-  "scanFailedFinalRetry": "Reintentar"
+  "scanFailedFinalRetry": "Reintentar",
+  "queueTitle": "Cola de escaneo",
+  "queueBack": "Atrás",
+  "queueWaitingTitle": "Esperando escaneo",
+  "queueWaitingEmpty": "No hay fotos en espera.",
+  "queueFailedTitle": "Escaneos fallidos",
+  "queueFailedEmpty": "No hay escaneos fallidos.",
+  "queueFailedNote": "Los escaneos fallidos se borran a los 7 días.",
+  "queueStateWaiting": "Esperando conexión",
+  "queueStateNextTry": "Próximo intento: {{time}}",
+  "queueStateSending": "Enviando…",
+  "queueFailedAt": "Falló: {{time}}",
+  "queueRetry": "Reintentar",
+  "queueDelete": "Eliminar",
+  "queuePhotoA11y": "Foto de escaneo",
+  "viewQueue": "Ver cola",
+  "scanFailedFinalViewQueue": "Ver cola"
 }

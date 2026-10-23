@@ -48,5 +48,21 @@
   "repeatReAdd": "再追加",
   "repeatNoMatch": "この写真では以前、本が見つかりませんでした。より鮮明な写真や別の角度でお試しください。",
   "scanFailedFinal": "このスキャンは失敗しました。「再試行」をタップしてもう一度お試しください。",
-  "scanFailedFinalRetry": "再試行"
+  "scanFailedFinalRetry": "再試行",
+  "queueTitle": "スキャンキュー",
+  "queueBack": "戻る",
+  "queueWaitingTitle": "スキャン待ち",
+  "queueWaitingEmpty": "待機中の写真はありません。",
+  "queueFailedTitle": "失敗したスキャン",
+  "queueFailedEmpty": "失敗したスキャンはありません。",
+  "queueFailedNote": "失敗したスキャンは7日後に削除されます。",
+  "queueStateWaiting": "接続を待っています",
+  "queueStateNextTry": "次の試行：{{time}}",
+  "queueStateSending": "送信中…",
+  "queueFailedAt": "失敗：{{time}}",
+  "queueRetry": "再試行",
+  "queueDelete": "削除",
+  "queuePhotoA11y": "スキャンの写真",
+  "viewQueue": "キューを見る",
+  "scanFailedFinalViewQueue": "キューを見る"
 }

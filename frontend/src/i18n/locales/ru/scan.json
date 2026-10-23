@@ -48,5 +48,21 @@
   "repeatReAdd": "Добавить снова",
   "repeatNoMatch": "Раньше мы не нашли книгу на этом фото. Попробуйте более чёткое фото или другой ракурс.",
   "scanFailedFinal": "Сканирование не удалось. Нажмите «Повторить», чтобы попробовать снова.",
-  "scanFailedFinalRetry": "Повторить"
+  "scanFailedFinalRetry": "Повторить",
+  "queueTitle": "Очередь сканирования",
+  "queueBack": "Назад",
+  "queueWaitingTitle": "Ожидают сканирования",
+  "queueWaitingEmpty": "Нет фото в ожидании.",
+  "queueFailedTitle": "Неудачные сканирования",
+  "queueFailedEmpty": "Нет неудачных сканирований.",
+  "queueFailedNote": "Неудачные сканирования удаляются через 7 дней.",
+  "queueStateWaiting": "Ожидание подключения",
+  "queueStateNextTry": "Следующая попытка в {{time}}",
+  "queueStateSending": "Отправка…",
+  "queueFailedAt": "Не удалось: {{time}}",
+  "queueRetry": "Повторить",
+  "queueDelete": "Удалить",
+  "queuePhotoA11y": "Фото для сканирования",
+  "viewQueue": "Открыть очередь",
+  "scanFailedFinalViewQueue": "Открыть очередь"
 }

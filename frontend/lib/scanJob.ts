@@ -6,6 +6,9 @@ import type { EnrichedBook } from '../components/BookCandidatePicker';
 // since both retrying and an enhanced re-scan need it.
 export const MAX_QUEUE_SIZE = 50;
 
+// Failed scans stay on the phone this long, then are removed with their image (#605).
+export const FAILED_SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 export type ScanJobType = 'image' | 'text';
 export type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'queued';
 
@@ -44,6 +47,8 @@ export interface ScanJob {
    * request sends `attempt` = this + 1.
    */
   attempts?: number;
+  /** Epoch ms when the job became failed (#605); absent on older saved jobs, which count from `createdAt`. */
+  failedAt?: number;
   /** Epoch ms of the photo's next scheduled attempt (#604); absent when none is scheduled. */
   nextAttemptAt?: number;
 }
@@ -92,4 +97,14 @@ export function repeatOutcome(
   if (books.length === 0) return 'no_match';
   const allIn = books.every((b) => (b.in_library ?? b.already_in_library) === true);
   return allIn ? 'all_in_library' : 'not_in_library';
+}
+
+/** When a failed job failed: `failedAt`, or `createdAt` for jobs saved before it existed. */
+export function failedTimeOf(job: ScanJob): number {
+  return job.failedAt ?? job.createdAt;
+}
+
+/** A failed job older than FAILED_SCAN_RETENTION_MS (#605). */
+export function isFailedScanExpired(job: ScanJob, now: number = Date.now()): boolean {
+  return job.status === 'failed' && now - failedTimeOf(job) > FAILED_SCAN_RETENTION_MS;
 }

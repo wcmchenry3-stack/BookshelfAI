@@ -4,6 +4,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useTranslation } from 'react-i18next';
 
+import { openScanQueue } from '../../lib/scanQueueNav';
 import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
@@ -241,6 +242,14 @@ export default function ScanScreen() {
         <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
           {t('pendingUploads', { count: pendingCount })}
         </Text>
+        <Pressable
+          onPress={openScanQueue}
+          style={styles.sendNow}
+          accessibilityRole="button"
+          accessibilityLabel={t('viewQueue')}
+        >
+          <Text style={[styles.sendNowText, { color: activeColor }]}>{t('viewQueue')}</Text>
+        </Pressable>
         {isConnected ? (
           <Pressable
             onPress={handleRetryNotice}
