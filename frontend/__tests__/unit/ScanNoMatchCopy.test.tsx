@@ -147,8 +147,8 @@ describe('a no-match result says whether it used a scan', () => {
   const EMPTY = { books: [], enhanced: false, enhanced_scans_remaining: null };
 
   it.each([
-    ['free', "No books found. This photo didn't use a scan."],
-    ['counted', 'No books found. This used a scan (unrecognised-photo allowance used up today).'],
+    ['free', "No books found. This one didn't use a scan."],
+    ['counted', "No books found. This used one of today's scans."],
     [null, 'No books found'],
     [undefined, 'No books found'],
   ])('no_match %s', async (noMatch, text) => {
