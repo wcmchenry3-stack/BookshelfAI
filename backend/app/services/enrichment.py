@@ -111,14 +111,42 @@ def normalise_title(value: object) -> str:
 # Where a subtitle or edition note starts: "Dune: Deluxe Edition",
 # "Dune (40th Anniversary)", "Dune - A Novel", "Dune — Book One".
 _SUBTITLE = re.compile(r"\s*[:(\[\u2013\u2014]|\s+-\s+")
+# A subtitle that only describes the edition, not which book it is. Anything
+# else ("Book Two", "The Two Towers") may tell volumes of a series apart, so it
+# must match exactly.
+_EDITION_NOTE = re.compile(
+    r"^(?:(?:a|an|the)\s+)?(?:\d+(?:st|nd|rd|th)\s+)?"
+    r"(?:(?:deluxe|special|collectors?|anniversary|illustrated|annotated|"
+    r"unabridged|abridged|revised|expanded|updated|definitive|complete|"
+    r"classic|movie\s+tie\s*in|tie\s*in|mass\s+market|large\s+print|"
+    r"paperback|hardcover|reissue|new|first|second|third)\s+)*"
+    r"(?:edition|ed|anniversary|novel|classic|reissue|paperback|hardcover|"
+    r"printing)$"
+)
 
 
-def main_title(value: object) -> str:
-    """:func:`normalise_title` of the title without its subtitle, so one
-    provider's "Dune: Deluxe Edition" agrees with the other's "Dune"."""
+def _split_title(value: object) -> tuple[str, str]:
+    """(normalised main title, normalised subtitle or "")."""
     if not isinstance(value, str):
-        return ""
-    return normalise_title(_SUBTITLE.split(value, maxsplit=1)[0])
+        return "", ""
+    parts = _SUBTITLE.split(value, maxsplit=1)
+    main = normalise_title(parts[0])
+    sub = _normalise(parts[1]) if len(parts) > 1 else ""
+    return main, sub
+
+
+def titles_agree(a: object, b: object) -> bool:
+    """Whether two provider titles name the same book: equal main titles
+    where each subtitle is the same or only an edition note ("Dune" vs
+    "Dune: Deluxe Edition"), so a series' volumes ("Saga: Book One" vs
+    "Saga: Book Two") never agree."""
+    main_a, sub_a = _split_title(a)
+    main_b, sub_b = _split_title(b)
+    if not main_a or main_a != main_b:
+        return False
+    if sub_a == sub_b:
+        return True
+    return all(not sub or _EDITION_NOTE.match(sub) for sub in (sub_a, sub_b))
 
 
 def _surname(authors: object) -> str:
@@ -131,21 +159,19 @@ def _surname(authors: object) -> str:
 
 def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     """Whether an Open Library doc and a Google Books volume describe the
-    same book: they share an ISBN, or their normalised main titles
-    (subtitle dropped) and first-author surnames both match (and are
-    non-empty)."""
+    same book: they share an ISBN, or their titles agree (:func:`titles_agree`:
+    the same main title, any differing subtitle only an edition note) and
+    their first-author surnames match (and are non-empty)."""
     if _ol_isbns(ol_doc) & _gb_isbns(gb_volume):
         return True
     info = gb_volume.get("volumeInfo") or {}
-    # Main titles: providers often differ only by a subtitle or edition note,
-    # and dropping an agreeing volume loses its cover and description.
-    ol_title, gb_title = main_title(ol_doc.get("title")), main_title(info.get("title"))
     ol_author, gb_author = _surname(ol_doc.get("author_name")), _surname(
         info.get("authors")
     )
-    return bool(ol_title and ol_author) and (ol_title, ol_author) == (
-        gb_title,
-        gb_author,
+    return (
+        bool(ol_author)
+        and ol_author == gb_author
+        and titles_agree(ol_doc.get("title"), info.get("title"))
     )
 
 

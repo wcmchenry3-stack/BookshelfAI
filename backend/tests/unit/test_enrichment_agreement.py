@@ -52,15 +52,44 @@ class TestRecordsAgree:
             "Dune: Deluxe Edition",
             "Dune (40th Anniversary Edition)",
             "Dune - A Novel",
-            "Dune \u2014 Book One",
+            "Dune: Movie Tie-In Edition",
+            "Dune (Mass Market Paperback)",
         ],
     )
-    def test_a_subtitle_still_agrees(self, gb_title):
-        # A subtitle or edition note alone must not drop the volume (it
-        # carries the cover and description).
+    def test_an_edition_note_still_agrees(self, gb_title):
+        # An edition note alone must not drop the volume (it carries the
+        # cover and description).
         assert records_agree(
             _doc(title="Dune", authors=["Frank Herbert"]),
             _volume(title=gb_title, authors=["Frank Herbert"]),
+        )
+
+    def test_series_volumes_disagree(self):
+        # Codex P2 on #611: "Saga: Book One" vs "Saga: Book Two", same author,
+        # no shared ISBN, are different books.
+        assert not records_agree(
+            _doc(title="Saga: Book One", authors=["Jane Smith"]),
+            _volume(title="Saga: Book Two", authors=["Jane Smith"]),
+        )
+
+    @pytest.mark.parametrize(
+        "gb_title", ["Dune \u2014 Book One", "Dune: The Graphic Novel Part 1"]
+    )
+    def test_a_distinguishing_subtitle_disagrees(self, gb_title):
+        assert not records_agree(
+            _doc(title="Dune", authors=["Frank Herbert"]),
+            _volume(title=gb_title, authors=["Frank Herbert"]),
+        )
+
+    def test_same_distinguishing_subtitle_agrees(self):
+        assert records_agree(
+            _doc(
+                title="The Lord of the Rings: The Two Towers",
+                authors=["J.R.R. Tolkien"],
+            ),
+            _volume(
+                title="Lord of the Rings - The Two Towers", authors=["J. R. R. Tolkien"]
+            ),
         )
 
     def test_same_subtitle_different_main_title_disagrees(self):
