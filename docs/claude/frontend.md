@@ -86,6 +86,7 @@ Stack: `i18next` + `react-i18next`. All user-facing strings must use `useTransla
 | `settings` | Settings screen |
 | `wishlist` | Wishlist screen |
 | `components` | `BookCandidatePicker`, `ThemeToggleButton` |
+| `feedback` | In-app feedback widget |
 
 #### Using translations in a screen
 
@@ -111,7 +112,7 @@ t(`status.${item.status}`)
    # or all namespaces at once for one locale:
    OPENAI_API_KEY=... node scripts/translate.js --locale <code> --namespace common && ...
    ```
-3. Add 8 static imports to `src/i18n/i18n.ts` and add locale entry to `resources`
+3. Add 9 static imports (one per namespace) to `src/i18n/i18n.ts` and add locale entry to `resources`
 4. If RTL (ar/he), add to `RTL_LOCALES` in `locales.ts`
 
 #### Re-running translations (e.g. after adding keys)
@@ -126,6 +127,10 @@ node scripts/translate.js --locale es --namespace scan --dry-run
 # All locales × all namespaces:
 node scripts/translate.js --all
 ```
+
+#### Key parity (every `en` key in every locale)
+
+`__tests__/unit/localeKeyParity.test.ts` fails with a list of `ns:key` entries when a locale is missing a key that `en` has, or carries a stale key that `en` no longer has. When you add or remove an `en` key, update all 12 other locales in the same PR (and `_meta/<ns>.meta.json`). Plurals: `en` uses `x_one` / `x_other`; a locale satisfies `x` with `x_other` plus its own CLDR categories (ar: zero/one/two/few/many/other, ru: one/few/many/other, he: one/two/many/other, ja/ko/zh: other only). `localeCharacterLimits.test.ts` enforces the `characterLimit` values in `_meta`. `provenance.json` currently tracks only the `feedback` namespace.
 
 #### RTL locales
 Arabic (`ar`) and Hebrew (`he`) are RTL. String translations are complete.
