@@ -6,10 +6,13 @@
 
 [run]
 # `--cov=.` sets the source root; `omit` still applies on top of it, so only
-# application code under app/ is measured, not the tests or migrations.
+# application code under app/ is measured, not the tests, migrations or the
+# load-run scripts in perf/ (#539; tests/unit/test_perf_fake_provider.py
+# covers the parts the load run depends on).
 omit =
     tests/*
     alembic/*
+    perf/*
 
 [report]
 # Coverage's default precision is 0, and pytest-cov rounds the total to this

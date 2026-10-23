@@ -79,3 +79,6 @@ frontend/android/app/upload-keystore.jks
 
 # Claude Code local overrides (personal, not shared)
 .claude/settings.local.json
+
+# Nightly /scan load run logs (backend/perf/run_scan_abuse.py)
+backend/perf-logs/

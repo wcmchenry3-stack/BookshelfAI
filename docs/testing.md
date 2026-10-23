@@ -71,6 +71,42 @@ pytest -m security
 DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_test pytest -m integration
 ```
 
+### Nightly scan abuse load run (#539)
+
+`backend/perf/` holds a Locust load run of `POST /scan` against a **fake provider**. It proves, under concurrent load, that the limits hold: the daily allowance, the in-flight lock, the cost breaker and the kill switch. It is not a latency benchmark and never calls a real model. It runs from `.github/workflows/perf-ai.yml` every night (03:17 UTC) and on demand (`workflow_dispatch`); it is **not a required check** and never runs on a pull request. A red run means a limit let too many provider calls through, or `/scan` answered 500: investigate it, do not just re-run.
+
+| File | Role |
+|---|---|
+| `perf/fake_provider.py` | Stdlib HTTP server with fixed Anthropic Messages replies (two books, fixed token usage), configurable latency and error rate, and an empty Open Library. `GET /__count` returns `calls`, `errors`, `in_flight`, `max_in_flight`; `POST /__reset`, `POST /__config` |
+| `perf/locustfile_scan.py` | The three scenarios and their post-run assertions |
+| `perf/run_scan_abuse.py` | Runner: resets the database, creates users and a throwaway RS256 key pair, writes `ai_settings`, starts uvicorn and Locust per scenario |
+| `perf/perf_setup.py` | The database and token helpers (refuses a non-local database or one not confirmed as throwaway) |
+| `requirements-perf.txt` | The app requirements plus Locust, pinned (kept out of `requirements.txt`) |
+
+What each scenario asserts (the real refusal codes: `daily_scan_limit`, `scan_in_progress`, `ai_budget_reached`, `scan_disabled`):
+
+| Scenario | Drive | Assertions |
+|---|---|---|
+| `abuse` (a) | 4 connections of ONE user, `quota.free.found_daily` = 3 | provider calls <= 3 (plus injected errors); 429 `daily_scan_limit` and 429 `scan_in_progress` seen; never more than 1 provider call at once for the user (the in-flight lock) |
+| `breaker` (b) | 8 users, `breaker.free_daily_ceiling_micros` = 6 x the 10,000-micro estimate, a reply that costs 7,000 | 503 `ai_budget_reached` seen; provider calls inside the window the ceiling allows (`ceiling // estimate` .. `(ceiling - estimate) // cost + 1`, here 6..8); calls stop (unchanged over the last 3 s while requests are refused) |
+| `kill` (c) | 4 users; `python -m app.ai.settings set scan.standard.enabled false` 8 s in | every request started more than the settings cache TTL (2 s, plus 1 s margin) after the switch got 503 `scan_disabled`; the first one within that time; provider calls stop |
+
+All scenarios also assert there are no 500s and no response outside the documented set (200 and the refusals above). Every photo is random pixel noise, so scan records (#585) never answer a request: the run measures the quota, not the cache. `scan.standard` is switched to the Anthropic adapter with the real `switch_provider`, and the adapter reaches the fake through `ANTHROPIC_BASE_URL` (only set in the processes the runner starts; see `docs/deployment.md`).
+
+What is different from production, on purpose, and only in the processes the runner starts: `RATE_LIMIT_SCAN=100000/minute` (production's 10/minute per user would throttle one Locust process before any quota is reached; the default is unchanged), `AI_SETTINGS_CACHE_TTL_SECONDS=2`, `scan.requests_per_user_daily` raised to 10,000 so the allowance, not the per-day request count, is what is measured, `TURNSTILE_REQUIRED=false`, `CLAMAV_ENABLED=false` (no clamd in the stack; image normalisation still runs), and `HTTPS_PROXY` aimed at a dead local port so enrichment cannot reach Google Books.
+
+Run it locally (about 75 s for all three scenarios):
+
+```bash
+cd backend
+pip install -r requirements-perf.txt
+createdb perf && DATABASE_URL=postgresql+asyncpg://localhost/perf alembic upgrade head   # a THROWAWAY database
+PERF_CONFIRM_ISOLATED_DB=yes DATABASE_URL=postgresql+asyncpg://localhost/perf \
+  python perf/run_scan_abuse.py                      # or --scenario abuse|breaker|kill
+```
+
+The runner deletes AI quota, spend, usage, scan-record and settings rows and its `*@perf.invalid` users, so it refuses a database that is not on this machine and one without `PERF_CONFIRM_ISOLATED_DB=yes`. `--tamper` asserts a deliberately wrong cap, ceiling and TTL while the app keeps its real settings: it exits 0 only when every scenario fails, which shows the assertions can fail the run. The API's log for each scenario is in `backend/perf-logs/` (uploaded as an artifact by the workflow). A story that changes a scan limit, the breaker or the kill switch should re-run it.
+
 ### Writing a new backend test
 
 For an endpoint test (mocks DB + uses ASGI transport):
@@ -228,6 +264,8 @@ Each job is a reusable workflow from `wcmchenry3-stack/.github`:
 | `android-bundle-check` | Metro bundle compiles for Android |
 | `ios-build-check` | Full `xcodebuild archive` (no signing) |
 | `android-build-check` | Full `./gradlew assembleDebug` |
+
+Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` and `workflow_dispatch`, not a required check) runs the scan abuse load run described under "Nightly scan abuse load run" above.
 
 ## Coverage targets
 
