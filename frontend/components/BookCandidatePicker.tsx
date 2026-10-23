@@ -4,6 +4,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
+import { isOwned, type Ownership } from '../lib/ownership';
 
 export interface EnrichedBook {
   book_id?: string;
@@ -16,10 +17,14 @@ export interface EnrichedBook {
   subjects: string[];
   confidence: number;
   already_in_library: boolean;
-  /** Same work-level library match as already_in_library, sent by POST /scan
-   * (#585). Optional: GET /books/search responses and older clients' saved
-   * results may not carry it. */
+  /** Same value as already_in_library (#585): true whenever `ownership` is
+   * not `not_owned`. Optional: results saved by older app versions may not
+   * carry it. */
   in_library?: boolean;
+  /** Whether the user already has this book, by edition (#587): the
+   * result's edition (`editions[0]`) or another one. Optional: results saved
+   * before the server sent it fall back to `in_library`. */
+  ownership?: Ownership;
   editions: {
     isbn_13?: string;
     isbn_10?: string;
@@ -58,7 +63,24 @@ interface Props {
 
 function initialSelection(candidates: EnrichedBook[], preselect: boolean): Set<number> {
   if (!preselect) return new Set();
-  return new Set(candidates.flatMap((book, i) => (book.already_in_library ? [] : [i])));
+  return new Set(candidates.flatMap((book, i) => (isOwned(book) ? [] : [i])));
+}
+
+/** The i18n key of the "you already have it" note for a book, or null. */
+function ownedNoteKey(book: EnrichedBook): string | null {
+  switch (book.ownership) {
+    case 'owned_same_edition':
+      return 'bookCandidatePicker.ownedSameEdition';
+    case 'owned_other_edition':
+      return 'bookCandidatePicker.ownedOtherEdition';
+    case 'owned_edition_unknown':
+      return 'bookCandidatePicker.ownedEditionUnknown';
+    case 'not_owned':
+      return null;
+    default:
+      // Saved before the server sent `ownership`: the work-level flag.
+      return isOwned(book) ? 'bookCandidatePicker.alreadyOwned' : null;
+  }
 }
 
 /**
@@ -80,10 +102,13 @@ export function BookCandidatePicker({
     initialSelection(candidates, preselect)
   );
 
-  const allSelected = candidates.length > 0 && selected.size === candidates.length;
+  // A book the user already has can't be added again (POST /wishlist 409s).
+  const selectable = candidates.flatMap((book, i) => (isOwned(book) ? [] : [i]));
+  const allSelected = selectable.length > 0 && selected.size === selectable.length;
   const outOfCredits = enhancedScansRemaining === 0;
 
   function toggle(index: number) {
+    if (isOwned(candidates[index])) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(index)) next.delete(index);
@@ -93,7 +118,7 @@ export function BookCandidatePicker({
   }
 
   function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(candidates.map((_, i) => i)));
+    setSelected(allSelected ? new Set() : new Set(selectable));
   }
 
   function confirm() {
@@ -132,7 +157,7 @@ export function BookCandidatePicker({
           </Pressable>
         </View>
 
-        {candidates.length > 1 && (
+        {candidates.length > 1 && selectable.length > 0 && (
           <Pressable
             onPress={toggleAll}
             style={styles.selectAll}
@@ -152,6 +177,8 @@ export function BookCandidatePicker({
         <ScrollView contentContainerStyle={styles.list}>
           {candidates.map((book, i) => {
             const checked = selected.has(i);
+            const owned = isOwned(book);
+            const ownedNote = ownedNoteKey(book);
             return (
               <Pressable
                 key={`${book.open_library_work_id ?? book.title}-${i}`}
@@ -163,8 +190,9 @@ export function BookCandidatePicker({
                   },
                 ]}
                 onPress={() => toggle(i)}
+                disabled={owned}
                 accessibilityRole="checkbox"
-                accessibilityState={{ checked }}
+                accessibilityState={{ checked, disabled: owned }}
                 accessibilityLabel={t('bookCandidatePicker.selectBook', {
                   title: book.title,
                   author: book.author,
@@ -217,16 +245,16 @@ export function BookCandidatePicker({
                       {book.editions[0].publish_year}
                     </Text>
                   )}
-                  {book.already_in_library && (
+                  {ownedNote && (
                     <View style={[styles.badge, { backgroundColor: theme.colors.success }]}>
                       <Text style={[styles.badgeText, { color: theme.colors.onSuccess }]}>
-                        {t('bookCandidatePicker.alreadyOwned')}
+                        {t(ownedNote)}
                       </Text>
                     </View>
                   )}
                 </View>
 
-                <View style={styles.checkbox}>
+                <View style={[styles.checkbox, owned && styles.checkboxDisabled]}>
                   <MaterialIcons
                     name={checked ? 'check-box' : 'check-box-outline-blank'}
                     size={28}
@@ -330,6 +358,7 @@ const styles = StyleSheet.create({
   info: { flex: 1, padding: 12, gap: 4 },
   bookTitle: { fontWeight: '600' },
   checkbox: { justifyContent: 'center', paddingHorizontal: 12, minWidth: 44 },
+  checkboxDisabled: { opacity: 0.4 },
   badge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,

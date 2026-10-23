@@ -53,6 +53,20 @@ class BookRead(BookBase):
     model_config = {"from_attributes": True}
 
 
+# Whether the requesting user already has a book, and which edition (#587):
+# the result's edition (``editions[0]``, the one POST /wishlist would add)
+# has the same ISBN-13 (ISBN-10 normalised) as an edition in their library;
+# the work is in their library in a different edition; the work is there but
+# one side has no ISBN to compare; or it is not in their library.
+Ownership = Literal[
+    "owned_same_edition",
+    "owned_other_edition",
+    "owned_edition_unknown",
+    "not_owned",
+]
+NOT_OWNED: Ownership = "not_owned"
+
+
 class EnrichedBook(BaseModel):
     """Returned by POST /scan and GET /books/search."""
 
@@ -66,6 +80,10 @@ class EnrichedBook(BaseModel):
     subjects: list[str] = []
     confidence: float  # 0–1, from image recognition
     already_in_library: bool = False
+    # Edition-level library match for this user (#587). Per user and live:
+    # never stored in a scan record. ``already_in_library`` / ``in_library``
+    # stay true whenever this is not ``not_owned``, for older clients.
+    ownership: Ownership = NOT_OWNED
     editions: list[EditionPreview] = []
     # Server signature over the catalog fields and the requesting user
     # (#602, app/core/catalog_token.py). Opaque to the app, which posts it
@@ -76,10 +94,10 @@ class EnrichedBook(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def in_library(self) -> bool:
-        """Whether the user already has this book (#585): the same work-level
-        match as ``already_in_library`` (Open Library work ID or Google Books
-        ID), checked against the library on every scan, repeats included.
-        Read-only; edition-level matching is #587."""
+        """Whether the user already has this book (#585): the same value as
+        ``already_in_library``, true whenever ``ownership`` is not
+        ``not_owned`` (#587), checked against the library on every scan,
+        repeats included. Read-only."""
         return self.already_in_library
 
 

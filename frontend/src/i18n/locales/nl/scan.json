@@ -70,5 +70,9 @@
   "queueRetryA11y": "Scan van {{time}} opnieuw proberen",
   "queueDeleteA11y": "Scan van {{time}} verwijderen",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "Wachtrij bekijken ({{count}} mislukt)"
+  "viewQueueFailed": "Wachtrij bekijken ({{count}} mislukt)",
+  "alreadyInLibraryMessage": "\"{{title}}\" staat al in je bibliotheek.",
+  "alreadyInLibraryManyMessage": "{{count}} boeken staan al in je bibliotheek.",
+  "addedAndOwnedMessage": "{{added}} toegevoegd. {{owned}} stond al in je bibliotheek.",
+  "addedSomeOwnedMessage": "{{added}} toegevoegd, {{owned}} al in je bibliotheek, {{failed}} niet opgeslagen. Tik op Toevoegen."
 }

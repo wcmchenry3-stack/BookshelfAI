@@ -92,5 +92,9 @@
   "queueRetryA11y": "Retry scan from {{time}}",
   "queueDeleteA11y": "Delete scan from {{time}}",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "View queue ({{count}} failed)"
+  "viewQueueFailed": "View queue ({{count}} failed)",
+  "alreadyInLibraryMessage": "\"{{title}}\" is already in your library.",
+  "alreadyInLibraryManyMessage": "{{count}} books are already in your library.",
+  "addedAndOwnedMessage": "Added {{added}}. {{owned}} already in your library.",
+  "addedSomeOwnedMessage": "Added {{added}}, {{owned}} already in your library, {{failed}} not saved. Tap Add to retry."
 }

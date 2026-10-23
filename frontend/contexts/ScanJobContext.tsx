@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
+import { isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
 import { Sentry } from '../lib/sentry';
 import {
@@ -671,40 +672,66 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       }
 
       const outcomes = await Promise.allSettled(books.map((book) => api.post('/wishlist', book)));
-      const failed = books.filter((_, i) => outcomes[i].status === 'rejected');
-      const addedCount = books.length - failed.length;
+      // A 409 with an ownership code means the book is already in the
+      // library (#587): nothing to retry and not a failure.
+      const alreadyOwned = (o: PromiseSettledResult<unknown>) =>
+        o.status === 'rejected' && isAlreadyOwnedError(o.reason);
+      const owned = books.filter((_, i) => alreadyOwned(outcomes[i]));
+      const failed = books.filter(
+        (_, i) => outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i])
+      );
+      const newlyAdded = books.length - failed.length - owned.length;
 
       if (failed.length === 0) {
         if (jobId) dismissJob(jobId);
         setReviewingJobId(null);
-        showBanner({
-          message:
+        let message: string;
+        if (owned.length === 0) {
+          message =
             books.length === 1
               ? t('addedMessage', { title: books[0].title })
-              : t('addedManyMessage', { count: books.length }),
-          type: 'success',
+              : t('addedManyMessage', { count: books.length });
+        } else if (newlyAdded === 0) {
+          message =
+            owned.length === 1
+              ? t('alreadyInLibraryMessage', { title: owned[0].title })
+              : t('alreadyInLibraryManyMessage', { count: owned.length });
+        } else {
+          message = t('addedAndOwnedMessage', { added: newlyAdded, owned: owned.length });
+        }
+        showBanner({
+          message,
+          type: newlyAdded === 0 ? 'info' : 'success',
           duration: 4000,
         });
         return;
       }
 
       for (const outcome of outcomes) {
-        if (outcome.status === 'rejected') {
+        if (outcome.status === 'rejected' && !alreadyOwned(outcome)) {
           Sentry.captureException(outcome.reason, {
             tags: { feature: 'scan', action: 'add_books' },
           });
         }
       }
-      // Keep only the books that didn't save so the user can retry just those.
-      if (jobId && addedCount > 0) updateJob(jobId, { results: failed });
-      showBanner({
-        message:
-          addedCount > 0
-            ? t('addedSomeMessage', { added: addedCount, total: books.length })
-            : t('couldNotSaveMessage'),
-        type: 'error',
-        duration: 6000,
-      });
+      // Keep only the books that didn't save so the user can retry just
+      // those (a book already in the library is done with too).
+      if (jobId && failed.length < books.length) updateJob(jobId, { results: failed });
+      // Count only the books actually added; say how many were already
+      // in the library rather than counting them as added (#587).
+      let message: string;
+      if (owned.length > 0) {
+        message = t('addedSomeOwnedMessage', {
+          added: newlyAdded,
+          owned: owned.length,
+          failed: failed.length,
+        });
+      } else if (newlyAdded > 0) {
+        message = t('addedSomeMessage', { added: newlyAdded, total: books.length });
+      } else {
+        message = t('couldNotSaveMessage');
+      }
+      showBanner({ message, type: 'error', duration: 6000 });
     },
     [reviewingJobId, dismissJob, updateJob, showBanner, t]
   );

@@ -7,7 +7,10 @@
     "addToWishlistHint": "מוסיף את הספר לרשימת המשאלות",
     "alreadyOwned": "כבר בבעלותך",
     "noneOfThese": "אף אחד מאלה",
-    "noneOfTheseA11y": "אף אחד מהספרים לא מתאים"
+    "noneOfTheseA11y": "אף אחד מהספרים לא מתאים",
+    "ownedSameEdition": "הספר הזה כבר אצלך",
+    "ownedOtherEdition": "הספר הזה כבר אצלך במהדורה אחרת",
+    "ownedEditionUnknown": "הספר הזה כבר אצלך"
   },
   "themeToggle": {
     "toDark": "החלף למצב כהה",

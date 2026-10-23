@@ -7,7 +7,10 @@
     "addToWishlistHint": "この本をウィッシュリストに追加",
     "alreadyOwned": "所有済み",
     "noneOfThese": "どれでもない",
-    "noneOfTheseA11y": "どの本も一致しません"
+    "noneOfTheseA11y": "どの本も一致しません",
+    "ownedSameEdition": "この本はすでに持っています",
+    "ownedOtherEdition": "この本は別の版ですでに持っています",
+    "ownedEditionUnknown": "この本はすでに持っています"
   },
   "themeToggle": {
     "toDark": "ダークモードに切替",

@@ -7,7 +7,10 @@
     "addToWishlistHint": "يضيف الكتاب إلى قائمة الأمنيات",
     "alreadyOwned": "مملوك بالفعل",
     "noneOfThese": "لا شيء من هذه",
-    "noneOfTheseA11y": "لا يوجد تطابق بين هذه الكتب"
+    "noneOfTheseA11y": "لا يوجد تطابق بين هذه الكتب",
+    "ownedSameEdition": "هذا الكتاب لديك بالفعل",
+    "ownedOtherEdition": "لديك هذا الكتاب بالفعل بطبعة أخرى",
+    "ownedEditionUnknown": "هذا الكتاب لديك بالفعل"
   },
   "themeToggle": {
     "toDark": "التبديل إلى الوضع الداكن",

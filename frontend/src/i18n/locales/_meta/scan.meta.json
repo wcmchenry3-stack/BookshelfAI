@@ -374,5 +374,28 @@
     "description": "Link on the scan screen, shown when only failed scans exist (nothing waiting), that opens the scan queue screen. {{count}} is the number of failed scans.",
     "tone": "neutral",
     "characterLimit": 40
+  },
+  "alreadyInLibraryMessage": {
+    "description": "Banner after adding one book that was already in the user's library, so nothing was added. {{title}} is the book title.",
+    "tone": "friendly",
+    "placeholders": ["{{title}}"]
+  },
+  "alreadyInLibraryManyMessage": {
+    "description": "Banner after adding several books that were all already in the user's library. {{count}} is the number of books (2 or more).",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{count}}"]
+  },
+  "addedAndOwnedMessage": {
+    "description": "Banner after adding books when some were added and the rest were already in the user's library. {{added}} and {{owned}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{added}}", "{{owned}}"]
+  },
+  "addedSomeOwnedMessage": {
+    "description": "Error banner after adding books when some could not be saved and some were already in the user's library. {{added}} were added now, {{owned}} were already in the library, {{failed}} failed and stay in the list to retry with the Add button.",
+    "tone": "friendly",
+    "characterLimit": 110,
+    "placeholders": ["{{added}}", "{{owned}}", "{{failed}}"]
   }
 }

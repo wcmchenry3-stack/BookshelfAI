@@ -70,5 +70,9 @@
   "queueRetryA11y": "Reintentar el escaneo de {{time}}",
   "queueDeleteA11y": "Eliminar el escaneo de {{time}}",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "Ver cola ({{count}} fallidos)"
+  "viewQueueFailed": "Ver cola ({{count}} fallidos)",
+  "alreadyInLibraryMessage": "\"{{title}}\" ya está en tu biblioteca.",
+  "alreadyInLibraryManyMessage": "{{count}} libros ya están en tu biblioteca.",
+  "addedAndOwnedMessage": "Añadidos: {{added}}. Ya en tu biblioteca: {{owned}}.",
+  "addedSomeOwnedMessage": "Añadidos: {{added}}. Ya en tu biblioteca: {{owned}}. Sin guardar: {{failed}}. Toca Añadir para reintentar."
 }

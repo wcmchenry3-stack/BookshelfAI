@@ -70,5 +70,9 @@
   "queueRetryA11y": "إعادة محاولة المسح من {{time}}",
   "queueDeleteA11y": "حذف المسح من {{time}}",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "عرض القائمة (فشل {{count}})"
+  "viewQueueFailed": "عرض القائمة (فشل {{count}})",
+  "alreadyInLibraryMessage": "\"{{title}}\" موجود بالفعل في مكتبتك.",
+  "alreadyInLibraryManyMessage": "موجودة بالفعل في مكتبتك: {{count}}",
+  "addedAndOwnedMessage": "تمت إضافة {{added}}. موجودة بالفعل في مكتبتك: {{owned}}",
+  "addedSomeOwnedMessage": "تمت إضافة {{added}}، وموجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا."
 }

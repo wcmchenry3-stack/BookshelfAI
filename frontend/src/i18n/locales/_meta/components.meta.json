@@ -48,5 +48,20 @@
     "description": "Accessibility label for the theme toggle button when currently in dark mode",
     "tone": "neutral",
     "characterLimit": 30
+  },
+  "bookCandidatePicker.ownedSameEdition": {
+    "description": "Note on a scan or search result the user already has in this exact edition (same ISBN); the book can't be added again",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "bookCandidatePicker.ownedOtherEdition": {
+    "description": "Note on a scan or search result whose title the user already has, but in a different edition; the book can't be added again",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "bookCandidatePicker.ownedEditionUnknown": {
+    "description": "Note on a scan or search result the user already has when the edition can't be compared (no ISBN); same text as ownedSameEdition",
+    "tone": "neutral",
+    "characterLimit": 60
   }
 }

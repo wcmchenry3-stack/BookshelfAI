@@ -70,5 +70,9 @@
   "queueRetryA11y": "Повторить сканирование от {{time}}",
   "queueDeleteA11y": "Удалить сканирование от {{time}}",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "Очередь (ошибок: {{count}})"
+  "viewQueueFailed": "Очередь (ошибок: {{count}})",
+  "alreadyInLibraryMessage": "\"{{title}}\" уже есть в вашей библиотеке.",
+  "alreadyInLibraryManyMessage": "Уже в вашей библиотеке: {{count}}.",
+  "addedAndOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}.",
+  "addedSomeOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить»."
 }

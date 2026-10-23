@@ -70,5 +70,9 @@
   "queueRetryA11y": "{{time}} का स्कैन फिर से आज़माएँ",
   "queueDeleteA11y": "{{time}} का स्कैन हटाएँ",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "कतार देखें ({{count}} विफल)"
+  "viewQueueFailed": "कतार देखें ({{count}} विफल)",
+  "alreadyInLibraryMessage": "\"{{title}}\" पहले से आपकी लाइब्रेरी में है।",
+  "alreadyInLibraryManyMessage": "{{count}} किताबें पहले से आपकी लाइब्रेरी में हैं।",
+  "addedAndOwnedMessage": "{{added}} जोड़ी गईं। {{owned}} पहले से आपकी लाइब्रेरी में हैं।",
+  "addedSomeOwnedMessage": "{{added}} जोड़ी गईं, {{owned}} पहले से लाइब्रेरी में, {{failed}} सहेजी नहीं गईं। जोड़ें दबाएं।"
 }

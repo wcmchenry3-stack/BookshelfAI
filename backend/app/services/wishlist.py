@@ -15,6 +15,16 @@ provider data the server itself produced (#602):
   (and an existing Edition of that Book), else it is refused with
   :class:`CatalogTokenInvalidError` (422 ``catalog_token_invalid``).
 
+A library holds one entry per title (``uq_user_books_user_book``), so a book
+the user already has is refused with :class:`AlreadyOwnedError` (409, #587)
+and no row is created or changed: the same edition (the same ISBN-13, an
+ISBN-10 normalised, or the same ``edition_id``) is ``owned_same_edition``,
+another edition of the work ``owned_other_edition``, and a match where one
+side has no ISBN ``owned_edition_unknown``. The work matches on the resolved
+Book, the Open Library work ID or the Google Books ID, with the same query
+and rules as ``app/services/deduplication.py``, which marks scan and search
+results, so the 409 agrees with what the scan showed.
+
 A user book is never linked to an Edition of a different Book, signed or
 not. Existing catalog rows are never modified from a request. Creation is
 idempotent per work: rows are matched by provider ID first, and a
@@ -39,7 +49,14 @@ from app.core import catalog_token
 from app.models.book import Book
 from app.models.edition import Edition
 from app.models.user_book import UserBook
+from app.schemas.book import NOT_OWNED, Ownership
 from app.schemas.user_book import WishlistRequest
+from app.services.deduplication import (
+    candidate_key,
+    held_entries,
+    matching,
+    ownership_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +69,15 @@ class CatalogTokenInvalidError(Exception):
 class BookNotInCatalogError(Exception):
     """The book has no provider ID, so it can never be in the shared
     catalog (422 ``book_not_in_catalog``)."""
+
+
+class AlreadyOwnedError(Exception):
+    """The user already has this book (409, ``detail`` = :attr:`ownership`,
+    #587). Nothing was written."""
+
+    def __init__(self, ownership: Ownership):
+        super().__init__(ownership)
+        self.ownership = ownership
 
 
 class WishlistService:
@@ -69,9 +95,22 @@ class WishlistService:
         if book is None:
             raise CatalogTokenInvalidError
         edition = await self._find_or_create_edition(db, book.id, req, create=trusted)
-        user_book = await self._find_or_create_user_book(
-            db, user_id, book.id, edition.id if edition else None
-        )
+        try:
+            user_book = await self._find_or_create_user_book(
+                db,
+                user_id,
+                book.id,
+                edition.id if edition else None,
+                isbn=candidate_key(req),
+                work_id=req.open_library_work_id,
+                volume_id=req.google_books_id,
+            )
+        except AlreadyOwnedError as exc:
+            # Nothing is written for a book the user already has, not even
+            # a catalog row created above.
+            await db.rollback()
+            logger.info("wishlist: already in the library (%s)", exc.ownership)
+            raise
         await db.commit()
         await db.refresh(user_book, ["book", "edition"])
         # Eagerly load book.editions for serialisation
@@ -199,17 +238,21 @@ class WishlistService:
         user_id: uuid.UUID,
         book_id: uuid.UUID,
         edition_id: uuid.UUID | None,
+        *,
+        isbn: str | None = None,
+        work_id: str | None = None,
+        volume_id: str | None = None,
     ) -> UserBook:
-        result = await db.execute(
-            select(UserBook).where(
-                UserBook.user_id == user_id,
-                UserBook.book_id == book_id,
-            )
+        """A new library entry; :class:`AlreadyOwnedError` when the user
+        already has this book: an entry for ``book_id``, for the same Open
+        Library work or Google Books volume (the scan's library check, so the
+        409 matches what the scan showed), or holding this edition (``isbn``,
+        normalised ISBN-13, whatever book it belongs to). One query; a
+        concurrent add of the same book (``uq_user_books_user_book``) is
+        refused the same way."""
+        await self._refuse_if_owned(
+            db, user_id, book_id, edition_id, isbn, work_id, volume_id
         )
-        user_book = result.scalar_one_or_none()
-        if user_book:
-            return user_book
-
         user_book = UserBook(
             user_id=user_id,
             book_id=book_id,
@@ -217,6 +260,40 @@ class WishlistService:
             status="wishlisted",
             wishlisted_at=datetime.now(UTC),
         )
-        db.add(user_book)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                db.add(user_book)
+                await db.flush()
+        except IntegrityError:
+            # Another request added this book between the check and the
+            # insert: refuse with how the user has it now.
+            await self._refuse_if_owned(
+                db, user_id, book_id, edition_id, isbn, work_id, volume_id
+            )
+            raise
         return user_book
+
+    async def _refuse_if_owned(
+        self,
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        book_id: uuid.UUID,
+        edition_id: uuid.UUID | None,
+        isbn: str | None,
+        work_id: str | None,
+        volume_id: str | None,
+    ) -> None:
+        held = await held_entries(
+            db,
+            user_id,
+            book_ids={book_id},
+            work_ids={work_id} if work_id else (),
+            volume_ids={volume_id} if volume_id else (),
+            isbns={isbn} if isbn else (),
+        )
+        matches = matching(
+            held, book_id=book_id, work_id=work_id, volume_id=volume_id, isbn=isbn
+        )
+        ownership = ownership_of(isbn, matches, edition_id=edition_id)
+        if ownership != NOT_OWNED:
+            raise AlreadyOwnedError(ownership)

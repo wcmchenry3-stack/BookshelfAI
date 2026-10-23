@@ -70,5 +70,9 @@
   "queueRetryA11y": "重试 {{time}} 的扫描",
   "queueDeleteA11y": "删除 {{time}} 的扫描",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "查看队列（失败 {{count}} 个）"
+  "viewQueueFailed": "查看队列（失败 {{count}} 个）",
+  "alreadyInLibraryMessage": "“{{title}}”已在你的书库中。",
+  "alreadyInLibraryManyMessage": "{{count}} 本书已在你的书库中。",
+  "addedAndOwnedMessage": "已添加 {{added}} 本，{{owned}} 本已在你的书库中。",
+  "addedSomeOwnedMessage": "已添加 {{added}} 本，{{owned}} 本已在书库中，{{failed}} 本未保存。点按添加以重试。"
 }

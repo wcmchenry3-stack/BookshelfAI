@@ -70,5 +70,9 @@
   "queueRetryA11y": "{{time}}のスキャンを再試行",
   "queueDeleteA11y": "{{time}}のスキャンを削除",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "キュー（失敗 {{count}} 件）"
+  "viewQueueFailed": "キュー（失敗 {{count}} 件）",
+  "alreadyInLibraryMessage": "\"{{title}}\"はすでにライブラリにあります。",
+  "alreadyInLibraryManyMessage": "{{count}}冊はすでにライブラリにあります。",
+  "addedAndOwnedMessage": "{{added}}冊を追加しました。{{owned}}冊はすでにライブラリにあります。",
+  "addedSomeOwnedMessage": "{{added}}冊を追加、{{owned}}冊はライブラリにあり、{{failed}}冊は保存できませんでした。追加で再試行。"
 }

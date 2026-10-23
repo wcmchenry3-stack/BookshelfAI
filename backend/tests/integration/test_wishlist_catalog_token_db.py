@@ -546,9 +546,13 @@ class TestDuplicateGoogleBooksRows:
     async def test_scan_library_check_with_duplicates(self, env, gb_only):
         factory, make_user, ids, _ = env
         _alice, bob = await self._race_duplicate(factory, make_user)
-        # Bob now also adds the oldest row, so he holds both duplicates.
-        (book,) = await _search(factory, bob)
-        await _wishlist(factory, bob, _posted_back(book))
+        # Bob now also holds the oldest row, so he holds both duplicates.
+        # Inserted directly: POST /wishlist refuses it since #587 (he already
+        # has the volume, 409 owned_edition_unknown).
+        oldest, _newer = await self._rows(factory, ids)
+        async with factory() as db:
+            db.add(UserBook(user_id=bob, book_id=oldest.id, status="wishlisted"))
+            await db.commit()
         async with factory() as db:
             held = (
                 await db.execute(

@@ -7,7 +7,10 @@
     "addToWishlistHint": "위시리스트에 추가됩니다",
     "alreadyOwned": "이미 소유함",
     "noneOfThese": "해당 없음",
-    "noneOfTheseA11y": "해당하는 책이 없습니다"
+    "noneOfTheseA11y": "해당하는 책이 없습니다",
+    "ownedSameEdition": "이미 가지고 있는 책입니다",
+    "ownedOtherEdition": "이 책의 다른 판을 이미 가지고 있습니다",
+    "ownedEditionUnknown": "이미 가지고 있는 책입니다"
   },
   "themeToggle": {
     "toDark": "다크 모드로 전환",

@@ -490,7 +490,8 @@ async def _enrich(candidates: list) -> tuple[list[EnrichedBook], bool]:
 async def _mark_library(
     db: AsyncSession, user_id: uuid.UUID, books: list[EnrichedBook]
 ) -> list[EnrichedBook]:
-    """Flag the books already in the user's library (work-level match)."""
+    """Flag the books already in the user's library: ``ownership`` by
+    edition, and ``already_in_library`` (#587)."""
     if not books:
         return []
     dedup = DeduplicationService()

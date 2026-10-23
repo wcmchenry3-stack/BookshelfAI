@@ -23,9 +23,17 @@ def make_candidate(ol_id=None, gb_id=None) -> EnrichedBook:
 
 
 def _mock_db(found: bool):
-    """Return an AsyncSession mock that returns a row (or None) for scalar_one_or_none."""
+    """Return an AsyncSession mock whose library query (one per check, #587)
+    returns an entry of the Dune work / volume without an edition, or none."""
+    entry = MagicMock(
+        open_library_work_id="OL45804W",
+        google_books_id="gb_dune_001",
+        edition_id=None,
+        isbn_13=None,
+        isbn_10=None,
+    )
     scalar_result = MagicMock()
-    scalar_result.scalar_one_or_none.return_value = MagicMock() if found else None
+    scalar_result.all.return_value = [entry] if found else []
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=scalar_result)
@@ -55,7 +63,7 @@ class TestCheck:
         assert result[0].already_in_library is False
 
     async def test_marks_true_when_google_books_id_matches(self, service):
-        # ol_id=None so OL query is skipped; only the GB query runs → found=True
+        # ol_id=None: the entry matches on the Google Books ID → found=True
         db = _mock_db(found=True)
         candidates = [make_candidate(ol_id=None, gb_id="gb_dune_001")]
         result = await service.check(db, USER_ID, candidates)
@@ -68,7 +76,7 @@ class TestCheck:
 
         await service.check(db, USER_ID, candidates)
 
-        # Only one execute call: the GB query
+        # One execute call: the single library query (#587)
         assert db.execute.call_count == 1
 
     async def test_skips_gb_query_when_already_found_via_ol(self, service):
@@ -77,7 +85,7 @@ class TestCheck:
 
         await service.check(db, USER_ID, candidates)
 
-        # Short-circuits after OL match — only one execute call
+        # One execute call for both IDs (#587)
         assert db.execute.call_count == 1
 
     async def test_processes_multiple_candidates(self, service):

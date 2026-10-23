@@ -25,6 +25,7 @@ from app.schemas.user_book import (
     WishlistRequest,
 )
 from app.services.wishlist import (
+    AlreadyOwnedError,
     BookNotInCatalogError,
     CatalogTokenInvalidError,
     WishlistService,
@@ -69,6 +70,13 @@ async def add_to_wishlist(
     service = WishlistService()
     try:
         return await service.add(db, current_user.id, req)
+    except AlreadyOwnedError as exc:
+        # The user already has this book (#587): nothing was written. The
+        # detail is the ownership code: owned_same_edition,
+        # owned_other_edition or owned_edition_unknown.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=exc.ownership
+        ) from None
     except BookNotInCatalogError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

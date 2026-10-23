@@ -70,5 +70,9 @@
   "queueRetryA11y": "Réessayer la numérisation de {{time}}",
   "queueDeleteA11y": "Supprimer la numérisation de {{time}}",
   "queueRowA11y": "{{what}}: {{state}}",
-  "viewQueueFailed": "Voir la file ({{count}} en échec)"
+  "viewQueueFailed": "Voir la file ({{count}} en échec)",
+  "alreadyInLibraryMessage": "\"{{title}}\" est déjà dans votre bibliothèque.",
+  "alreadyInLibraryManyMessage": "{{count}} livres sont déjà dans votre bibliothèque.",
+  "addedAndOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}.",
+  "addedSomeOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}. Non enregistrés : {{failed}}. Touchez Ajouter."
 }
