@@ -19,8 +19,9 @@ every newer duplicate is merged into it:
    duplicate (``created_at``, then ``id``) survives. Every field of the
    survivor that is NULL (``edition_id``, ``notes``, ``rating`` and the
    ``*_at`` timestamps) takes the first non-NULL value from the user's other
-   entries (oldest first); ``status`` is never NULL, so the survivor's status
-   is kept. The other entries are then deleted (hard delete: their content is
+   entries (oldest first). ``status`` becomes the most advanced status among
+   all of the user's merged entries (wishlisted < purchased < reading <
+   read). The other entries are then deleted (hard delete: their content is
    now on the survivor) and the survivor is pointed at the kept book.
 2. ``editions`` of the duplicates are pointed at the kept book. The only
    other unique constraint there is the global ``isbn_13``, which a book_id
@@ -86,6 +87,14 @@ _MERGED_FIELDS = (
     "started_at",
     "finished_at",
 )
+# Frozen copy of app.models.user_book.VALID_STATUSES at this revision, in
+# order of progress: a merged entry keeps the most advanced one.
+_STATUS_ORDER = ("wishlisted", "purchased", "reading", "read")
+_STATUS_RANK = (
+    "CASE r.status "
+    + " ".join(f"WHEN '{st}' THEN {i}" for i, st in enumerate(_STATUS_ORDER))
+    + " ELSE -1 END"
+)
 
 log = logging.getLogger("alembic.runtime.migration")
 
@@ -126,7 +135,13 @@ def _merge_batch(conn) -> tuple[int, int, int, list]:
     _exec(
         conn,
         f"""
-        UPDATE user_books s SET {fills}, updated_at = now()
+        UPDATE user_books s SET {fills},
+            status = (
+                SELECT r.status FROM user_books r
+                JOIN _gb_ub o ON o.id = r.id
+                WHERE o.user_id = x.user_id AND o.keep_id = x.keep_id
+                ORDER BY {_STATUS_RANK} DESC, o.rn LIMIT 1),
+            updated_at = now()
         FROM _gb_ub x
         WHERE x.id = s.id AND x.rn = 1
           AND EXISTS (

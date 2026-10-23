@@ -151,8 +151,10 @@ def _cycle(connection) -> None:
         # Holds only the newer duplicates: the oldest of their entries
         # survives, moved to the kept row, with the other's fields merged.
         only_dupes = _user(connection)
-        dupes_kept = _entry(connection, only_dupes, newest, 5, rating=5)
-        _entry(connection, only_dupes, newer, 7, notes="mine")
+        dupes_kept = _entry(
+            connection, only_dupes, newest, 5, status="reading", rating=5
+        )
+        _entry(connection, only_dupes, newer, 7, status="purchased", notes="mine")
         # Holds only the newest duplicate.
         newest_only = _user(connection)
         newest_only_entry = _entry(
@@ -211,12 +213,15 @@ def _cycle(connection) -> None:
         ).all()
         assert len(rows) == 4  # one per user per book, plus single_entry
         b = connection.execute(select(UserBook).where(UserBook.user_id == both)).one()
-        assert (b.id, b.book_id, b.status) == (both_kept, oldest, "wishlisted")
+        # The kept-row entry was wishlisted, a duplicate's read: the most
+        # advanced status wins.
+        assert (b.id, b.book_id, b.status) == (both_kept, oldest, "read")
         assert (b.edition_id, b.notes, b.rating) == (e_newer, "first notes", 4)
         d = connection.execute(
             select(UserBook).where(UserBook.user_id == only_dupes)
         ).one()
         assert (d.id, d.book_id, d.notes, d.rating) == (dupes_kept, oldest, "mine", 5)
+        assert d.status == "reading"  # already the most advanced: kept
         n = connection.execute(
             select(UserBook).where(
                 UserBook.user_id == newest_only, UserBook.book_id != single
