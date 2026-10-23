@@ -1,0 +1,76 @@
+name: Perf AI (scan abuse load run)
+
+# Nightly load run of POST /scan against a FAKE provider (#539, epic #524):
+# proves the daily quota, the in-flight lock, the cost breaker and the kill
+# switch hold under concurrent load. It never calls a real model.
+#
+# NOT a required check, and it never runs on pull_request: it is for the
+# nightly schedule and for a manual run (Actions > Perf AI > Run workflow).
+# A red run means a limit let more provider calls through than it should, or
+# /scan answered 500: open an issue, do not just re-run.
+on:
+  schedule:
+    # 03:17 UTC every day (off the hour to avoid the scheduler rush)
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-ai
+  cancel-in-progress: false
+
+jobs:
+  scan-abuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      # Its own throwaway database, like test-migrations in ci.yml: the run
+      # deletes AI quota, spend, usage and settings rows.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: perf
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/perf
+      PERF_CONFIRM_ISOLATED_DB: 'yes'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install dependencies (app + Locust)
+        run: pip install -r requirements-perf.txt
+      - name: Migrate the throwaway database
+        run: alembic upgrade head
+      - name: Start the fake provider
+        run: |
+          mkdir -p perf-logs
+          nohup python perf/fake_provider.py --port 18080 > perf-logs/fake-provider.log 2>&1 &
+      - name: Run the scan abuse scenarios
+        # Starts the API itself (uvicorn, once per scenario) with
+        # AI_ANTHROPIC_BASE_URL pointing at the fake provider, then Locust.
+        # Fails when a scenario's assertions fail.
+        run: python perf/run_scan_abuse.py --external-stub --stub-port 18080
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-ai-logs
+          path: backend/perf-logs/
+          if-no-files-found: ignore

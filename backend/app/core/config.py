@@ -24,6 +24,9 @@ _HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 # ORIGIN_AUTH_SECRET, when set: printable ASCII (it travels as a header value),
 # long enough not to be guessed. Generate with e.g. `openssl rand -hex 32`.
 _ORIGIN_AUTH_SECRET_MIN_LENGTH = 32
+
+# The only hosts AI_ANTHROPIC_BASE_URL may name, in any environment (#539).
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _PRINTABLE_ASCII_PATTERN = re.compile(r"[\x20-\x7e]+")
 
 
@@ -62,6 +65,14 @@ class Settings(BaseSettings):
     # such a feature answers 503 scan_unavailable (refunded); boot never
     # fails over it. A secret: never logged, scrubbed from Sentry events.
     anthropic_api_key: str = ""
+    # Base URL of the Anthropic API for the Claude adapter (AI_ANTHROPIC_BASE_URL),
+    # read once at boot. Unset (the default) means the host pinned in
+    # app/ai/providers/anthropic_vision.py. It exists only so the nightly load run (#539)
+    # can point the adapter at a local fake provider. Only localhost /
+    # 127.0.0.1 / ::1 is accepted, in every environment, and in staging and
+    # production any value fails boot, so it can never send the API key and
+    # photos to another host.
+    ai_anthropic_base_url: str = ""
     openai_max_tokens: int = 512
     # Multi-book scan: one photo can hold up to scan_max_books covers or spines.
     # The JSON for 15 books needs far more room than openai_max_tokens allows,
@@ -273,6 +284,41 @@ class Settings(BaseSettings):
                 f"{_ORIGIN_AUTH_SECRET_MIN_LENGTH} characters"
             )
         return v
+
+    @model_validator(mode="after")
+    def _valid_anthropic_base_url(self) -> "Settings":
+        """AI_ANTHROPIC_BASE_URL: empty, or an http(s) URL to a LOCAL host
+        (localhost, 127.0.0.1, ::1) with a valid port, no credentials, query
+        or fragment. In a hardened environment (staging, production) any
+        value fails boot. The rule is the same whatever ENVIRONMENT says, so a
+        deployment that forgot to set it cannot send the API key and photos
+        elsewhere. Messages describe the rule only; the value is never
+        echoed."""
+        value = self.ai_anthropic_base_url.strip()
+        self.ai_anthropic_base_url = value
+        if not value:
+            return self
+        if self.is_hardened:
+            raise ValueError(
+                "AI_ANTHROPIC_BASE_URL must be unset in staging and production"
+            )
+        try:
+            parts = urlsplit(value)
+            host = parts.hostname
+            parts.port  # noqa: B018 - raises ValueError for a bad port
+        except ValueError:
+            raise ValueError("AI_ANTHROPIC_BASE_URL is not a valid URL") from None
+        if parts.scheme not in {"http", "https"} or not host:
+            raise ValueError("AI_ANTHROPIC_BASE_URL must be an http(s) URL with a host")
+        if parts.username is not None or parts.password is not None:
+            raise ValueError("AI_ANTHROPIC_BASE_URL must not contain credentials")
+        if parts.query or parts.fragment:
+            raise ValueError("AI_ANTHROPIC_BASE_URL must not have a query or fragment")
+        if host not in _LOCAL_HOSTS:
+            raise ValueError(
+                "AI_ANTHROPIC_BASE_URL must be localhost, 127.0.0.1 or ::1"
+            )
+        return self
 
     @model_validator(mode="after")
     def _max_stale_not_below_ttl(self) -> "Settings":
