@@ -20,6 +20,10 @@ export interface ScanResponse {
   /** True when the answer came from the user's saved scan record for this
    * exact photo: no AI call and nothing charged (#585). The app copy is #588. */
   repeat?: boolean;
+  /** A standard scan where the model answered but found no book (#577):
+   * 'free' = it did not use a scan; 'counted' = it used one because today's
+   * allowance for unrecognised photos is used up; null/absent otherwise. */
+  no_match?: 'free' | 'counted' | null;
 }
 
 export interface ScanJob {
@@ -39,4 +43,20 @@ export interface ScanJob {
 /** A job still waiting to be uploaded/processed (counts toward the queue cap). */
 export function isPendingUpload(job: ScanJob): boolean {
   return job.status === 'queued' || job.status === 'pending';
+}
+
+/**
+ * The "no books found" banner for a standard scan (#577): it also says
+ * whether the photo used one of today's scans, as the server reported in
+ * `no_match`. Without that field (an older server, a repeat, or nothing
+ * decided) just `fallback`. Copy from the `scan` namespace.
+ */
+export function noMatchMessage(
+  noMatch: ScanResponse['no_match'],
+  fallback: string,
+  t: (key: string) => string
+): string {
+  if (noMatch === 'free') return t('noBooksFoundFree');
+  if (noMatch === 'counted') return t('noBooksFoundCounted');
+  return fallback;
 }

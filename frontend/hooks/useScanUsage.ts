@@ -7,10 +7,19 @@ import { useNetworkStatus } from './useNetworkStatus';
  * Body of GET /scan/usage. Limits come from the server; never hardcode them.
  * There is no monthly limit (#582): the server still sends the old monthly
  * fields as null for one release; the app ignores them.
+ *
+ * Two daily counters (#577): `found_*` (scans that used a scan; a scan is
+ * refused when it is full) and `no_match_*` (photos the model answered but
+ * found no book in, which did not use a scan). `used_today` / `daily_limit`
+ * are the found counter again, which an older server sends alone.
  */
 export interface ScanUsage {
   used_today: number;
   daily_limit: number;
+  found_used_today?: number;
+  found_daily_limit?: number;
+  no_match_used_today?: number;
+  no_match_daily_limit?: number;
 }
 
 function isScanUsage(v: unknown): v is ScanUsage {

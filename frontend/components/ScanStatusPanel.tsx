@@ -6,9 +6,23 @@ import { useTheme } from '../hooks/useTheme';
 import type { ScanUsage } from '../hooks/useScanUsage';
 import { scanNoticeMessage, type ScanNotice } from '../lib/scanErrors';
 
-/** Scans left today (there is no monthly allowance, #582); never negative. */
+/** Scans left today: the found counter (#577; there is no monthly
+ * allowance, #582); never negative. Falls back to `used_today` /
+ * `daily_limit` from an older server. */
 export function remainingToday(usage: ScanUsage): number {
-  return Math.max(0, usage.daily_limit - usage.used_today);
+  const used = usage.found_used_today ?? usage.used_today;
+  const limit = usage.found_daily_limit ?? usage.daily_limit;
+  return Math.max(0, limit - used);
+}
+
+/** Unrecognised photos (no book found) still allowed today without using a
+ * scan (#577); never negative. null when the server does not send the
+ * no-match counter (an older server): the line is hidden. */
+export function noMatchRemainingToday(usage: ScanUsage): number | null {
+  const used = usage.no_match_used_today;
+  const limit = usage.no_match_daily_limit;
+  if (typeof used !== 'number' || typeof limit !== 'number') return null;
+  return Math.max(0, limit - used);
 }
 
 interface Props {
@@ -29,6 +43,7 @@ export function ScanStatusPanel({ usage, notice, onDismissNotice, onRetryNotice 
   const { theme } = useTheme();
   const { t, i18n } = useTranslation('scan');
   if (!usage && !notice) return null;
+  const noMatchLeft = usage ? noMatchRemainingToday(usage) : null;
 
   return (
     <View style={styles.wrap}>
@@ -76,6 +91,14 @@ export function ScanStatusPanel({ usage, notice, onDismissNotice, onRetryNotice 
           <Text style={[styles.usageText, { color: theme.colors.onSurface }]}>
             {t('usageToday', { count: remainingToday(usage) })}
           </Text>
+          {noMatchLeft !== null ? (
+            <Text
+              style={[styles.usageSubText, { color: theme.colors.onSurfaceVariant }]}
+              testID="scan-usage-no-match"
+            >
+              {t('usageNoMatch', { count: noMatchLeft })}
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -98,4 +121,5 @@ const styles = StyleSheet.create({
   dismiss: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   dismissText: { fontSize: 14, fontWeight: '600' },
   usageText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  usageSubText: { fontSize: 12, fontWeight: '500', textAlign: 'center', marginTop: 2 },
 });

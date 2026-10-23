@@ -20,6 +20,7 @@ import {
 import {
   isPendingUpload,
   MAX_QUEUE_SIZE,
+  noMatchMessage,
   type ScanJob,
   type ScanJobType,
   type ScanResponse,
@@ -529,6 +530,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       // Enhanced scans left as reported by this response (the state update
       // lands next render).
       let reportedRemaining: number | null = enhancedScansRemaining;
+      // Whether a no-match used a scan, as the server reports it (#577).
+      let noMatch: ScanResponse['no_match'] = null;
 
       try {
         let results: EnrichedBook[];
@@ -595,6 +598,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           );
           if (waiting && !drainingRef.current) void drainQueue();
           results = response.data?.books ?? [];
+          const reportedNoMatch = response.data?.no_match;
+          if (reportedNoMatch === 'free' || reportedNoMatch === 'counted') {
+            noMatch = reportedNoMatch;
+          }
           // A number for Premium, null otherwise (enhanced is Premium-only).
           const remaining = response.data?.enhanced_scans_remaining;
           if (typeof remaining === 'number' || remaining === null) {
@@ -619,7 +626,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             reportedRemaining !== null &&
             reportedRemaining > 0;
           showBanner({
-            message: job.enhanced ? t('enhancedNoBooksFound') : t('noBooksFoundTitle'),
+            message: job.enhanced
+              ? t('enhancedNoBooksFound')
+              : noMatchMessage(noMatch, t('noBooksFoundTitle'), t),
             type: 'info',
             duration: canEnhance ? 8000 : 4000,
             actions: canEnhance

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useScanUsage } from '../../hooks/useScanUsage';
-import { remainingToday } from '../../components/ScanStatusPanel';
+import { noMatchRemainingToday, remainingToday } from '../../components/ScanStatusPanel';
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
 
 export default function SettingsScreen() {
@@ -13,6 +13,7 @@ export default function SettingsScreen() {
   const { t } = useTranslation(['settings', 'scan']);
   const { usageRefreshKey } = useScanJobs();
   const usage = useScanUsage(usageRefreshKey ?? 0);
+  const noMatchLeft = usage ? noMatchRemainingToday(usage) : null;
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <Text style={{ color: theme.colors.text, marginBottom: theme.spacing.md }}>
@@ -26,6 +27,14 @@ export default function SettingsScreen() {
           <Text style={[styles.usageValue, { color: theme.colors.text }]}>
             {t('usageToday', { ns: 'scan', count: remainingToday(usage) })}
           </Text>
+          {noMatchLeft !== null ? (
+            <Text
+              style={[styles.usageValue, { color: theme.colors.text }]}
+              testID="settings-scan-usage-no-match"
+            >
+              {t('usageNoMatch', { ns: 'scan', count: noMatchLeft })}
+            </Text>
+          ) : null}
         </View>
       ) : null}
       <ThemeToggleButton />

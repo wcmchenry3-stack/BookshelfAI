@@ -160,6 +160,21 @@
     "tone": "neutral",
     "characterLimit": 45
   },
+  "usageNoMatch": {
+    "description": "Counter on the scan screen and in Settings, under the scans-left counter (#577): how many more photos where no book could be recognised are allowed today without using a scan. {{count}} is a number.",
+    "tone": "neutral",
+    "characterLimit": 45
+  },
+  "noBooksFoundFree": {
+    "description": "Banner after a scan found no book (#577): says the photo did not use one of today's scans (it counted against the separate allowance for unrecognised photos). Shown in at most two lines.",
+    "tone": "reassuring",
+    "characterLimit": 80
+  },
+  "noBooksFoundCounted": {
+    "description": "Banner after a scan found no book (#577) when today's allowance for unrecognised photos is already used up, so this photo did use one of today's scans. Shown in at most two lines.",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
   "dailyLimit": {
     "description": "Shown when the daily scan limit is reached. Keep 'UTC' and keep {{time}}, the reset time in the user's local time.",
     "tone": "neutral",
