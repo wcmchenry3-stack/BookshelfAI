@@ -79,11 +79,13 @@ PURGE_MAX_BATCHES = 20
 _CANDIDATE_FIELDS = ("title", "author", "confidence", "isbn_13", "isbn_10")
 MAX_TEXT_LENGTH = 500
 # What a saved enriched book may hold: the EnrichedBook fields except the
-# per-user ones (book_id is always None on a scan; the library flag is live;
-# the catalog token, #602, is signed afresh on every response).
+# per-user ones (book_id is always None on a scan; the library flag and the
+# edition-level ownership, #587, are live; the catalog token, #602, is signed
+# afresh on every response).
 _BOOK_FIELDS = frozenset(EnrichedBook.model_fields) - {
     "book_id",
     "already_in_library",
+    "ownership",
     "catalog_token",
 }
 # Every saved book carries this marker (#602). Books saved before catalog
@@ -202,8 +204,9 @@ def serialise_books(books: list[EnrichedBook]) -> list[dict[str, Any]]:
 
 
 def deserialise_books(value: Any) -> list[EnrichedBook]:
-    """A stored book list (``already_in_library`` False; the caller checks
-    the library); :class:`ScanRecordError` if invalid."""
+    """A stored book list (``already_in_library`` False and ``ownership``
+    ``not_owned``; the caller checks the library); :class:`ScanRecordError` if invalid.
+    """
     if not isinstance(value, list) or len(value) > max_items():
         raise ScanRecordError("bad books")
     books = []

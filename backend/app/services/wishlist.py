@@ -15,6 +15,14 @@ provider data the server itself produced (#602):
   (and an existing Edition of that Book), else it is refused with
   :class:`CatalogTokenInvalidError` (422 ``catalog_token_invalid``).
 
+A library holds one entry per title (``uq_user_books_user_book``), so a book
+the user already has is refused with :class:`AlreadyOwnedError` (409, #587)
+and no row is created or changed: the same edition (the same ISBN-13, an
+ISBN-10 normalised, or the same ``edition_id``) is ``owned_same_edition``,
+another edition of the work ``owned_other_edition``, and a match where one
+side has no ISBN ``owned_edition_unknown`` (the comparison rules are
+``app/services/deduplication.py``'s, which marks scan and search results).
+
 A user book is never linked to an Edition of a different Book, signed or
 not. Existing catalog rows are never modified from a request. Creation is
 idempotent per work: rows are matched by provider ID first, and a
@@ -31,15 +39,23 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core import catalog_token
 from app.models.book import Book
 from app.models.edition import Edition
 from app.models.user_book import UserBook
+from app.schemas.book import Ownership
 from app.schemas.user_book import WishlistRequest
+from app.services.deduplication import (
+    OWNED_SAME_EDITION,
+    candidate_key,
+    classify,
+    isbn_lookup_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +68,15 @@ class CatalogTokenInvalidError(Exception):
 class BookNotInCatalogError(Exception):
     """The book has no provider ID, so it can never be in the shared
     catalog (422 ``book_not_in_catalog``)."""
+
+
+class AlreadyOwnedError(Exception):
+    """The user already has this book (409, ``detail`` = :attr:`ownership`,
+    #587). Nothing was written."""
+
+    def __init__(self, ownership: Ownership):
+        super().__init__(ownership)
+        self.ownership = ownership
 
 
 class WishlistService:
@@ -69,9 +94,20 @@ class WishlistService:
         if book is None:
             raise CatalogTokenInvalidError
         edition = await self._find_or_create_edition(db, book.id, req, create=trusted)
-        user_book = await self._find_or_create_user_book(
-            db, user_id, book.id, edition.id if edition else None
-        )
+        try:
+            user_book = await self._find_or_create_user_book(
+                db,
+                user_id,
+                book.id,
+                edition.id if edition else None,
+                isbn=candidate_key(req),
+            )
+        except AlreadyOwnedError as exc:
+            # Nothing is written for a book the user already has, not even
+            # a catalog row created above.
+            await db.rollback()
+            logger.info("wishlist: already in the library (%s)", exc.ownership)
+            raise
         await db.commit()
         await db.refresh(user_book, ["book", "edition"])
         # Eagerly load book.editions for serialisation
@@ -199,16 +235,36 @@ class WishlistService:
         user_id: uuid.UUID,
         book_id: uuid.UUID,
         edition_id: uuid.UUID | None,
+        *,
+        isbn: str | None = None,
     ) -> UserBook:
-        result = await db.execute(
-            select(UserBook).where(
-                UserBook.user_id == user_id,
-                UserBook.book_id == book_id,
+        """A new library entry; :class:`AlreadyOwnedError` when the user
+        already has this book (an entry for ``book_id``) or this edition
+        (an entry whose edition has ``isbn``, normalised ISBN-13, whatever
+        book it belongs to). One query either way."""
+        held = UserBook.book_id == book_id
+        same_edition = None
+        if isbn:
+            isbn_13s, isbn_10s = isbn_lookup_values({isbn})
+            same_edition = UserBook.edition_id.in_(
+                select(Edition.id).where(
+                    or_(Edition.isbn_13.in_(isbn_13s), Edition.isbn_10.in_(isbn_10s))
+                )
             )
+            held = or_(held, same_edition)
+        query = (
+            select(UserBook)
+            .where(UserBook.user_id == user_id, held)
+            .options(selectinload(UserBook.edition))
+            .limit(1)
         )
+        if same_edition is not None:
+            # An entry holding this very edition decides first.
+            query = query.order_by(case((same_edition, 0), else_=1))
+        result = await db.execute(query)
         user_book = result.scalar_one_or_none()
         if user_book:
-            return user_book
+            raise AlreadyOwnedError(_ownership(user_book, edition_id, isbn))
 
         user_book = UserBook(
             user_id=user_id,
@@ -220,3 +276,13 @@ class WishlistService:
         db.add(user_book)
         await db.flush()
         return user_book
+
+
+def _ownership(
+    entry: UserBook, edition_id: uuid.UUID | None, isbn: str | None
+) -> Ownership:
+    """How the user already has the requested book: ``entry`` is their
+    library entry for it."""
+    if edition_id is not None and entry.edition_id == edition_id:
+        return OWNED_SAME_EDITION
+    return classify(isbn, entry.edition)

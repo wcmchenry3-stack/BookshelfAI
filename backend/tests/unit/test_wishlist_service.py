@@ -10,7 +10,7 @@ from app.models.edition import Edition
 from app.models.user_book import UserBook
 from app.schemas.book import EditionPreview
 from app.schemas.user_book import WishlistRequest
-from app.services.wishlist import WishlistService
+from app.services.wishlist import AlreadyOwnedError, WishlistService
 
 USER_ID = uuid.uuid4()
 
@@ -160,12 +160,17 @@ class TestFindOrCreateEdition:
 
 
 class TestFindOrCreateUserBook:
-    async def test_returns_existing_user_book(self, service, existing_user_book):
+    async def test_existing_user_book_is_refused(self, service, existing_user_book):
+        # #587: re-adding a book the user has is a 409, no longer the
+        # existing row returned idempotently.
         book_id = uuid.uuid4()
+        existing_user_book.edition_id = None
+        existing_user_book.edition = None
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(existing_user_book))
-        result = await service._find_or_create_user_book(db, USER_ID, book_id, None)
-        assert result is existing_user_book
+        with pytest.raises(AlreadyOwnedError) as exc:
+            await service._find_or_create_user_book(db, USER_ID, book_id, None)
+        assert exc.value.ownership == "owned_edition_unknown"
         db.add.assert_not_called()
 
     async def test_creates_user_book_when_not_found(self, service):

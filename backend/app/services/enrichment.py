@@ -196,6 +196,30 @@ def isbn_13_to_10(isbn_13: str | None) -> str | None:
     return body + ("X" if check == 10 else str(check))
 
 
+def isbn_10_to_13(isbn_10: str | None) -> str | None:
+    """The 978-prefixed ISBN-13 form of an ISBN-10, else None."""
+    if not isinstance(isbn_10, str):
+        return None
+    value = isbn_10.replace("-", "").replace(" ", "").upper()
+    if len(value) != 10 or not value[:9].isdigit():
+        return None
+    if not (value[9].isdigit() or value[9] == "X"):
+        return None
+    body = "978" + value[:9]
+    total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(body))
+    return body + str((10 - total % 10) % 10)
+
+
+def normalise_isbn_13(isbn_13: str | None, isbn_10: str | None = None) -> str | None:
+    """One comparable key for an edition: its ISBN-13, else its ISBN-10 as
+    an ISBN-13 (#587). None when it has neither."""
+    if isinstance(isbn_13, str):
+        value = isbn_13.replace("-", "").replace(" ", "")
+        if len(value) == 13 and value.isdigit():
+            return value
+    return isbn_10_to_13(isbn_10)
+
+
 def _edition_isbns(
     isbn_13: str | None, isbn_10: str | None, confirmed: set[str]
 ) -> tuple[str | None, str | None]:
