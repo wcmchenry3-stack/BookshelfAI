@@ -27,7 +27,7 @@
   "errorUpdateStatus": "Impossible de mettre à jour le statut.",
   "errorRemoveBook": "Impossible de supprimer le livre.",
   "searchPlaceholder": "Rechercher dans la bibliothèque...",
-  "searchA11y": "Rechercher la bibliothèque",
+  "searchA11y": "Chercher dans la bibliothèque",
   "sectionTitle": "Ma bibliothèque",
   "bookCount": "{{count}} volumes dans votre collection.",
   "heroSubtitle": "Toute ta vie de lecture ici",
