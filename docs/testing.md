@@ -55,7 +55,7 @@ pytest
 # With coverage report
 pytest --cov=app --cov-report=term-missing
 
-# Enforce the CI threshold (app code only via backend/.coveragerc, exact to 2 decimals; #621)
+# Enforce the CI threshold (app code only via backend/.coveragerc, compared to 2 decimal places; #621)
 pytest --cov=. --cov-fail-under=90
 
 # Single file
@@ -231,7 +231,7 @@ Each job is a reusable workflow from `wcmchenry3-stack/.github`:
 
 ## Coverage targets
 
-- **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/` and `alembic/` and sets `precision = 2`, so the gate compares the exact figure (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
+- **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/` and `alembic/` and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
 - **Frontend:** tracked via `npx jest --coverage`, no hard threshold enforced by default
 
 ## Rule + memory references
