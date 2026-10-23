@@ -53,7 +53,7 @@ class WishlistService:
         return user_book
 
     async def _find_or_create_book(
-        self, db: AsyncSession, req: WishlistRequest, *, create: bool = True
+        self, db: AsyncSession, req: WishlistRequest, *, create: bool = False
     ) -> Book | None:
         """The Book matching the work-level IDs; otherwise a new one from
         ``req`` when ``create`` (a verified catalog token), else None."""
@@ -99,7 +99,7 @@ class WishlistService:
         book_id: uuid.UUID,
         req: WishlistRequest,
         *,
-        create: bool = True,
+        create: bool = False,
     ) -> Edition | None:
         """The Edition with the first edition's ISBN-13; otherwise a new one
         when ``create`` (a verified catalog token). Unsigned requests link

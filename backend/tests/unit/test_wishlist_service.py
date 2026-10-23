@@ -105,7 +105,7 @@ class TestFindOrCreateBook:
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(None))
 
-        await service._find_or_create_book(db, BASE_REQUEST)
+        await service._find_or_create_book(db, BASE_REQUEST, create=True)
 
         db.add.assert_called_once()
         db.flush.assert_called_once()
@@ -122,7 +122,7 @@ class TestFindOrCreateEdition:
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(existing_edition))
         result = await service._find_or_create_edition(
-            db, existing_book.id, BASE_REQUEST
+            db, existing_book.id, BASE_REQUEST, create=True
         )
         assert result is existing_edition
         db.add.assert_not_called()
@@ -131,7 +131,7 @@ class TestFindOrCreateEdition:
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(None))
         result = await service._find_or_create_edition(
-            db, existing_book.id, BASE_REQUEST
+            db, existing_book.id, BASE_REQUEST, create=True
         )
         db.add.assert_called_once()
         assert result is not None
