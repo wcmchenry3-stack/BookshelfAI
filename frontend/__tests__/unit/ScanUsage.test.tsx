@@ -147,6 +147,27 @@ describe('notice actions and refresh', () => {
     expect(mockResume).toHaveBeenCalledTimes(1);
   });
 
+  it('no Try again while a photo waits on the retry schedule (#604)', async () => {
+    mockGet.mockResolvedValue({ data: USAGE });
+    mockNotice = { kind: 'paused' };
+    mockPending = 1;
+    mockJobs = [
+      {
+        id: 'r',
+        type: 'image',
+        status: 'queued',
+        createdAt: 1,
+        retryCount: 0,
+        error: 'unavailable',
+        attempts: 1,
+        nextAttemptAt: Date.now() + 30_000,
+      },
+    ];
+    const { findByText, queryByText } = await render(<ScanScreen />);
+    expect(await findByText('Dismiss')).toBeTruthy();
+    expect(queryByText('Try again')).toBeNull();
+  });
+
   it('no Try again when nothing is waiting, Dismiss still shown', async () => {
     mockGet.mockResolvedValue({ data: USAGE });
     mockNotice = { kind: 'paused' };

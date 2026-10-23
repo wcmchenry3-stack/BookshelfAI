@@ -46,5 +46,7 @@
   "repeatAlreadyHaveMany": "你已经有这些书了。",
   "repeatNotInLibrary": "你之前扫描过，但它不在你的书库中。要重新添加吗？",
   "repeatReAdd": "重新添加",
-  "repeatNoMatch": "之前在这张照片中没有找到书。请试试更清晰的照片或换个角度。"
+  "repeatNoMatch": "之前在这张照片中没有找到书。请试试更清晰的照片或换个角度。",
+  "scanFailedFinal": "此次扫描失败。打开队列以重试或删除。",
+  "scanFailedFinalRetry": "重试"
 }
