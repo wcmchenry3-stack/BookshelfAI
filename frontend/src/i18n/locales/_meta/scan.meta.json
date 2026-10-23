@@ -256,7 +256,7 @@
     "characterLimit": 120
   },
   "scanFailedFinal": {
-    "description": "Error banner (#604) when a photo still failed after every automatic retry because the scanner was unavailable. Tells the user to tap the banner's Retry button (scanFailedFinalRetry; use the same word) to try again. Do not mention a queue or deleting: there is no queue screen yet (#605). Not the user's fault.",
+    "description": "Error banner (#604) when a photo still failed after every automatic retry because the scanner was unavailable. Tells the user to tap the banner's Retry button (scanFailedFinalRetry; use the same word) to try again. Do not mention deleting or the queue: the banner's View queue button (scanFailedFinalViewQueue) covers that. Not the user's fault.",
     "tone": "neutral",
     "characterLimit": 80
   },
@@ -264,6 +264,116 @@
     "description": "Button on the final scan failure banner (#604): sends the photo again now and restarts its automatic retries. One short word.",
     "tone": "neutral",
     "characterLimit": 16
+  },
+  "queueTitle": {
+    "description": "Title of the scan queue screen: lists photos waiting to be scanned and photos that failed",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueBack": {
+    "description": "Button at the top of the scan queue screen that goes back to the previous screen. One short word.",
+    "tone": "neutral",
+    "characterLimit": 14
+  },
+  "queueWaitingTitle": {
+    "description": "Section heading on the scan queue screen for photos waiting to be scanned",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueWaitingEmpty": {
+    "description": "Empty state under the waiting section of the scan queue screen when no photo is waiting",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "queueFailedTitle": {
+    "description": "Section heading on the scan queue screen for scans that failed",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueFailedEmpty": {
+    "description": "Empty state under the failed section of the scan queue screen when no scan has failed",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "queueFailedNote": {
+    "description": "Note under the failed-scans heading: failed scans stay on the phone for 7 days and are then removed automatically. Keep the number 7.",
+    "tone": "neutral",
+    "characterLimit": 64
+  },
+  "queueStateWaiting": {
+    "description": "State of a queued photo that cannot be sent yet because the phone is offline or the scanner is paused",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueStateNextTry": {
+    "description": "State of a queued photo that will be tried again automatically; {{time}} is a local time of day such as 3:45 PM",
+    "tone": "neutral",
+    "characterLimit": 36
+  },
+  "queueStateSending": {
+    "description": "State of a queued photo that is being sent to be scanned right now",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "queueFailedAt": {
+    "description": "Line on a failed scan saying when it failed; {{time}} is a local date and time such as Oct 22, 2026, 3:45 PM",
+    "tone": "neutral",
+    "characterLimit": 44
+  },
+  "queueRetry": {
+    "description": "Button on a failed scan: sends the photo again now and restarts its automatic retries. Use the same word as scanFailedFinalRetry. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queueDelete": {
+    "description": "Button on a failed scan: deletes the scan and its photo from the phone. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queuePhotoA11y": {
+    "description": "Screen reader label for the thumbnail of a photo in the scan queue",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "viewQueue": {
+    "description": "Button on the scan screen's pending-uploads badge that opens the scan queue screen",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "scanFailedFinalViewQueue": {
+    "description": "Second button on the final scan failure banner (#604): opens the scan queue screen where the failed photo can be retried or deleted. Same wording as viewQueue.",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "queueDeleteConfirm": {
+    "description": "Confirmation shown before a failed scan is deleted from the scan queue screen. Says the scan will be deleted and its photo removed (permanent). Two short sentences, a question then a statement.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "queueDeleteCancel": {
+    "description": "Cancel button in the delete-scan confirmation. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queueRetryA11y": {
+    "description": "Screen-reader label for a failed scan's Retry button. {{time}} is the date and time the scan failed, so each row's button is distinct. Use the same word for retry as queueRetry.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "queueDeleteA11y": {
+    "description": "Screen-reader label for a failed scan's Delete button. {{time}} is the date and time the scan failed, so each row's button is distinct. Use the same word for delete as queueDelete.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "queueRowA11y": {
+    "description": "Screen-reader label that reads a queue row's photo and state as one item. {{what}} is the photo label or the search text; {{state}} is the row's state text. Keep the placeholders and the colon-style separator.",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
+  "viewQueueFailed": {
+    "description": "Link on the scan screen, shown when only failed scans exist (nothing waiting), that opens the scan queue screen. {{count}} is the number of failed scans.",
+    "tone": "neutral",
+    "characterLimit": 40
   },
   "alreadyInLibraryMessage": {
     "description": "Banner after adding one book that was already in the user's library, so nothing was added. {{title}} is the book title.",

@@ -8,6 +8,7 @@ import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { isAlreadyOwnedError } from '../lib/ownership';
+import { openScanQueue } from '../lib/scanQueueNav';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
@@ -23,6 +24,7 @@ import {
 } from '../lib/scanErrors';
 import {
   isAwaitingRetry,
+  isFailedScanExpired,
   isPendingUpload,
   MAX_QUEUE_SIZE,
   noMatchMessage,
@@ -69,6 +71,10 @@ export interface ScanJobContextValue {
   reviewJob: (jobId: string) => void;
   dismissReview: () => void;
   dismissJob: (jobId: string) => void;
+  /** Send a failed photo again now, with the retry schedule restarted at attempt 1 (#605). */
+  restartScanSchedule: (jobId: string) => Promise<void>;
+  /** Remove failed scans older than 7 days, with their images (#605). */
+  purgeExpiredFailedJobs: () => void;
   /** Re-run an image scan with the stronger model (uses an enhanced scan if it finds books). */
   requestEnhancedScan: (jobId: string) => void;
   /** Add the books ticked in the review checklist to the wishlist. */
@@ -91,6 +97,8 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   reviewJob: () => {},
   dismissReview: () => {},
   dismissJob: () => {},
+  restartScanSchedule: async () => {},
+  purgeExpiredFailedJobs: () => {},
   requestEnhancedScan: () => {},
   handleAddBooks: async () => {},
 });
@@ -120,11 +128,32 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const drainingRef = useRef(false);
+  // A retried photo was queued while another photo was being sent or a drain
+  // was running: run another drain as soon as that finishes (#605).
+  const drainAgainRef = useRef(false);
   // Which photos the current drain stops sending after a refusal: all of
   // them (limit, paused, busy) or only enhanced ones (enhanced switched off).
   const stopDrainRef = useRef<'none' | 'enhanced' | 'images'>('none');
   // Ids of jobs being sent right now, so a drain can't send the same job twice.
   const inFlightRef = useRef<Set<string>>(new Set());
+  // Whether a photo is being sent right now.
+  const imageInFlight = useCallback(
+    () =>
+      [...inFlightRef.current].some(
+        (id) => jobsRef.current.find((j) => j.id === id)?.type === 'image'
+      ),
+    []
+  );
+  // Whether a photo is being uploaded right now (past its connectivity
+  // check), which a drain must not send another photo alongside.
+  const imageUploading = useCallback(
+    () =>
+      [...inFlightRef.current].some((id) => {
+        const j = jobsRef.current.find((x) => x.id === id);
+        return j?.type === 'image' && j.status === 'searching';
+      }),
+    []
+  );
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
   // Set when the initial load fails, so the persist effect below doesn't
   // immediately overwrite storage with the empty `jobs` state it starts
@@ -180,15 +209,36 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             ? { ...j, nextAttemptAt: latestRetryAt }
             : j
         );
-      setJobsAndRef(() => restored);
+      // Failed scans older than 7 days are dropped (#605). Their images are
+      // not deleted here: the sweep below removes files no kept job refers to
+      // (they are older than `launchedAt`, so the sweep's age guard allows it),
+      // so a job is never saved with its image already gone.
+      const kept = restored.filter((j) => !isFailedScanExpired(j, launchedAt));
+      setJobsAndRef(() => kept);
       setLoaded(true);
-      await sweepOrphanedScanFiles(restored, launchedAt);
+      await sweepOrphanedScanFiles(kept, launchedAt);
     })();
   }, [setJobsAndRef]);
 
   const updateJob = useCallback(
     (jobId: string, updates: Partial<ScanJob>) =>
-      setJobsAndRef((list) => list.map((j) => (j.id === jobId ? { ...j, ...updates } : j))),
+      setJobsAndRef((list) =>
+        list.map((j) => {
+          if (j.id !== jobId) return j;
+          // Record when a job became failed (#605), only on the change to
+          // failed; a job that leaves `failed` loses it. A job saved before
+          // `failedAt` existed has none and counts from `createdAt`.
+          const failedAt =
+            updates.status === 'failed'
+              ? j.status === 'failed'
+                ? (updates.failedAt ?? j.failedAt)
+                : (updates.failedAt ?? Date.now())
+              : updates.status
+                ? undefined
+                : j.failedAt;
+          return { ...j, ...updates, failedAt };
+        })
+      ),
     [setJobsAndRef]
   );
 
@@ -196,19 +246,24 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // the connectivity effect to satisfy no-use-before-define. Only uses stable
   // refs and setJobs so deps are empty.
   const drainQueue = useCallback(async () => {
-    drainingRef.current = true;
-    try {
-      // A photo skipped only because another photo was waiting for its retry
-      // is revisited once that wait ends during the pass (the waiting photo
-      // failed for good or was sent and succeeded), since nothing else would
-      // start another drain then (#604). Bounded: each extra pass needs a
-      // photo to have stopped waiting during the previous one.
-      for (let pass = 0; pass < MAX_DRAIN_PASSES; pass++) {
-        if (!(await drainPass())) break;
+    // Runs again when a retry was queued while it was running (#605).
+    do {
+      drainAgainRef.current = false;
+      drainingRef.current = true;
+      try {
+        // A photo skipped only because another photo was waiting for its
+        // retry is revisited once that wait ends during the pass (the waiting
+        // photo failed for good or was sent and succeeded), since nothing
+        // else would start another drain then (#604). Bounded: each extra
+        // pass needs a photo to have stopped waiting during the previous one.
+        for (let pass = 0; pass < MAX_DRAIN_PASSES; pass++) {
+          if (!(await drainPass())) break;
+        }
+      } finally {
+        drainingRef.current = false;
       }
-    } finally {
-      drainingRef.current = false;
-    }
+      // Left for the photo being sent, whose completion starts the next drain.
+    } while (drainAgainRef.current && !imageUploading());
 
     // One pass over the queue; true when a photo was skipped for another
     // photo's retry wait and no photo is waiting any more.
@@ -259,6 +314,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           !isAwaitingRetry(current) &&
           waitingForRetry();
         if (heldByWait) skippedForWait = true;
+        // One photo at a time: a photo uploading outside this drain
+        // (startScan, retryScan) holds back the drain's photos until it
+        // finishes, which then drains again (#605).
+        if (current?.type === 'image' && !inFlightRef.current.has(current.id) && imageUploading()) {
+          drainAgainRef.current = true;
+          continue;
+        }
         if (
           !current ||
           (current.status !== 'queued' && current.status !== 'pending') ||
@@ -445,6 +507,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         retryCount: job.retryCount + 1,
         status: 'pending' as const,
         error: undefined,
+        failedAt: undefined,
       };
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
       await executeScanRef.current(updated);
@@ -459,10 +522,41 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     async (jobId: string) => {
       const job = jobsRef.current.find((j) => j.id === jobId);
       if (!job || job.status !== 'failed' || inFlightRef.current.has(jobId)) return;
+      // One photo at a time (#604): if another photo is being sent, a drain is
+      // running, or a photo waits on its retry schedule, hand this one to the
+      // drain instead of sending it now.
+      const now = Date.now();
+      const imageSending = imageInFlight();
+      const photoWaiting = jobsRef.current.some(
+        (j) => j.id !== jobId && j.type === 'image' && isAwaitingRetry(j) && j.nextAttemptAt! > now
+      );
+      if (job.type === 'image' && (imageSending || drainingRef.current || photoWaiting)) {
+        setJobsAndRef((prev) =>
+          prev.map((j) =>
+            j.id === jobId
+              ? {
+                  ...j,
+                  status: 'queued' as const,
+                  error: undefined,
+                  failedAt: undefined,
+                  retryCount: 0,
+                  attempts: undefined,
+                  nextAttemptAt: undefined,
+                }
+              : j
+          )
+        );
+        // Starting a drain now would send this photo alongside the one being
+        // sent, so ask for one when that send or the running drain finishes.
+        if (!imageSending && !drainingRef.current) void drainQueue();
+        else drainAgainRef.current = true;
+        return;
+      }
       const updated: ScanJob = {
         ...job,
         status: 'pending',
         error: undefined,
+        failedAt: undefined,
         retryCount: 0,
         attempts: undefined,
         nextAttemptAt: undefined,
@@ -470,8 +564,29 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
       await executeScanRef.current(updated);
     },
-    [setJobsAndRef]
+    [setJobsAndRef, drainQueue, imageInFlight]
   );
+
+  // Failed scans are kept 7 days (#605): on launch (the load above) and when
+  // the queue screen opens, older ones are removed with their images.
+  const purgeExpiredFailedJobs = useCallback(() => {
+    const now = Date.now();
+    const expired = jobsRef.current.filter((j) => isFailedScanExpired(j, now));
+    if (expired.length === 0) return;
+    const ids = new Set(expired.map((j) => j.id));
+    setJobsAndRef((prev) => prev.filter((j) => !ids.has(j.id)));
+    // Save the pruned list first, then delete the images, so a kill in
+    // between can't leave a saved job whose image is gone. If the save fails
+    // the images stay; the next launch's load drops the jobs and sweeps them.
+    void (async () => {
+      try {
+        await saveJobs(jobsRef.current);
+      } catch {
+        return;
+      }
+      for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
+    })();
+  }, [setJobsAndRef]);
 
   const queueForLater = useCallback(
     (jobId: string) => {
@@ -721,6 +836,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           duration: 8000,
           actions: [
             { label: t('scanFailedFinalRetry'), onPress: () => restartScanSchedule(job.id) },
+            { label: t('scanFailedFinalViewQueue'), onPress: openScanQueue },
           ],
         });
         return;
@@ -777,6 +893,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         await runScan(job);
       } finally {
         inFlightRef.current.delete(job.id);
+        // A retry queued behind this send (outside a drain; a drain handles
+        // it when it ends). Left for a photo still being sent, so a text
+        // search finishing first doesn't send the retry alongside it.
+        if (drainAgainRef.current && !drainingRef.current && !imageInFlight()) {
+          drainAgainRef.current = false;
+          void drainQueue();
+        }
       }
     };
 
@@ -1109,6 +1232,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       reviewJob,
       dismissReview,
       dismissJob,
+      restartScanSchedule,
+      purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
     }),
@@ -1128,6 +1253,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       reviewJob,
       dismissReview,
       dismissJob,
+      restartScanSchedule,
+      purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
     ]

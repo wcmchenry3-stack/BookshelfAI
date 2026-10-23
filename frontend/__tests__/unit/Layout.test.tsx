@@ -15,12 +15,17 @@ jest.mock('../../lib/sentry', () => ({
   initSentry: jest.fn(),
 }));
 
+const mockScreens: { name: string; options?: Record<string, unknown> }[] = [];
+
 jest.mock('expo-router', () => {
   const { View } = require('react-native');
   const MockStack = ({ children }: { children?: React.ReactNode }) => (
     <View testID="stack">{children}</View>
   );
-  MockStack.Screen = () => null;
+  MockStack.Screen = (props: unknown) => {
+    mockScreens.push(props as { name: string; options?: Record<string, unknown> });
+    return null;
+  };
   return { Stack: MockStack };
 });
 
@@ -149,6 +154,13 @@ describe('RootLayout (_layout.tsx)', () => {
   });
 
   describe('rendering', () => {
+    it('keeps the scan queue header opaque so the list is not under the dark-mode header (#605)', async () => {
+      mockScreens.length = 0;
+      await render(<RootLayoutDefault />);
+      const queue = mockScreens.find((s) => s.name === 'scan-queue');
+      expect(queue?.options?.headerTransparent).toBe(false);
+    });
+
     it('renders without crashing', async () => {
       const { getByTestId } = await render(<RootLayoutDefault />);
       expect(getByTestId('stack')).toBeTruthy();
