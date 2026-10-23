@@ -36,9 +36,13 @@ logger = logging.getLogger(__name__)
 def scan_for_malware(raw_bytes: bytes) -> None:
     """Stream *raw_bytes* through the ClamAV daemon if CLAMAV_ENABLED is set.
 
+    Only an explicit ``("OK", ...)`` result passes. Fails closed otherwise.
+
     Raises:
         HTTPException 422  — if ClamAV reports a threat (FOUND)
-        HTTPException 503  — if the daemon is unreachable (fail-closed)
+        HTTPException 503  — if the daemon is unreachable, reports ERROR, or
+                             returns any other status or a missing/malformed
+                             result (fail-closed)
     """
     if not settings.clamav_enabled:
         return
@@ -67,19 +71,31 @@ def scan_for_malware(raw_bytes: bytes) -> None:
             detail="Malware scanning unavailable",
         )
 
-    status_code, virus_name = result.get("stream", ("ERROR", "unknown"))
+    entry = result.get("stream") if isinstance(result, dict) else None
+    if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+        logger.error(
+            "ClamAV returned a malformed scan result (%s)", type(entry).__name__
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Malware scanning unavailable",
+        )
+
+    status_code, virus_name = entry
+    if status_code == "OK":
+        return
     if status_code == "FOUND":
         logger.warning("ClamAV detected threat: %s", virus_name)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="File failed malware scan",
         )
-    if status_code == "ERROR":
-        logger.error("ClamAV returned scan error: %s", virus_name)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Malware scanning unavailable",
-        )
+    # ERROR or any unrecognised status: fail closed, never treat as clean.
+    logger.error("ClamAV returned non-OK scan status %r: %s", status_code, virus_name)
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Malware scanning unavailable",
+    )
 
 
 # ---------------------------------------------------------------------------

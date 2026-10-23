@@ -60,7 +60,7 @@ Every step runs before the enhanced entitlement check (Premium-only, #533) and t
 2. Extension and `Content-Type` → `415`.
 3. **Streaming read with cap.** The handler reads the upload in 64 KB chunks and stops as soon as it has more than 5 MB (`MAX_IMAGE_BYTES`) → `413 "Image must be 5MB or smaller"`. The handler reads and holds at most 5 MB + 1 byte, but the framework has already received the whole multipart body before the handler runs (spooled to a temp file past 1 MB). `RequestSizeLimitMiddleware` rejects a request whose `Content-Length` is above 10 MB, but it checks only that header, so a chunked body (no `Content-Length`) is not capped yet — see #557.
 4. **Magic bytes** (`app/core/file_validation.py`) must match the declared extension → `415`. This runs before anything decodes the bytes.
-5. **ClamAV** (optional, `CLAMAV_ENABLED`) on the original bytes.
+5. **ClamAV** (optional, `CLAMAV_ENABLED`) on the original bytes. Fails closed (#622): only an explicit `OK` result passes; `FOUND` → `422`; daemon unreachable, `ERROR`, an unrecognised status or a missing/malformed result → `503 "Malware scanning unavailable"`.
 6. **Normalisation** (`app/ai/images.py`, called through `sanitize_image` in `app/core/file_security.py`):
    - Only the JPEG, PNG, WebP and HEIF decoders are tried (`pillow-heif` is registered for HEIC/HEIF at import). Other Pillow plugins (TIFF, GIF, EPS, PDF, ...) are unreachable from an upload.
    - **Decompression-bomb guard:** the pixel count declared in the header is checked before any pixel data is decoded. Above `scan.max_image_pixels` in `ai_settings` (seeded from `SCAN_MAX_IMAGE_PIXELS`; default 40 MP, range 1–100 MP) → `413 image_too_large_pixels`. Pillow's own `DecompressionBombError` maps to the same response.
