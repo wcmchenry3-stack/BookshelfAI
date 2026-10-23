@@ -413,3 +413,103 @@ class TestReleaseWithNoMatch:
         )
         assert got is None
         move.assert_not_awaited()
+
+
+class TestAllowanceAndUsage:
+    """``allowance_for`` and ``usage_for`` (#577): both counters per tier."""
+
+    def test_allowance_reads_both_ceilings_for_the_tier(self):
+        from app.ai import settings as ai_settings
+
+        view = ai_settings.AISettings(
+            rows={
+                ai_settings.found_key("premium"): 4,
+                ai_settings.no_match_key("premium"): 2,
+            }
+        )
+        assert quota.allowance_for(view, Tier.PREMIUM) == quota.Allowance(4, 2)
+
+    async def test_usage_reports_found_and_no_match(self):
+        from app.ai import settings as ai_settings
+
+        view = ai_settings.AISettings(
+            rows={
+                ai_settings.found_key("free"): 5,
+                ai_settings.no_match_key("free"): 3,
+            }
+        )
+        db = _db(2, 1)  # found used, no-match used
+        user = MagicMock(id=uuid.uuid4())
+        with patch.object(
+            quota.entitlements, "tier_for", AsyncMock(return_value=Tier.FREE)
+        ):
+            usage = await quota.usage_for(
+                db, user=user, feature=quota.SCAN_QUOTA_FEATURE, ai=view
+            )
+        assert (usage.used_today, usage.daily_limit) == (2, 5)
+        assert (usage.no_match_used_today, usage.no_match_daily_limit) == (1, 3)
+
+    @pytest.mark.parametrize(
+        "tier, used, expected", [(Tier.PREMIUM, 3, 2), (Tier.PREMIUM, 9, 0)]
+    )
+    async def test_enhanced_remaining_is_the_daily_allowance_left(
+        self, tier, used, expected
+    ):
+        db = _db(used)
+        reservation = _reservation(tier=tier, allowance=quota.Allowance(5, 5))
+        assert await quota.enhanced_remaining(db, reservation) == expected
+        db.commit.assert_awaited_once()
+
+    async def test_enhanced_remaining_is_none_for_free(self):
+        db = _db()
+        assert await quota.enhanced_remaining(db, _reservation()) is None
+        db.execute.assert_not_awaited()
+
+
+class TestDayWindowHelpers:
+    """The day-window helpers both counters share (#577 resets at UTC
+    midnight, like the found counter)."""
+
+    def test_utc_today_converts_to_utc(self):
+        from datetime import datetime, timedelta, timezone
+
+        late = datetime(2026, 10, 22, 23, 30, tzinfo=timezone(timedelta(hours=-5)))
+        assert quota.utc_today(late).isoformat() == "2026-10-23"
+
+    @pytest.mark.parametrize(
+        "hour, minute, second, expected",
+        [(0, 0, 0, 86_400), (23, 59, 59, 1), (12, 0, 0, 43_200)],
+    )
+    def test_seconds_until_utc_midnight(self, hour, minute, second, expected):
+        from datetime import UTC, datetime
+
+        now = datetime(2026, 10, 23, hour, minute, second, tzinfo=UTC)
+        assert quota.seconds_until_utc_midnight(now) == expected
+
+    @pytest.mark.parametrize(
+        "day, months, expected",
+        [
+            ("2026-10-23", 13, "2025-09-01"),
+            ("2026-01-15", 1, "2025-12-01"),
+            ("2026-03-31", 0, "2026-03-01"),
+        ],
+    )
+    def test_months_before(self, day, months, expected):
+        from datetime import date
+
+        got = quota.months_before(date.fromisoformat(day), months)
+        assert got.isoformat() == expected
+
+    def test_purge_cutoffs(self):
+        from datetime import date, timedelta
+
+        today = date(2026, 10, 23)
+        day_cutoff, month_cutoff = quota.purge_cutoffs(today)
+        assert day_cutoff == today - timedelta(days=quota.DAILY_RETENTION_DAYS)
+        assert month_cutoff == quota.months_before(
+            today, quota.MONTHLY_RETENTION_MONTHS
+        )
+
+    @pytest.mark.parametrize("timeout, expected", [(30, 60), (29.2, 60), (0, 30)])
+    def test_lease_seconds(self, timeout, expected):
+        assert quota.lease_seconds(timeout) == expected
