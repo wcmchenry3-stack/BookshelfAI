@@ -73,5 +73,6 @@
   "viewQueueFailed": "عرض القائمة (فشل {{count}})",
   "alreadyInLibraryMessage": "\"{{title}}\" موجود بالفعل في مكتبتك.",
   "alreadyInLibraryManyMessage": "موجودة بالفعل في مكتبتك: {{count}}",
-  "addedAndOwnedMessage": "تمت إضافة {{added}}. موجودة بالفعل في مكتبتك: {{owned}}"
+  "addedAndOwnedMessage": "تمت إضافة {{added}}. موجودة بالفعل في مكتبتك: {{owned}}",
+  "addedSomeOwnedMessage": "تمت إضافة {{added}}، وموجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا."
 }

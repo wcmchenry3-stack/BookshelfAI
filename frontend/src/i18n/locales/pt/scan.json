@@ -73,5 +73,6 @@
   "viewQueueFailed": "Ver fila ({{count}} com falha)",
   "alreadyInLibraryMessage": "\"{{title}}\" já está na sua biblioteca.",
   "alreadyInLibraryManyMessage": "{{count}} livros já estão na sua biblioteca.",
-  "addedAndOwnedMessage": "{{added}} adicionados. {{owned}} já estão na sua biblioteca."
+  "addedAndOwnedMessage": "{{added}} adicionados. {{owned}} já estão na sua biblioteca.",
+  "addedSomeOwnedMessage": "{{added}} adicionados, {{owned}} já na sua biblioteca, {{failed}} não salvos. Toque em Adicionar."
 }

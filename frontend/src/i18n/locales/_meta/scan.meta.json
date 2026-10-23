@@ -391,5 +391,11 @@
     "tone": "friendly",
     "characterLimit": 70,
     "placeholders": ["{{added}}", "{{owned}}"]
+  },
+  "addedSomeOwnedMessage": {
+    "description": "Error banner after adding books when some could not be saved and some were already in the user's library. {{added}} were added now, {{owned}} were already in the library, {{failed}} failed and stay in the list to retry with the Add button.",
+    "tone": "friendly",
+    "characterLimit": 110,
+    "placeholders": ["{{added}}", "{{owned}}", "{{failed}}"]
   }
 }

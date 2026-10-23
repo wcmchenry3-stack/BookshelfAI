@@ -149,6 +149,29 @@ describe('POST /wishlist 409 = already in your library (#587)', () => {
     );
     expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual(['Emma']);
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    // Nothing was added: the owned book is not counted as added.
+    expect(hook.result.current.banner.banner).toEqual(
+      expect.objectContaining({
+        message: 'Added 0, 1 already in your library, 1 not saved. Tap Add to retry.',
+        type: 'error',
+      })
+    );
+  });
+
+  it('added, owned and failed together are each counted', async () => {
+    const hook = await scanAndAdd(['Dune', 'Emma', 'Ulysses'], (title) =>
+      title === 'Dune'
+        ? Promise.resolve({ data: {} })
+        : title === 'Emma'
+          ? Promise.reject(httpError(409, 'owned_other_edition'))
+          : Promise.reject(httpError(500, 'boom'))
+    );
+    expect(hook.result.current.banner.banner?.message).toBe(
+      'Added 1, 1 already in your library, 1 not saved. Tap Add to retry.'
+    );
+    expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual([
+      'Ulysses',
+    ]);
   });
 
   it('a 409 without an ownership code is still a failure', async () => {

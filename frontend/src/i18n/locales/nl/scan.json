@@ -73,5 +73,6 @@
   "viewQueueFailed": "Wachtrij bekijken ({{count}} mislukt)",
   "alreadyInLibraryMessage": "\"{{title}}\" staat al in je bibliotheek.",
   "alreadyInLibraryManyMessage": "{{count}} boeken staan al in je bibliotheek.",
-  "addedAndOwnedMessage": "{{added}} toegevoegd. {{owned}} stond al in je bibliotheek."
+  "addedAndOwnedMessage": "{{added}} toegevoegd. {{owned}} stond al in je bibliotheek.",
+  "addedSomeOwnedMessage": "{{added}} toegevoegd, {{owned}} al in je bibliotheek, {{failed}} niet opgeslagen. Tik op Toevoegen."
 }

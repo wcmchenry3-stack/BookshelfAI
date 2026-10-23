@@ -73,5 +73,6 @@
   "viewQueueFailed": "Voir la file ({{count}} en échec)",
   "alreadyInLibraryMessage": "\"{{title}}\" est déjà dans votre bibliothèque.",
   "alreadyInLibraryManyMessage": "{{count}} livres sont déjà dans votre bibliothèque.",
-  "addedAndOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}."
+  "addedAndOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}.",
+  "addedSomeOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}. Non enregistrés : {{failed}}. Touchez Ajouter."
 }

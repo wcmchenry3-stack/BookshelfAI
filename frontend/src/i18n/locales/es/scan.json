@@ -73,5 +73,6 @@
   "viewQueueFailed": "Ver cola ({{count}} fallidos)",
   "alreadyInLibraryMessage": "\"{{title}}\" ya está en tu biblioteca.",
   "alreadyInLibraryManyMessage": "{{count}} libros ya están en tu biblioteca.",
-  "addedAndOwnedMessage": "Añadidos: {{added}}. Ya en tu biblioteca: {{owned}}."
+  "addedAndOwnedMessage": "Añadidos: {{added}}. Ya en tu biblioteca: {{owned}}.",
+  "addedSomeOwnedMessage": "Añadidos: {{added}}. Ya en tu biblioteca: {{owned}}. Sin guardar: {{failed}}. Toca Añadir para reintentar."
 }

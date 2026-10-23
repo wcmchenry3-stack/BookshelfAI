@@ -680,8 +680,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       const failed = books.filter(
         (_, i) => outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i])
       );
-      const addedCount = books.length - failed.length;
-      const newlyAdded = addedCount - owned.length;
+      const newlyAdded = books.length - failed.length - owned.length;
 
       if (failed.length === 0) {
         if (jobId) dismissJob(jobId);
@@ -715,16 +714,24 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           });
         }
       }
-      // Keep only the books that didn't save so the user can retry just those.
-      if (jobId && addedCount > 0) updateJob(jobId, { results: failed });
-      showBanner({
-        message:
-          addedCount > 0
-            ? t('addedSomeMessage', { added: addedCount, total: books.length })
-            : t('couldNotSaveMessage'),
-        type: 'error',
-        duration: 6000,
-      });
+      // Keep only the books that didn't save so the user can retry just
+      // those (a book already in the library is done with too).
+      if (jobId && failed.length < books.length) updateJob(jobId, { results: failed });
+      // Count only the books actually added; say how many were already
+      // in the library rather than counting them as added (#587).
+      let message: string;
+      if (owned.length > 0) {
+        message = t('addedSomeOwnedMessage', {
+          added: newlyAdded,
+          owned: owned.length,
+          failed: failed.length,
+        });
+      } else if (newlyAdded > 0) {
+        message = t('addedSomeMessage', { added: newlyAdded, total: books.length });
+      } else {
+        message = t('couldNotSaveMessage');
+      }
+      showBanner({ message, type: 'error', duration: 6000 });
     },
     [reviewingJobId, dismissJob, updateJob, showBanner, t]
   );

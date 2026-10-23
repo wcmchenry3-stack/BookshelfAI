@@ -73,5 +73,6 @@
   "viewQueueFailed": "Warteschlange ({{count}} fehlgeschlagen)",
   "alreadyInLibraryMessage": "\"{{title}}\" ist bereits in deiner Bibliothek.",
   "alreadyInLibraryManyMessage": "{{count}} Bücher sind bereits in deiner Bibliothek.",
-  "addedAndOwnedMessage": "{{added}} hinzugefügt. {{owned}} bereits in deiner Bibliothek."
+  "addedAndOwnedMessage": "{{added}} hinzugefügt. {{owned}} bereits in deiner Bibliothek.",
+  "addedSomeOwnedMessage": "{{added}} hinzugefügt, {{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen."
 }

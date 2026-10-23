@@ -73,5 +73,6 @@
   "viewQueueFailed": "הצג תור ({{count}} נכשלו)",
   "alreadyInLibraryMessage": "\"{{title}}\" כבר נמצא בספרייה שלך.",
   "alreadyInLibraryManyMessage": "{{count}} ספרים כבר נמצאים בספרייה שלך.",
-  "addedAndOwnedMessage": "נוספו {{added}}. {{owned}} כבר בספרייה שלך."
+  "addedAndOwnedMessage": "נוספו {{added}}. {{owned}} כבר בספרייה שלך.",
+  "addedSomeOwnedMessage": "נוספו {{added}}, {{owned}} כבר בספרייה שלך, {{failed}} לא נשמרו. הקש על הוספה כדי לנסות שוב."
 }

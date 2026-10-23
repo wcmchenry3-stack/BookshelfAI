@@ -73,5 +73,6 @@
   "viewQueueFailed": "Очередь (ошибок: {{count}})",
   "alreadyInLibraryMessage": "\"{{title}}\" уже есть в вашей библиотеке.",
   "alreadyInLibraryManyMessage": "Уже в вашей библиотеке: {{count}}.",
-  "addedAndOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}."
+  "addedAndOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}.",
+  "addedSomeOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить»."
 }
