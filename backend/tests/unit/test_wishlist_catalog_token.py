@@ -210,23 +210,46 @@ class TestRacingInserts:
 
     async def test_book_conflict_links_the_existing_work(self):
         winner = Book(id=uuid.uuid4(), title="Dune", author="Frank Herbert")
-        result = MagicMock()
-        result.scalar_one.return_value = winner
-        # OL lookup, GB lookup: nothing; re-read after the conflict: winner.
-        db = _mock_db(None, None)
-        db.execute = AsyncMock(side_effect=[*db.execute.side_effect, result])
+        # OL lookup, GB lookup: nothing; re-read by OL after the conflict:
+        # winner.
+        db = _mock_db(None, None, winner)
         self._flush_conflicts(db)
         book = await WishlistService()._find_or_create_book(db, _signed(), create=True)
         assert book is winner
         db.begin_nested.assert_called_once()
 
-    async def test_book_conflict_without_a_work_id_is_raised(self):
-        db = _mock_db(None)
+    async def test_book_conflict_without_a_work_id_links_the_volume(self):
+        """#613: a Google-Books-only book loses the race on
+        uq_books_google_books_id and links the winner's row (before #613
+        the IntegrityError was raised: a 500)."""
+        winner = Book(id=uuid.uuid4(), title="Dune", author="Frank Herbert")
+        # GB lookup: nothing; re-read by GB after the conflict: winner.
+        db = _mock_db(None, winner)
+        self._flush_conflicts(db)
+        book = await WishlistService()._find_or_create_book(
+            db, _signed(open_library_work_id=None), create=True
+        )
+        assert book is winner
+        assert _added(db, Book)[0].google_books_id == "gb_dune_001"
+
+    async def test_book_conflict_on_the_volume_with_a_new_work_id(self):
+        """#613: the work ID is new but the Google Books volume was just
+        created by another request: the re-read falls through to the
+        volume and links that row."""
+        winner = Book(id=uuid.uuid4(), title="Dune", author="Frank Herbert")
+        # OL, GB lookups: nothing; re-read: OL nothing, GB winner.
+        db = _mock_db(None, None, None, winner)
+        self._flush_conflicts(db)
+        book = await WishlistService()._find_or_create_book(db, _signed(), create=True)
+        assert book is winner
+        assert db.execute.await_count == 4
+
+    async def test_book_conflict_with_nothing_to_link_is_raised(self):
+        """An IntegrityError the re-read cannot explain is not swallowed."""
+        db = _mock_db(None, None, None, None)
         self._flush_conflicts(db)
         with pytest.raises(IntegrityError):
-            await WishlistService()._find_or_create_book(
-                db, _signed(open_library_work_id=None), create=True
-            )
+            await WishlistService()._find_or_create_book(db, _signed(), create=True)
 
     @pytest.mark.parametrize("same_book", [True, False])
     async def test_edition_conflict_links_only_an_edition_of_this_book(self, same_book):

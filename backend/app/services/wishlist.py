@@ -29,12 +29,12 @@ A user book is never linked to an Edition of a different Book, signed or
 not. Existing catalog rows are never modified from a request. Creation is
 idempotent per work: rows are matched by provider ID first, and a
 concurrent first add of the same Open Library work (unique
-``books.open_library_work_id``) or ISBN-13 (unique ``editions.isbn_13``)
+``books.open_library_work_id``), Google Books volume (partial unique index
+``uq_books_google_books_id``, #613) or ISBN-13 (unique ``editions.isbn_13``)
 re-reads and links the row the other request created instead of failing.
-``books.google_books_id`` has no unique constraint yet (#613), so a racing
-first add of a Google-Books-only book can create two rows; lookups by it
-take the oldest row (``created_at``, then ``id``) and never fail on the
-duplicates.
+Lookups by ``google_books_id`` still take the oldest row (``created_at``,
+then ``id``) and never fail on duplicates (#611); since the index (migration
+0015, which merged the duplicates that existed) none can be created.
 """
 
 import logging
@@ -122,30 +122,9 @@ class WishlistService:
     ) -> Book | None:
         """The Book matching the work-level IDs; otherwise a new one from
         ``req`` when ``create`` (a verified catalog token), else None."""
-        # Try to match on work-level IDs first
-        if req.open_library_work_id:
-            result = await db.execute(
-                select(Book).where(
-                    Book.open_library_work_id == req.open_library_work_id
-                )
-            )
-            book = result.scalar_one_or_none()
-            if book:
-                return book
-
-        if req.google_books_id:
-            # google_books_id is not unique (#613): racing first adds of a
-            # Google-Books-only book can leave duplicates, so link the oldest
-            # row deterministically rather than fail on MultipleResultsFound.
-            result = await db.execute(
-                select(Book)
-                .where(Book.google_books_id == req.google_books_id)
-                .order_by(Book.created_at, Book.id)
-                .limit(1)
-            )
-            book = result.scalar_one_or_none()
-            if book:
-                return book
+        book = await self._find_book(db, req)
+        if book is not None:
+            return book
 
         if not create:
             return None
@@ -169,16 +148,42 @@ class WishlistService:
                 db.add(book)
                 await db.flush()  # get book.id without committing
         except IntegrityError:
-            # Another request created this work first: link its row.
-            if not req.open_library_work_id:
+            # Another request created this work first (unique
+            # open_library_work_id, or uq_books_google_books_id, #613): link
+            # its row, found by either ID.
+            existing = await self._find_book(db, req)
+            if existing is None:
                 raise
+            return existing
+        return book
+
+    async def _find_book(self, db: AsyncSession, req: WishlistRequest) -> Book | None:
+        """The Book with ``req``'s Open Library work ID, else its Google
+        Books ID, else None."""
+        if req.open_library_work_id:
             result = await db.execute(
                 select(Book).where(
                     Book.open_library_work_id == req.open_library_work_id
                 )
             )
-            return result.scalar_one()
-        return book
+            book = result.scalar_one_or_none()
+            if book:
+                return book
+
+        if req.google_books_id:
+            # uq_books_google_books_id (#613) now prevents duplicates; the
+            # oldest-row LIMIT 1 (#611) stays as a harmless guard so a
+            # duplicate could never cause MultipleResultsFound.
+            result = await db.execute(
+                select(Book)
+                .where(Book.google_books_id == req.google_books_id)
+                .order_by(Book.created_at, Book.id)
+                .limit(1)
+            )
+            book = result.scalar_one_or_none()
+            if book:
+                return book
+        return None
 
     async def _find_or_create_edition(
         self,
