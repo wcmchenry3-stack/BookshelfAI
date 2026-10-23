@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import insert, inspect, select
+from sqlalchemy import insert, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -172,6 +172,14 @@ def _cycle(connection) -> None:
         }
         # The whole upgrade: its merge finds nothing more, then the index.
         migration.upgrade()
+        # Writes to all three tables are blocked until the run commits, and
+        # lock_timeout is back to the default for any later revision.
+        assert _locks(connection) == {
+            "books": True,
+            "user_books": True,
+            "editions": True,
+        }
+        assert _lock_timeout_is_default(connection)
         ix = _index(connection)
         assert ix is not None and migration.INDEX == INDEX
         assert ix["unique"] and ix["column_names"] == ["google_books_id"]
@@ -249,6 +257,7 @@ def _cycle(connection) -> None:
 
         # Downgrade drops the index only; the merge is not undone.
         migration.downgrade()
+        assert _lock_timeout_is_default(connection)
         assert _index(connection) is None
         assert (
             len(
@@ -269,7 +278,42 @@ def _cycle(connection) -> None:
         assert _index(connection) is not None
 
 
-async def test_migration_merges_duplicates_and_cycles():
+def _lock_timeout_is_default(connection) -> bool:
+    """lock_timeout is the session's default again (not 0015's 5 s)."""
+    return connection.execute(
+        text("SELECT setting = reset_val FROM pg_settings WHERE name = 'lock_timeout'")
+    ).scalar_one()
+
+
+def _locks(connection) -> dict[str, bool]:
+    """Whether this transaction holds SHARE ROW EXCLUSIVE on each table."""
+    rows = connection.execute(text("""
+            SELECT c.relname, bool_or(l.mode = 'ShareRowExclusiveLock' AND l.granted)
+            FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
+            WHERE l.pid = pg_backend_pid()
+              AND c.relname IN ('books', 'user_books', 'editions')
+            GROUP BY c.relname
+            """)).all()
+    return dict(rows)
+
+
+def _too_many(connection) -> None:
+    migration = _load_migration()
+    migration._MAX_DUPLICATES = 1
+    context = MigrationContext.configure(connection)
+    vol = f"gbmax{uuid.uuid4().hex[:10]}"
+    with Operations.context(context):
+        if _index(connection) is not None:
+            migration.downgrade()
+        for minutes in (0, 1, 2):
+            _book(connection, vol, minutes)
+        with pytest.raises(RuntimeError, match="merge them manually"):
+            migration.upgrade()
+
+
+async def _in_rolled_back_transaction(fn) -> None:
+    """Run ``fn`` in a transaction that is rolled back (Postgres DDL is
+    transactional), so the shared test database is left as it was."""
     engine = create_async_engine(settings.async_database_url)
     try:
         async with engine.begin() as conn:
@@ -277,8 +321,32 @@ async def test_migration_merges_duplicates_and_cycles():
         async with engine.connect() as conn:
             trans = await conn.begin()
             try:
-                await conn.run_sync(_cycle)
+                await conn.run_sync(fn)
             finally:
                 await trans.rollback()
     finally:
         await engine.dispose()
+
+
+async def test_migration_merges_duplicates_and_cycles():
+    await _in_rolled_back_transaction(_cycle)
+
+
+async def test_too_many_duplicates_fail_the_upgrade():
+    """Above _MAX_DUPLICATES the upgrade refuses instead of holding the
+    locks for a long merge (lowered to 1 here)."""
+    await _in_rolled_back_transaction(_too_many)
+
+
+def test_offline_sql_generation_is_refused():
+    """``alembic upgrade --sql`` cannot run the merge (it reads rows), and
+    the index alone would fail on duplicates, so 0015 refuses."""
+    migration = _load_migration()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True}
+    )
+    with (
+        Operations.context(context),
+        pytest.raises(RuntimeError, match="offline SQL generation"),
+    ):
+        migration.upgrade()

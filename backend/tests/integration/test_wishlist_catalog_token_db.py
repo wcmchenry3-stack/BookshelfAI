@@ -563,6 +563,9 @@ class TestConcurrentGoogleBooksOnlyFirstAdds:
         assert len(await self._rows(factory, ids)) == 1
 
     async def test_simultaneous_first_adds_in_two_sessions(self, env, gb_only):
+        """Two sessions, both of whose (real) Google Books lookups find
+        nothing before either inserts: the first insert wins, the second
+        blocks on the index until it commits, then links that row."""
         factory, make_user, ids, _ = env
         alice, bob = await make_user(), await make_user()
         (a_book,) = await _search(factory, alice)
@@ -572,10 +575,42 @@ class TestConcurrentGoogleBooksOnlyFirstAdds:
             async with factory() as s1, factory() as s2:
                 await s1.connection()
                 await s2.connection()
+        both_looked = asyncio.Event()
+        lookups: list = []
+
+        async def add(user_id, req):
+            async with factory() as db:
+                user = await db.get(User, user_id)
+                real = db.execute
+                gated = False
+
+                async def execute(stmt, *args, **kwargs):
+                    nonlocal gated
+                    descriptions = getattr(stmt, "column_descriptions", None)
+                    entity = descriptions[0].get("entity") if descriptions else None
+                    if entity is not Book or gated:
+                        return await real(stmt, *args, **kwargs)
+                    # The first Book lookup: run it, then wait until the
+                    # other session has run its own before inserting.
+                    gated = True
+                    found = (await real(stmt, *args, **kwargs)).scalar_one_or_none()
+                    lookups.append(found)
+                    if len(lookups) == 2:
+                        both_looked.set()
+                    await asyncio.wait_for(both_looked.wait(), timeout=10)
+                    result = MagicMock()
+                    result.scalar_one_or_none.return_value = found
+                    return result
+
+                db.execute = execute
+                return await user_books_api.add_to_wishlist.__wrapped__(
+                    request=MagicMock(), req=req, current_user=user, db=db
+                )
+
         await asyncio.gather(
-            _wishlist(factory, alice, _posted_back(a_book)),
-            _wishlist(factory, bob, _posted_back(b_book)),
+            add(alice, _posted_back(a_book)), add(bob, _posted_back(b_book))
         )
+        assert lookups == [None, None]  # both missed: a real race
         (row,) = await self._rows(factory, ids)
         entries = await self._entries(factory, alice, bob)
         assert {b for b, _e in entries.values()} == {row.id}
