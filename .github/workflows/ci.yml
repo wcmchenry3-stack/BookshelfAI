@@ -114,7 +114,9 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-test-python.yml@main
     with:
       working-directory: backend
-      coverage-threshold: 80
+      # App code only (backend/.coveragerc omits tests/ and alembic/). Raised
+      # from 80 to 90 in #621 once the gate actually failed below threshold.
+      coverage-threshold: 90
     secrets: inherit
 
   test-frontend:
