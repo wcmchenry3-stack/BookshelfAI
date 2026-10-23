@@ -64,5 +64,11 @@
   "queueDelete": "削除",
   "queuePhotoA11y": "スキャンの写真",
   "viewQueue": "キューを見る",
-  "scanFailedFinalViewQueue": "キューを見る"
+  "scanFailedFinalViewQueue": "キューを見る",
+  "queueDeleteConfirm": "このスキャンを削除しますか？写真も削除されます。",
+  "queueDeleteCancel": "キャンセル",
+  "queueRetryA11y": "{{time}}のスキャンを再試行",
+  "queueDeleteA11y": "{{time}}のスキャンを削除",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "キュー（失敗 {{count}} 件）"
 }

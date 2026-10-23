@@ -64,5 +64,11 @@
   "queueDelete": "Verwijderen",
   "queuePhotoA11y": "Scanfoto",
   "viewQueue": "Wachtrij bekijken",
-  "scanFailedFinalViewQueue": "Wachtrij bekijken"
+  "scanFailedFinalViewQueue": "Wachtrij bekijken",
+  "queueDeleteConfirm": "Deze scan verwijderen? De foto wordt verwijderd.",
+  "queueDeleteCancel": "Annuleren",
+  "queueRetryA11y": "Scan van {{time}} opnieuw proberen",
+  "queueDeleteA11y": "Scan van {{time}} verwijderen",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "Wachtrij bekijken ({{count}} mislukt)"
 }

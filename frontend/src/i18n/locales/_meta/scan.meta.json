@@ -344,5 +344,35 @@
     "description": "Second button on the final scan failure banner (#604): opens the scan queue screen where the failed photo can be retried or deleted. Same wording as viewQueue.",
     "tone": "neutral",
     "characterLimit": 20
+  },
+  "queueDeleteConfirm": {
+    "description": "Confirmation shown before a failed scan is deleted from the scan queue screen. Says the scan will be deleted and its photo removed (permanent). Two short sentences, a question then a statement.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "queueDeleteCancel": {
+    "description": "Cancel button in the delete-scan confirmation. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queueRetryA11y": {
+    "description": "Screen-reader label for a failed scan's Retry button. {{time}} is the date and time the scan failed, so each row's button is distinct. Use the same word for retry as queueRetry.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "queueDeleteA11y": {
+    "description": "Screen-reader label for a failed scan's Delete button. {{time}} is the date and time the scan failed, so each row's button is distinct. Use the same word for delete as queueDelete.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "queueRowA11y": {
+    "description": "Screen-reader label that reads a queue row's photo and state as one item. {{what}} is the photo label or the search text; {{state}} is the row's state text. Keep the placeholders and the colon-style separator.",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
+  "viewQueueFailed": {
+    "description": "Link on the scan screen, shown when only failed scans exist (nothing waiting), that opens the scan queue screen. {{count}} is the number of failed scans.",
+    "tone": "neutral",
+    "characterLimit": 40
   }
 }

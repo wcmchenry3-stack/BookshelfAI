@@ -64,5 +64,11 @@
   "queueDelete": "Excluir",
   "queuePhotoA11y": "Foto do escaneamento",
   "viewQueue": "Ver fila",
-  "scanFailedFinalViewQueue": "Ver fila"
+  "scanFailedFinalViewQueue": "Ver fila",
+  "queueDeleteConfirm": "Excluir esta digitalização? A foto será removida.",
+  "queueDeleteCancel": "Cancelar",
+  "queueRetryA11y": "Tentar novamente a digitalização de {{time}}",
+  "queueDeleteA11y": "Excluir a digitalização de {{time}}",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "Ver fila ({{count}} com falha)"
 }

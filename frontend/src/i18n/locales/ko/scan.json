@@ -64,5 +64,11 @@
   "queueDelete": "삭제",
   "queuePhotoA11y": "스캔 사진",
   "viewQueue": "대기열 보기",
-  "scanFailedFinalViewQueue": "대기열 보기"
+  "scanFailedFinalViewQueue": "대기열 보기",
+  "queueDeleteConfirm": "이 스캔을 삭제할까요? 사진이 삭제됩니다.",
+  "queueDeleteCancel": "취소",
+  "queueRetryA11y": "{{time}} 스캔 다시 시도",
+  "queueDeleteA11y": "{{time}} 스캔 삭제",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "대기열 보기 (실패 {{count}}건)"
 }

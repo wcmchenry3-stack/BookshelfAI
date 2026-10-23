@@ -64,5 +64,11 @@
   "queueDelete": "מחק",
   "queuePhotoA11y": "תמונת סריקה",
   "viewQueue": "הצג תור",
-  "scanFailedFinalViewQueue": "הצג תור"
+  "scanFailedFinalViewQueue": "הצג תור",
+  "queueDeleteConfirm": "למחוק את הסריקה? התמונה תוסר.",
+  "queueDeleteCancel": "ביטול",
+  "queueRetryA11y": "נסה שוב את הסריקה מ-{{time}}",
+  "queueDeleteA11y": "מחק את הסריקה מ-{{time}}",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "הצג תור ({{count}} נכשלו)"
 }

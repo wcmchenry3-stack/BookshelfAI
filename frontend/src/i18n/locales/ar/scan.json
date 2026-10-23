@@ -64,5 +64,11 @@
   "queueDelete": "حذف",
   "queuePhotoA11y": "صورة المسح",
   "viewQueue": "عرض القائمة",
-  "scanFailedFinalViewQueue": "عرض القائمة"
+  "scanFailedFinalViewQueue": "عرض القائمة",
+  "queueDeleteConfirm": "حذف هذا المسح؟ ستتم إزالة الصورة.",
+  "queueDeleteCancel": "إلغاء",
+  "queueRetryA11y": "إعادة محاولة المسح من {{time}}",
+  "queueDeleteA11y": "حذف المسح من {{time}}",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "عرض القائمة (فشل {{count}})"
 }

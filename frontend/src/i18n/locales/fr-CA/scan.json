@@ -64,5 +64,11 @@
   "queueDelete": "Supprimer",
   "queuePhotoA11y": "Photo à numériser",
   "viewQueue": "Voir la file",
-  "scanFailedFinalViewQueue": "Voir la file"
+  "scanFailedFinalViewQueue": "Voir la file",
+  "queueDeleteConfirm": "Supprimer cette numérisation? La photo sera retirée.",
+  "queueDeleteCancel": "Annuler",
+  "queueRetryA11y": "Réessayer la numérisation de {{time}}",
+  "queueDeleteA11y": "Supprimer la numérisation de {{time}}",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "Voir la file ({{count}} en échec)"
 }

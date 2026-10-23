@@ -64,5 +64,11 @@
   "queueDelete": "删除",
   "queuePhotoA11y": "扫描照片",
   "viewQueue": "查看队列",
-  "scanFailedFinalViewQueue": "查看队列"
+  "scanFailedFinalViewQueue": "查看队列",
+  "queueDeleteConfirm": "删除此扫描？照片将被移除。",
+  "queueDeleteCancel": "取消",
+  "queueRetryA11y": "重试 {{time}} 的扫描",
+  "queueDeleteA11y": "删除 {{time}} 的扫描",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "查看队列（失败 {{count}} 个）"
 }

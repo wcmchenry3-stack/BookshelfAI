@@ -64,5 +64,11 @@
   "queueDelete": "हटाएँ",
   "queuePhotoA11y": "स्कैन फ़ोटो",
   "viewQueue": "कतार देखें",
-  "scanFailedFinalViewQueue": "कतार देखें"
+  "scanFailedFinalViewQueue": "कतार देखें",
+  "queueDeleteConfirm": "यह स्कैन हटाएँ? फ़ोटो हटा दी जाएगी।",
+  "queueDeleteCancel": "रद्द करें",
+  "queueRetryA11y": "{{time}} का स्कैन फिर से आज़माएँ",
+  "queueDeleteA11y": "{{time}} का स्कैन हटाएँ",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "कतार देखें ({{count}} विफल)"
 }

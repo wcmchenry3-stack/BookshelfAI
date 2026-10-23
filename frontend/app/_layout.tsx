@@ -71,7 +71,8 @@ function InnerStack() {
       }}
     >
       <Stack.Screen name="(tabs)" options={{ title: '' }} />
-      <Stack.Screen name="scan-queue" options={{ title: '' }} />
+      {/* Opaque header: the list starts below it, not under the dark-mode glass header. */}
+      <Stack.Screen name="scan-queue" options={{ title: '', headerTransparent: false }} />
     </Stack>
   );
 }

@@ -86,5 +86,11 @@
   "queueDelete": "Delete",
   "queuePhotoA11y": "Scan photo",
   "viewQueue": "View queue",
-  "scanFailedFinalViewQueue": "View queue"
+  "scanFailedFinalViewQueue": "View queue",
+  "queueDeleteConfirm": "Delete this scan? The photo will be removed.",
+  "queueDeleteCancel": "Cancel",
+  "queueRetryA11y": "Retry scan from {{time}}",
+  "queueDeleteA11y": "Delete scan from {{time}}",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "View queue ({{count}} failed)"
 }

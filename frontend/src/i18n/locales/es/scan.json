@@ -64,5 +64,11 @@
   "queueDelete": "Eliminar",
   "queuePhotoA11y": "Foto de escaneo",
   "viewQueue": "Ver cola",
-  "scanFailedFinalViewQueue": "Ver cola"
+  "scanFailedFinalViewQueue": "Ver cola",
+  "queueDeleteConfirm": "¿Eliminar este escaneo? Se quitará la foto.",
+  "queueDeleteCancel": "Cancelar",
+  "queueRetryA11y": "Reintentar el escaneo de {{time}}",
+  "queueDeleteA11y": "Eliminar el escaneo de {{time}}",
+  "queueRowA11y": "{{what}}: {{state}}",
+  "viewQueueFailed": "Ver cola ({{count}} fallidos)"
 }

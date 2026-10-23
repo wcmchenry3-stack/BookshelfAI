@@ -9,10 +9,12 @@ const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
   router: { push: (...a: unknown[]) => mockPush(...a) },
 }));
+let mockJobs: { status: string }[] = [];
+let mockPendingCount = 2;
 jest.mock('../../hooks/useScanJobs', () => ({
   useScanJobs: () => ({
-    jobs: [],
-    pendingCount: 2,
+    jobs: mockJobs,
+    pendingCount: mockPendingCount,
     isQueueFull: false,
     startScan: jest.fn(),
     resumeQueue: jest.fn(),
@@ -57,4 +59,27 @@ it('the pending-uploads badge opens the scan queue (even offline)', async () => 
   const { getByLabelText } = await render(<ScanScreen />);
   fireEvent.press(getByLabelText('View queue'));
   expect(mockPush).toHaveBeenCalledWith('/scan-queue');
+});
+
+describe('failed scans only', () => {
+  afterEach(() => {
+    mockJobs = [];
+    mockPendingCount = 2;
+  });
+
+  it('shows a View queue link with the failed count when nothing is waiting', async () => {
+    mockPendingCount = 0;
+    mockJobs = [{ status: 'failed' }, { status: 'failed' }, { status: 'complete' }];
+    mockPush.mockClear();
+    const { getByLabelText } = await render(<ScanScreen />);
+    fireEvent.press(getByLabelText('View queue (2 failed)'));
+    expect(mockPush).toHaveBeenCalledWith('/scan-queue');
+  });
+
+  it('shows no queue link when nothing is waiting or failed', async () => {
+    mockPendingCount = 0;
+    mockJobs = [{ status: 'complete' }];
+    const { queryByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(/^View queue/)).toBeNull();
+  });
 });

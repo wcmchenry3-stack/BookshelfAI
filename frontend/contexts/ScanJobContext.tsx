@@ -187,10 +187,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             ? { ...j, nextAttemptAt: latestRetryAt }
             : j
         );
-      // Failed scans older than 7 days are removed with their images (#605).
-      const expired = restored.filter((j) => isFailedScanExpired(j, launchedAt));
-      const kept = expired.length ? restored.filter((j) => !expired.includes(j)) : restored;
-      for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
+      // Failed scans older than 7 days are dropped (#605). Their images are
+      // not deleted here: the sweep below removes files no kept job refers to
+      // (they are older than `launchedAt`, so the sweep's age guard allows it),
+      // so a job is never saved with its image already gone.
+      const kept = restored.filter((j) => !isFailedScanExpired(j, launchedAt));
       setJobsAndRef(() => kept);
       setLoaded(true);
       await sweepOrphanedScanFiles(kept, launchedAt);
@@ -202,10 +203,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       setJobsAndRef((list) =>
         list.map((j) => {
           if (j.id !== jobId) return j;
-          // Record when a job became failed (#605); a job that leaves `failed` loses it.
+          // Record when a job became failed (#605), only on the change to
+          // failed; a job that leaves `failed` loses it. A job saved before
+          // `failedAt` existed has none and counts from `createdAt`.
           const failedAt =
             updates.status === 'failed'
-              ? (updates.failedAt ?? Date.now())
+              ? j.status === 'failed'
+                ? (updates.failedAt ?? j.failedAt)
+                : (updates.failedAt ?? Date.now())
               : updates.status
                 ? undefined
                 : j.failedAt;
@@ -483,6 +488,38 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     async (jobId: string) => {
       const job = jobsRef.current.find((j) => j.id === jobId);
       if (!job || job.status !== 'failed' || inFlightRef.current.has(jobId)) return;
+      // One photo at a time (#604): if another photo is being sent, a drain is
+      // running, or a photo waits on its retry schedule, hand this one to the
+      // drain instead of sending it now.
+      const now = Date.now();
+      const imageSending = [...inFlightRef.current].some(
+        (id) => jobsRef.current.find((j) => j.id === id)?.type === 'image'
+      );
+      const photoWaiting = jobsRef.current.some(
+        (j) => j.id !== jobId && j.type === 'image' && isAwaitingRetry(j) && j.nextAttemptAt! > now
+      );
+      if (job.type === 'image' && (imageSending || drainingRef.current || photoWaiting)) {
+        setJobsAndRef((prev) =>
+          prev.map((j) =>
+            j.id === jobId
+              ? {
+                  ...j,
+                  status: 'queued' as const,
+                  error: undefined,
+                  failedAt: undefined,
+                  retryCount: 0,
+                  attempts: undefined,
+                  nextAttemptAt: undefined,
+                }
+              : j
+          )
+        );
+        // A photo being sent starts a drain itself when it succeeds, and the
+        // retry timer does when it fails; starting one here would send this
+        // photo alongside it.
+        if (!imageSending && !drainingRef.current) void drainQueue();
+        return;
+      }
       const updated: ScanJob = {
         ...job,
         status: 'pending',
@@ -495,7 +532,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
       await executeScanRef.current(updated);
     },
-    [setJobsAndRef]
+    [setJobsAndRef, drainQueue]
   );
 
   // Failed scans are kept 7 days (#605): on launch (the load above) and when
@@ -506,7 +543,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     if (expired.length === 0) return;
     const ids = new Set(expired.map((j) => j.id));
     setJobsAndRef((prev) => prev.filter((j) => !ids.has(j.id)));
-    for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
+    // Save the pruned list first, then delete the images, so a kill in
+    // between can't leave a saved job whose image is gone. If the save fails
+    // the images stay; the next launch's load drops the jobs and sweeps them.
+    void (async () => {
+      try {
+        await saveJobs(jobsRef.current);
+      } catch {
+        return;
+      }
+      for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
+    })();
   }, [setJobsAndRef]);
 
   const queueForLater = useCallback(
