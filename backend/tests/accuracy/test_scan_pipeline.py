@@ -72,6 +72,9 @@ def _ol_doc(entry: dict) -> dict:
         "title": entry["title"],
         "author_name": [entry["author"]],
         "subject": ["Fiction"],
+        # Open Library lists the work's ISBNs; an ISBN is kept only when a
+        # record lists it (#602).
+        "isbn": [entry["isbn"]],
     }
 
 
@@ -85,6 +88,7 @@ def _gb_volume(entry: dict) -> dict:
             "publisher": "Publisher",
             "publishedDate": "2000",
             "pageCount": 300,
+            "industryIdentifiers": [{"type": "ISBN_13", "identifier": entry["isbn"]}],
         },
     }
 

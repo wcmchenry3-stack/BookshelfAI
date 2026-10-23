@@ -7,9 +7,21 @@ create shared ``books`` / ``editions`` rows:
 
 - title and author: the Open Library doc (``title``, ``author_name[0]``),
   otherwise the Google Books volume (``volumeInfo.title``, ``authors[0]``);
-- edition ISBNs: the candidate's ISBN-13 / ISBN-10 only when a provider
-  confirmed it (the ISBN-13 that was looked up and matched, or an ISBN the
-  provider record lists), else none.
+- edition ISBNs: the candidate's ISBN-13 only when a provider record used
+  for the result lists it among its identifiers (Open Library ``isbn``,
+  Google Books ``industryIdentifiers``); a lookup by that ISBN returning a
+  record is not enough, since Google Books ``q=isbn:X`` is a keyword search.
+  The ISBN-10 is kept only when it is the ISBN-10 form of that confirmed
+  ISBN-13 (an Open Library work lists every edition's ISBNs, so a listed
+  ISBN-10 may belong to another edition); without a confirmed ISBN-13, a
+  listed ISBN-10 is kept on its own.
+
+When both providers matched, the Google Books volume is used only if it is
+the same book as the Open Library doc (:func:`records_agree`): a shared
+ISBN, or the same normalised title and first-author surname. Otherwise it is
+dropped entirely (no ``google_books_id``, description, cover or edition
+data from it), so one book's Google Books ID is never wired to another
+book's work.
 
 The candidate's own title and author are shown only when nothing matched;
 such a result has no provider ID, is never signed and so can never create a
@@ -19,6 +31,8 @@ catalog row.
 import asyncio
 import contextvars
 import logging
+import re
+import unicodedata
 
 from app.schemas.book import EditionPreview, EnrichedBook
 from app.services.book_identifier import BookCandidate
@@ -75,6 +89,77 @@ def _ol_isbns(doc: dict | None) -> set[str]:
     return (
         {v for v in values if isinstance(v, str)} if isinstance(values, list) else set()
     )
+
+
+_NON_WORD = re.compile(r"[\W_]+")
+_LEADING_ARTICLE = re.compile(r"^(?:the|a|an) ")
+
+
+def _normalise(value: object) -> str:
+    """Casefolded, punctuation stripped, whitespace collapsed."""
+    if not isinstance(value, str):
+        return ""
+    value = unicodedata.normalize("NFKC", value).casefold()
+    return " ".join(_NON_WORD.sub(" ", value).split())
+
+
+def normalise_title(value: object) -> str:
+    """A title for comparison: :func:`_normalise`, minus a leading article."""
+    return _LEADING_ARTICLE.sub("", _normalise(value), count=1)
+
+
+def _surname(authors: object) -> str:
+    """The normalised last word of the first author's name."""
+    if not isinstance(authors, list) or not authors:
+        return ""
+    words = _normalise(authors[0]).split()
+    return words[-1] if words else ""
+
+
+def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
+    """Whether an Open Library doc and a Google Books volume describe the
+    same book: they share an ISBN, or their normalised titles and
+    first-author surnames both match (and are non-empty)."""
+    if _ol_isbns(ol_doc) & _gb_isbns(gb_volume):
+        return True
+    info = gb_volume.get("volumeInfo") or {}
+    ol_title, gb_title = normalise_title(ol_doc.get("title")), normalise_title(
+        info.get("title")
+    )
+    ol_author, gb_author = _surname(ol_doc.get("author_name")), _surname(
+        info.get("authors")
+    )
+    return bool(ol_title and ol_author) and (ol_title, ol_author) == (
+        gb_title,
+        gb_author,
+    )
+
+
+def isbn_13_to_10(isbn_13: str | None) -> str | None:
+    """The ISBN-10 form of a 978-prefixed ISBN-13, else None."""
+    if not isbn_13 or len(isbn_13) != 13 or not isbn_13.isdigit():
+        return None
+    if not isbn_13.startswith("978"):
+        return None
+    body = isbn_13[3:12]
+    total = sum((10 - i) * int(d) for i, d in enumerate(body))
+    check = (11 - total % 11) % 11
+    return body + ("X" if check == 10 else str(check))
+
+
+def _edition_isbns(
+    isbn_13: str | None, isbn_10: str | None, confirmed: set[str]
+) -> tuple[str | None, str | None]:
+    """The candidate's ISBNs a provider confirmed, paired consistently: an
+    ISBN-10 beside a confirmed ISBN-13 only when it is that ISBN-13's
+    ISBN-10 form; without one, a confirmed ISBN-10 on its own."""
+    isbn_13 = isbn_13 if isbn_13 in confirmed else None
+    if isbn_10 is not None:
+        isbn_10 = isbn_10.upper()
+    if isbn_13:
+        return isbn_13, isbn_10 if isbn_10 == isbn_13_to_10(isbn_13) else None
+    confirmed_upper = {c.upper() for c in confirmed}
+    return None, isbn_10 if isbn_10 in confirmed_upper else None
 
 
 def _note_failure(source: str) -> None:
@@ -163,6 +248,11 @@ class EnrichmentService:
         )
         if not gb_title:
             gb_volume = None
+        # Two different books (e.g. title searches that matched different
+        # works): keep Open Library's, use nothing from the volume.
+        if ol_doc and gb_volume and not records_agree(ol_doc, gb_volume):
+            logger.info("enrichment: Google Books volume disagrees; dropped")
+            gb_volume, gb_title = None, None
 
         work_id = self.ol.extract_work_id(ol_doc) if ol_doc else None
         gb_info = self.gb.extract_info(gb_volume) if gb_volume else {}
@@ -183,15 +273,16 @@ class EnrichmentService:
         else:
             title, author = candidate.title, candidate.author
 
-        # ISBNs a provider confirmed: the one looked up when a lookup by it
-        # matched, and any the matched records list.
+        # ISBNs a provider confirmed: those the records used list. A lookup
+        # by an ISBN that returned a record does not confirm it.
         confirmed = _ol_isbns(ol_doc) | _gb_isbns(gb_volume)
-        if candidate.isbn_13 and (ol_doc or gb_volume):
-            confirmed.add(candidate.isbn_13)
+        isbn_13, isbn_10 = _edition_isbns(
+            candidate.isbn_13, candidate.isbn_10, confirmed
+        )
 
         edition = EditionPreview(
-            isbn_13=candidate.isbn_13 if candidate.isbn_13 in confirmed else None,
-            isbn_10=candidate.isbn_10 if candidate.isbn_10 in confirmed else None,
+            isbn_13=isbn_13,
+            isbn_10=isbn_10,
             publisher=gb_info.get("publisher"),
             publish_year=(
                 int(gb_info["publish_year"]) if gb_info.get("publish_year") else None

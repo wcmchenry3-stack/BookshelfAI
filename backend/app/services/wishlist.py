@@ -21,6 +21,10 @@ idempotent per work: rows are matched by provider ID first, and a
 concurrent first add of the same Open Library work (unique
 ``books.open_library_work_id``) or ISBN-13 (unique ``editions.isbn_13``)
 re-reads and links the row the other request created instead of failing.
+``books.google_books_id`` has no unique constraint yet (#613), so a racing
+first add of a Google-Books-only book can create two rows; lookups by it
+take the oldest row (``created_at``, then ``id``) and never fail on the
+duplicates.
 """
 
 import logging
@@ -91,8 +95,14 @@ class WishlistService:
                 return book
 
         if req.google_books_id:
+            # google_books_id is not unique (#613): racing first adds of a
+            # Google-Books-only book can leave duplicates, so link the oldest
+            # row deterministically rather than fail on MultipleResultsFound.
             result = await db.execute(
-                select(Book).where(Book.google_books_id == req.google_books_id)
+                select(Book)
+                .where(Book.google_books_id == req.google_books_id)
+                .order_by(Book.created_at, Book.id)
+                .limit(1)
             )
             book = result.scalar_one_or_none()
             if book:

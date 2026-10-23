@@ -39,6 +39,9 @@ OL_DOC = {
     "title": "Dune",
     "author_name": ["Frank Herbert"],
     "subject": ["Science fiction"],
+    # The ISBNs Open Library lists for the work; shared with GB_VOLUME, so
+    # the two records agree (are the same book).
+    "isbn": [ISBN_13],
 }
 GB_VOLUME = {
     "id": "gb_dune_001",
@@ -140,7 +143,7 @@ class TestTitleAndAuthorFromTheProvider:
 
 
 class TestOnlyConfirmedIsbns:
-    async def test_isbn_looked_up_and_matched_is_kept(self):
+    async def test_isbn_looked_up_and_listed_is_kept(self):
         candidate = BookCandidate(
             title="Dune", author="Frank Herbert", confidence=0.9, isbn_13=ISBN_13
         )
@@ -186,6 +189,177 @@ class TestOnlyConfirmedIsbns:
         ]
         book = await _enrich_one(candidate, ol=None, gb=volume)
         assert book.editions[0].isbn_10 == ISBN_10
+
+
+class TestIsbn13ConfirmedOnlyByIdentifiers:
+    """A lookup by ISBN X that returned a record does not confirm X: Google
+    Books ``q=isbn:X`` is a keyword search and may return a volume that does
+    not list X (#602 security review round 2, finding 2)."""
+
+    CANDIDATE = BookCandidate(
+        title="Dune", author="Frank Herbert", confidence=0.9, isbn_13=ISBN_13
+    )
+
+    async def test_google_books_volume_not_listing_it(self):
+        volume = {**GB_VOLUME, "volumeInfo": {**GB_VOLUME["volumeInfo"]}}
+        volume["volumeInfo"]["industryIdentifiers"] = [
+            {"type": "ISBN_13", "identifier": "9780000000002"}
+        ]
+        book = await _enrich_one(self.CANDIDATE, ol=None, gb=volume, by_isbn=True)
+        assert book.google_books_id == "gb_dune_001"
+        assert book.editions[0].isbn_13 is None
+        (signed,) = catalog_token.sign_books([book], USER)
+        assert signed.editions[0].isbn_13 is None
+
+    async def test_open_library_doc_not_listing_it(self):
+        doc = {**OL_DOC, "isbn": ["9780000000002"]}
+        book = await _enrich_one(self.CANDIDATE, ol=doc, gb=None, by_isbn=True)
+        assert book.open_library_work_id == "OL45804W"
+        assert book.editions[0].isbn_13 is None
+
+    async def test_unsigned_isbn_cannot_create_an_edition(self):
+        volume = {**GB_VOLUME, "volumeInfo": {**GB_VOLUME["volumeInfo"]}}
+        del volume["volumeInfo"]["industryIdentifiers"]
+        book = await _enrich_one(self.CANDIDATE, ol=None, gb=volume, by_isbn=True)
+        (signed,) = catalog_token.sign_books([book], USER)
+        # Adding the ISBN back breaks the signature.
+        forged = signed.model_copy(
+            update={"editions": [EditionPreview(isbn_13=ISBN_13)]}
+        )
+        assert catalog_token.verify(signed.catalog_token, signed, USER)
+        assert not catalog_token.verify(signed.catalog_token, forged, USER)
+
+
+NEUROMANCER_VOLUME = {
+    "id": "gb_neuromancer",
+    "volumeInfo": {
+        "title": "Neuromancer",
+        "authors": ["William Gibson"],
+        "description": "Cyberspace.",
+        "publisher": "Ace",
+        "publishedDate": "1984",
+        "pageCount": 271,
+        "imageLinks": {"thumbnail": "http://books.google.com/n.jpg"},
+        "industryIdentifiers": [{"type": "ISBN_13", "identifier": "9780441569595"}],
+    },
+}
+
+
+class TestProvidersMustAgree:
+    """Open Library and Google Books may match different books; the volume
+    is used only when it is the same book as the Open Library doc (#602
+    security review round 2, finding 3)."""
+
+    async def test_disagreeing_volume_is_dropped_entirely(self):
+        candidate = BookCandidate(title="Dune", author="Herbert", confidence=0.9)
+        book = await _enrich_one(candidate, ol=OL_DOC, gb=NEUROMANCER_VOLUME)
+        assert (book.title, book.author) == ("Dune", "Frank Herbert")
+        assert book.open_library_work_id == "OL45804W"
+        assert book.google_books_id is None
+        assert book.description is None and book.cover_url is None
+        (edition,) = book.editions
+        assert (edition.publisher, edition.publish_year, edition.page_count) == (
+            None,
+            None,
+            None,
+        )
+        assert book.subjects == ["Science fiction"]
+
+    async def test_disagreeing_volume_confirms_no_isbn(self):
+        candidate = BookCandidate(
+            title="Dune",
+            author="Herbert",
+            confidence=0.9,
+            isbn_13="9780441569595",
+        )
+        doc = {k: v for k, v in OL_DOC.items() if k != "isbn"}
+        book = await _enrich_one(candidate, ol=doc, gb=NEUROMANCER_VOLUME, by_isbn=True)
+        assert book.google_books_id is None
+        assert book.editions[0].isbn_13 is None
+
+    async def test_agree_by_shared_isbn(self):
+        volume = {**GB_VOLUME, "volumeInfo": {**GB_VOLUME["volumeInfo"]}}
+        volume["volumeInfo"]["title"] = "Dune: Deluxe Edition"
+        book = await _enrich_one(DOCTORED, ol=OL_DOC, gb=volume)
+        assert book.google_books_id == "gb_dune_001"
+        assert book.description == "Spice."
+
+    async def test_agree_by_title_and_author(self):
+        doc = {
+            "key": "/works/OL59863W",
+            "title": "The Left Hand of Darkness",
+            "author_name": ["Ursula K. Le Guin"],
+        }
+        volume = {
+            "id": "gb_lhod",
+            "volumeInfo": {
+                "title": "Left Hand of Darkness!",
+                "authors": ["Ursula K Le  Guin"],
+                "description": "Gethen.",
+            },
+        }
+        candidate = BookCandidate(
+            title="Left Hand of Darkness", author="Le Guin", confidence=0.9
+        )
+        book = await _enrich_one(candidate, ol=doc, gb=volume)
+        assert book.title == "The Left Hand of Darkness"
+        assert (book.google_books_id, book.description) == ("gb_lhod", "Gethen.")
+
+    async def test_google_books_alone_is_still_used(self):
+        candidate = BookCandidate(title="Neuromancer", author="Gibson", confidence=0.9)
+        book = await _enrich_one(candidate, ol=None, gb=NEUROMANCER_VOLUME)
+        assert book.google_books_id == "gb_neuromancer"
+        assert book.title == "Neuromancer"
+
+
+class TestIsbn10PairsWithTheIsbn13:
+    """An Open Library work lists every edition's ISBNs, so a listed ISBN-10
+    may be another edition's; beside a confirmed ISBN-13 only its own
+    ISBN-10 form is kept (#602 security review round 2, finding 4)."""
+
+    OTHER_EDITION_10 = "0340960191"
+
+    async def test_other_editions_isbn_10_is_dropped(self):
+        candidate = BookCandidate(
+            title="Dune",
+            author="Frank Herbert",
+            confidence=0.9,
+            isbn_13=ISBN_13,
+            isbn_10=self.OTHER_EDITION_10,
+        )
+        doc = {**OL_DOC, "isbn": [ISBN_13, self.OTHER_EDITION_10]}
+        book = await _enrich_one(candidate, ol=doc, gb=None, by_isbn=True)
+        assert book.editions[0].isbn_13 == ISBN_13
+        assert book.editions[0].isbn_10 is None
+
+    async def test_matching_isbn_10_is_kept(self):
+        candidate = BookCandidate(
+            title="Dune",
+            author="Frank Herbert",
+            confidence=0.9,
+            isbn_13=ISBN_13,
+            isbn_10=ISBN_10,
+        )
+        book = await _enrich_one(candidate, ol=OL_DOC, gb=GB_VOLUME, by_isbn=True)
+        assert (book.editions[0].isbn_13, book.editions[0].isbn_10) == (
+            ISBN_13,
+            ISBN_10,
+        )
+
+    async def test_unconfirmed_isbn_13_keeps_a_listed_isbn_10_alone(self):
+        candidate = BookCandidate(
+            title="Dune",
+            author="Frank Herbert",
+            confidence=0.9,
+            isbn_13="9780000000002",
+            isbn_10=self.OTHER_EDITION_10,
+        )
+        doc = {**OL_DOC, "isbn": [self.OTHER_EDITION_10]}
+        book = await _enrich_one(candidate, ol=doc, gb=None, by_isbn=True)
+        assert (book.editions[0].isbn_13, book.editions[0].isbn_10) == (
+            None,
+            self.OTHER_EDITION_10,
+        )
 
 
 class TestSearchSignsOnlyProviderData:

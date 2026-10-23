@@ -119,10 +119,13 @@ async def env():
 
     async with factory() as db:
         await db.execute(delete(UserBook).where(UserBook.user_id.in_(users)))
-        book_ids = select(Book.id).where(Book.open_library_work_id == ids["work"])
+        ours = (Book.open_library_work_id == ids["work"]) | (
+            Book.google_books_id == ids["volume"]
+        )
+        book_ids = select(Book.id).where(ours)
         await db.execute(delete(Edition).where(Edition.book_id.in_(book_ids)))
         await db.execute(delete(Edition).where(Edition.isbn_13 == ids["isbn"]))
-        await db.execute(delete(Book).where(Book.open_library_work_id == ids["work"]))
+        await db.execute(delete(Book).where(ours))
         await db.execute(delete(AIUsage).where(AIUsage.user_id.in_(users)))
         await db.execute(delete(User).where(User.id.in_(users)))
         await db.commit()
@@ -475,3 +478,93 @@ class TestConcurrentFirstAdds:
         ub = await self._add_racing(factory, bob, _posted_back(b_book), Edition=1)
         (row,), (edition,) = await _catalog(factory, ids)
         assert (ub.book_id, ub.edition_id) == (row.id, edition.id)
+
+
+class TestDuplicateGoogleBooksRows:
+    """``books.google_books_id`` is not unique (#613), so racing first adds
+    of a Google-Books-only book can create two rows. Later adds and the
+    scan's library check must still work, never a permanent 500 (#602
+    security review round 2, finding 1)."""
+
+    @pytest.fixture
+    def gb_only(self):
+        with (
+            patch.object(
+                OpenLibraryService, "search_by_isbn", AsyncMock(return_value=None)
+            ),
+            patch.object(OpenLibraryService, "search", AsyncMock(return_value=None)),
+        ):
+            yield
+
+    async def _race_duplicate(self, factory, make_user):
+        """Alice adds the book; Bob's lookup ran before her insert, so he
+        creates a second row. Returns (alice, bob, rows oldest first)."""
+        alice, bob = await make_user(), await make_user()
+        (a_book,) = await _search(factory, alice)
+        (b_book,) = await _search(factory, bob)
+        assert a_book.open_library_work_id is None and a_book.catalog_token
+        await _wishlist(factory, alice, _posted_back(a_book))
+        async with factory() as db:
+            user = await db.get(User, bob)
+            _hiding(db, Book=1)
+            await user_books_api.add_to_wishlist.__wrapped__(
+                request=MagicMock(), req=_posted_back(b_book), current_user=user, db=db
+            )
+        return alice, bob
+
+    async def _rows(self, factory, ids) -> list[Book]:
+        async with factory() as db:
+            return list(
+                (
+                    await db.execute(
+                        select(Book)
+                        .where(Book.google_books_id == ids["volume"])
+                        .order_by(Book.created_at, Book.id)
+                    )
+                ).scalars()
+            )
+
+    async def test_next_add_links_the_oldest_row(self, env, gb_only):
+        factory, make_user, ids, _ = env
+        await self._race_duplicate(factory, make_user)
+        oldest, newer = await self._rows(factory, ids)
+        carol = await make_user()
+        (book,) = await _search(factory, carol)
+        ub = await _wishlist(factory, carol, _posted_back(book))
+        assert ub.book_id == oldest.id != newer.id
+        async with factory() as db:
+            (edition,) = (
+                await db.execute(select(Edition).where(Edition.isbn_13 == ids["isbn"]))
+            ).scalars()
+        assert edition.book_id == oldest.id and ub.edition_id == edition.id
+        # And again: still no error, still the same row.
+        dave = await make_user()
+        ub = await _wishlist(factory, dave, _posted_back(book))
+        assert ub.book_id == oldest.id
+        assert len(await self._rows(factory, ids)) == 2
+
+    async def test_scan_library_check_with_duplicates(self, env, gb_only):
+        factory, make_user, ids, _ = env
+        _alice, bob = await self._race_duplicate(factory, make_user)
+        # Bob now also adds the oldest row, so he holds both duplicates.
+        (book,) = await _search(factory, bob)
+        await _wishlist(factory, bob, _posted_back(book))
+        async with factory() as db:
+            held = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(UserBook)
+                    .join(Book, Book.id == UserBook.book_id)
+                    .where(
+                        UserBook.user_id == bob,
+                        Book.google_books_id == ids["volume"],
+                    )
+                )
+            ).scalar_one()
+        assert held == 2
+        (scanned,) = (await _scan(factory, bob, _jpeg())).books
+        assert scanned.google_books_id == ids["volume"]
+        assert scanned.already_in_library is True
+        carol = await make_user()
+        (scanned,) = (await _scan(factory, carol, _jpeg())).books
+        assert scanned.already_in_library is False
