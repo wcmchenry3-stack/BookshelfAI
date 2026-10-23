@@ -138,8 +138,10 @@ SCAN_ENHANCED_ENABLED=true               # seeds scan.enhanced.enabled
 AI_SETTINGS_CACHE_TTL_SECONDS=30         # 1..300, how long each process caches ai_settings
 AI_SETTINGS_MAX_STALE_SECONDS=300        # 1..3600 (>= TTL), max age of cached ai_settings served when a read fails
 SCAN_GLOBAL_DAILY_LIMIT=2000             # 1..1000000, seeds scan.global_daily_limit
-SCAN_FREE_DAILY_LIMIT=5                  # 0..1000, seeds quota.free.daily (per UTC day)
-SCAN_PREMIUM_DAILY_LIMIT=30              # 0..1000, seeds quota.premium.daily
+SCAN_FREE_DAILY_LIMIT=5                  # 0..1000, seeds quota.free.found_daily (per UTC day)
+SCAN_PREMIUM_DAILY_LIMIT=5               # 0..1000, seeds quota.premium.found_daily
+SCAN_FREE_NO_MATCH_DAILY_LIMIT=5         # 0..1000, seeds quota.free.no_match_daily
+SCAN_PREMIUM_NO_MATCH_DAILY_LIMIT=5      # 0..1000, seeds quota.premium.no_match_daily
 # No monthly limits (#582): SCAN_*_MONTHLY_LIMIT are retired and seed nothing.
 SCAN_FREE_DAILY_CEILING_MICROS=10000000  # 0..1000000000 micro-dollars/UTC day, seeds breaker.free_daily_ceiling_micros
 ```

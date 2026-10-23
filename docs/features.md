@@ -68,12 +68,16 @@ sequenceDiagram
 
 ### Scan limits — what users see
 
-Every user has a daily scan allowance (standard and enhanced scans share it). The numbers come from `GET /scan/usage`; no copy hardcodes them. The day is the UTC day.
+Every user has two daily allowances (#577). The numbers come from `GET /scan/usage`; no copy hardcodes them. The day is the UTC day.
+- **Scans** (the found counter): scans where the AI found books, plus anything below that used a scan. Standard and enhanced scans share it. Free 5 a day, Premium 5 (operator settings `quota.<tier>.found_daily`).
+- **Unrecognised photos** (the no-match counter): photos the AI read properly but found no book in. While this allowance lasts, such a photo does not use a scan, so an unlucky photo doesn't cost one. Free 5 a day, Premium 5 (`quota.<tier>.no_match_daily`). Once it is used up, a photo with no book found uses a scan.
+- A scan is refused only when the scans allowance is used up, even if unrecognised photos are left (the next photo might find books). Only real AI calls count: a re-uploaded photo answered from its saved record, an AI reply that could not be read, and an AI outage never use either allowance. Enhanced scans that find nothing still use a scan (the enhanced rule below).
 
 **There is no monthly limit (#582, owner decision).** No scan is ever refused for a monthly reason, and the app shows no monthly counter, no monthly-limit message and no "resets on" date. Daily limits keep cost bounded: each user's daily limit, the service-wide daily cap, the daily spending cut-off ("Scanning is paused" below) and the monthly spending limit set in the AI provider's console. Monthly spend and usage are still tracked for reporting, not as a limit.
 
-- **Counter (scan screen):** "Scans left today: N" (the daily allowance left). Refetched after every scan that reaches the server. Hidden while offline or if the request fails; it never shows an error.
-- **Settings:** a "Scan usage" row with the same "Scans left today: N" figure. No plan label, renewal date or upgrade button.
+- **Counter (scan screen):** "Scans left today: N" (the scans allowance left) and, under it, "Unrecognised photos: N left" (the no-match allowance left; hidden when an older server does not send it, #577). Refetched after every scan that reaches the server. Hidden while offline or if the request fails; it never shows an error.
+- **No book found (#577):** the "No books found" banner says "No books found. This photo didn't use a scan." when the photo went to the unrecognised-photo allowance (`no_match: "free"`), or "No books found. This used a scan (unrecognised-photo allowance used up today)." when that allowance was already used up (`no_match: "counted"`). Without the field (an older server, a repeat, an enhanced scan) it is the plain "No books found".
+- **Settings:** a "Scan usage" row with the same two figures. No plan label, renewal date or upgrade button.
 - **An older server's monthly refusal (402 `scan_limit_reached` / `enhanced_limit_reached`):** shown as the generic "Scan failed" banner (retry or save for later), or for an enhanced re-scan "Enhanced scan failed. Showing your earlier results."; never a monthly message.
 - **Daily limit (429 `daily_scan_limit`):** "Daily limit reached. Scanning resets at midnight UTC (<local time> your time)."
 - **Scan already running (429 `scan_in_progress`):** the app waits `Retry-After` (default 2 s, capped at 10 s) and retries silently, up to 3 times. If it is still busy: "Still processing. Please try again in a moment." (3 retries is about 6 s, long enough to ride out a normal overlap without leaving the user waiting on a stuck lease.)
