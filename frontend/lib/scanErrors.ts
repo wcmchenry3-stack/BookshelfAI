@@ -44,7 +44,14 @@ export type ScanNotice =
   { kind: 'daily_limit'; resetsAt: number } | { kind: 'still_processing' } | { kind: 'paused' };
 
 /** `error` values a refused (re-queued) job carries. */
-export const REFUSAL_ERRORS: readonly string[] = ['daily_limit', 'paused', 'in_progress'];
+// 'monthly_limit' stays for one release (#582): a job persisted by an older build
+// may still carry it, and it still counts as a refusal (#594 removes it).
+export const REFUSAL_ERRORS: readonly string[] = [
+  'daily_limit',
+  'paused',
+  'in_progress',
+  'monthly_limit',
+];
 
 /** True when any queued job is waiting because the server refused it. */
 export function hasRefusedJobs(jobs: readonly { status: string; error?: string }[]): boolean {

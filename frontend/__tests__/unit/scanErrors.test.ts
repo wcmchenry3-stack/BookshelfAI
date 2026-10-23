@@ -1,5 +1,6 @@
 import {
   classifyScanError,
+  hasRefusedJobs,
   enhancedRefusalMessage,
   nextUtcMidnight,
   scanNoticeMessage,
@@ -161,5 +162,23 @@ describe('copy', () => {
       minute: '2-digit',
     });
     expect(msg).toBe(`enhancedThrottled:${JSON.stringify({ time: expected })}`);
+  });
+});
+
+describe('hasRefusedJobs', () => {
+  it('counts a queued job refused for a daily limit, pause or scan in progress', () => {
+    for (const error of ['daily_limit', 'paused', 'in_progress']) {
+      expect(hasRefusedJobs([{ status: 'queued', error }])).toBe(true);
+    }
+  });
+
+  it('still counts a job persisted by an older build with monthly_limit (#582, one release)', () => {
+    expect(hasRefusedJobs([{ status: 'queued', error: 'monthly_limit' }])).toBe(true);
+  });
+
+  it('ignores other errors and jobs that are not queued', () => {
+    expect(hasRefusedJobs([{ status: 'queued', error: 'network' }])).toBe(false);
+    expect(hasRefusedJobs([{ status: 'failed', error: 'daily_limit' }])).toBe(false);
+    expect(hasRefusedJobs([{ status: 'queued' }])).toBe(false);
   });
 });
