@@ -7,10 +7,14 @@
  * Validates that:
  * - importMap covers all 10 non-en active locales with 8 namespaces each
  * - en JSON files have the correct keys and values (via direct require)
- * - No English key has __NEEDS_TRANSLATION__ as its value
+ * - No English key has __NEEDS_TRANSLATION__ as its value, and no locale file
+ *   contains it at all
  * - Exactly 11 locales are active (ar/he excluded until RTL ready)
  * - RTL_LOCALES is empty
  */
+
+import fs from 'fs';
+import path from 'path';
 
 import { importMap } from '../../src/i18n/i18n';
 import { LOCALES, RTL_LOCALES } from '../../src/i18n/locales';
@@ -100,6 +104,22 @@ describe('en namespace content', () => {
       checkValues(data, `en.${ns}`);
     }
 
+    expect(problematic).toEqual([]);
+  });
+
+  // The translate script writes __NEEDS_TRANSLATION__ when it has no
+  // translation, and nothing falls back at runtime, so users would see it.
+  it('no locale, active or not, ships an untranslated placeholder', () => {
+    const dir = path.join(__dirname, '../../src/i18n/locales');
+    const problematic: string[] = [];
+    for (const code of fs.readdirSync(dir)) {
+      if (code.startsWith('_') || !fs.statSync(path.join(dir, code)).isDirectory()) continue;
+      for (const file of fs.readdirSync(path.join(dir, code))) {
+        if (!file.endsWith('.json')) continue;
+        const raw = fs.readFileSync(path.join(dir, code, file), 'utf8');
+        if (raw.includes('__NEEDS_TRANSLATION__')) problematic.push(`${code}/${file}`);
+      }
+    }
     expect(problematic).toEqual([]);
   });
 });

@@ -12,7 +12,7 @@
   "allowCamera": "Allow Camera",
   "allowCameraA11y": "Grant camera permission",
   "captureA11y": "Capture books",
-  "captureHint": "Takes a photo and identifies every book in it — covers or spines",
+  "captureHint": "Takes a photo and identifies every book — covers or spines",
   "noBooksFoundTitle": "No books found",
   "noBooksFoundMessage": "Point the camera at book covers or spines and try again.",
   "scanFailedTitle": "Scan failed",

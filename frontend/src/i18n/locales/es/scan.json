@@ -33,7 +33,7 @@
   "noBooksFoundCounted": "No se encontraron libros. Se usó un escaneo de hoy.",
   "dailyLimit": "Límite diario alcanzado. El escaneo se restablece a medianoche UTC ({{time}} en tu hora).",
   "requestsDailyLimit": "Has alcanzado el límite de escaneos de hoy. Inténtalo después de las {{time}}.",
-  "stillProcessing": "Todavía se está procesando. Inténtalo de nuevo en un momento.",
+  "stillProcessing": "Aún se está procesando. Inténtalo de nuevo en un momento.",
   "scanPaused": "El escaneo está en pausa. Inténtalo de nuevo más tarde.",
   "dismissNotice": "Cerrar",
   "tryAgainNotice": "Intentar de nuevo",
