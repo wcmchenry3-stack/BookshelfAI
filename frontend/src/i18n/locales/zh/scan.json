@@ -74,5 +74,14 @@
   "alreadyInLibraryMessage": "“{{title}}”已在你的书库中。",
   "alreadyInLibraryManyMessage": "{{count}} 本书已在你的书库中。",
   "addedAndOwnedMessage": "已添加 {{added}} 本，{{owned}} 本已在你的书库中。",
-  "addedSomeOwnedMessage": "已添加 {{added}} 本，{{owned}} 本已在书库中，{{failed}} 本未保存。点按添加以重试。"
+  "addedSomeOwnedMessage": "已添加 {{added}} 本，{{owned}} 本已在书库中，{{failed}} 本未保存。点按添加以重试。",
+  "notInCatalogMessage": "我们在目录中没有找到这本书，暂时无法添加。请尝试按书名搜索。",
+  "notInCatalogManyMessage": "我们在目录中没有找到这 {{count}} 本书，暂时无法添加。请尝试按书名搜索。",
+  "catalogTokenInvalidMessage": "此结果已过期。请重新扫描或搜索这本书。",
+  "catalogTokenInvalidManyMessage": "这 {{count}} 条结果已过期。请重新扫描或搜索这些书。",
+  "notSavedSummaryMessage": "已添加 {{added}} 本，{{notSaved}} 本未保存。",
+  "notSavedSummaryOwnedMessage": "已添加 {{added}} 本，{{owned}} 本已在你的书库中，{{notSaved}} 本未保存。",
+  "reasonNotInCatalog": "目录中没有：请按书名搜索。",
+  "reasonTokenInvalid": "已过期：请重新扫描或搜索。",
+  "retryOthersHint": "点按“添加”重试其余的书。"
 }

@@ -74,5 +74,14 @@
   "alreadyInLibraryMessage": "\"{{title}}\" ist bereits in deiner Bibliothek.",
   "alreadyInLibraryManyMessage": "{{count}} Bücher sind bereits in deiner Bibliothek.",
   "addedAndOwnedMessage": "{{added}} hinzugefügt. {{owned}} bereits in deiner Bibliothek.",
-  "addedSomeOwnedMessage": "{{added}} hinzugefügt, {{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen."
+  "addedSomeOwnedMessage": "{{added}} hinzugefügt, {{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen.",
+  "notInCatalogMessage": "Dieses Buch ist nicht in unserem Katalog und kann noch nicht hinzugefügt werden. Suche es nach Titel.",
+  "notInCatalogManyMessage": "Diese {{count}} Bücher sind nicht in unserem Katalog und können noch nicht hinzugefügt werden. Suche nach Titel.",
+  "catalogTokenInvalidMessage": "Dieses Ergebnis ist veraltet. Scanne das Buch erneut oder suche danach.",
+  "catalogTokenInvalidManyMessage": "Diese {{count}} Ergebnisse sind veraltet. Scanne die Bücher erneut oder suche danach.",
+  "notSavedSummaryMessage": "{{added}} hinzugefügt, {{notSaved}} nicht gespeichert.",
+  "notSavedSummaryOwnedMessage": "{{added}} hinzugefügt, {{owned}} schon in der Bibliothek, {{notSaved}} nicht gespeichert.",
+  "reasonNotInCatalog": "Nicht im Katalog: Suche nach Titel.",
+  "reasonTokenInvalid": "Veraltet: erneut scannen oder suchen.",
+  "retryOthersHint": "Zum Wiederholen der übrigen auf Hinzufügen tippen."
 }

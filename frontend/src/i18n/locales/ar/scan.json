@@ -74,5 +74,14 @@
   "alreadyInLibraryMessage": "\"{{title}}\" موجود بالفعل في مكتبتك.",
   "alreadyInLibraryManyMessage": "موجودة بالفعل في مكتبتك: {{count}}",
   "addedAndOwnedMessage": "تمت إضافة {{added}}. موجودة بالفعل في مكتبتك: {{owned}}",
-  "addedSomeOwnedMessage": "تمت إضافة {{added}}، وموجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا."
+  "addedSomeOwnedMessage": "تمت إضافة {{added}}، وموجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا.",
+  "notInCatalogMessage": "لم نعثر على هذا الكتاب في فهرسنا، لذا لا يمكن إضافته الآن. جرّب البحث بالعنوان.",
+  "notInCatalogManyMessage": "لم نعثر على هذه الكتب ({{count}}) في فهرسنا، لذا لا يمكن إضافتها الآن. جرّب البحث بالعنوان.",
+  "catalogTokenInvalidMessage": "هذه النتيجة قديمة. امسح الكتاب ضوئيًا أو ابحث عنه مجددًا.",
+  "catalogTokenInvalidManyMessage": "هذه النتائج ({{count}}) قديمة. امسح الكتب ضوئيًا أو ابحث عنها مجددًا.",
+  "notSavedSummaryMessage": "تمت إضافة {{added}}، وتعذّر حفظ {{notSaved}}.",
+  "notSavedSummaryOwnedMessage": "تمت إضافة {{added}}، و{{owned}} في مكتبتك مسبقًا، وتعذّر حفظ {{notSaved}}.",
+  "reasonNotInCatalog": "غير موجود في الفهرس: ابحث بالعنوان.",
+  "reasonTokenInvalid": "نتيجة قديمة: امسح أو ابحث مجددًا.",
+  "retryOthersHint": "اضغط إضافة لإعادة محاولة البقية."
 }

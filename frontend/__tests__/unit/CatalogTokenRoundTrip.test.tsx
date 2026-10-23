@@ -136,27 +136,28 @@ describe('catalog_token round trip (#602)', () => {
     expect(posted).toEqual([dune]);
   });
 
-  it.each(['catalog_token_invalid', 'book_not_in_catalog'])(
-    'shows the existing "couldn\'t save" message on 422 %s',
-    async (detail) => {
-      const hook = await render();
-      mockPost.mockResolvedValueOnce({ data: { ...base, books: [signed('Dune', 'old.mac')] } });
-      await act(async () => {
-        await hook.result.current.scan.startScan('image', 'file:///a.jpg');
-      });
-      mockPost.mockRejectedValue(
-        Object.assign(new Error('Request failed with status code 422'), {
-          response: { status: 422, data: { detail } },
-        })
-      );
+  it.each([
+    ['catalog_token_invalid', 'This result is out of date. Scan or search for the book again.'],
+    [
+      'book_not_in_catalog',
+      "We couldn't find this book in our catalog, so it can't be added yet. Try searching by title.",
+    ],
+  ])('shows the specific message on 422 %s (#612)', async (detail, message) => {
+    const hook = await render();
+    mockPost.mockResolvedValueOnce({ data: { ...base, books: [signed('Dune', 'old.mac')] } });
+    await act(async () => {
+      await hook.result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    mockPost.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 422'), {
+        response: { status: 422, data: { detail } },
+      })
+    );
 
-      await addReviewedResults(hook);
+    await addReviewedResults(hook);
 
-      expect(hook.result.current.banner.banner?.message).toBe(
-        'Failed to add book to wishlist. Please try again.'
-      );
-      // The book stays under review so the user can retry.
-      expect(hook.result.current.scan.reviewingJob).not.toBeNull();
-    }
-  );
+    expect(hook.result.current.banner.banner?.message).toBe(message);
+    // Retrying cannot help, so nothing stays under review.
+    expect(hook.result.current.scan.reviewingJob).toBeNull();
+  });
 });

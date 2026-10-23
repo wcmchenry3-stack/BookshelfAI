@@ -74,5 +74,14 @@
   "alreadyInLibraryMessage": "\"{{title}}\" уже есть в вашей библиотеке.",
   "alreadyInLibraryManyMessage": "Уже в вашей библиотеке: {{count}}.",
   "addedAndOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}.",
-  "addedSomeOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить»."
+  "addedSomeOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить».",
+  "notInCatalogMessage": "Мы не нашли эту книгу в каталоге, поэтому пока её нельзя добавить. Попробуйте найти по названию.",
+  "notInCatalogManyMessage": "Мы не нашли эти книги ({{count}}) в каталоге, поэтому пока их нельзя добавить. Попробуйте найти по названию.",
+  "catalogTokenInvalidMessage": "Этот результат устарел. Отсканируйте или найдите книгу снова.",
+  "catalogTokenInvalidManyMessage": "Эти результаты ({{count}}) устарели. Отсканируйте или найдите книги снова.",
+  "notSavedSummaryMessage": "Добавлено: {{added}}, не сохранено: {{notSaved}}.",
+  "notSavedSummaryOwnedMessage": "Добавлено: {{added}}, уже в библиотеке: {{owned}}, не сохранено: {{notSaved}}.",
+  "reasonNotInCatalog": "Нет в каталоге: найдите по названию.",
+  "reasonTokenInvalid": "Устарело: отсканируйте или найдите снова.",
+  "retryOthersHint": "Нажмите «Добавить», чтобы повторить для остальных."
 }

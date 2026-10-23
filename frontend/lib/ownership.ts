@@ -33,3 +33,20 @@ export function isAlreadyOwnedError(reason: unknown): boolean {
     ?.response;
   return response?.status === 409 && OWNED_CODES.includes(response.data?.detail as Ownership);
 }
+
+/**
+ * The 422 `detail` codes POST /wishlist returns for a book the server will not
+ * add to the shared catalog (#612): `book_not_in_catalog` (no Open Library /
+ * Google Books match) and `catalog_token_invalid` (a stale or expired result).
+ * Retrying cannot help either one.
+ */
+export type CatalogRefusal = 'book_not_in_catalog' | 'catalog_token_invalid';
+
+/** Which catalog refusal a failed POST /wishlist is, or null for any other failure. */
+export function catalogRefusal(reason: unknown): CatalogRefusal | null {
+  const response = (reason as { response?: { status?: number; data?: { detail?: unknown } } })
+    ?.response;
+  if (response?.status !== 422) return null;
+  const detail = response.data?.detail;
+  return detail === 'book_not_in_catalog' || detail === 'catalog_token_invalid' ? detail : null;
+}
