@@ -187,6 +187,21 @@ async def _reserve_scan_quota(
         ) from None
 
 
+async def _count_scan_request(db: AsyncSession, user: User, ai: AISettings) -> None:
+    """Count this /scan request for the user's UTC day (#586); 429
+    ``scan_requests_daily_limit`` with a Retry-After until UTC midnight when
+    the day's requests are used up. Distinct from the per-minute 429 and
+    from ``daily_scan_limit``."""
+    try:
+        await quota.count_scan_request(db, user.id, ai)
+    except quota.ScanRequestsDailyLimitReached as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="scan_requests_daily_limit",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+
+
 def _enhanced_requires_premium() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -602,6 +617,21 @@ async def scan(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="enhanced_scan_disabled",
         )
+
+    # --- /scan requests per user per UTC day (#586) ---
+    # Every request past authentication (get_current_user) and the kill
+    # switches counts, new photo or repeat, allowed or refused later; nothing
+    # is given back. At scan.requests_per_user_daily: 429
+    # scan_requests_daily_limit until UTC midnight, before any other work
+    # (Turnstile, the upload, normalisation, the scan-record lookup, the
+    # allowance and the provider). The kill switches stay first: they cost
+    # nothing (no DB write, no work), a switched-off scan should say so, and
+    # the app's retries during an outage we caused should not use up a
+    # user's requests. Turnstile comes after: it is an outbound call, i.e.
+    # work this limit bounds, and a request that fails it is the kind of
+    # request the limit is for. Repeats are free (#585), so this is what
+    # stops someone hammering the endpoint (decision #573 point 3).
+    await _count_scan_request(db, current_user, ai)
 
     # --- Cloudflare Turnstile bot check ---
     # Enabled when TURNSTILE_REQUIRED=true (the default).

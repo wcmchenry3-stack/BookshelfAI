@@ -7,6 +7,10 @@
  *
  *   403 enhanced_requires_premium -> enhanced_refused (premium_required)
  *   429 daily_scan_limit       -> daily_limit     (Retry-After: s to UTC midnight)
+ *   429 scan_requests_daily_limit -> requests_daily_limit (#586: the user's
+ *                                 /scan requests for the UTC day, new photo
+ *                                 or repeat, are used up; Retry-After: s to
+ *                                 UTC midnight)
  *   429 scan_in_progress       -> in_progress     (Retry-After: 2)
  *   429 enhanced_throttled     -> enhanced_refused (throttled; Retry-After: s
  *                                 until enough empty enhanced scans age out)
@@ -26,6 +30,7 @@
 
 export type ScanUiState =
   | { kind: 'daily_limit'; retryAfterSeconds?: number }
+  | { kind: 'requests_daily_limit'; retryAfterSeconds?: number }
   | { kind: 'in_progress'; retryAfterSeconds: number }
   | { kind: 'paused'; enhancedOnly?: boolean }
   | {
@@ -41,17 +46,40 @@ export type EnhancedRefusalReason = 'premium_required' | 'throttled';
 
 /** What the scan screen shows. `in_progress` becomes `still_processing` once retries run out. */
 export type ScanNotice =
-  { kind: 'daily_limit'; resetsAt: number } | { kind: 'still_processing' } | { kind: 'paused' };
+  | { kind: 'daily_limit'; resetsAt: number }
+  | { kind: 'requests_daily_limit'; resetsAt: number }
+  | { kind: 'still_processing' }
+  | { kind: 'paused' };
 
 /** `error` values a refused (re-queued) job carries. */
 // 'monthly_limit' stays for one release (#582): a job persisted by an older build
 // may still carry it, and it still counts as a refusal (#594 removes it).
 export const REFUSAL_ERRORS: readonly string[] = [
   'daily_limit',
+  'requests_daily_limit',
   'paused',
   'in_progress',
   'monthly_limit',
 ];
+
+/**
+ * True while scanning is limited or paused (#586): a full queue then means the
+ * saved photos go out once scanning is available again, not "wait for uploads".
+ */
+export function isScanningLimited(
+  notice: ScanNotice | null | undefined,
+  jobs: readonly { status: string; error?: string }[]
+): boolean {
+  if (
+    notice &&
+    (notice.kind === 'daily_limit' ||
+      notice.kind === 'requests_daily_limit' ||
+      notice.kind === 'paused')
+  ) {
+    return true;
+  }
+  return hasRefusedJobs(jobs);
+}
 
 /** True when any queued job is waiting because the server refused it. */
 export function hasRefusedJobs(jobs: readonly { status: string; error?: string }[]): boolean {
@@ -113,6 +141,9 @@ export function classifyScanError(err: unknown): ScanUiState {
   if (status === 429) {
     const retryAfterSeconds = parseSeconds(readHeader(response.headers, 'retry-after'));
     if (detail === 'daily_scan_limit') return { kind: 'daily_limit', retryAfterSeconds };
+    if (detail === 'scan_requests_daily_limit') {
+      return { kind: 'requests_daily_limit', retryAfterSeconds };
+    }
     if (detail === 'enhanced_throttled') {
       return { kind: 'enhanced_refused', reason: 'throttled', retryAfterSeconds };
     }
@@ -149,8 +180,10 @@ export function toScanNotice(
 ): ScanNotice | null {
   switch (state.kind) {
     case 'daily_limit':
+    case 'requests_daily_limit':
+      // Both reset at UTC midnight (Retry-After when the server sent one).
       return {
-        kind: 'daily_limit',
+        kind: state.kind,
         resetsAt:
           state.retryAfterSeconds != null && state.retryAfterSeconds > 0
             ? now + state.retryAfterSeconds * 1000
@@ -204,6 +237,8 @@ export function scanNoticeMessage(notice: ScanNotice, t: TFn, locale: string): s
   switch (notice.kind) {
     case 'daily_limit':
       return t('dailyLimit', { time: formatLocalTime(notice.resetsAt, locale) });
+    case 'requests_daily_limit':
+      return t('requestsDailyLimit', { time: formatLocalTime(notice.resetsAt, locale) });
     case 'still_processing':
       return t('stillProcessing');
     case 'paused':

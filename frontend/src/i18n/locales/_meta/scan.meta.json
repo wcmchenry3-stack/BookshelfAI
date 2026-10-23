@@ -180,6 +180,11 @@
     "tone": "neutral",
     "characterLimit": 100
   },
+  "requestsDailyLimit": {
+    "description": "Shown when the user has made the most scan requests allowed today (new photos and repeats both count; #586). Different from dailyLimit. Keep {{time}}, the local time the limit resets (UTC midnight).",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
   "stillProcessing": {
     "description": "Neutral message when the server is still working on the user's previous scan after silent retries.",
     "tone": "neutral",

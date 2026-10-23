@@ -81,6 +81,13 @@ describe('every scan refusal shows its translated message', () => {
       refusal(429, 'daily_scan_limit', {}, { 'retry-after': '43200' }),
       /^Daily limit reached\. Scanning resets at midnight UTC \(.+ your time\)\.$/,
     ],
+    // #586: the per-user daily /scan request limit, distinct from the daily
+    // scan allowance above.
+    [
+      '429 scan_requests_daily_limit',
+      refusal(429, 'scan_requests_daily_limit', {}, { 'retry-after': '43200' }),
+      /^You've reached today's scan limit\. Try again after .+\.$/,
+    ],
     [
       '429 scan_in_progress (retries used up)',
       refusal(429, 'scan_in_progress', {}, { 'retry-after': '2' }),
@@ -182,6 +189,8 @@ describe('every active locale has the refusal and usage copy', () => {
   // dates reach the user only through these).
   const SCAN_KEYS: Record<string, string[]> = {
     dailyLimit: ['time'],
+    // #586
+    requestsDailyLimit: ['time'],
     stillProcessing: [],
     scanPaused: [],
     enhancedRequiresPremium: [],

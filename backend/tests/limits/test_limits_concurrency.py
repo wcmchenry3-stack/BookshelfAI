@@ -57,6 +57,9 @@ async def test_parallel_scans_never_charge_more_than_the_limit(
         "quota.free.found_daily": 1_000,
         "quota.premium.found_daily": 1_000,
         limit_key: L,
+        # #586: every retry on scan_in_progress is a /scan request; this test
+        # is about the daily unit, so the request limit is raised.
+        "scan.requests_per_user_daily": 10_000,
     }
     h.use_settings(rows)
     provider = h.FakeProvider("books", delay=0.01)

@@ -32,6 +32,7 @@
   "noBooksFoundFree": "Keine Bücher gefunden. Das hat keinen Scan verbraucht.",
   "noBooksFoundCounted": "Keine Bücher gefunden. Das hat einen Scan verbraucht.",
   "dailyLimit": "Tageslimit erreicht. Das Scannen wird um Mitternacht UTC zurückgesetzt ({{time}} Ortszeit).",
+  "requestsDailyLimit": "Sie haben das heutige Scan-Limit erreicht. Bitte nach {{time}} erneut versuchen.",
   "stillProcessing": "Wird noch verarbeitet. Bitte versuche es gleich noch einmal.",
   "scanPaused": "Das Scannen ist pausiert. Bitte versuche es später erneut.",
   "dismissNotice": "Schließen",

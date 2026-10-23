@@ -32,6 +32,7 @@
   "noBooksFoundFree": "Geen boeken gevonden. Dit kostte geen scan.",
   "noBooksFoundCounted": "Geen boeken gevonden. Dit kostte één scan van vandaag.",
   "dailyLimit": "Daglimiet bereikt. Scannen wordt om middernacht UTC hersteld ({{time}} jouw tijd).",
+  "requestsDailyLimit": "Je hebt de scanlimiet van vandaag bereikt. Probeer het na {{time}} opnieuw.",
   "stillProcessing": "Nog bezig met verwerken. Probeer het zo meteen opnieuw.",
   "scanPaused": "Scannen is gepauzeerd. Probeer het later opnieuw.",
   "dismissNotice": "Sluiten",

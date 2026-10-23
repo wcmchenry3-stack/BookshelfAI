@@ -32,6 +32,7 @@
   "noBooksFoundFree": "本が見つかりませんでした。スキャンは消費されません。",
   "noBooksFoundCounted": "本が見つかりませんでした。今日のスキャンを1回使用しました。",
   "dailyLimit": "1日の上限に達しました。スキャンはUTCの午前0時にリセットされます（お住まいの地域では {{time}}）。",
+  "requestsDailyLimit": "本日のスキャン上限に達しました。{{time}} 以降にもう一度お試しください。",
   "stillProcessing": "処理中です。しばらくしてからもう一度お試しください。",
   "scanPaused": "スキャンは一時停止中です。しばらくしてからもう一度お試しください。",
   "dismissNotice": "閉じる",

@@ -10,7 +10,7 @@ import { useScanJobs } from '../../hooks/useScanJobs';
 import { useBanner } from '../../hooks/useBanner';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-import { hasRefusedJobs } from '../../lib/scanErrors';
+import { isScanningLimited } from '../../lib/scanErrors';
 import { ScanStatusPanel } from '../../components/ScanStatusPanel';
 
 type InputMode = 'camera' | 'search';
@@ -39,10 +39,7 @@ export default function ScanScreen() {
   // While scanning is limited or paused, a full queue is not "wait for uploads":
   // the saved photos go out once scanning is available again.
   function queueFullMessage(): string {
-    const limited =
-      (scanNotice && (scanNotice.kind === 'daily_limit' || scanNotice.kind === 'paused')) ||
-      hasRefusedJobs(jobs ?? []);
-    return t(limited ? 'queueFullLimited' : 'queueFull');
+    return t(isScanningLimited(scanNotice, jobs ?? []) ? 'queueFullLimited' : 'queueFull');
   }
   function handleRetryNotice() {
     // Offline: keep the notice and say why nothing was sent.

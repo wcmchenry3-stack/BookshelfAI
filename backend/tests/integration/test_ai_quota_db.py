@@ -29,6 +29,7 @@ from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.ai import entitlements, quota
+from app.ai import settings as ai_settings
 from app.ai.entitlements import Tier
 from app.ai.providers.base import ProviderResult
 from app.ai.settings import AISettings
@@ -515,6 +516,9 @@ class TestScanEndpoint:
         with (
             provider.patch(),
             patch.object(settings, "scan_free_daily_limit", 5),
+            # #586: every retry on scan_in_progress is a /scan request; this
+            # test is about the daily unit, so the request limit is raised.
+            patch.object(ai_settings, "DEFAULT_SCAN_REQUESTS_PER_USER_DAILY", 10_000),
         ):
             outcomes = await asyncio.gather(*(one() for _ in range(20)))
 
@@ -705,7 +709,12 @@ class TestScanEndpoint:
                     )
                 )
             ).all()
-            assert set(keys) == {(FEATURE, "day")}
+            # #586: plus the /scan request counter (a request count, not an
+            # allowance unit).
+            assert set(keys) == {
+                (FEATURE, "day"),
+                (quota.SCAN_REQUESTS_QUOTA_FEATURE, "day"),
+            }
 
     async def test_release_timeout_mid_query_leaves_session_usable(
         self, sessions, downstream

@@ -1,6 +1,7 @@
 import {
   classifyScanError,
   hasRefusedJobs,
+  isScanningLimited,
   enhancedRefusalMessage,
   nextUtcMidnight,
   scanNoticeMessage,
@@ -180,5 +181,29 @@ describe('hasRefusedJobs', () => {
     expect(hasRefusedJobs([{ status: 'queued', error: 'network' }])).toBe(false);
     expect(hasRefusedJobs([{ status: 'failed', error: 'daily_limit' }])).toBe(false);
     expect(hasRefusedJobs([{ status: 'queued' }])).toBe(false);
+  });
+});
+
+describe('isScanningLimited (queue-full wording, #586)', () => {
+  it.each(['daily_limit', 'requests_daily_limit'] as const)(
+    'is true while a %s notice shows, even with no refused job queued',
+    (kind) => {
+      expect(isScanningLimited({ kind, resetsAt: 0 }, [])).toBe(true);
+    }
+  );
+
+  it('is true while paused', () => {
+    expect(isScanningLimited({ kind: 'paused' }, [])).toBe(true);
+  });
+
+  it('is false for still_processing or no notice with nothing refused', () => {
+    expect(isScanningLimited({ kind: 'still_processing' }, [])).toBe(false);
+    expect(isScanningLimited(null, [{ status: 'queued' }])).toBe(false);
+  });
+
+  it('is true without a notice when a queued job was refused', () => {
+    expect(
+      isScanningLimited(undefined, [{ status: 'queued', error: 'requests_daily_limit' }])
+    ).toBe(true);
   });
 });

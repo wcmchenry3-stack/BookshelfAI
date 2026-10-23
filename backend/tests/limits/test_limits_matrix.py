@@ -45,10 +45,17 @@ Done:
   (``counted``). Every row asserts the no-match counter's move (``Delta``)
   and the response field; ``global`` moves with both counters. The retired
   ``quota.<tier>.daily`` keys are ignored (``retired_daily_key`` rows).
+- #586 the per-user /scan request limit (``scan.requests_per_user_daily``,
+  100/day, decision #573 point 3): every row asserts the request counter
+  (``requests``): it moves by one for every request past the kill
+  switches, allowed or refused later, new photo or repeat
+  (:data:`NOT_COUNTED` lists the refusals that come first), and never
+  moves the service-wide count. ``request_limit`` rows refuse with 429
+  ``scan_requests_daily_limit`` before every other refusal but the kill
+  switches; ``REPEATS`` has a repeat at the limit.
 
 Rules that do not exist yet get their rows from their own stories:
 
-- #586 the per-user 100/day /scan request limit (decision #573 point 3)
 - #583 Premium escalation
 - #574 retries
 - #581 adds a drift test of the limits overview against the settings registry
@@ -61,7 +68,7 @@ expectation, add a field to ``Start`` / ``Case`` with a default that keeps
 the existing rows unchanged.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
@@ -100,9 +107,23 @@ BASE: dict[str, Any] = {
     "scan_records.enabled": True,
     "scan_records.retention_days": 30,
     "scan_records.max_per_user": 500,
+    "scan.requests_per_user_daily": 100,
 }
 
 ALLOWED = 200
+# The refusals that come before the /scan request count (#586): the kill
+# switches, and the request limit itself (a refused request writes
+# nothing). Every other request, allowed or refused, counts one.
+NOT_COUNTED = frozenset(
+    {"scan_disabled", "enhanced_scan_disabled", "scan_requests_daily_limit"}
+)
+
+
+def requests_delta(code: str | None) -> int:
+    """How far one request moves the user's /scan request counter (#586)."""
+    return 0 if code in NOT_COUNTED else 1
+
+
 # What a scan costs the day's spend after the request.
 NO_SPEND, ESTIMATE, COST = "none", "estimate", "cost"
 
@@ -128,6 +149,11 @@ class Start:
     spend: int | str = 0
     zero_results: int = 0
     lease_held: bool = False
+    # The user's /scan requests today (#586), or LIMIT (the request limit).
+    requests: int | str = 0
+    # /scan requests of another user today (#586): never part of the
+    # service-wide count.
+    others_requests: int = 0
 
 
 @dataclass(frozen=True)
@@ -279,6 +305,38 @@ CASES: list[Case] = [
     Case("free-standard-scanning_disabled-refused", FREE, False, None,
          503, "scan_disabled", NOTHING, NO_SPEND,
          settings={"scan.standard.enabled": False}),
+    # ---- /scan requests per user per day (#586) ---------------------------
+    # At the limit: refused before any other work (no lookup, no allowance,
+    # no provider), and the refused request is not counted.
+    Case("free-standard-request_limit-refused", FREE, False, None,
+         429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
+         Start(requests=LIMIT)),
+    Case("free-standard-last_request-allowed", FREE, False, "books",
+         ALLOWED, None, CHARGED, COST, Start(requests=2),
+         {"scan.requests_per_user_daily": 3}),
+    # It comes before every allowance and backstop.
+    Case("free-standard-request_limit_beats_daily_limit", FREE, False, None,
+         429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
+         Start(daily=LIMIT, requests=LIMIT)),
+    Case("free-standard-request_limit_beats_global_cap", FREE, False, None,
+         429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
+         Start(requests=LIMIT, global_others=LIMIT),
+         {"scan.global_daily_limit": 3}),
+    Case("free-standard-request_limit_beats_spend_ceiling", FREE, False, None,
+         429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
+         Start(requests=LIMIT, spend=LIMIT)),
+    # Only the kill switches come first.
+    Case("free-standard-scanning_disabled_at_request_limit-disabled", FREE,
+         False, None, 503, "scan_disabled", NOTHING, NO_SPEND,
+         Start(requests=LIMIT), {"scan.standard.enabled": False}),
+    # Requests are not AI calls: other users' request counts, far over the
+    # global cap, never refuse a scan.
+    Case("free-standard-others_requests_over_global_cap-allowed", FREE, False,
+         "books", ALLOWED, None, CHARGED, COST, Start(others_requests=10_000),
+         {"scan.global_daily_limit": 3}),
+    Case("free-enhanced-request_limit_beats_requires_premium", FREE, True,
+         None, 429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
+         Start(requests=LIMIT)),
     # ---- Free, enhanced: Premium only, refused before anything -----------
     Case("free-enhanced-requires_premium-refused", FREE, True, None,
          403, "enhanced_requires_premium", NOTHING, NO_SPEND),
@@ -331,6 +389,10 @@ CASES: list[Case] = [
          settings={"breaker.free_daily_ceiling_micros": 0}),
     Case("premium-standard-scan_in_progress-refused", PREMIUM, False, None,
          429, "scan_in_progress", NOTHING, NO_SPEND, Start(lease_held=True)),
+    # #586: before the in-flight lease too.
+    Case("premium-standard-request_limit_beats_scan_in_progress", PREMIUM,
+         False, None, 429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
+         Start(requests=LIMIT, lease_held=True)),
     # ---- Premium, enhanced: the shared daily unit only (#582) -------------
     Case("premium-enhanced-books_found-charged", PREMIUM, True, "books",
          ALLOWED, None, CHARGED_ENHANCED, COST),
@@ -407,6 +469,12 @@ CASES: list[Case] = [
          {"scan.global_daily_limit": 3}),
     Case("premium-enhanced-past_spend_ceiling-allowed", PREMIUM, True, "books",
          ALLOWED, None, CHARGED_ENHANCED, COST, Start(spend=LIMIT)),
+    Case("premium-enhanced-request_limit-refused", PREMIUM, True, None,
+         429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
+         Start(requests=LIMIT)),
+    Case("premium-enhanced-enhanced_disabled_at_request_limit-disabled",
+         PREMIUM, True, None, 503, "enhanced_scan_disabled", NOTHING,
+         NO_SPEND, Start(requests=LIMIT), {"scan.enhanced.enabled": False}),
     Case("premium-enhanced-enhanced_disabled-refused", PREMIUM, True, None,
          503, "enhanced_scan_disabled", NOTHING, NO_SPEND,
          settings={"scan.enhanced.enabled": False}),
@@ -429,6 +497,7 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     daily_limit = rows[f"quota.{tier}.found_daily"]
     no_match_limit = rows[f"quota.{tier}.no_match_daily"]
     global_limit = rows["scan.global_daily_limit"]
+    request_limit = rows["scan.requests_per_user_daily"]
     ceiling = rows["breaker.free_daily_ceiling_micros"]
     est = h.estimate(case.enhanced)
 
@@ -446,6 +515,8 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
         (user_id, h.SCAN, "month", month, s.legacy_month),
         (user_id, h.ENHANCED, "month", month, s.legacy_enhanced_month),
         (other, h.SCAN, "day", day, _resolve(s.global_others, global_limit)),
+        (user_id, h.REQUESTS, "day", day, _resolve(s.requests, request_limit)),
+        (other, h.REQUESTS, "day", day, s.others_requests),
     ):
         await db.seed_units(uid, feature=feature, kind=kind, start=start, units=units)
     if s.spend == LIMIT:
@@ -469,7 +540,7 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
 
     # -- what the client sees ----------------------------------------------
     assert (got.status, got.code) == (case.status, case.code)
-    if case.code == "daily_scan_limit":
+    if case.code in ("daily_scan_limit", "scan_requests_daily_limit"):
         # Retry-After: seconds to the next UTC midnight (the clock is noon).
         assert got.headers == {"Retry-After": "43200"}
     if case.code in ("scan_in_progress", "enhanced_throttled"):
@@ -505,6 +576,8 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     }
     assert after.delta(before) == expected
     assert after.no_match - before.no_match == case.delta.no_match
+    # #586: every request past the kill switches counts, whatever follows.
+    assert after.requests - before.requests == requests_delta(case.code)
     assert await db.negative_counters() == 0
 
     # -- spend: nothing left reserved; settled as the row says --------------
@@ -542,6 +615,7 @@ def test_matrix_ids_are_unique_and_cover_every_refusal_code():
         "scan_disabled",
         "enhanced_scan_disabled",
         "scan_unavailable",
+        "scan_requests_daily_limit",
     } <= codes
     outcomes = {c.provider for c in CASES} - {None}
     assert outcomes == set(h.OUTCOMES) | set(h.ERRORS)
@@ -652,6 +726,17 @@ REPEATS: list[Repeat] = [
     Repeat("free-standard-repeat_while_scan_in_progress-free", FREE,
            (False, "books"), False, None, ALLOWED, None, **FREE_REPEAT,
            lease_held=True, new_photo=(429, "scan_in_progress")),
+    # #586: a repeat is a /scan request like any other: it counts, and at
+    # the request limit it is refused before the lookup.
+    Repeat("free-standard-repeat_uses_last_request-free", FREE,
+           (False, "books"), False, None, ALLOWED, None, **FREE_REPEAT,
+           settings_after={"scan.requests_per_user_daily": 2},
+           new_photo=(429, "scan_requests_daily_limit")),
+    Repeat("free-standard-repeat_at_request_limit-refused", FREE,
+           (False, "books"), False, None, 429, "scan_requests_daily_limit",
+           repeat=False, delta=NOTHING, spend=NO_SPEND,
+           settings_after={"scan.requests_per_user_daily": 1},
+           new_photo=(429, "scan_requests_daily_limit")),
     # The scanning kill switch is checked before the lookup.
     Repeat("free-standard-repeat_scanning_disabled-refused", FREE,
            (False, "books"), False, None, 503, "scan_disabled", repeat=False,
@@ -785,6 +870,8 @@ async def test_limits_matrix_repeats(case: Repeat, limits_db: h.LimitsDb, downst
         "zero_results": case.delta.zero_results,
     }
     assert after.no_match - before.no_match == case.delta.no_match
+    # #586: a repeat counts as a request too.
+    assert after.requests - before.requests == requests_delta(case.code)
     assert await db.negative_counters() == 0
     settled = {
         NO_SPEND: 0,
@@ -818,7 +905,11 @@ async def test_limits_matrix_repeats(case: Repeat, limits_db: h.LimitsDb, downst
             fresh = await h.call_scan(db.factory, user_id, enhanced=case.enhanced)
         assert (fresh.status, fresh.code) == case.new_photo
         assert control.calls == 0
-        assert await db.counters(user_id, day) == after
+        # The refused control request still counts as a request (#586),
+        # unless it was refused for the request limit itself.
+        assert await db.counters(user_id, day) == replace(
+            after, requests=after.requests + requests_delta(fresh.code)
+        )
         assert await db.lease(user_id) == held
 
 
