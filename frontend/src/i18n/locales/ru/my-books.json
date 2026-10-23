@@ -26,10 +26,10 @@
   "errorLoadBooks": "Не удалось загрузить книги.",
   "errorUpdateStatus": "Не удалось обновить статус.",
   "errorRemoveBook": "Не удалось удалить книгу.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "Поиск по библиотеке...",
+  "searchA11y": "Поиск по библиотеке",
   "sectionTitle": "Моя библиотека",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "bookCount": "Книг в коллекции: {{count}}.",
   "heroSubtitle": "Вся ваша читательская жизнь здесь",
   "archiveSummary": "книг отслеживается"
 }

@@ -26,10 +26,10 @@
   "errorLoadBooks": "Bücher konnten nicht geladen werden.",
   "errorUpdateStatus": "Status konnte nicht aktualisiert werden.",
   "errorRemoveBook": "Buch konnte nicht entfernt werden.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "Bibliothek durchsuchen...",
+  "searchA11y": "Bibliothek durchsuchen",
   "sectionTitle": "Meine Bibliothek",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "bookCount": "{{count}} Bände in deiner Sammlung.",
   "heroSubtitle": "Dein Leserleben auf einen Blick",
   "archiveSummary": "Bücher erfasst"
 }

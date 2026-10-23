@@ -26,10 +26,10 @@
   "errorLoadBooks": "تعذر تحميل الكتب.",
   "errorUpdateStatus": "تعذر تحديث الحالة.",
   "errorRemoveBook": "تعذر إزالة الكتاب.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "ابحث في مكتبتك...",
+  "searchA11y": "البحث في مكتبتك",
   "sectionTitle": "مكتبتي",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "bookCount": "{{count}} مجلد في مجموعتك.",
   "heroSubtitle": "حياتك القرائية في مكان واحد",
   "archiveSummary": "كتب مسجلة"
 }

@@ -26,10 +26,10 @@
   "errorLoadBooks": "无法加载书籍。",
   "errorUpdateStatus": "无法更新状态。",
   "errorRemoveBook": "无法移除书籍。",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "搜索你的书库...",
+  "searchA11y": "搜索你的书库",
   "sectionTitle": "我的书库",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "bookCount": "你的收藏中有 {{count}} 本书。",
   "heroSubtitle": "您的阅读生活，尽在一处",
   "archiveSummary": "本书已记录"
 }

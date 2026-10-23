@@ -26,10 +26,10 @@
   "errorLoadBooks": "पुस्तकें लोड नहीं हो सकीं।",
   "errorUpdateStatus": "स्थिति अपडेट नहीं हो सकी।",
   "errorRemoveBook": "पुस्तक हटाई नहीं जा सकी।",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "अपनी लाइब्रेरी खोजें...",
+  "searchA11y": "अपनी लाइब्रेरी खोजें",
   "sectionTitle": "मेरी लाइब्रेरी",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "bookCount": "आपके संग्रह में {{count}} किताबें।",
   "heroSubtitle": "आपकी पढ़ाई की दुनिया एक जगह",
   "archiveSummary": "किताबें दर्ज"
 }
