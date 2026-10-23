@@ -424,10 +424,13 @@ def log_event(
     books: int = 0,
     in_library: int = 0,
     reason: str | None = None,
+    attempt: int | None = None,
 ) -> None:
     """One structured line per scan that touched a record, so the rate of
     records left with an incomplete step (and of repeats whose books are not
-    in the library) can be counted from the logs. Events:
+    in the library) can be counted from the logs. ``attempt`` (#603) is
+    which try of the /scan request this was (1..6; ``-`` when unknown), so
+    repeats served to the app's retries can be counted too. Events:
 
     - ``saved``: a new answer was saved (``enrich_done`` false: the
       enrichment step is left incomplete);
@@ -439,11 +442,12 @@ def log_event(
     """
     logger.info(
         "scan_record event=%s ai_done=%s enrich_done=%s books=%d in_library=%d "
-        "reason=%s",
+        "reason=%s attempt=%s",
         event,
         str(ai_done).lower(),
         str(enrich_done).lower(),
         books,
         in_library,
         reason or "-",
+        "-" if attempt is None else int(attempt),
     )

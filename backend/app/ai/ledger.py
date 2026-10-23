@@ -9,9 +9,11 @@ hands it to ``quota.release`` so the row is committed in the same transaction
 as the settle (the lease delete). :func:`record` writes a row on its own (for
 callers with no lease, e.g. a repeat served from a scan record, #585).
 
-A row holds counts, cost, the feature, model and status, the user id and the
-server-generated request id. Never the prompt, the image, or the model's
-output.
+A row holds counts, cost, the feature, model and status, the user id, the
+server-generated request id and (#603) the request's ``attempt`` (which try
+of a /scan request it was, 1..6, validated by ``/scan``; NULL when unknown).
+Never the prompt, the image, or the model's output. ``attempt`` is purely
+informational: nothing here or in ``app.ai.quota`` reads it.
 
 Statuses
 --------
@@ -33,7 +35,9 @@ row twice or lose it, and two concurrent runs cannot both move the same row.
 A second run finds nothing old enough left, so it changes nothing. Daily rows
 are kept 400 days. The daily table has no user column and no cache-token
 columns (``input_tokens`` there is the sum of the raw ``input_tokens``,
-which exclude cached tokens; ``cost_micros`` includes everything).
+which exclude cached tokens; ``cost_micros`` includes everything). Nor does
+it carry ``attempt`` (#603): the retry rate is counted from the 30 days of
+raw rows, so the daily key stays (day, feature, model, status).
 
 This module never calls a provider.
 """
@@ -89,6 +93,7 @@ def usage_insert(
     cache_write_tokens: int = 0,
     request_id: str | None = None,
     price_version: str = CURRENT_PRICE_VERSION,
+    attempt: int | None = None,
 ) -> Insert:
     """The ``ai_usage`` insert for one call, with its cost computed.
 
@@ -96,6 +101,9 @@ def usage_insert(
     is ``ON CONFLICT (call_id) DO NOTHING RETURNING call_id``, so executing it
     again (a settle retried after a commit whose acknowledgement was lost)
     adds no row and returns nothing.
+
+    ``attempt`` (#603) is stored as given (None: unknown); it never changes
+    the cost.
 
     Raises ``ValueError`` for an unknown status or a bad token count and
     ``UnknownPriceError`` for a model with no price at ``price_version``.
@@ -128,6 +136,7 @@ def usage_insert(
             cost_micros=cost,
             status=status,
             request_id=request_id,
+            attempt=attempt,
         )
         .on_conflict_do_nothing(index_elements=[AIUsage.call_id])
         # A row back means this execution inserted it; none means an earlier

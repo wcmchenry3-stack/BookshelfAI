@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     UniqueConstraint,
     func,
@@ -96,6 +97,12 @@ class AIUsage(Base):
     # The server-generated X-Request-ID (app.core.logging); NULL outside a
     # request.
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Which try of the request this was (#603): the client's ``attempt`` form
+    # field on /scan, validated to 1..6 (1 the first try, 2..6 the app's
+    # scheduled retries). Informational only: never used for charging,
+    # limits or ordering. NULL on rows written before 0014 (unknown) and for
+    # callers outside /scan. Not carried into ``ai_usage_daily``.
+    attempt: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
