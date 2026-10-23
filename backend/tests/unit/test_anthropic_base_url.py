@@ -1,4 +1,4 @@
-"""The Claude adapter and ANTHROPIC_BASE_URL (#539): the client is built with
+"""The Claude adapter and AI_ANTHROPIC_BASE_URL (#539): the client is built with
 the pinned Anthropic host unless the validated setting names another."""
 
 import dataclasses
@@ -29,7 +29,7 @@ def provider():
 
 async def test_unset_uses_the_pinned_host(provider):
     with (
-        patch.object(settings, "anthropic_base_url", ""),
+        patch.object(settings, "ai_anthropic_base_url", ""),
         fake_claude(message()) as (client_cls, _create),
     ):
         await provider.identify(IMAGE)
@@ -39,16 +39,28 @@ async def test_unset_uses_the_pinned_host(provider):
 
 async def test_set_is_passed_to_the_client(provider):
     with (
-        patch.object(settings, "anthropic_base_url", "http://127.0.0.1:18080"),
+        patch.object(settings, "ai_anthropic_base_url", "http://127.0.0.1:18080"),
         fake_claude(message()) as (client_cls, _create),
     ):
         await provider.identify(IMAGE)
     assert client_cls.call_args.kwargs["base_url"] == "http://127.0.0.1:18080"
 
 
-def test_the_process_environment_is_not_read_by_the_tests():
-    # tests/conftest.py drops it, so a developer's shell cannot change a test.
-    import os
+async def test_the_generic_anthropic_base_url_is_ignored(provider, monkeypatch):
+    # A developer's shell may export ANTHROPIC_BASE_URL for other tools. Neither
+    # the app's settings nor the SDK may use it, or the API key would go there.
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.com")
+    from app.core.config import Settings
 
-    assert "ANTHROPIC_BASE_URL" not in os.environ
-    assert settings.anthropic_base_url == ""
+    assert (
+        Settings(
+            database_url="postgresql+asyncpg://u:p@localhost/db"
+        ).ai_anthropic_base_url
+        == ""
+    )
+    with (
+        patch.object(settings, "ai_anthropic_base_url", ""),
+        fake_claude(message()) as (client_cls, _create),
+    ):
+        await provider.identify(IMAGE)
+    assert client_cls.call_args.kwargs["base_url"] == "https://api.anthropic.com"

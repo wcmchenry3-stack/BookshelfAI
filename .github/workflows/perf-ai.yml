@@ -62,7 +62,7 @@ jobs:
           nohup python perf/fake_provider.py --port 18080 > perf-logs/fake-provider.log 2>&1 &
       - name: Run the scan abuse scenarios
         # Starts the API itself (uvicorn, once per scenario) with
-        # ANTHROPIC_BASE_URL pointing at the fake provider, then Locust.
+        # AI_ANTHROPIC_BASE_URL pointing at the fake provider, then Locust.
         # Fails when a scenario's assertions fail.
         run: python perf/run_scan_abuse.py --external-stub --stub-port 18080
       - name: Upload logs

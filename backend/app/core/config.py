@@ -25,7 +25,7 @@ _HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 # long enough not to be guessed. Generate with e.g. `openssl rand -hex 32`.
 _ORIGIN_AUTH_SECRET_MIN_LENGTH = 32
 
-# Hosts ANTHROPIC_BASE_URL may name in a hardened environment (#539).
+# Hosts AI_ANTHROPIC_BASE_URL may name in a hardened environment (#539).
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _PRINTABLE_ASCII_PATTERN = re.compile(r"[\x20-\x7e]+")
 
@@ -65,14 +65,14 @@ class Settings(BaseSettings):
     # such a feature answers 503 scan_unavailable (refunded); boot never
     # fails over it. A secret: never logged, scrubbed from Sentry events.
     anthropic_api_key: str = ""
-    # Base URL of the Anthropic API for the Claude adapter (ANTHROPIC_BASE_URL),
+    # Base URL of the Anthropic API for the Claude adapter (AI_ANTHROPIC_BASE_URL),
     # read once at boot. Unset (the default) means the host pinned in
     # app/ai/providers/anthropic_vision.py. It exists only so the nightly load run (#539)
     # can point the adapter at a local fake provider; it must stay unset in
     # production. In any hardened environment (staging, production) a value
     # that is not localhost / 127.0.0.1 / ::1 fails boot, so it can never
     # redirect real traffic and the API key to another host.
-    anthropic_base_url: str = ""
+    ai_anthropic_base_url: str = ""
     openai_max_tokens: int = 512
     # Multi-book scan: one photo can hold up to scan_max_books covers or spines.
     # The JSON for 15 books needs far more room than openai_max_tokens allows,
@@ -287,27 +287,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _valid_anthropic_base_url(self) -> "Settings":
-        """ANTHROPIC_BASE_URL: empty, or an http(s) URL with a host and no
+        """AI_ANTHROPIC_BASE_URL: empty, or an http(s) URL with a host and no
         credentials; in a hardened environment only a local host. Messages
         describe the rule only; the value is never echoed."""
-        value = self.anthropic_base_url.strip()
-        self.anthropic_base_url = value
+        value = self.ai_anthropic_base_url.strip()
+        self.ai_anthropic_base_url = value
         if not value:
             return self
         try:
             parts = urlsplit(value)
             host = parts.hostname
         except ValueError:
-            raise ValueError("ANTHROPIC_BASE_URL is not a valid URL") from None
+            raise ValueError("AI_ANTHROPIC_BASE_URL is not a valid URL") from None
         if parts.scheme not in {"http", "https"} or not host:
-            raise ValueError("ANTHROPIC_BASE_URL must be an http(s) URL with a host")
+            raise ValueError("AI_ANTHROPIC_BASE_URL must be an http(s) URL with a host")
         if parts.username is not None or parts.password is not None:
-            raise ValueError("ANTHROPIC_BASE_URL must not contain credentials")
+            raise ValueError("AI_ANTHROPIC_BASE_URL must not contain credentials")
         if parts.query or parts.fragment:
-            raise ValueError("ANTHROPIC_BASE_URL must not have a query or fragment")
+            raise ValueError("AI_ANTHROPIC_BASE_URL must not have a query or fragment")
         if self.is_hardened and host not in _LOCAL_HOSTS:
             raise ValueError(
-                "ANTHROPIC_BASE_URL must be unset (or localhost / 127.0.0.1) "
+                "AI_ANTHROPIC_BASE_URL must be unset (or localhost / 127.0.0.1) "
                 "in staging and production"
             )
         return self

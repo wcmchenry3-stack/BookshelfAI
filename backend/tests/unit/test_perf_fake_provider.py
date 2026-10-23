@@ -62,7 +62,7 @@ def _post(url: str, body: dict | None = None) -> dict:
 async def test_the_real_adapter_parses_the_fake_reply(stub, provider):
     base, state = stub
     with (
-        patch.object(settings, "anthropic_base_url", base),
+        patch.object(settings, "ai_anthropic_base_url", base),
         patch.object(settings, "anthropic_api_key", "perf-fake-key"),
     ):
         result = await provider.identify(IMAGE)
@@ -78,7 +78,7 @@ async def test_injected_error_is_counted_and_refunds_the_scan(stub, provider):
     base, state = stub
     state.error_rate = 1.0
     with (
-        patch.object(settings, "anthropic_base_url", base),
+        patch.object(settings, "ai_anthropic_base_url", base),
         patch.object(settings, "anthropic_api_key", "perf-fake-key"),
         pytest.raises(ScanUnavailableError),
     ):

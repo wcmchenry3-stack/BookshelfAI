@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         "TURNSTILE_SECRET_KEY": "",
         "CLAMAV_ENABLED": "false",
         "ANTHROPIC_API_KEY": "perf-fake-key",
-        "ANTHROPIC_BASE_URL": stub_url,
+        "AI_ANTHROPIC_BASE_URL": stub_url,
         "OPENAI_API_KEY": "",
         "OPEN_LIBRARY_BASE_URL": stub_url,
         "RATE_LIMIT_SCAN": "100000/minute",
@@ -288,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
                 "JWT_PRIVATE_KEY",
                 "JWT_PUBLIC_KEY",
                 "TURNSTILE_REQUIRED",
-                "ANTHROPIC_BASE_URL",
+                "AI_ANTHROPIC_BASE_URL",
                 "RATE_LIMIT_SCAN",
                 "AI_SETTINGS_CACHE_TTL_SECONDS",
             )

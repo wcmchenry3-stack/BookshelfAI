@@ -10,11 +10,6 @@ _DUMMY_DB_URL = "postgresql+asyncpg://test:test@localhost/test"
 if not os.environ.get("DATABASE_URL"):
     os.environ["DATABASE_URL"] = _DUMMY_DB_URL
 
-# ANTHROPIC_BASE_URL (#539) redirects the Claude adapter. A developer's shell may
-# set it for other tools; tests must neither read it nor depend on it, so every
-# run starts without it. Tests that need a value pass one explicitly.
-os.environ.pop("ANTHROPIC_BASE_URL", None)
-
 # Disable Turnstile bot-protection in tests. Production deployments must configure
 # TURNSTILE_SECRET_KEY; the startup handler enforces this when TURNSTILE_REQUIRED=true.
 if not os.environ.get("TURNSTILE_REQUIRED"):

@@ -49,7 +49,7 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 - `ALLOWED_EMAILS`
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY` (#532) — only needed once a scan feature is switched to the `anthropic` provider (see "Switching a scan feature to Claude" below). The app boots without it; a feature switched to `anthropic` while it is missing answers `503 scan_unavailable` (refunded) and logs an error. Secret: never logged, scrubbed from Sentry events
-- `ANTHROPIC_BASE_URL` (#539) — **must stay unset in production and staging.** It exists only so the nightly load run (`.github/workflows/perf-ai.yml`) can point the Claude adapter at a local fake provider. Unset means `https://api.anthropic.com`. In a hardened environment (any `ENVIRONMENT` except `development` and `test`) a value that is not `localhost`, `127.0.0.1` or `::1` makes the app fail at boot, so a mistaken or malicious value cannot send the API key and photos to another host. Check that the service does not have it set when you add a variable.
+- `AI_ANTHROPIC_BASE_URL` (#539) — **must stay unset in production and staging.** It exists only so the nightly load run (`.github/workflows/perf-ai.yml`) can point the Claude adapter at a local fake provider. Unset means `https://api.anthropic.com`. In a hardened environment (any `ENVIRONMENT` except `development` and `test`) a value that is not `localhost`, `127.0.0.1` or `::1` makes the app fail at boot, so a mistaken or malicious value cannot send the API key and photos to another host. Check that the service does not have it set when you add a variable.
 - `GOOGLE_BOOKS_API_KEY`
 - `OPENAI_MAX_TOKENS` (optional)
 

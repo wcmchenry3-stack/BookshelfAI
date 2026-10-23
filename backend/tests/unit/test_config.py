@@ -185,22 +185,26 @@ class TestScanAiSettingsValidation:
 
 
 class TestAnthropicBaseUrl:
-    """ANTHROPIC_BASE_URL (#539): unset by default; a hardened environment
+    """AI_ANTHROPIC_BASE_URL (#539): unset by default; a hardened environment
     accepts only a local host, so it can never redirect production traffic."""
 
     DB = "postgresql+asyncpg://u:p@localhost/db"
 
     def _settings(self, url: str | None, environment: str = "development"):
-        kwargs = {} if url is None else {"anthropic_base_url": url}
+        kwargs = {} if url is None else {"ai_anthropic_base_url": url}
         return Settings(database_url=self.DB, environment=environment, **kwargs)
 
     def test_unset_by_default(self):
-        assert self._settings(None).anthropic_base_url == ""
+        assert self._settings(None).ai_anthropic_base_url == ""
+
+    def test_the_generic_sdk_variable_is_not_read(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:1")
+        assert self._settings(None).ai_anthropic_base_url == ""
 
     def test_read_from_the_environment(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:18080")
+        monkeypatch.setenv("AI_ANTHROPIC_BASE_URL", "http://127.0.0.1:18080")
         s = Settings(database_url=self.DB, environment="development")
-        assert s.anthropic_base_url == "http://127.0.0.1:18080"
+        assert s.ai_anthropic_base_url == "http://127.0.0.1:18080"
 
     @pytest.mark.parametrize("environment", ["development", "test"])
     @pytest.mark.parametrize(
@@ -214,7 +218,7 @@ class TestAnthropicBaseUrl:
     def test_any_http_url_is_accepted_outside_hardened_environments(
         self, url, environment
     ):
-        assert self._settings(url, environment).anthropic_base_url == url
+        assert self._settings(url, environment).ai_anthropic_base_url == url
 
     @pytest.mark.parametrize("environment", ["staging", "production"])
     @pytest.mark.parametrize(
@@ -230,7 +234,7 @@ class TestAnthropicBaseUrl:
     def test_unset_or_local_is_accepted_in_hardened_environments(
         self, url, environment
     ):
-        assert self._settings(url, environment).anthropic_base_url == url.strip()
+        assert self._settings(url, environment).ai_anthropic_base_url == url.strip()
 
     @pytest.mark.parametrize("environment", ["staging", "production"])
     @pytest.mark.parametrize(
@@ -248,7 +252,7 @@ class TestAnthropicBaseUrl:
     def test_non_local_url_is_rejected_in_hardened_environments(self, url, environment):
         with pytest.raises(ValidationError) as exc:
             self._settings(url, environment)
-        assert "ANTHROPIC_BASE_URL" in str(exc.value)
+        assert "AI_ANTHROPIC_BASE_URL" in str(exc.value)
 
     @pytest.mark.parametrize(
         "url",

@@ -21,7 +21,7 @@ settings can also come from ``FAKE_PROVIDER_*`` environment variables.
 
 It lives under ``backend/perf/``, not ``backend/app/``: nothing in the app
 imports it, and the app reaches it only through the validated
-``ANTHROPIC_BASE_URL`` setting.
+``AI_ANTHROPIC_BASE_URL`` setting.
 """
 
 from __future__ import annotations
