@@ -319,6 +319,36 @@ describe('Retry respects one photo at a time (#604)', () => {
     expect(mockPost).toHaveBeenCalledTimes(2);
   });
 
+  it('sends a photo retried while a drain is sending once that drain ends', async () => {
+    let finishQueued!: (v: unknown) => void;
+    mockPost.mockReturnValueOnce(new Promise((r) => (finishQueued = r)));
+    mockPost.mockResolvedValue(okBody);
+    const hook = await setup([
+      job('queued', { status: 'queued' }),
+      job('bad', { failedAt: NOW - 1000, attempts: 5, retryCount: 2 }),
+    ]);
+
+    await act(async () => {
+      hook.result.current.resumeQueue();
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await hook.result.current.restartScanSchedule('bad');
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    // Not sent alongside the drain's photo.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishQueued(okBody);
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.jobs.find((j) => j.id === 'bad')?.status).not.toBe('queued');
+  });
+
   it('sends a retried photo now when nothing else is going on', async () => {
     mockPost.mockResolvedValue(okBody);
     const hook = await setup([job('bad', { failedAt: NOW - 1000 })]);

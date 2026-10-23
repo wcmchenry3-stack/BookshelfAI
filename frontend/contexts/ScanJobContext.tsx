@@ -127,6 +127,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const drainingRef = useRef(false);
+  // A retried photo was queued while another photo was being sent or a drain
+  // was running: run another drain as soon as that finishes (#605).
+  const drainAgainRef = useRef(false);
   // Which photos the current drain stops sending after a refusal: all of
   // them (limit, paused, busy) or only enhanced ones (enhanced switched off).
   const stopDrainRef = useRef<'none' | 'enhanced' | 'images'>('none');
@@ -224,19 +227,23 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // the connectivity effect to satisfy no-use-before-define. Only uses stable
   // refs and setJobs so deps are empty.
   const drainQueue = useCallback(async () => {
-    drainingRef.current = true;
-    try {
-      // A photo skipped only because another photo was waiting for its retry
-      // is revisited once that wait ends during the pass (the waiting photo
-      // failed for good or was sent and succeeded), since nothing else would
-      // start another drain then (#604). Bounded: each extra pass needs a
-      // photo to have stopped waiting during the previous one.
-      for (let pass = 0; pass < MAX_DRAIN_PASSES; pass++) {
-        if (!(await drainPass())) break;
+    // Runs again when a retry was queued while it was running (#605).
+    do {
+      drainAgainRef.current = false;
+      drainingRef.current = true;
+      try {
+        // A photo skipped only because another photo was waiting for its
+        // retry is revisited once that wait ends during the pass (the waiting
+        // photo failed for good or was sent and succeeded), since nothing
+        // else would start another drain then (#604). Bounded: each extra
+        // pass needs a photo to have stopped waiting during the previous one.
+        for (let pass = 0; pass < MAX_DRAIN_PASSES; pass++) {
+          if (!(await drainPass())) break;
+        }
+      } finally {
+        drainingRef.current = false;
       }
-    } finally {
-      drainingRef.current = false;
-    }
+    } while (drainAgainRef.current);
 
     // One pass over the queue; true when a photo was skipped for another
     // photo's retry wait and no photo is waiting any more.
@@ -514,10 +521,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               : j
           )
         );
-        // A photo being sent starts a drain itself when it succeeds, and the
-        // retry timer does when it fails; starting one here would send this
-        // photo alongside it.
+        // Starting a drain now would send this photo alongside the one being
+        // sent, so ask for one when that send or the running drain finishes.
         if (!imageSending && !drainingRef.current) void drainQueue();
+        else drainAgainRef.current = true;
         return;
       }
       const updated: ScanJob = {
@@ -842,6 +849,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         await runScan(job);
       } finally {
         inFlightRef.current.delete(job.id);
+        // A retry queued behind this send (outside a drain; a drain handles
+        // it when it ends).
+        if (drainAgainRef.current && !drainingRef.current) {
+          drainAgainRef.current = false;
+          void drainQueue();
+        }
       }
     };
 
