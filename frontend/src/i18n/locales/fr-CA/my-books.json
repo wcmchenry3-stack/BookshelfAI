@@ -3,7 +3,7 @@
   "noBooksYet": "Aucun livre ici.",
   "statusTab": {
     "all": "Tous",
-    "wishlisted": "Liste de souhaits",
+    "wishlisted": "Souhaits",
     "purchased": "Achetés",
     "reading": "En lecture",
     "read": "Lus"
@@ -28,7 +28,7 @@
   "errorRemoveBook": "Impossible de supprimer le livre.",
   "searchPlaceholder": "__NEEDS_TRANSLATION__",
   "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
+  "sectionTitle": "Ma bibliothèque",
   "bookCount": "__NEEDS_TRANSLATION__",
   "heroSubtitle": "Toute ta vie de lecture ici",
   "archiveSummary": "livres suivis"

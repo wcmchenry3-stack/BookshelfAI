@@ -28,41 +28,9 @@ const locales = fs
   .map((d) => d.name);
 const namespaces = fs.readdirSync(META_DIR).map((f) => f.replace('.meta.json', ''));
 
-// Strings that already exceeded their limit before this test existed. This is a
-// debt list, not an allowance: shorten the string (do not raise the limit) and
-// delete the entry. A new overrun, or a stale entry here, fails the test.
-const KNOWN_OVERRUNS = new Set([
-  'ar/my-books.status.wishlisted',
-  'ar/my-books.sectionTitle',
-  'de/my-books.sectionTitle',
-  'es/my-books.sectionTitle',
-  'fr-CA/my-books.statusTab.wishlisted',
-  'fr-CA/my-books.sectionTitle',
-  'he/my-books.sectionTitle',
-  'hi/my-books.markAs',
-  'hi/my-books.sectionTitle',
-  'ja/my-books.sectionTitle',
-  'ko/my-books.sectionTitle',
-  'nl/my-books.sectionTitle',
-  'pt/my-books.sectionTitle',
-  'ru/my-books.sectionTitle',
-  'zh/my-books.sectionTitle',
-  'ar/scan.pendingUploads',
-  'de/scan.couldNotSaveMessage',
-  'de/scan.queueFull',
-  'en/scan.captureHint',
-  'es/scan.stillProcessing',
-  'fr-CA/scan.queueFull',
-  'fr-CA/scan.pendingUploads',
-  'fr-CA/scan.usageToday',
-  'fr-CA/scan.queueFullLimited',
-  'pt/scan.scanFailedTitle',
-  'pt/scan.queueFullLimited',
-  'ru/scan.scanFailedTitle',
-  'fr-CA/settings.scanUsageLabel',
-  'ru/settings.scanUsageLabel',
-  'fr-CA/tabs.wishlist',
-]);
+// Debt list for strings that exceed their limit. It is intentionally empty:
+// shorten the string (do not raise the limit). A stale entry here fails the test.
+const KNOWN_OVERRUNS = new Set<string>([]);
 
 describe('locale strings respect their _meta characterLimit', () => {
   it.each(namespaces)('%s', (ns) => {

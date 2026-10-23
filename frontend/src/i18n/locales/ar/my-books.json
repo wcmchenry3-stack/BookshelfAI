@@ -9,7 +9,7 @@
     "read": "مقروء"
   },
   "status": {
-    "wishlisted": "في قائمة الرغبات",
+    "wishlisted": "في الرغبات",
     "purchased": "تم الشراء",
     "reading": "قيد القراءة",
     "read": "مقروء"
@@ -28,7 +28,7 @@
   "errorRemoveBook": "تعذر إزالة الكتاب.",
   "searchPlaceholder": "__NEEDS_TRANSLATION__",
   "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
+  "sectionTitle": "مكتبتي",
   "bookCount": "__NEEDS_TRANSLATION__",
   "heroSubtitle": "حياتك القرائية في مكان واحد",
   "archiveSummary": "كتب مسجلة"

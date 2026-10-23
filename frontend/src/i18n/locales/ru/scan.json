@@ -15,7 +15,7 @@
   "captureHint": "Делает фото и определяет книгу",
   "noBooksFoundTitle": "Книги не найдены",
   "noBooksFoundMessage": "Наведите камеру на обложку книги и попробуйте снова.",
-  "scanFailedTitle": "Сканирование не удалось",
+  "scanFailedTitle": "Сбой сканирования",
   "scanFailedMessage": "Что-то пошло не так. Попробуйте снова.",
   "noResultsTitle": "Нет результатов",
   "noResultsMessage": "Книги не найдены. Попробуйте другое название или автора.",
