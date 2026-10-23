@@ -238,6 +238,21 @@ async def _own(factory, user_id, ids, *, isbn_13=None, isbn_10=None, work=None):
         await db.commit()
 
 
+class TestSearchLibraryCheckFailure:
+    async def test_failed_check_still_answers_on_a_real_session(self, env):
+        """The check's rollback expires the session's user; the search must
+        not reload it afterwards (a 500 on a real AsyncSession)."""
+        factory, make_user, _ids, _ = env
+        alice = await make_user()
+        with patch(
+            "app.api.books.DeduplicationService.check",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        ):
+            (found,) = await _search(factory, alice)
+        assert found.ownership == "not_owned" and found.in_library is False
+        assert found.catalog_token
+
+
 class TestSameEdition:
     async def test_added_from_search_then_scanned_and_re_added(self, env):
         factory, make_user, _ids, _ = env

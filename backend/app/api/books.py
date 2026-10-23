@@ -1,6 +1,7 @@
 """Book search endpoint — free-text query returning enriched candidates."""
 
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +64,9 @@ async def search_books(
     """Search for books by free text. Returns up to 3 enriched candidates,
     each signed for this user (``catalog_token``, #602) and marked with
     whether they already have it (``ownership``, #587)."""
+    # Read now: a failed library check rolls the session back, which expires
+    # ``current_user``, and reloading it later would fail outside an await.
+    user_id = current_user.id
     try:
         volumes = await _gb.search_query(q, limit=3)
     except Exception as exc:
@@ -73,12 +77,12 @@ async def search_books(
 
     candidates = [_volume_to_candidate(v) for v in volumes]
     books = await _enrichment.enrich(candidates)
-    books = await _mark_library(db, current_user, books)
-    return catalog_token.sign_books(books, current_user.id)
+    books = await _mark_library(db, user_id, books)
+    return catalog_token.sign_books(books, user_id)
 
 
 async def _mark_library(
-    db: AsyncSession, user: User, books: list[EnrichedBook]
+    db: AsyncSession, user_id: uuid.UUID, books: list[EnrichedBook]
 ) -> list[EnrichedBook]:
     """The edition-level library check (#587). A failed check never fails
     the search: the results go out unmarked, and POST /wishlist still
@@ -86,7 +90,7 @@ async def _mark_library(
     if not books:
         return books
     try:
-        return await DeduplicationService().check(db, str(user.id), books)
+        return await DeduplicationService().check(db, str(user_id), books)
     except Exception as exc:  # noqa: BLE001 - the search must still answer
         logger.warning("books/search: library check failed (%s)", type(exc).__name__)
         try:
