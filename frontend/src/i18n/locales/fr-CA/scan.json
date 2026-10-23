@@ -42,8 +42,8 @@
   "enhancedRequiresPremium": "Les numérisations améliorées font partie de Premium.",
   "enhancedThrottled": "Plusieurs numérisations améliorées récentes n'ont trouvé aucun livre. Réessayez après {{time}}.",
   "enhancedThrottledLater": "Plusieurs numérisations améliorées récentes n'ont trouvé aucun livre. Réessayez plus tard.",
-  "repeatAlreadyHave_one": "Vous avez déjà ce livre.",
-  "repeatAlreadyHave_other": "Vous avez déjà ces livres.",
+  "repeatAlreadyHaveOne": "Vous avez déjà ce livre.",
+  "repeatAlreadyHaveMany": "Vous avez déjà ces livres.",
   "repeatNotInLibrary": "Vous avez déjà numérisé ceci, mais ce n'est pas dans votre bibliothèque. Le rajouter?",
   "repeatReAdd": "Rajouter",
   "repeatNoMatch": "Nous n'avions trouvé aucun livre dans cette photo. Essayez une photo plus nette ou un autre angle."

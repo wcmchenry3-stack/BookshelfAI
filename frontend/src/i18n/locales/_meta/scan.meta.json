@@ -230,13 +230,13 @@
     "tone": "neutral",
     "characterLimit": 120
   },
-  "repeatAlreadyHave_one": {
-    "description": "Info banner (#588) when the user re-sends a photo already scanned and its one book is already in their library. Singular form; i18next plural, no number shown.",
+  "repeatAlreadyHaveOne": {
+    "description": "Info banner (#588) when the user re-sends a photo already scanned and its one book is already in their library.",
     "tone": "neutral",
     "characterLimit": 50
   },
-  "repeatAlreadyHave_other": {
-    "description": "Info banner (#588) when the user re-sends a photo already scanned and all its books are already in their library. Plural form; i18next plural, no number shown.",
+  "repeatAlreadyHaveMany": {
+    "description": "Info banner (#588) when the user re-sends a photo already scanned and all its books (two or more) are already in their library. No number is shown, so this is a fixed plural, not an i18next count plural.",
     "tone": "neutral",
     "characterLimit": 50
   },

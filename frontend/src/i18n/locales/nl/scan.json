@@ -42,9 +42,9 @@
   "enhancedRequiresPremium": "Uitgebreide scans zijn onderdeel van Premium.",
   "enhancedThrottled": "Meerdere recente uitgebreide scans vonden geen boeken. Probeer het opnieuw na {{time}}.",
   "enhancedThrottledLater": "Meerdere recente uitgebreide scans vonden geen boeken. Probeer het later opnieuw.",
-  "repeatAlreadyHave_one": "Je hebt dit boek al.",
-  "repeatAlreadyHave_other": "Je hebt deze boeken al.",
+  "repeatAlreadyHaveOne": "Je hebt dit boek al.",
+  "repeatAlreadyHaveMany": "Je hebt deze boeken al.",
   "repeatNotInLibrary": "Je hebt dit al gescand, maar het staat niet in je bibliotheek. Opnieuw toevoegen?",
-  "repeatReAdd": "Toevoegen",
+  "repeatReAdd": "Opnieuw",
   "repeatNoMatch": "Op deze foto vonden we eerder geen boek. Probeer een scherpere foto of een andere hoek."
 }

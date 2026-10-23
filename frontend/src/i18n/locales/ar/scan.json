@@ -42,13 +42,9 @@
   "enhancedRequiresPremium": "عمليات المسح المحسّن جزء من Premium.",
   "enhancedThrottled": "لم تعثر عدة عمليات مسح محسّن حديثة على أي كتب. حاول مرة أخرى بعد {{time}}.",
   "enhancedThrottledLater": "لم تعثر عدة عمليات مسح محسّن حديثة على أي كتب. يُرجى المحاولة مرة أخرى لاحقًا.",
-  "repeatAlreadyHave_one": "لديك هذا الكتاب بالفعل.",
-  "repeatAlreadyHave_other": "لديك هذه الكتب بالفعل.",
-  "repeatAlreadyHave_zero": "لديك هذه الكتب بالفعل.",
-  "repeatAlreadyHave_two": "لديك هذه الكتب بالفعل.",
-  "repeatAlreadyHave_few": "لديك هذه الكتب بالفعل.",
-  "repeatAlreadyHave_many": "لديك هذه الكتب بالفعل.",
+  "repeatAlreadyHaveOne": "لديك هذا الكتاب بالفعل.",
+  "repeatAlreadyHaveMany": "لديك هذه الكتب بالفعل.",
   "repeatNotInLibrary": "مسحت هذا من قبل وهو غير موجود في مكتبتك. هل تريد إضافته مجددًا؟",
-  "repeatReAdd": "إضافة",
+  "repeatReAdd": "إعادة الإضافة",
   "repeatNoMatch": "لم نجد كتابًا في هذه الصورة من قبل. جرّب صورة أوضح أو زاوية مختلفة."
 }

@@ -81,7 +81,7 @@ Every user has two daily allowances (#577). The numbers come from `GET /scan/usa
   - Every book already in the library: "You already have this book." / "You already have these books." The photo is discarded and no review sheet opens.
   - Some books not in the library (rejected, deleted, or a save that failed): "You scanned this before and it's not in your library. Re-add it?" with a **Re-add** button. It opens the usual review sheet on the saved result, which preselects only the books not in the library; confirming sends `POST /wishlist` only, never another `/scan`.
   - A photo where no book was found before: "We couldn't find a book in this photo before. Try a clearer photo or a different angle." The Premium enhanced-scan offer still shows when it normally would.
-  - Enhanced re-scans and text searches keep their normal messages.
+  - An enhanced re-scan of a photo already enhanced is a repeat too and gets the same messages; an empty one keeps the enhanced "no books found" message. Text searches are never repeats.
 - **Settings:** a "Scan usage" row with the same two figures. No plan label, renewal date or upgrade button.
 - **An older server's monthly refusal (402 `scan_limit_reached` / `enhanced_limit_reached`):** shown as the generic "Scan failed" banner (retry or save for later), or for an enhanced re-scan "Enhanced scan failed. Showing your earlier results."; never a monthly message.
 - **Daily limit (429 `daily_scan_limit`):** "Daily limit reached. Scanning resets at midnight UTC (<local time> your time)."

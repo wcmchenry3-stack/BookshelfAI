@@ -42,8 +42,8 @@
   "enhancedRequiresPremium": "향상된 스캔은 Premium 기능입니다.",
   "enhancedThrottled": "최근 향상된 스캔에서 책을 여러 번 찾지 못했습니다. {{time}} 이후에 다시 시도해 주세요.",
   "enhancedThrottledLater": "최근 향상된 스캔에서 책을 여러 번 찾지 못했습니다. 나중에 다시 시도해 주세요.",
-  "repeatAlreadyHave_one": "이미 가지고 있는 책입니다.",
-  "repeatAlreadyHave_other": "이미 가지고 있는 책들입니다.",
+  "repeatAlreadyHaveOne": "이미 가지고 있는 책입니다.",
+  "repeatAlreadyHaveMany": "이미 가지고 있는 책들입니다.",
   "repeatNotInLibrary": "전에 스캔했지만 라이브러리에 없습니다. 다시 추가할까요?",
   "repeatReAdd": "다시 추가",
   "repeatNoMatch": "전에 이 사진에서 책을 찾지 못했습니다. 더 선명한 사진이나 다른 각도로 시도해 보세요."

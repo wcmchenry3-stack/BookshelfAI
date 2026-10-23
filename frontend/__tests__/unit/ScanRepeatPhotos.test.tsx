@@ -107,6 +107,12 @@ describe('repeat photo messages', () => {
     expect(hook.result.current.scan.reviewingJob).toBeNull();
   });
 
+  it('all in the library: the discarded photo is deleted from disk', async () => {
+    const { deleteScanImage } = jest.requireMock('../../lib/scanJobStorage');
+    await scan({ ...base, repeat: true, books: [book('Dune', true)] });
+    expect(deleteScanImage).toHaveBeenCalledWith('file:///a.jpg');
+  });
+
   it('several books all in the library: plural copy', async () => {
     const { hook } = await scan({
       ...base,
@@ -141,6 +147,33 @@ describe('repeat photo messages', () => {
   it('a normal scan still shows "books found"', async () => {
     const { hook } = await scan({ ...base, books: [book('Dune', false)] });
     expect(hook.result.current.banner.banner?.message).toBe('Found 1 book');
+  });
+});
+
+describe('enhanced re-scan served as a repeat', () => {
+  it('a photo already enhanced, its books all in the library: "You already have…"', async () => {
+    const { hook } = await scan({ ...base, books: [book('Dune', false)] });
+    const jobId = hook.result.current.scan.jobs[0].id;
+    mockPost.mockResolvedValueOnce({
+      data: { ...base, enhanced: true, repeat: true, books: [book('Dune', true)] },
+    });
+    await act(async () => {
+      await hook.result.current.scan.requestEnhancedScan(jobId);
+    });
+    expect(hook.result.current.banner.banner?.message).toBe('You already have this book.');
+    expect(hook.result.current.scan.jobs).toEqual([]);
+  });
+
+  it('a photo already enhanced, a book not in the library: offers Re-add', async () => {
+    const { hook } = await scan({ ...base, books: [book('Dune', false)] });
+    const jobId = hook.result.current.scan.jobs[0].id;
+    mockPost.mockResolvedValueOnce({
+      data: { ...base, enhanced: true, repeat: true, books: [book('Dune', false)] },
+    });
+    await act(async () => {
+      await hook.result.current.scan.requestEnhancedScan(jobId);
+    });
+    expect(hook.result.current.banner.banner?.actions?.[0].label).toBe('Re-add');
   });
 });
 
@@ -190,8 +223,8 @@ describe('re-add flow', () => {
 
 describe('every locale has the repeat copy', () => {
   const KEYS = [
-    'repeatAlreadyHave_one',
-    'repeatAlreadyHave_other',
+    'repeatAlreadyHaveOne',
+    'repeatAlreadyHaveMany',
     'repeatNotInLibrary',
     'repeatReAdd',
     'repeatNoMatch',
@@ -202,6 +235,14 @@ describe('every locale has the repeat copy', () => {
       expect([key, typeof scan[key] === 'string' && scan[key].length > 0]).toEqual([key, true]);
       expect(scan[key]).not.toContain('NEEDS_TRANSLATION');
     }
+  });
+
+  // The number of books is never shown, so the copy is chosen on one vs more
+  // than one, not with count plurals: Russian puts 21, 31… in the "one"
+  // category, which would say "this book" for 21 books.
+  it.each(LOCALES.map((l) => l.code))('%s has no count-plural repeat keys', (code) => {
+    const scan = require(`../../src/i18n/locales/${code}/scan.json`);
+    expect(Object.keys(scan).filter((k) => k.startsWith('repeatAlreadyHave_'))).toEqual([]);
   });
 
   it('_meta describes every new key with a character limit', () => {
