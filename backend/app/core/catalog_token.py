@@ -1,16 +1,28 @@
 """Server-signed catalog tokens (#602).
 
 The shared catalog (``books``, ``editions``) is written only from data the
-server produced itself (Open Library / Google Books lookups). The app adds a
-book to the wishlist by posting back an ``EnrichedBook`` it got from
-``POST /scan`` or ``GET /books/search``, so the server signs every such
-result: ``catalog_token`` is an HMAC-SHA256 over
+providers (Open Library / Google Books) returned to the server. The app adds
+a book to the wishlist by posting back an ``EnrichedBook`` it got from
+``POST /scan`` or ``GET /books/search``, so the server signs such a result:
+``catalog_token`` is an HMAC-SHA256 over
 
 - a canonical serialisation of the catalog fields (:data:`BOOK_FIELDS`,
   ``subjects`` and, per edition, :data:`EDITION_FIELDS`): JSON with sorted
   keys and no whitespace;
 - the requesting user's ID;
 - the expiry and the token version.
+
+What a valid token guarantees: the server produced exactly these field
+values for this user from provider records, within the TTL. It does not
+stop the user from choosing *which* provider record a photo or query
+matches. The enrichment service (``app/services/enrichment.py``) is what
+keeps user-controlled input out of the signed fields: whenever a provider
+matched, the title, author, IDs, description, cover, subjects and edition
+details come from the provider records, and an edition ISBN read only by the
+vision model is signed only when a provider confirmed it. A result with no
+provider ID (nothing matched, so its title and author are the model's
+reading of the photo) is never signed (:func:`sign_books`), and the wishlist
+service never creates a row for one.
 
 ``POST /wishlist`` recomputes the MAC over what it receives and the
 authenticated user. Only a valid token lets it create catalog rows; anything
@@ -205,8 +217,20 @@ def _b64encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
+_B64URL_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+)
+
+
 def _b64decode(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+    """Strict unpadded base64url: any character outside ``[A-Za-z0-9_-]``
+    (padding included) is :class:`binascii.Error` rather than skipped, so
+    exactly one string decodes to a given payload."""
+    if not set(text) <= _B64URL_ALPHABET:
+        raise binascii.Error("not base64url")
+    return base64.b64decode(
+        text + "=" * (-len(text) % 4), altchars=b"-_", validate=True
+    )
 
 
 def expiry_for(now: datetime) -> int:
@@ -232,15 +256,25 @@ def sign(book: SignableBook, user_id: uuid.UUID, now: datetime | None = None) ->
     return _encode(version=CATALOG_TOKEN_VERSION, exp=exp, user_id=user_id, book=book)
 
 
+def is_signable(book: SignableBook) -> bool:
+    """Only a book a provider matched (it has a provider ID) may ever create
+    a catalog row; one with neither ID is the model's reading alone."""
+    return bool(book.open_library_work_id or book.google_books_id)
+
+
 def sign_books(
     books: list[Any], user_id: uuid.UUID, now: datetime | None = None
 ) -> list[Any]:
-    """Set ``catalog_token`` on every ``EnrichedBook`` in ``books`` (in
-    place) and return the list. Never fails the response: a book that
-    cannot be signed gets no token (it can then only be linked to an
+    """Set ``catalog_token`` on every signable ``EnrichedBook`` in ``books``
+    (in place) and return the list. A book with no provider ID
+    (:func:`is_signable`) gets ``None``. Never fails the response: a book
+    that cannot be signed gets no token (it can then only be linked to an
     existing catalog row, never create one)."""
     when = now or datetime.now(UTC)
     for book in books:
+        if not is_signable(book):
+            book.catalog_token = None
+            continue
         try:
             book.catalog_token = sign(book, user_id, when)
         except Exception as exc:  # noqa: BLE001 - fail closed, not the scan

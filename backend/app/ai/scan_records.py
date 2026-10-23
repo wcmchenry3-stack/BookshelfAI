@@ -86,6 +86,13 @@ _BOOK_FIELDS = frozenset(EnrichedBook.model_fields) - {
     "already_in_library",
     "catalog_token",
 }
+# Every saved book carries this marker (#602). Books saved before catalog
+# fields came only from the providers (the title, author and ISBNs could be
+# the vision model's reading) have none: such an enrichment is treated as
+# missing, so a repeat redoes the enrichment step (provider lookups only,
+# no AI call, nothing charged) instead of signing the old values.
+BOOK_FORMAT_KEY = "record_v"
+BOOK_FORMAT_VERSION = 2
 
 
 class ScanRecordError(ValueError):
@@ -183,7 +190,13 @@ def deserialise_candidates(value: Any) -> list[BookCandidate]:
 
 def serialise_books(books: list[EnrichedBook]) -> list[dict[str, Any]]:
     """The enriched books as JSON, without the per-user fields."""
-    items = [b.model_dump(mode="json", include=set(_BOOK_FIELDS)) for b in books]
+    items = [
+        {
+            **b.model_dump(mode="json", include=set(_BOOK_FIELDS)),
+            BOOK_FORMAT_KEY: BOOK_FORMAT_VERSION,
+        }
+        for b in books
+    ]
     deserialise_books(items)
     return items
 
@@ -195,10 +208,14 @@ def deserialise_books(value: Any) -> list[EnrichedBook]:
         raise ScanRecordError("bad books")
     books = []
     for item in value:
-        if not isinstance(item, dict) or set(item) - _BOOK_FIELDS:
+        if not isinstance(item, dict) or set(item) - _BOOK_FIELDS - {BOOK_FORMAT_KEY}:
             raise ScanRecordError("bad book")
+        version = item.get(BOOK_FORMAT_KEY)
+        if isinstance(version, bool) or version != BOOK_FORMAT_VERSION:
+            raise ScanRecordError("old book format")
+        fields = {k: v for k, v in item.items() if k != BOOK_FORMAT_KEY}
         try:
-            books.append(EnrichedBook.model_validate(item))
+            books.append(EnrichedBook.model_validate(fields))
         except ValidationError:
             raise ScanRecordError("bad book") from None
     return books

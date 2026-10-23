@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.core import catalog_token
 from app.main import app
@@ -15,7 +16,11 @@ from app.models.edition import Edition
 from app.models.user import User
 from app.schemas.book import EditionPreview
 from app.schemas.user_book import WishlistRequest
-from app.services.wishlist import CatalogTokenInvalidError, WishlistService
+from app.services.wishlist import (
+    BookNotInCatalogError,
+    CatalogTokenInvalidError,
+    WishlistService,
+)
 
 USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000602")
 OTHER_USER = uuid.UUID("00000000-0000-0000-0000-000000000603")
@@ -46,6 +51,8 @@ def _mock_db(*results):
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    # A SAVEPOINT around each catalog insert (#602 race handling).
+    db.begin_nested = MagicMock(return_value=MagicMock())
     rows = []
     for value in results:
         result = MagicMock()
@@ -140,6 +147,105 @@ class TestSigned:
         assert _added(db, Edition) == []
         assert edition.publisher == "Ace"
 
+    async def test_edition_of_another_book_is_not_linked(self):
+        """Signed or not, a user book never points at another book's
+        edition (#602 review, finding 2)."""
+        book = Book(id=uuid.uuid4(), title="Dune", author="Frank Herbert")
+        other = Edition(id=uuid.uuid4(), book_id=uuid.uuid4(), isbn_13="9780441013593")
+        # OL lookup -> book, edition lookup -> another book's, user_book -> none
+        db = _mock_db(book, other, None)
+        await WishlistService().add(db, USER_ID, _signed())
+        assert _added(db, Edition) == []
+        (user_book,) = db.add.call_args_list
+        assert user_book.args[0].book_id == book.id
+        assert user_book.args[0].edition_id is None
+
+
+class TestNoProviderId:
+    """A book with no work ID and no Google Books ID never creates or links
+    a catalog row, even with a valid token (#602 review, finding 3)."""
+
+    async def test_signed_book_without_ids_is_refused(self):
+        db = _mock_db()
+        req = _signed(open_library_work_id=None, google_books_id=None)
+        assert catalog_token.verify(req.catalog_token, req, USER_ID)
+        with pytest.raises(BookNotInCatalogError):
+            await WishlistService().add(db, USER_ID, req)
+        db.execute.assert_not_called()
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
+
+    async def test_replayed_token_creates_nothing(self):
+        req = _signed(open_library_work_id=None, google_books_id=None)
+        for _ in range(3):
+            db = _mock_db()
+            with pytest.raises(BookNotInCatalogError):
+                await WishlistService().add(db, USER_ID, req)
+            db.add.assert_not_called()
+
+    async def test_find_or_create_never_creates_without_ids(self):
+        db = _mock_db()
+        req = _request(open_library_work_id=None, google_books_id=None)
+        assert (
+            await WishlistService()._find_or_create_book(db, req, create=True) is None
+        )
+        db.add.assert_not_called()
+
+
+class TestRacingInserts:
+    """A unique-constraint loss inside the SAVEPOINT re-reads and links the
+    row the other request created (finding 3); the Postgres version is in
+    tests/integration/test_wishlist_catalog_token_db.py."""
+
+    @staticmethod
+    def _flush_conflicts(db, times=1):
+        calls = {"n": 0}
+
+        async def flush():
+            calls["n"] += 1
+            if calls["n"] <= times:
+                raise IntegrityError("INSERT", {}, Exception("duplicate key"))
+
+        db.flush = AsyncMock(side_effect=flush)
+
+    async def test_book_conflict_links_the_existing_work(self):
+        winner = Book(id=uuid.uuid4(), title="Dune", author="Frank Herbert")
+        result = MagicMock()
+        result.scalar_one.return_value = winner
+        # OL lookup, GB lookup: nothing; re-read after the conflict: winner.
+        db = _mock_db(None, None)
+        db.execute = AsyncMock(side_effect=[*db.execute.side_effect, result])
+        self._flush_conflicts(db)
+        book = await WishlistService()._find_or_create_book(db, _signed(), create=True)
+        assert book is winner
+        db.begin_nested.assert_called_once()
+
+    async def test_book_conflict_without_a_work_id_is_raised(self):
+        db = _mock_db(None)
+        self._flush_conflicts(db)
+        with pytest.raises(IntegrityError):
+            await WishlistService()._find_or_create_book(
+                db, _signed(open_library_work_id=None), create=True
+            )
+
+    @pytest.mark.parametrize("same_book", [True, False])
+    async def test_edition_conflict_links_only_an_edition_of_this_book(self, same_book):
+        book_id = uuid.uuid4()
+        winner = Edition(
+            id=uuid.uuid4(),
+            book_id=book_id if same_book else uuid.uuid4(),
+            isbn_13="9780441013593",
+        )
+        result = MagicMock()
+        result.scalar_one.return_value = winner
+        db = _mock_db(None)
+        db.execute = AsyncMock(side_effect=[*db.execute.side_effect, result])
+        self._flush_conflicts(db)
+        edition = await WishlistService()._find_or_create_edition(
+            db, book_id, _signed(), create=True
+        )
+        assert edition is (winner if same_book else None)
+
 
 # ─── POST /wishlist ────────────────────────────────────────────────────────────
 
@@ -169,6 +275,24 @@ class TestEndpoint:
             )
         assert resp.status_code == 422
         assert resp.json() == {"detail": "catalog_token_invalid"}
+
+    def test_book_without_ids_is_422_book_not_in_catalog(self, client):
+        # The real service: refused before any database access.
+        resp = client.post(
+            "/wishlist", json={"title": "Dune", "author": "Frank Herbert"}
+        )
+        assert resp.status_code == 422
+        assert resp.json() == {"detail": "book_not_in_catalog"}
+
+    def test_book_not_in_catalog_error_maps_to_422(self, client):
+        with patch("app.api.user_books.WishlistService") as svc:
+            svc.return_value.add = AsyncMock(side_effect=BookNotInCatalogError)
+            resp = client.post(
+                "/wishlist",
+                json={"title": "Dune", "author": "F", "google_books_id": "gb1"},
+            )
+        assert resp.status_code == 422
+        assert resp.json() == {"detail": "book_not_in_catalog"}
 
     def test_token_is_passed_to_the_service(self, client):
         with patch("app.api.user_books.WishlistService") as svc:

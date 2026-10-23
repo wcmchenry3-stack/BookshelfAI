@@ -24,11 +24,18 @@ from app.schemas.user_book import (
     UserBookUpdate,
     WishlistRequest,
 )
-from app.services.wishlist import CatalogTokenInvalidError, WishlistService
+from app.services.wishlist import (
+    BookNotInCatalogError,
+    CatalogTokenInvalidError,
+    WishlistService,
+)
 
 # 422 detail when POST /wishlist would need a new catalog row but the book
 # carries no valid catalog token (#602).
 CATALOG_TOKEN_INVALID = "catalog_token_invalid"
+# 422 detail when the book has no provider ID (no Open Library work ID and no
+# Google Books ID): it is not in the catalog and can never be added (#602).
+BOOK_NOT_IN_CATALOG = "book_not_in_catalog"
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,11 @@ async def add_to_wishlist(
     service = WishlistService()
     try:
         return await service.add(db, current_user.id, req)
+    except BookNotInCatalogError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=BOOK_NOT_IN_CATALOG,
+        ) from None
     except CatalogTokenInvalidError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

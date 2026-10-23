@@ -30,6 +30,8 @@ def _mock_db():
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    # A SAVEPOINT around each catalog insert (#602 race handling).
+    db.begin_nested = MagicMock(return_value=MagicMock())
     return db
 
 
@@ -119,6 +121,8 @@ class TestFindOrCreateEdition:
     async def test_finds_existing_edition_by_isbn(
         self, service, existing_book, existing_edition
     ):
+        # An edition of this book (#602: never another book's edition).
+        existing_edition.book_id = existing_book.id
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(existing_edition))
         result = await service._find_or_create_edition(

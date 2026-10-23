@@ -26,15 +26,18 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.ai import scan_records
 from app.ai.providers.base import ProviderResult
 from app.api import books as books_api
 from app.api import scan as scan_api
 from app.api import user_books as user_books_api
+from app.core import catalog_token
 from app.core.config import settings
 from app.core.database import Base
 from app.models.ai_usage import AIUsage
 from app.models.book import Book
 from app.models.edition import Edition
+from app.models.scan_record import ScanRecord
 from app.models.user import User
 from app.models.user_book import UserBook
 from app.schemas.user_book import WishlistRequest
@@ -85,6 +88,7 @@ async def env():
     }
     doc = {
         "key": f"/works/{ids['work']}",
+        "title": "Dune",
         "author_name": ["Frank Herbert"],
         "subject": ["Science fiction"],
     }
@@ -319,12 +323,155 @@ class TestExistingRows:
         try:
             (book,) = await _search(factory, user_id)
             await _wishlist(factory, user_id, _posted_back(book))
-            (_row,), (edition,) = await _catalog(factory, ids)
+            (row,), (edition,) = await _catalog(factory, ids)
             assert edition.publisher == "First Writer"
             assert edition.book_id == other.id
+            # Never linked to another book's edition (#602 review, finding 2).
+            async with factory() as db:
+                ub = (
+                    await db.execute(
+                        select(UserBook).where(UserBook.user_id == user_id)
+                    )
+                ).scalar_one()
+            assert (ub.book_id, ub.edition_id) == (row.id, None)
         finally:
             async with factory() as db:
                 await db.execute(delete(UserBook).where(UserBook.user_id == user_id))
                 await db.execute(delete(Edition).where(Edition.book_id == other.id))
                 await db.execute(delete(Book).where(Book.id == other.id))
                 await db.commit()
+
+
+class TestProviderFieldsOnly:
+    """What a scan signs, and so what POST /wishlist stores, is the
+    provider's record, never the photo's reading (#602 review, finding 1)."""
+
+    DOCTORED = "Dune — FREE CRYPTO at evil.example"
+
+    async def test_doctored_cover_stores_the_provider_title(self, env):
+        factory, make_user, ids, provider = env
+        candidate = BookCandidate(
+            title=self.DOCTORED,
+            author="Not Herbert",
+            confidence=0.9,
+            isbn_13=ids["isbn"],
+        )
+        provider.return_value.identify = AsyncMock(
+            return_value=ProviderResult([candidate])
+        )
+        user_id = await make_user()
+        (book,) = (await _scan(factory, user_id, _jpeg())).books
+        assert (book.title, book.author) == ("Dune", "Frank Herbert")
+        await _wishlist(factory, user_id, _posted_back(book))
+        (row,), _ = await _catalog(factory, ids)
+        assert (row.title, row.author) == ("Dune", "Frank Herbert")
+
+    async def test_repeat_of_a_record_saved_before_the_fix_is_re_enriched(self, env):
+        factory, make_user, _ids, provider = env
+        user_id = await make_user()
+        image = _jpeg()
+        await _scan(factory, user_id, image)
+        # Rewrite the saved enrichment as an older record would hold it: the
+        # model's title, no format marker.
+        async with factory() as db:
+            record = (
+                await db.execute(
+                    select(ScanRecord).where(ScanRecord.user_id == user_id)
+                )
+            ).scalar_one()
+            (item,) = record.enrichment
+            legacy = {
+                k: v for k, v in item.items() if k != scan_records.BOOK_FORMAT_KEY
+            }
+            record.enrichment = [{**legacy, "title": self.DOCTORED}]
+            await db.commit()
+        repeat = await _scan(factory, user_id, image)
+        assert repeat.repeat is True
+        assert provider.return_value.identify.await_count == 1  # no AI call
+        (book,) = repeat.books
+        assert book.title == "Dune" and book.catalog_token
+        async with factory() as db:
+            record = (
+                await db.execute(
+                    select(ScanRecord).where(ScanRecord.user_id == user_id)
+                )
+            ).scalar_one()
+        (item,) = record.enrichment
+        assert item["title"] == "Dune"
+        assert item[scan_records.BOOK_FORMAT_KEY] == scan_records.BOOK_FORMAT_VERSION
+        async with factory() as db:
+            await db.execute(delete(ScanRecord).where(ScanRecord.user_id == user_id))
+            await db.commit()
+
+
+class TestNoProviderIdCreatesNothing:
+    async def test_replayed_token_for_a_book_without_ids(self, env):
+        """A token a server once signed for a book with no provider ID
+        creates no row, however often it is replayed (finding 3)."""
+        factory, make_user, _ids, _ = env
+        user_id = await make_user()
+        req = WishlistRequest(title=f"Zine {uuid.uuid4().hex}", author="Me")
+        req.catalog_token = catalog_token.sign(req, user_id)
+        before = await _count(factory, Book)
+        for _ in range(3):
+            with pytest.raises(HTTPException) as exc:
+                await _wishlist(factory, user_id, req)
+            assert (exc.value.status_code, exc.value.detail) == (
+                422,
+                "book_not_in_catalog",
+            )
+        assert await _count(factory, Book) == before
+
+
+def _hiding(db, **hidden: int):
+    """Make ``db``'s first N lookups of each named entity find nothing, as
+    if another request inserted the row just after them (a race)."""
+    real = db.execute
+
+    async def execute(stmt, *args, **kwargs):
+        descriptions = getattr(stmt, "column_descriptions", None)
+        entity = descriptions[0].get("entity") if descriptions else None
+        name = getattr(entity, "__name__", None)
+        if hidden.get(name, 0) > 0:
+            hidden[name] -= 1
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = None
+            return result
+        return await real(stmt, *args, **kwargs)
+
+    db.execute = execute
+    return db
+
+
+class TestConcurrentFirstAdds:
+    """Two first-time adds of the same work: the loser of the unique
+    constraint links the winner's row instead of failing (finding 3)."""
+
+    async def _add_racing(self, factory, user_id, req, **hidden):
+        async with factory() as db:
+            user = await db.get(User, user_id)
+            _hiding(db, **hidden)
+            return await user_books_api.add_to_wishlist.__wrapped__(
+                request=MagicMock(), req=req, current_user=user, db=db
+            )
+
+    async def test_book_created_by_another_request_is_linked(self, env):
+        factory, make_user, ids, _ = env
+        alice, bob = await make_user(), await make_user()
+        (a_book,) = await _search(factory, alice)
+        (b_book,) = await _search(factory, bob)
+        await _wishlist(factory, alice, _posted_back(a_book))
+        # Bob's work-ID and volume-ID lookups ran before Alice's insert.
+        ub = await self._add_racing(factory, bob, _posted_back(b_book), Book=2)
+        (row,), (edition,) = await _catalog(factory, ids)
+        assert (ub.book_id, ub.edition_id) == (row.id, edition.id)
+
+    async def test_edition_created_by_another_request_is_linked(self, env):
+        factory, make_user, ids, _ = env
+        alice, bob = await make_user(), await make_user()
+        (a_book,) = await _search(factory, alice)
+        (b_book,) = await _search(factory, bob)
+        await _wishlist(factory, alice, _posted_back(a_book))
+        ub = await self._add_racing(factory, bob, _posted_back(b_book), Edition=1)
+        (row,), (edition,) = await _catalog(factory, ids)
+        assert (ub.book_id, ub.edition_id) == (row.id, edition.id)

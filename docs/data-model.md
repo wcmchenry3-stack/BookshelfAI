@@ -192,7 +192,7 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 
 Represents the **conceptual work** — the thing a user would say "I own Dune" about. Editions are separate.
 
-**Who writes `books` and `editions` (#602).** Only `WishlistService` (`POST /wishlist`) creates them, and only from a book whose server-signed `catalog_token` verifies (data the server produced from Open Library / Google Books for that user). Without one it may only reference existing rows. No request ever updates an existing `books` or `editions` row. See [security.md](security.md#shared-catalog-trust-model).
+**Who writes `books` and `editions` (#602).** Only `WishlistService` (`POST /wishlist`) creates them, and only from a book whose server-signed `catalog_token` verifies (data the server produced from Open Library / Google Books for that user). Without one it may only reference existing rows; a book with no provider ID (no `open_library_work_id`, no `google_books_id`) is never signed or created. Signed fields are provider data only (title and author from the Open Library / Google Books record, ISBNs only when a provider confirmed them). `books.open_library_work_id` and `editions.isbn_13` are unique, and a racing duplicate insert links the existing row; `books.google_books_id` is not unique. No request ever updates an existing `books` or `editions` row. See [security.md](security.md#shared-catalog-trust-model).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -393,7 +393,7 @@ Per-user scan records by photo fingerprint (#585, decision #573): a user who upl
 | `tier` | varchar(16), not null | the user's tier at the time (`free`, `premium`) |
 | `model` | varchar(64), not null | the model that produced `candidates` |
 | `candidates` | JSONB, not null | the AI step: the validated candidate list (`title`, `author`, `confidence`, `isbn_13`, `isbn_10` per book). Never the model's raw output. Validated again on read; a row that does not validate is treated as no record |
-| `enrichment` | JSONB, nullable | the enrichment step: the enriched books (the `EnrichedBook` fields from Open Library / Google Books, without `book_id` and the per-user library flag, which is checked on every scan). NULL until the step finished; validated on read, and treated as missing if it does not validate |
+| `enrichment` | JSONB, nullable | the enrichment step: the enriched books (the `EnrichedBook` fields from Open Library / Google Books, without `book_id`, `catalog_token` and the per-user library flag, which is checked on every scan; each book also holds `record_v: 2`, #602). NULL until the step finished; validated on read, and treated as missing if it does not validate or a book lacks the current `record_v` (saved before catalog fields were provider-only), so a repeat redoes the lookups |
 | `ai_done` | boolean, not null, default false | true once the AI step is saved (rows are only written with it true) |
 | `enrich_done` | boolean, not null, default false | true once every Open Library / Google Books lookup for the answer finished |
 | `created_at` | timestamptz, not null | when the AI step was saved; retention runs from it |

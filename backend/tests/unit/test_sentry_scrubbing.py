@@ -79,6 +79,17 @@ class TestDenylist:
         assert _is_filtered(event["request"]["data"][key])
         assert event["request"]["data"]["ok"] == "keep"
 
+    def test_catalog_token_is_filtered(self):
+        """POST /wishlist bodies and EnrichedBook payloads carry it (#602)."""
+        event = {
+            "request": {"data": {"catalog_token": "eyJ.mac", "title": "Dune"}},
+            "extra": {"books": {"book": {"catalog_token": "eyJ.mac"}}},
+        }
+        build_event_scrubber().scrub_event(event)
+        assert _is_filtered(event["request"]["data"]["catalog_token"])
+        assert _is_filtered(event["extra"]["books"]["book"]["catalog_token"])
+        assert event["request"]["data"]["title"] == "Dune"
+
     def test_nested_credentials_are_filtered(self):
         # "body" is not a denylisted key, so only recursion can reach the token.
         event = {

@@ -336,3 +336,60 @@ class TestSignBooks:
         assert "catalog_token" not in item
         with pytest.raises(scan_records.ScanRecordError):
             scan_records.deserialise_books([{**item, "catalog_token": "x.y"}])
+
+
+class TestNoProviderIdIsNeverSigned:
+    """A book no provider matched (no work ID, no Google Books ID) is the
+    model's reading alone: it never gets a token, so a replayed one can
+    never create rows (#602 review, finding 3)."""
+
+    def test_book_without_ids_gets_no_token(self):
+        bare = _book(open_library_work_id=None, google_books_id=None)
+        good = _book()
+        catalog_token.sign_books([bare, good], ALICE, NOW)
+        assert bare.catalog_token is None
+        assert catalog_token.verify(good.catalog_token, good, ALICE, NOW)
+
+    @pytest.mark.parametrize(
+        "ids",
+        [
+            {"google_books_id": None},
+            {"open_library_work_id": None},
+        ],
+        ids=["work_only", "volume_only"],
+    )
+    def test_one_provider_id_is_enough(self, ids):
+        (book,) = catalog_token.sign_books([_book(**ids)], ALICE, NOW)
+        assert catalog_token.verify(book.catalog_token, book, ALICE, NOW)
+
+
+class TestStrictDecoding:
+    """Base64url is decoded strictly: a character outside [A-Za-z0-9_-]
+    anywhere in the token is malformed, never silently skipped (#602 review,
+    finding 5)."""
+
+    @pytest.mark.parametrize("junk", ["!", "+", "/", "=", " ", "\n", "*", "é"])
+    @pytest.mark.parametrize("part", [0, 1], ids=["payload", "mac"])
+    def test_injected_character_is_malformed(self, junk, part):
+        book = _book()
+        token = catalog_token.sign(book, ALICE, NOW)
+        assert catalog_token.verify(token, book, ALICE, NOW)
+        pieces = token.split(".")
+        pieces[part] = pieces[part][:4] + junk + pieces[part][4:]
+        assert (
+            catalog_token.check(".".join(pieces), book, ALICE, NOW)
+            == catalog_token.MALFORMED
+        )
+
+    def test_padded_token_is_malformed(self):
+        book = _book()
+        token = catalog_token.sign(book, ALICE, NOW)
+        payload, mac = token.split(".")
+        padded = f"{payload}{'=' * (-len(payload) % 4)}.{mac}="
+        assert catalog_token.check(padded, book, ALICE, NOW) == catalog_token.MALFORMED
+
+    def test_unpadded_round_trip_still_decodes(self):
+        for raw in (b"", b"a", b"ab", b"abc", bytes(range(256))):
+            encoded = catalog_token._b64encode(raw)
+            assert "=" not in encoded
+            assert catalog_token._b64decode(encoded) == raw

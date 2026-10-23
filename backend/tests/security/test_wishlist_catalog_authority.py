@@ -16,6 +16,7 @@ Postgres in ``tests/integration/test_wishlist_catalog_token_db.py``.
 Run on its own with:  pytest -m security tests/security/test_wishlist_catalog_authority.py
 """
 
+import contextlib
 import io
 import uuid
 from datetime import UTC, datetime
@@ -85,6 +86,10 @@ class FakeCatalogSession:
                     setattr(obj, attr, NOW)
             if isinstance(obj, Book) and obj.language is None:
                 obj.language = "en"  # the column's server default
+
+    @contextlib.asynccontextmanager
+    async def begin_nested(self):
+        yield self
 
     async def commit(self):
         await self.flush()

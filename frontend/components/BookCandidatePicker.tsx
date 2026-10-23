@@ -32,7 +32,9 @@ export interface EnrichedBook {
   /** Server signature over this result for this user (#602). Opaque: keep
    * it unchanged and post it back with the book to POST /wishlist, which
    * refuses to create a catalog entry without it (422
-   * `catalog_token_invalid`). Never edit the book's fields before posting. */
+   * `catalog_token_invalid`). Null for a book no provider matched, which can
+   * never be added (422 `book_not_in_catalog`). Never edit the book's fields
+   * before posting. */
   catalog_token?: string;
 }
 

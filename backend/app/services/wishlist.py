@@ -1,12 +1,26 @@
 """WishlistService — finds or creates Book + Edition, creates/retrieves UserBook.
 
 The shared catalog (``books``, ``editions``) is written only from
-server-produced provider data (#602): a request whose ``catalog_token``
-verifies (the server signed exactly these fields for this user) may create
-missing catalog rows; any other request may only link the user to a Book
-that already exists (and an existing Edition of that Book), else it is
-refused with :class:`CatalogTokenInvalidError`. Existing catalog rows are
-never modified from a request, signed or not.
+provider data the server itself produced (#602):
+
+- A book with no provider ID (no ``open_library_work_id`` and no
+  ``google_books_id``) never creates or links a catalog row: nothing
+  matched it, so its title and author are only the vision model's reading.
+  Refused with :class:`BookNotInCatalogError` (422 ``book_not_in_catalog``).
+- A request whose ``catalog_token`` verifies (the server signed exactly
+  these fields for this user, and signs only provider-sourced catalog
+  fields, see ``app/core/catalog_token.py``) may create a missing Book /
+  Edition.
+- Any other request may only link the user to a Book that already exists
+  (and an existing Edition of that Book), else it is refused with
+  :class:`CatalogTokenInvalidError` (422 ``catalog_token_invalid``).
+
+A user book is never linked to an Edition of a different Book, signed or
+not. Existing catalog rows are never modified from a request. Creation is
+idempotent per work: rows are matched by provider ID first, and a
+concurrent first add of the same Open Library work (unique
+``books.open_library_work_id``) or ISBN-13 (unique ``editions.isbn_13``)
+re-reads and links the row the other request created instead of failing.
 """
 
 import logging
@@ -14,6 +28,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import catalog_token
@@ -30,10 +45,17 @@ class CatalogTokenInvalidError(Exception):
     ``catalog_token_invalid``)."""
 
 
+class BookNotInCatalogError(Exception):
+    """The book has no provider ID, so it can never be in the shared
+    catalog (422 ``book_not_in_catalog``)."""
+
+
 class WishlistService:
     async def add(
         self, db: AsyncSession, user_id: uuid.UUID, req: WishlistRequest
     ) -> UserBook:
+        if not catalog_token.is_signable(req):
+            raise BookNotInCatalogError
         reason = catalog_token.check(req.catalog_token, req, user_id)
         trusted = reason == catalog_token.OK
         if not trusted:
@@ -80,6 +102,10 @@ class WishlistService:
             return None
 
         # Not found — create (from server-signed data only)
+        if not catalog_token.is_signable(req):
+            # Defence in depth: never create a row no provider ID identifies.
+            return None
+
         book = Book(
             open_library_work_id=req.open_library_work_id,
             google_books_id=req.google_books_id,
@@ -89,8 +115,20 @@ class WishlistService:
             cover_url=req.cover_url,
             subjects=req.subjects or [],
         )
-        db.add(book)
-        await db.flush()  # get book.id without committing
+        try:
+            async with db.begin_nested():
+                db.add(book)
+                await db.flush()  # get book.id without committing
+        except IntegrityError:
+            # Another request created this work first: link its row.
+            if not req.open_library_work_id:
+                raise
+            result = await db.execute(
+                select(Book).where(
+                    Book.open_library_work_id == req.open_library_work_id
+                )
+            )
+            return result.scalar_one()
         return book
 
     async def _find_or_create_edition(
@@ -116,9 +154,8 @@ class WishlistService:
         )
         edition = result.scalar_one_or_none()
         if edition:
-            if not create and edition.book_id != book_id:
-                return None
-            return edition
+            # Never link a user book to another book's edition, signed or not.
+            return edition if edition.book_id == book_id else None
 
         if not create:
             return None
@@ -132,8 +169,18 @@ class WishlistService:
             page_count=edition_data.page_count,
             format=edition_data.format or "unknown",
         )
-        db.add(edition)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                db.add(edition)
+                await db.flush()
+        except IntegrityError:
+            # Another request created this ISBN-13 first: link it if it is
+            # an edition of this book.
+            result = await db.execute(
+                select(Edition).where(Edition.isbn_13 == edition_data.isbn_13)
+            )
+            existing = result.scalar_one()
+            return existing if existing.book_id == book_id else None
         return edition
 
     async def _find_or_create_user_book(

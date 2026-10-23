@@ -10,7 +10,8 @@ import type { EnrichedBook } from '../../components/BookCandidatePicker';
 // #602: every book from POST /scan and GET /books/search carries a
 // server-signed `catalog_token`. The app must post it back unchanged, with
 // every catalog field as received, to POST /wishlist; a 422
-// `catalog_token_invalid` shows the existing "couldn't save" message.
+// `catalog_token_invalid` or `book_not_in_catalog` shows the existing
+// "couldn't save" message.
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();
@@ -135,24 +136,27 @@ describe('catalog_token round trip (#602)', () => {
     expect(posted).toEqual([dune]);
   });
 
-  it('shows the existing "couldn\'t save" message on 422 catalog_token_invalid', async () => {
-    const hook = await render();
-    mockPost.mockResolvedValueOnce({ data: { ...base, books: [signed('Dune', 'old.mac')] } });
-    await act(async () => {
-      await hook.result.current.scan.startScan('image', 'file:///a.jpg');
-    });
-    mockPost.mockRejectedValue(
-      Object.assign(new Error('Request failed with status code 422'), {
-        response: { status: 422, data: { detail: 'catalog_token_invalid' } },
-      })
-    );
+  it.each(['catalog_token_invalid', 'book_not_in_catalog'])(
+    'shows the existing "couldn\'t save" message on 422 %s',
+    async (detail) => {
+      const hook = await render();
+      mockPost.mockResolvedValueOnce({ data: { ...base, books: [signed('Dune', 'old.mac')] } });
+      await act(async () => {
+        await hook.result.current.scan.startScan('image', 'file:///a.jpg');
+      });
+      mockPost.mockRejectedValue(
+        Object.assign(new Error('Request failed with status code 422'), {
+          response: { status: 422, data: { detail } },
+        })
+      );
 
-    await addReviewedResults(hook);
+      await addReviewedResults(hook);
 
-    expect(hook.result.current.banner.banner?.message).toBe(
-      'Failed to add book to wishlist. Please try again.'
-    );
-    // The book stays under review so the user can retry.
-    expect(hook.result.current.scan.reviewingJob).not.toBeNull();
-  });
+      expect(hook.result.current.banner.banner?.message).toBe(
+        'Failed to add book to wishlist. Please try again.'
+      );
+      // The book stays under review so the user can retry.
+      expect(hook.result.current.scan.reviewingJob).not.toBeNull();
+    }
+  );
 });

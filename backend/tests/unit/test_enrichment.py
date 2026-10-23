@@ -24,6 +24,8 @@ OL_DOC = {
 GB_VOLUME = {
     "id": "gb_dune_001",
     "volumeInfo": {
+        "title": "Dune",
+        "authors": ["Frank Herbert"],
         "description": "A desert planet epic.",
         "publisher": "Ace Books",
         "publishedDate": "1990",
@@ -80,7 +82,10 @@ class TestEnrich:
         assert len(results) == 3
 
     async def test_respects_custom_limit(self, service):
-        service.ol.search = AsyncMock(return_value=OL_DOC)
+        # The title shown is the provider's (#602): one record per candidate.
+        service.ol.search = AsyncMock(
+            side_effect=lambda title, _author: {**OL_DOC, "title": title}
+        )
         service.gb.search = AsyncMock(return_value=GB_VOLUME)
 
         candidates = [

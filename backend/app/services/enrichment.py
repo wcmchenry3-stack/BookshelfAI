@@ -1,4 +1,20 @@
-"""EnrichmentService — merges Open Library + Google Books into EnrichedBook."""
+"""EnrichmentService — merges Open Library + Google Books into EnrichedBook.
+
+The candidate (the vision model's reading of the photo, or a search hit) is
+only a search key. Whenever a provider matched, every catalog field of the
+result comes from the provider records (#602), because a signed result may
+create shared ``books`` / ``editions`` rows:
+
+- title and author: the Open Library doc (``title``, ``author_name[0]``),
+  otherwise the Google Books volume (``volumeInfo.title``, ``authors[0]``);
+- edition ISBNs: the candidate's ISBN-13 / ISBN-10 only when a provider
+  confirmed it (the ISBN-13 that was looked up and matched, or an ISBN the
+  provider record lists), else none.
+
+The candidate's own title and author are shown only when nothing matched;
+such a result has no provider ID, is never signed and so can never create a
+catalog row.
+"""
 
 import asyncio
 import contextvars
@@ -10,6 +26,11 @@ from app.services.google_books import GoogleBooksService
 from app.services.open_library import OpenLibraryService
 
 logger = logging.getLogger(__name__)
+
+# Shown when a provider matched but neither record names an author.
+UNKNOWN_AUTHOR = "Unknown"
+# EnrichedBook's limit for title / author.
+_MAX_TEXT = 500
 
 
 # Each candidate fires one Open Library and one Google Books request. A shelf
@@ -23,6 +44,37 @@ MAX_CONCURRENT_ENRICHMENTS = 5
 _LOOKUP_FAILURES: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
     "enrichment_lookup_failures", default=None
 )
+
+
+def _provider_text(value: object) -> str | None:
+    """A usable provider string (non-empty, within the schema limit)."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if 0 < len(value) <= _MAX_TEXT else None
+
+
+def _first_text(values: object) -> str | None:
+    if isinstance(values, list) and values:
+        return _provider_text(values[0])
+    return None
+
+
+def _gb_isbns(volume: dict | None) -> set[str]:
+    info = (volume or {}).get("volumeInfo") or {}
+    identifiers = info.get("industryIdentifiers") or []
+    return {
+        entry["identifier"]
+        for entry in identifiers
+        if isinstance(entry, dict) and isinstance(entry.get("identifier"), str)
+    }
+
+
+def _ol_isbns(doc: dict | None) -> set[str]:
+    values = (doc or {}).get("isbn") or []
+    return (
+        {v for v in values if isinstance(v, str)} if isinstance(values, list) else set()
+    )
 
 
 def _note_failure(source: str) -> None:
@@ -99,15 +151,47 @@ class EnrichmentService:
             _note_failure("google_books")
             gb_volume = None
 
+        # A record without a usable title is not a match: nothing from it
+        # (ID, cover, subjects) may be paired with the candidate's reading.
+        ol_title = _provider_text(ol_doc.get("title")) if ol_doc else None
+        if not ol_title:
+            ol_doc = None
+        gb_title = (
+            _provider_text((gb_volume.get("volumeInfo") or {}).get("title"))
+            if gb_volume
+            else None
+        )
+        if not gb_title:
+            gb_volume = None
+
         work_id = self.ol.extract_work_id(ol_doc) if ol_doc else None
         gb_info = self.gb.extract_info(gb_volume) if gb_volume else {}
 
         subjects = (ol_doc or {}).get("subject", [])[:10] if ol_doc else []
-        authors = (ol_doc or {}).get("author_name", [candidate.author])
+
+        if ol_doc or gb_volume:
+            title = ol_title or gb_title
+            author = (
+                (_first_text(ol_doc.get("author_name")) if ol_doc else None)
+                or (
+                    _first_text((gb_volume.get("volumeInfo") or {}).get("authors"))
+                    if gb_volume
+                    else None
+                )
+                or UNKNOWN_AUTHOR
+            )
+        else:
+            title, author = candidate.title, candidate.author
+
+        # ISBNs a provider confirmed: the one looked up when a lookup by it
+        # matched, and any the matched records list.
+        confirmed = _ol_isbns(ol_doc) | _gb_isbns(gb_volume)
+        if candidate.isbn_13 and (ol_doc or gb_volume):
+            confirmed.add(candidate.isbn_13)
 
         edition = EditionPreview(
-            isbn_13=candidate.isbn_13,
-            isbn_10=candidate.isbn_10,
+            isbn_13=candidate.isbn_13 if candidate.isbn_13 in confirmed else None,
+            isbn_10=candidate.isbn_10 if candidate.isbn_10 in confirmed else None,
             publisher=gb_info.get("publisher"),
             publish_year=(
                 int(gb_info["publish_year"]) if gb_info.get("publish_year") else None
@@ -119,8 +203,8 @@ class EnrichmentService:
         return EnrichedBook(
             open_library_work_id=work_id,
             google_books_id=gb_info.get("google_books_id"),
-            title=candidate.title,
-            author=authors[0] if authors else candidate.author,
+            title=title,
+            author=author,
             description=gb_info.get("description"),
             cover_url=gb_info.get("cover_url"),
             subjects=subjects,
