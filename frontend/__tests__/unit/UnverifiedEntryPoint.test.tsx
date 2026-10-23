@@ -124,7 +124,7 @@ describe('"Add it yourself" from a 422 book_not_in_catalog (#616)', () => {
 
     await act(() => actions[0].onPress());
     expect(hook.result.current.scan.unverifiedDrafts).toEqual([
-      { title: 'Pond Notes', author: 'A. Local', isbn: '9780306406157' },
+      { title: 'Pond Notes', author: 'A. Local', isbn: '9780306406157', id: expect.any(String) },
     ]);
   });
 
@@ -158,7 +158,7 @@ describe('"Add it yourself" from a 422 book_not_in_catalog (#616)', () => {
     const hook = await renderHook(() => useScanJobs(), { wrapper });
     await act(() => hook.result.current.addYourself([book('Pond')]));
     expect(hook.result.current.unverifiedDrafts).toEqual([
-      { title: 'Pond', author: 'A. Local', isbn: '9780306406157' },
+      { title: 'Pond', author: 'A. Local', isbn: '9780306406157', id: expect.any(String) },
     ]);
   });
 });

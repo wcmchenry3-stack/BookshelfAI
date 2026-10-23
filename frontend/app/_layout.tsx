@@ -143,10 +143,12 @@ function GlobalScanModals() {
         <AddUnverifiedBookSheet
           // One Modal for the whole queue: the next draft resets the fields
           // in place rather than remounting (and re-presenting) the sheet.
-          draftKey={`${unverifiedDrafts.length}-${draft.title}-${draft.isbn}`}
+          draftKey={draft.id}
           visible
           draft={draft}
-          onSaved={(entry) => unverifiedSaved(entry.book.title)}
+          // Bound to this render's draft: a save that finishes after its form
+          // was closed completes that draft, not whichever is shown by then.
+          onSaved={(entry) => unverifiedSaved(entry.book.title, draft.id)}
           onDismiss={dismissUnverified}
           onHidden={sheetGate.notifyDismissed}
         />

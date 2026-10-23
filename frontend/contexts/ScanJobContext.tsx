@@ -37,6 +37,9 @@ import {
 import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../lib/scanJobStorage';
 import { draftFromBook, type UnverifiedDraft } from '../lib/unverified';
 
+/** An "Add it yourself" form waiting to be shown, with its own id (#616). */
+export type PendingUnverifiedDraft = UnverifiedDraft & { id: string };
+
 const MAX_RETRIES = 3;
 const QUEUE_DRAIN_DELAY = 2000;
 // Extra drain passes when a retry wait ends mid-drain (#604).
@@ -84,11 +87,16 @@ export interface ScanJobContextValue {
    * "Add it yourself" forms still to show (#616), one per book the catalog
    * could not find, pre-filled from the scan; the first is shown.
    */
-  unverifiedDrafts: UnverifiedDraft[];
+  unverifiedDrafts: PendingUnverifiedDraft[];
   /** Open the "Add it yourself" form for these books (no catalog match). */
   addYourself: (books: EnrichedBook[]) => void;
-  /** The first form was saved: show the next one, if any, and confirm. */
-  unverifiedSaved: (title: string) => void;
+  /**
+   * A form was saved: take its book out of the scan it came from, show the
+   * next form, if any, and confirm. `draftId` is the draft the save started
+   * from (default: the one shown), so a save that completes after its form
+   * was closed never touches another draft.
+   */
+  unverifiedSaved: (title: string, draftId?: string) => void;
   /** Close the "Add it yourself" forms. */
   dismissUnverified: () => void;
 }
@@ -135,12 +143,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [enhancedScansRemaining, setEnhancedScansRemaining] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const [usageRefreshKey, setUsageRefreshKey] = useState(0);
-  const [unverifiedDrafts, setUnverifiedDrafts] = useState<UnverifiedDraft[]>([]);
+  const [unverifiedDrafts, setUnverifiedDrafts] = useState<PendingUnverifiedDraft[]>([]);
   const reviewingJobIdRef = useRef<string | null>(null);
   // The job whose review to reopen after the "Add it yourself" forms close.
   const reopenReviewJobIdRef = useRef<string | null>(null);
-  // candidateKey of the book behind each entry of unverifiedDrafts, in order.
-  const draftKeysRef = useRef<string[]>([]);
+  // Where each draft's book came from, by draft id. Kept after the forms
+  // close, so a save still in flight can take its own book out of its scan.
+  const draftSourcesRef = useRef(new Map<string, { jobId: string | null; key: string }>());
+  const nextDraftIdRef = useRef(0);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
   // The ref is the source of truth: every change goes through setJobsAndRef,
   // which updates the ref first and then hands React the same list. There is
@@ -687,15 +697,20 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
     setReviewingJobId(null);
     reopenReviewJobIdRef.current = job ? job.id : null;
-    draftKeysRef.current = books.map(candidateKey);
-    setUnverifiedDrafts(books.map(draftFromBook));
+    setUnverifiedDrafts(
+      books.map((b) => {
+        nextDraftIdRef.current += 1;
+        const id = `draft-${nextDraftIdRef.current}`;
+        draftSourcesRef.current.set(id, { jobId: job ? job.id : null, key: candidateKey(b) });
+        return { ...draftFromBook(b), id };
+      })
+    );
   }, []);
 
   // When the forms are done, show the review again if the job still has
   // books; a job whose every book was saved this way is finished.
   useEffect(() => {
     if (unverifiedDrafts.length > 0) return;
-    draftKeysRef.current = [];
     const jobId = reopenReviewJobIdRef.current;
     if (!jobId) return;
     reopenReviewJobIdRef.current = null;
@@ -707,18 +722,22 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
   const dismissUnverified = useCallback(() => setUnverifiedDrafts([]), []);
 
+  const unverifiedDraftsRef = useRef(unverifiedDrafts);
+  unverifiedDraftsRef.current = unverifiedDrafts;
+
   const unverifiedSaved = useCallback(
-    (title: string) => {
-      const savedKey = draftKeysRef.current[0];
-      draftKeysRef.current = draftKeysRef.current.slice(1);
-      const jobId = reopenReviewJobIdRef.current;
-      const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
-      if (job && savedKey !== undefined) {
+    (title: string, draftId?: string) => {
+      const id = draftId ?? unverifiedDraftsRef.current[0]?.id;
+      const source = id ? draftSourcesRef.current.get(id) : undefined;
+      if (id) draftSourcesRef.current.delete(id);
+      const job = source?.jobId ? jobsRef.current.find((j) => j.id === source.jobId) : undefined;
+      if (job && source) {
         updateJob(job.id, {
-          results: (job.results ?? []).filter((b) => candidateKey(b) !== savedKey),
+          results: (job.results ?? []).filter((b) => candidateKey(b) !== source.key),
         });
       }
-      setUnverifiedDrafts((prev) => prev.slice(1));
+      // Only that draft leaves the queue; a stale save leaves others alone.
+      setUnverifiedDrafts((prev) => prev.filter((d) => d.id !== id));
       showBanner({
         message: t('unverifiedSavedMessage', { title }),
         type: 'success',

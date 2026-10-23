@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -74,8 +74,11 @@ export function AddUnverifiedBookSheet({
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [shownKey, setShownKey] = useState(draftKey);
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
   if (draftKey !== shownKey) {
     setShownKey(draftKey);
+    setSaving(false);
     setTitle(draft.title);
     setAuthor(draft.author);
     setIsbn(draft.isbn);
@@ -93,17 +96,22 @@ export function AddUnverifiedBookSheet({
     setFormError('');
     if (!cleanTitle || !cleanAuthor) return;
     setSaving(true);
+    const startedFor = draftKey;
     try {
       const { data } = await api.post<SavedUnverifiedBook>('/wishlist/unverified', {
         title: cleanTitle,
         author: cleanAuthor,
         isbn: isbn.trim() || null,
       });
+      // onSaved is this render's callback, bound to the draft being saved.
       onSaved(data);
     } catch (err) {
-      setFormError(t(FAILURE_KEYS[unverifiedFailure(err)]));
+      // Show the failure only on the form it belongs to.
+      if (draftKeyRef.current === startedFor) {
+        setFormError(t(FAILURE_KEYS[unverifiedFailure(err)]));
+      }
     } finally {
-      setSaving(false);
+      if (draftKeyRef.current === startedFor) setSaving(false);
     }
   }
 

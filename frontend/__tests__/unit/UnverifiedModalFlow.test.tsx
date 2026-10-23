@@ -104,6 +104,21 @@ jest.mock('react-native/Libraries/Modal/Modal', () => {
   };
 });
 
+// Record the form's props, to call a form's onSaved after it has closed.
+type SheetProps = { draft: { title: string }; onSaved: (entry: unknown) => void };
+let mockSheetRenders: SheetProps[] = [];
+jest.mock('../../components/AddUnverifiedBookSheet', () => {
+  const React = require('react');
+  const actual = jest.requireActual('../../components/AddUnverifiedBookSheet');
+  return {
+    ...actual,
+    AddUnverifiedBookSheet: (props: SheetProps) => {
+      mockSheetRenders.push(props);
+      return React.createElement(actual.AddUnverifiedBookSheet, props);
+    },
+  };
+});
+
 // The layout renders <FeedbackButton /> inside the real ScanJobProvider: use
 // it as the probe that hands the test the live context.
 let ctx: ScanJobContextValue;
@@ -163,6 +178,7 @@ beforeEach(() => {
   mockPost.mockReset();
   mockModalRenders = [];
   mockModalMounts = 0;
+  mockSheetRenders = [];
   jest.useFakeTimers();
   setOS('android');
 });
@@ -239,6 +255,44 @@ describe('"Add it yourself" from the picker keeps the other candidates (#616)', 
     await settle();
     expect(ctx.jobs).toHaveLength(1);
     expect(ctx.reviewingJob?.results?.map((b) => b.title)).toEqual(['Pond Notes']);
+  });
+});
+
+describe('a save that finishes after its form closed (#616)', () => {
+  it('takes out only its own book and leaves the next form alone', async () => {
+    const MARSH = book('Marsh Log', false);
+    seedJob([POND, MARSH, DUNE]);
+    const utils = await open();
+
+    await fireEvent.press(utils.getByLabelText('Add Pond Notes yourself'));
+    await settle();
+    // The callback Pond Notes' form calls when its POST succeeds, as wired
+    // by the real layout when that save started.
+    const pondOnSaved = mockSheetRenders
+      .filter((p) => p.draft.title === 'Pond Notes')
+      .at(-1)!.onSaved;
+
+    // The user cancels while that save is in flight and opens Marsh Log's form.
+    await act(() => ctx.dismissUnverified());
+    await settle();
+    await fireEvent.press(utils.getByLabelText('Add Marsh Log yourself'));
+    await settle();
+    expect(utils.getByTestId('unverified-title-input').props.value).toBe('Marsh Log');
+
+    // Pond Notes' save now completes.
+    await act(async () => {
+      pondOnSaved({
+        id: 'ub-1',
+        unverified: true,
+        book: { id: 'b-1', title: 'Pond Notes', author: 'A. Author' },
+      });
+    });
+    await settle();
+
+    // Pond Notes (saved) leaves the scan; Marsh Log's form is untouched.
+    expect(ctx.jobs[0].results?.map((b) => b.title)).toEqual(['Marsh Log', 'Dune']);
+    expect(ctx.unverifiedDrafts.map((d) => d.title)).toEqual(['Marsh Log']);
+    expect(utils.getByTestId('unverified-title-input').props.value).toBe('Marsh Log');
   });
 });
 
