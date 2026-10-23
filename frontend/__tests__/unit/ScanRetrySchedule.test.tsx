@@ -722,6 +722,28 @@ describe('the drain while a photo waits (#604)', () => {
     expect(attempts()).toEqual(['2']);
   });
 
+  it('a photo held back for a wait that ends mid-drain is sent in the same drain (Codex)', async () => {
+    // [ordinary photo, text search, photo due in 1 s]: the ordinary photo is
+    // held back while the other waits; the text search and the 2 s delay let
+    // the waiting photo become due and succeed in the same pass. Nothing else
+    // reliably starts another drain (the retry timer's busy re-arm only does
+    // when it hasn't been cleared yet), so the drain itself goes round again.
+    mockLoadJobs.mockResolvedValue([
+      queuedJob(2),
+      textJob(1),
+      queuedJob(1, { error: 'unavailable', attempts: 1, nextAttemptAt: Date.now() + 1_000 }),
+    ]);
+    mockGet.mockResolvedValue(TEXT_OK);
+    mockPost.mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    expect(attempts()).toEqual(['2', '1']);
+    expect(result.current.scan.jobs.find((j) => j.id === 'q-2')?.status).toBe('complete');
+  });
+
   it('does not double-send a pending job that is in flight (inFlightRef)', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();

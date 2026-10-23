@@ -35,6 +35,8 @@ import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../
 
 const MAX_RETRIES = 3;
 const QUEUE_DRAIN_DELAY = 2000;
+// Extra drain passes when a retry wait ends mid-drain (#604).
+const MAX_DRAIN_PASSES = 3;
 // When the retry timer fires during a drain, check again after this long.
 const RETRY_TIMER_BUSY_DELAY = 1000;
 // When the retry timer fires while offline, check again after this long (#604).
@@ -195,6 +197,21 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const drainQueue = useCallback(async () => {
     drainingRef.current = true;
     try {
+      // A photo skipped only because another photo was waiting for its retry
+      // is revisited once that wait ends during the pass (the waiting photo
+      // failed for good or was sent and succeeded), since nothing else would
+      // start another drain then (#604). Bounded: each extra pass needs a
+      // photo to have stopped waiting during the previous one.
+      for (let pass = 0; pass < MAX_DRAIN_PASSES; pass++) {
+        if (!(await drainPass())) break;
+      }
+    } finally {
+      drainingRef.current = false;
+    }
+
+    // One pass over the queue; true when a photo was skipped for another
+    // photo's retry wait and no photo is waiting any more.
+    async function drainPass(): Promise<boolean> {
       // Read the latest jobs from the ref: a setJobs updater is run lazily by
       // React, so it can't be used to read state synchronously.
       const pending = jobsRef.current.filter(
@@ -222,6 +239,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       };
 
       stopDrainRef.current = 'none';
+      let skippedForWait = false;
       for (const job of queuedJobs) {
         const netState = await NetInfo.fetch();
         // Only a known-offline state stops the drain; null ("unknown") counts
@@ -232,6 +250,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         const current = jobsRef.current.find((j) => j.id === job.id);
         // Re-read: executeScan (via a refusal) sets it during the loop.
         const stop = stopDrainRef.current as 'none' | 'enhanced' | 'images';
+        // Held back only because another photo is waiting for its retry.
+        const heldByWait =
+          !!current &&
+          current.type === 'image' &&
+          stop === 'none' &&
+          !isAwaitingRetry(current) &&
+          waitingForRetry();
+        if (heldByWait) skippedForWait = true;
         if (
           !current ||
           (current.status !== 'queued' && current.status !== 'pending') ||
@@ -242,7 +268,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             (stop === 'images' ||
               (stop === 'enhanced' && !!current.enhanced) ||
               // Not due yet, or another photo is waiting for its retry.
-              (isAwaitingRetry(current) ? current.nextAttemptAt! > Date.now() : waitingForRetry())))
+              (isAwaitingRetry(current) ? current.nextAttemptAt! > Date.now() : heldByWait)))
         ) {
           continue;
         }
@@ -252,8 +278,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           await new Promise((r) => setTimeout(r, QUEUE_DRAIN_DELAY));
         }
       }
-    } finally {
-      drainingRef.current = false;
+      const stopped = stopDrainRef.current as 'none' | 'enhanced' | 'images';
+      return skippedForWait && stopped === 'none' && !waitingForRetry();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
