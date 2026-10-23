@@ -41,5 +41,10 @@
   "sendPendingNow": "Jetzt senden",
   "enhancedRequiresPremium": "Erweiterte Scans sind Teil von Premium.",
   "enhancedThrottled": "Mehrere erweiterte Scans haben zuletzt keine Bücher gefunden. Versuche es nach {{time}} erneut.",
-  "enhancedThrottledLater": "Mehrere erweiterte Scans haben zuletzt keine Bücher gefunden. Bitte versuche es später erneut."
+  "enhancedThrottledLater": "Mehrere erweiterte Scans haben zuletzt keine Bücher gefunden. Bitte versuche es später erneut.",
+  "repeatAlreadyHave_one": "Du hast dieses Buch schon.",
+  "repeatAlreadyHave_other": "Du hast diese Bücher schon.",
+  "repeatNotInLibrary": "Das hast du schon gescannt, es ist aber nicht in deiner Bibliothek. Erneut hinzufügen?",
+  "repeatReAdd": "Hinzufügen",
+  "repeatNoMatch": "In diesem Foto haben wir schon einmal kein Buch gefunden. Versuch ein klareres Foto oder einen anderen Winkel."
 }

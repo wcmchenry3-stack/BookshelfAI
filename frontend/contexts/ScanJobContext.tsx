@@ -21,6 +21,8 @@ import {
   isPendingUpload,
   MAX_QUEUE_SIZE,
   noMatchMessage,
+  repeatOutcome,
+  type RepeatOutcome,
   type ScanJob,
   type ScanJobType,
   type ScanResponse,
@@ -532,6 +534,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       let reportedRemaining: number | null = enhancedScansRemaining;
       // Whether a no-match used a scan, as the server reports it (#577).
       let noMatch: ScanResponse['no_match'] = null;
+      // How the server says this photo relates to an earlier scan (#588).
+      let repeat: RepeatOutcome = 'none';
 
       try {
         let results: EnrichedBook[];
@@ -584,8 +588,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               await sleep(state.retryAfterSeconds * 1000);
             }
           }
-          // A scan reached the server, so the usage counters are stale.
-          bumpUsage();
+          repeat = repeatOutcome(response.data);
+          // A scan reached the server, so the usage counters are stale. A
+          // repeat is answered from the saved record and charges nothing, so
+          // the counters have not moved (#588).
+          if (repeat === 'none') bumpUsage();
           setScanNotice(null);
           // The service evidently accepts scans again: send any scans that were
           // refused earlier. Never re-entrant (drainingRef), and a drain sends
@@ -628,7 +635,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           showBanner({
             message: job.enhanced
               ? t('enhancedNoBooksFound')
-              : noMatchMessage(noMatch, t('noBooksFoundTitle'), t),
+              : repeat === 'no_match'
+                ? t('repeatNoMatch')
+                : noMatchMessage(noMatch, t('noBooksFoundTitle'), t),
             type: 'info',
             duration: canEnhance ? 8000 : 4000,
             actions: canEnhance
@@ -638,9 +647,32 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
+        // A repeat whose books are all in the library: just say so (#588).
+        // Enhanced scans keep their normal path (never a repeat in practice).
+        if (repeat === 'all_in_library' && !job.enhanced) {
+          dismissJob(job.id);
+          showBanner({
+            message: t('repeatAlreadyHave', { count: results.length }),
+            type: 'info',
+            duration: 5000,
+          });
+          return;
+        }
+
         // Keep the image: the user may still ask for an enhanced re-scan from the
         // review sheet. It's deleted when the job is dismissed.
         updateJob(job.id, { status: 'complete', results, error: undefined });
+        // A repeat with books missing from the library: offer to re-add from
+        // the saved result (the review sheet, then POST /wishlist only) (#588).
+        if (repeat === 'not_in_library' && !job.enhanced) {
+          showBanner({
+            message: t('repeatNotInLibrary'),
+            type: 'info',
+            duration: 8000,
+            actions: [{ label: t('repeatReAdd'), onPress: () => setReviewingJobId(job.id) }],
+          });
+          return;
+        }
         showBanner({
           message:
             job.type === 'image'

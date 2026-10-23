@@ -41,5 +41,10 @@
   "sendPendingNow": "Enviar ahora",
   "enhancedRequiresPremium": "Los escaneos mejorados son parte de Premium.",
   "enhancedThrottled": "Varios escaneos mejorados recientes no encontraron libros. Inténtalo de nuevo después de las {{time}}.",
-  "enhancedThrottledLater": "Varios escaneos mejorados recientes no encontraron libros. Inténtalo de nuevo más tarde."
+  "enhancedThrottledLater": "Varios escaneos mejorados recientes no encontraron libros. Inténtalo de nuevo más tarde.",
+  "repeatAlreadyHave_one": "Ya tienes este libro.",
+  "repeatAlreadyHave_other": "Ya tienes estos libros.",
+  "repeatNotInLibrary": "Ya escaneaste esto y no está en tu biblioteca. ¿Volver a añadirlo?",
+  "repeatReAdd": "Añadir",
+  "repeatNoMatch": "Antes no encontramos ningún libro en esta foto. Prueba con una foto más nítida o desde otro ángulo."
 }

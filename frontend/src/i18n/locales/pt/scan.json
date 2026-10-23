@@ -41,5 +41,10 @@
   "sendPendingNow": "Enviar agora",
   "enhancedRequiresPremium": "Os escaneamentos avançados fazem parte do Premium.",
   "enhancedThrottled": "Vários escaneamentos avançados recentes não encontraram livros. Tente novamente após {{time}}.",
-  "enhancedThrottledLater": "Vários escaneamentos avançados recentes não encontraram livros. Tente novamente mais tarde."
+  "enhancedThrottledLater": "Vários escaneamentos avançados recentes não encontraram livros. Tente novamente mais tarde.",
+  "repeatAlreadyHave_one": "Você já tem este livro.",
+  "repeatAlreadyHave_other": "Você já tem estes livros.",
+  "repeatNotInLibrary": "Você já escaneou isto e não está na sua biblioteca. Adicionar de novo?",
+  "repeatReAdd": "Adicionar",
+  "repeatNoMatch": "Antes não encontramos nenhum livro nesta foto. Tente uma foto mais nítida ou outro ângulo."
 }
