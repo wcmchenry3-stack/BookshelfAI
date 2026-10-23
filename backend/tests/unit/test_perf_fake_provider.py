@@ -162,32 +162,14 @@ class TestIsolatedDatabaseGuard:
             perf_setup.check_database_url(url, "yes")
         assert "u:p" not in str(exc.value)
 
-    @pytest.mark.parametrize(
-        ("database", "address"),
-        [
-            ("bs539_perf", None),
-            ("perf", "127.0.0.1"),
-            ("PERF_x", "127.3.4.5"),
-            ("perf", "::1"),
-            ("perf", "127.0.0.1/32"),
-        ],
-    )
-    def test_connected_server_identity_accepted(self, database, address):
-        perf_setup.check_server_identity(database, address)
+    @pytest.mark.parametrize("database", ["bs539_perf", "perf", "PERF_x"])
+    def test_connected_database_accepted(self, database):
+        perf_setup.check_server_identity(database)
 
-    @pytest.mark.parametrize(
-        ("database", "address"),
-        [
-            ("bookshelf", None),
-            (None, None),
-            ("perf", "10.0.0.5"),
-            ("perf", "::2"),
-            ("perf", "garbage"),
-        ],
-    )
-    def test_connected_server_identity_refused(self, database, address):
+    @pytest.mark.parametrize("database", ["bookshelf", "", None])
+    def test_connected_database_refused(self, database):
         with pytest.raises(perf_setup.UnsafeDatabaseError):
-            perf_setup.check_server_identity(database, address)
+            perf_setup.check_server_identity(database)
 
     @pytest.mark.parametrize("confirmed", [None, "", "no", "YES", "true"])
     def test_needs_the_confirmation(self, confirmed):

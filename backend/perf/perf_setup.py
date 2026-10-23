@@ -20,9 +20,12 @@ then creates new users. It therefore refuses to run unless DATABASE_URL
 - comes with ``PERF_CONFIRM_ISOLATED_DB=yes``.
 
 Then, before any delete, in the same session that deletes, the server is asked
-what it really is (:func:`verify_connected_database`): ``current_database()``
-must contain ``perf`` and ``inet_server_addr()`` must be NULL (unix socket) or
-a loopback address.
+which database this session really reached (:func:`verify_connected_database`):
+``current_database()`` must contain ``perf``. The server address is not
+checked: in the workflow Postgres runs in a service container reached through
+a published port, so the server sees its own bridge address, not loopback.
+The local-host URL and the no-query-parameter rule above cover where we
+connect; this check covers which database the driver actually opened.
 
 The app modules are imported inside the functions, after the caller has put
 the throwaway JWT key pair and the other settings in ``os.environ``.
@@ -78,36 +81,22 @@ def check_database_url(url: str, confirmed: str | None) -> None:
         )
 
 
-def check_server_identity(database: str | None, address: object) -> None:
-    """Refuse unless the connected database is named ``*perf*`` and the server
-    is on this machine (no address means a unix socket)."""
-    import ipaddress
-
+def check_server_identity(database: str | None) -> None:
+    """Refuse unless the database this session actually reached is named
+    ``*perf*`` (whatever the URL said)."""
     if REQUIRED_DB_NAME_PART not in (database or "").lower():
         raise UnsafeDatabaseError(
             "the connected database is not a perf database: refusing to delete"
         )
-    if address is None:
-        return
-    try:
-        loopback = ipaddress.ip_address(str(address).split("/")[0]).is_loopback
-    except ValueError:
-        loopback = False
-    if not loopback:
-        raise UnsafeDatabaseError(
-            "the connected server is not on this machine: refusing to delete"
-        )
 
 
 async def verify_connected_database(db) -> None:
-    """Ask the server which database and address THIS session reached, before
-    anything is deleted. Defence in depth behind :func:`check_database_url`."""
+    """Ask the server which database THIS session reached, before anything is
+    deleted. Defence in depth behind :func:`check_database_url`."""
     from sqlalchemy import func, select
 
-    row = (
-        await db.execute(select(func.current_database(), func.inet_server_addr()))
-    ).one()
-    check_server_identity(row[0], row[1])
+    database = (await db.execute(select(func.current_database()))).scalar_one()
+    check_server_identity(database)
 
 
 def require_isolated_db() -> None:
