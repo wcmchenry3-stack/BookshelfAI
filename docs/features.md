@@ -46,8 +46,8 @@ sequenceDiagram
   GPT-->>API: 3 candidates {title, author, confidence, isbn}
   API->>GB: enrich each (title, author, cover, work_id, description)
   GB-->>API: metadata (the provider's title/author replace the AI's reading)
-  API->>DB: dedup check vs user's UserBooks
-  DB-->>API: already_in_library flags
+  API->>DB: library check vs user's UserBooks (by edition, #587)
+  DB-->>API: ownership per book
   API-->>SJ: 3 EnrichedBook results (each with catalog_token, #602)
   SJ->>SJ: status=complete, show banner
   U->>P: Tap "View results"
@@ -66,6 +66,7 @@ sequenceDiagram
 - Scan job IDs are minted with `Crypto.randomUUID()` from `expo-crypto` (native-backed, Hermes-safe — see the uuid regression in `frontend/.eslintrc.js`).
 - **The title shown is the catalog's (#602).** The AI's reading of the photo is only used to look the book up. When Open Library or Google Books finds it, the result shows (and the wishlist stores) their title and author, so a mis-read or doctored cover cannot rename a book for everyone. When neither finds it, the result shows what the AI read, but it cannot be added to the wishlist (the app shows its "couldn't save" message). Results saved for a re-scan before this change are looked up again on the next re-scan (still free, no AI call).
 - Text search (`/books/search`) uses the same `ScanJob` pipeline with `type='text'` — different input path, same state machine.
+- **Books you already have (#587).** Every scan and search result says whether the book is already in your library, by edition (`ownership`; the edition compared is the one the app would add). The results sheet shows "You already have this book" (the same edition, or when there is no ISBN to compare) or "You already have this book in another edition". Those books can't be ticked, preselected or picked by "Select all", since a library holds one entry per title; there is no "Add anyway" (#610). If one is sent anyway (an older saved result, or the library changed in between), `POST /wishlist` answers `409` and the app counts it as already in the library, not a failure: one book shows `"Dune" is already in your library.`, several `2 books are already in your library.`, and a mix `Added 2. 1 already in your library.`; the review closes and nothing is retried or reported to Sentry. Results saved before the server sent `ownership` fall back to the work-level "Already owned" badge.
 
 ### Scan limits — what users see
 

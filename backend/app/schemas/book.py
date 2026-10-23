@@ -94,10 +94,10 @@ class EnrichedBook(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def in_library(self) -> bool:
-        """Whether the user already has this book (#585): the same work-level
-        match as ``already_in_library`` (Open Library work ID or Google Books
-        ID), checked against the library on every scan, repeats included.
-        Read-only; edition-level matching is #587."""
+        """Whether the user already has this book (#585): the same value as
+        ``already_in_library``, true whenever ``ownership`` is not
+        ``not_owned`` (#587), checked against the library on every scan,
+        repeats included. Read-only."""
         return self.already_in_library
 
 

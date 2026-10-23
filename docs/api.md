@@ -185,7 +185,7 @@ Queries Google Books, maps the top 3 volumes to candidates, then runs them throu
 **Query params:**
 - `q` (required, min length 2) — free-text query, e.g. `"John Adams McCullough"`
 
-**Response `200`:** array of up to 3 `EnrichedBook` objects (see shape under `/scan`). Search does not check the library, so `already_in_library` and `in_library` are always `false` here. Each carries a `catalog_token` signed for the requesting user (#602, see below).
+**Response `200`:** array of up to 3 `EnrichedBook` objects (see shape under `/scan`). Each is checked against the requesting user's library like a scan result (`ownership`, `already_in_library`, `in_library`, #587); if that check fails the search still answers, with every result `not_owned`. Each carries a `catalog_token` signed for the requesting user (#602, see below).
 
 **Errors:**
 - `422` — `q` missing or too short
@@ -234,6 +234,7 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
       "confidence": 0.92,
       "already_in_library": false,
       "in_library": false,
+      "ownership": "not_owned",
       "editions": [
         { "isbn_13": "9780441013593", "publisher": "Ace", "publish_year": 2005, "format": "paperback", "page_count": 688 }
       ],
@@ -247,7 +248,16 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 }
 ```
 
-`book_id` is `null` when the work isn't yet in the `books` table — it's created on `POST /wishlist` or `POST /purchased`. `already_in_library` is `true` when the user already has a `UserBook` for this work (dedup keyed on work_id / volume_id — see [data-model.md](data-model.md#dedup-strategy--why-work_id-not-isbn)). `in_library` (#585) carries the same value under the name the app's repeat flow uses; edition-level matching is #587. `repeat` (#585) is `true` when the answer came from the user's saved scan record for this exact photo (no AI call, nothing charged; see "Scan records" below) and `false` otherwise. Both fields are additive: older clients can ignore them.
+`book_id` is `null` when the work isn't yet in the `books` table — it's created on `POST /wishlist` or `POST /purchased`. `ownership` (#587) says whether the requesting user already has this book, by edition. The edition compared is `editions[0]`, the one `POST /wishlist` would add; its ISBN-13 (an ISBN-10 is converted to ISBN-13) is compared with the editions in the user's library:
+
+| `ownership` | Meaning |
+|---|---|
+| `owned_same_edition` | an edition in the user's library has the same ISBN |
+| `owned_other_edition` | the work is in the library (same `open_library_work_id`, else `google_books_id`) but its edition has a different ISBN |
+| `owned_edition_unknown` | the work is in the library but one side has no ISBN to compare (the result has no edition ISBN, or the library entry has no edition) |
+| `not_owned` | not in the user's library |
+
+Only the requesting user's library counts. It is checked on every response (new scans, repeats served from a scan record, `GET /books/search`) and never stored in a scan record. `already_in_library` and `in_library` (#585) are kept for older clients: both are `true` exactly when `ownership` is not `not_owned` (see [data-model.md](data-model.md#dedup-strategy--why-work_id-not-isbn)). `repeat` (#585) is `true` when the answer came from the user's saved scan record for this exact photo (no AI call, nothing charged; see "Scan records" below) and `false` otherwise. Both fields are additive: older clients can ignore them.
 
 `catalog_token` (#602) is the server's signature over this book's catalog fields (`open_library_work_id`, `google_books_id`, `title`, `author`, `description`, `cover_url`, `subjects`, and per edition `isbn_13`, `isbn_10`, `publisher`, `publish_year`, `format`, `page_count`, `open_library_edition_id`) and the requesting user. It is opaque: the app keeps it unchanged and posts it back with the book, fields unchanged, to `POST /wishlist`. Every signed field comes from Open Library / Google Books: when a provider matched, `title` and `author` are the provider's (not the vision model's reading of the photo), and an edition `isbn_13` / `isbn_10` is present only when a provider confirmed it. A book with no provider ID (neither `open_library_work_id` nor `google_books_id`; nothing matched, so its title and author are the model's reading) always has `catalog_token: null` and cannot be added to the wishlist. Every response signs afresh (new scans, repeats served from a scan record, and `GET /books/search`); it is never stored in a scan record. It expires 30 days after the end of the UTC day it was issued, so the same result signed for the same user on the same day gives the same token. A book the server could not sign has `catalog_token: null` and can only be linked to an existing catalog entry.
 
@@ -335,7 +345,9 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 
 ### `POST /wishlist` — add book to wishlist
 
-Finds the `Book` by `open_library_work_id`, then `google_books_id`, and the `Edition` by the first edition's `isbn_13`; then inserts a `UserBook` with `status=wishlisted` and `wishlisted_at=now()` (or returns the user's existing one).
+Finds the `Book` by `open_library_work_id`, then `google_books_id`, and the `Edition` by the first edition's `isbn_13`; then inserts a `UserBook` with `status=wishlisted` and `wishlisted_at=now()`.
+
+**A book the user already has is refused with `409` (#587).** A library holds one entry per title (`uq_user_books_user_book`), so this endpoint no longer returns the existing entry: when the user already has an entry for the `Book`, or an entry whose edition has the same ISBN as the posted first edition (ISBN-10 converted to ISBN-13, whichever `Book` it belongs to), nothing is written (not even a new catalog row) and `detail` says how they have it, with the same values and rules as `ownership` on scan results: `owned_same_edition` (same ISBN, or the same `edition_id`), `owned_other_edition` or `owned_edition_unknown`. Only the requesting user's library counts.
 
 **Shared-catalog rule (#602).** `books` and `editions` are shared by every user, so they are written only from server-produced data. A missing `Book` / `Edition` is created only when `catalog_token` verifies: signed by this server for **this user**, not expired, current version (`v1`), and every catalog field in the body exactly as signed. Without a valid token (missing, malformed, expired, another user's, or any field changed) the request may only link the user to a `Book` that already exists (and to an existing `Edition` of that book); if no such `Book` exists it is refused with `422 catalog_token_invalid` and nothing is written. A book with neither `open_library_work_id` nor `google_books_id` is never added, token or not: `422 book_not_in_catalog`. A user book is never linked to an edition of a different book (it is then saved without an edition). Existing catalog rows are never changed by this endpoint, signed or not.
 
@@ -381,7 +393,7 @@ The `EnrichedBook` returned by `/scan` or `/books/search`, posted back as receiv
 - `422` — validation failure (`detail` is a list)
 - `422 catalog_token_invalid` — the book is not in the catalog yet and the body has no valid `catalog_token` (#602); nothing was written. The app shows its "couldn't save" message
 - `422 book_not_in_catalog` — the book has no `open_library_work_id` and no `google_books_id` (no provider matched it), so it can never be in the catalog (#602); nothing was written. The app shows the same "couldn't save" message
-- uniqueness violation on `(user_id, book_id)` if the book is already in the user's library (dedup enforcement)
+- `409 owned_same_edition` / `409 owned_other_edition` / `409 owned_edition_unknown` — the user already has this book (#587, see above); nothing was written. The app treats it as "already in your library", not as a failure: no retry, no error report
 
 ---
 

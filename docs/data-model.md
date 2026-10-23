@@ -441,10 +441,10 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 ## Dedup strategy — why work_id, not ISBN
 
-The dedup check lives in `backend/app/services/deduplication.py` and runs inside the `POST /scan` response pipeline. For each candidate returned by the vision identifier + enrichment:
+The dedup check lives in `backend/app/services/deduplication.py` and runs inside the `POST /scan` and `GET /books/search` response pipelines. Since #587 it is edition-aware: one batched query first finds which results' ISBNs (`editions[0]`, ISBN-10 converted to ISBN-13) are editions in the user's library (`owned_same_edition`); for the rest, the work match below decides between `owned_other_edition` (the owned entry's edition has another ISBN), `owned_edition_unknown` (one side has no ISBN) and `not_owned`. For each candidate returned by the vision identifier + enrichment:
 
 ```python
-# Pseudocode of DeduplicationService._is_in_library
+# Pseudocode of DeduplicationService._work_entry (the work-level match)
 if candidate.open_library_work_id:
     exists = db.exec(
         select(UserBook)
@@ -470,8 +470,8 @@ if candidate.google_books_id:
 - If neither is available, the candidate is returned with `already_in_library=False` and the user sees a duplicate — rare enough to accept.
 
 **When dedup is actually applied:**
-- On `POST /scan` the candidates are flagged (`already_in_library=true|false`) but still returned. The frontend's `BookCandidatePicker` shows the flag so the user can skip duplicates intentionally.
-- On `POST /wishlist` the unique constraint `uq_user_books_user_book` on `(user_id, book_id)` is the database-level enforcement — the `Book` row is reused if dedup found a match, so the insert either succeeds (new tracking row) or fails the unique constraint (already tracking that Book).
+- On `POST /scan` and `GET /books/search` the candidates are marked (`ownership`, plus `already_in_library` / `in_library`) but still returned. The frontend's `BookCandidatePicker` shows the edition-level note and does not let the user tick a book they already have.
+- On `POST /wishlist` a book the user already has (an entry for the `Book`, or an entry holding an edition with the same ISBN) is refused with `409` and the ownership code, and nothing is written (#587). The unique constraint `uq_user_books_user_book` on `(user_id, book_id)` remains the database-level enforcement.
 
 ## Migration workflow
 

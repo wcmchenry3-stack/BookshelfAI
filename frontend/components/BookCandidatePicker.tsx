@@ -17,9 +17,9 @@ export interface EnrichedBook {
   subjects: string[];
   confidence: number;
   already_in_library: boolean;
-  /** Same work-level library match as already_in_library, sent by POST /scan
-   * (#585). Optional: GET /books/search responses and older clients' saved
-   * results may not carry it. */
+  /** Same value as already_in_library (#585): true whenever `ownership` is
+   * not `not_owned`. Optional: results saved by older app versions may not
+   * carry it. */
   in_library?: boolean;
   /** Whether the user already has this book, by edition (#587): the
    * result's edition (`editions[0]`) or another one. Optional: results saved
