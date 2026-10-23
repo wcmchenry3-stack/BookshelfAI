@@ -14,7 +14,9 @@ EnrichmentService runs).
 Needs DATABASE_URL pointing at a Postgres database.
 """
 
+import asyncio
 import io
+import socket
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,6 +48,10 @@ from app.services.google_books import GoogleBooksService
 from app.services.open_library import OpenLibraryService
 
 pytestmark = pytest.mark.integration
+
+# Captured before ``env`` fakes DNS for the cover URL check (that patch is on
+# the socket module, so it would also break new database connections).
+_REAL_GETADDRINFO = socket.getaddrinfo
 
 
 @pytest.fixture
@@ -480,11 +486,12 @@ class TestConcurrentFirstAdds:
         assert (ub.book_id, ub.edition_id) == (row.id, edition.id)
 
 
-class TestDuplicateGoogleBooksRows:
-    """``books.google_books_id`` is not unique (#613), so racing first adds
-    of a Google-Books-only book can create two rows. Later adds and the
-    scan's library check must still work, never a permanent 500 (#602
-    security review round 2, finding 1)."""
+class TestConcurrentGoogleBooksOnlyFirstAdds:
+    """``books.google_books_id`` is unique when set (``uq_books_google_books_id``,
+    #613). Racing first adds of a Google-Books-only book (no Open Library
+    work ID) end with one ``books`` row and both users linked to it: the
+    loser of the index re-reads and links the winner's row. Before #613
+    they created two rows (#611 made lookups tolerate that)."""
 
     @pytest.fixture
     def gb_only(self):
@@ -496,9 +503,9 @@ class TestDuplicateGoogleBooksRows:
         ):
             yield
 
-    async def _race_duplicate(self, factory, make_user):
-        """Alice adds the book; Bob's lookup ran before her insert, so he
-        creates a second row. Returns (alice, bob, rows oldest first)."""
+    async def _race(self, factory, make_user):
+        """Alice adds the book; Bob's lookup ran before her insert, so his
+        insert loses on the index. Returns (alice, bob, Bob's entry)."""
         alice, bob = await make_user(), await make_user()
         (a_book,) = await _search(factory, alice)
         (b_book,) = await _search(factory, bob)
@@ -507,65 +514,76 @@ class TestDuplicateGoogleBooksRows:
         async with factory() as db:
             user = await db.get(User, bob)
             _hiding(db, Book=1)
-            await user_books_api.add_to_wishlist.__wrapped__(
+            ub = await user_books_api.add_to_wishlist.__wrapped__(
                 request=MagicMock(), req=_posted_back(b_book), current_user=user, db=db
             )
-        return alice, bob
+        return alice, bob, ub
 
     async def _rows(self, factory, ids) -> list[Book]:
         async with factory() as db:
             return list(
                 (
                     await db.execute(
-                        select(Book)
-                        .where(Book.google_books_id == ids["volume"])
-                        .order_by(Book.created_at, Book.id)
+                        select(Book).where(Book.google_books_id == ids["volume"])
                     )
                 ).scalars()
             )
 
-    async def test_next_add_links_the_oldest_row(self, env, gb_only):
-        factory, make_user, ids, _ = env
-        await self._race_duplicate(factory, make_user)
-        oldest, newer = await self._rows(factory, ids)
-        carol = await make_user()
-        (book,) = await _search(factory, carol)
-        ub = await _wishlist(factory, carol, _posted_back(book))
-        assert ub.book_id == oldest.id != newer.id
+    async def _entries(self, factory, *users) -> dict:
+        async with factory() as db:
+            rows = await db.execute(
+                select(UserBook.user_id, UserBook.book_id, UserBook.edition_id).where(
+                    UserBook.user_id.in_(users)
+                )
+            )
+            return {u: (b, e) for u, b, e in rows}
+
+    async def _edition(self, factory, ids) -> Edition:
         async with factory() as db:
             (edition,) = (
                 await db.execute(select(Edition).where(Edition.isbn_13 == ids["isbn"]))
             ).scalars()
-        assert edition.book_id == oldest.id and ub.edition_id == edition.id
-        # And again: still no error, still the same row.
-        dave = await make_user()
-        ub = await _wishlist(factory, dave, _posted_back(book))
-        assert ub.book_id == oldest.id
-        assert len(await self._rows(factory, ids)) == 2
+        return edition
 
-    async def test_scan_library_check_with_duplicates(self, env, gb_only):
+    async def test_loser_of_the_race_links_the_winners_row(self, env, gb_only):
         factory, make_user, ids, _ = env
-        _alice, bob = await self._race_duplicate(factory, make_user)
-        # Bob now also holds the oldest row, so he holds both duplicates.
-        # Inserted directly: POST /wishlist refuses it since #587 (he already
-        # has the volume, 409 owned_edition_unknown).
-        oldest, _newer = await self._rows(factory, ids)
-        async with factory() as db:
-            db.add(UserBook(user_id=bob, book_id=oldest.id, status="wishlisted"))
-            await db.commit()
-        async with factory() as db:
-            held = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(UserBook)
-                    .join(Book, Book.id == UserBook.book_id)
-                    .where(
-                        UserBook.user_id == bob,
-                        Book.google_books_id == ids["volume"],
-                    )
-                )
-            ).scalar_one()
-        assert held == 2
+        alice, bob, ub = await self._race(factory, make_user)
+        (row,) = await self._rows(factory, ids)
+        edition = await self._edition(factory, ids)
+        assert edition.book_id == row.id
+        assert ub.book_id == row.id
+        assert await self._entries(factory, alice, bob) == {
+            alice: (row.id, edition.id),
+            bob: (row.id, edition.id),
+        }
+        # A later add links the same row; still one row.
+        carol = await make_user()
+        (book,) = await _search(factory, carol)
+        assert (await _wishlist(factory, carol, _posted_back(book))).book_id == row.id
+        assert len(await self._rows(factory, ids)) == 1
+
+    async def test_simultaneous_first_adds_in_two_sessions(self, env, gb_only):
+        factory, make_user, ids, _ = env
+        alice, bob = await make_user(), await make_user()
+        (a_book,) = await _search(factory, alice)
+        (b_book,) = await _search(factory, bob)
+        # Two pooled connections, opened with real DNS, for the two sessions.
+        with patch.object(socket, "getaddrinfo", _REAL_GETADDRINFO):
+            async with factory() as s1, factory() as s2:
+                await s1.connection()
+                await s2.connection()
+        await asyncio.gather(
+            _wishlist(factory, alice, _posted_back(a_book)),
+            _wishlist(factory, bob, _posted_back(b_book)),
+        )
+        (row,) = await self._rows(factory, ids)
+        entries = await self._entries(factory, alice, bob)
+        assert {b for b, _e in entries.values()} == {row.id}
+        assert set(entries) == {alice, bob}
+
+    async def test_scan_library_check_after_the_race(self, env, gb_only):
+        factory, make_user, ids, _ = env
+        _alice, bob, _ub = await self._race(factory, make_user)
         (scanned,) = (await _scan(factory, bob, _jpeg())).books
         assert scanned.google_books_id == ids["volume"]
         assert scanned.already_in_library is True
