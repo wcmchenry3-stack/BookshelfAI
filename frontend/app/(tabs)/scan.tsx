@@ -4,6 +4,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useTranslation } from 'react-i18next';
 
+import { openScanQueue } from '../../lib/scanQueueNav';
 import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
@@ -231,6 +232,7 @@ export default function ScanScreen() {
     </View>
   );
 
+  const failedCount = (jobs ?? []).filter((j) => j.status === 'failed').length;
   const pendingBadge =
     pendingCount > 0 ? (
       <View
@@ -241,6 +243,14 @@ export default function ScanScreen() {
         <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
           {t('pendingUploads', { count: pendingCount })}
         </Text>
+        <Pressable
+          onPress={openScanQueue}
+          style={styles.sendNow}
+          accessibilityRole="button"
+          accessibilityLabel={t('viewQueue')}
+        >
+          <Text style={[styles.sendNowText, { color: activeColor }]}>{t('viewQueue')}</Text>
+        </Pressable>
         {isConnected ? (
           <Pressable
             onPress={handleRetryNotice}
@@ -252,6 +262,18 @@ export default function ScanScreen() {
           </Pressable>
         ) : null}
       </View>
+    ) : failedCount > 0 ? (
+      // Only failed scans are left: still a way into the queue (#605).
+      <Pressable
+        onPress={openScanQueue}
+        style={[styles.sendNow, styles.failedLink]}
+        accessibilityRole="button"
+        accessibilityLabel={t('viewQueueFailed', { count: failedCount })}
+      >
+        <Text style={[styles.sendNowText, { color: activeColor }]}>
+          {t('viewQueueFailed', { count: failedCount })}
+        </Text>
+      </Pressable>
     ) : null;
 
   const statusPanel = (
@@ -480,6 +502,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sendNow: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  failedLink: { alignSelf: 'center', marginBottom: 8 },
   sendNowText: { fontWeight: '600', fontSize: 13 },
   pendingBadgeText: {
     fontWeight: '600',

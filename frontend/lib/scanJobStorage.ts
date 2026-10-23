@@ -31,7 +31,7 @@ export async function saveJobs(jobs: ScanJob[]): Promise<void> {
   // Strip results from persisted jobs to keep storage size small.
   // Results are only useful for the current session.
   const stripped = jobs.map((j) => ({ ...j, results: undefined }));
-  storage.setItem(STORAGE_KEY, JSON.stringify(stripped));
+  await storage.setItem(STORAGE_KEY, JSON.stringify(stripped));
 }
 
 /**

@@ -252,6 +252,18 @@ export function formatLocalTime(epochMs: number, locale: string): string {
   }
 }
 
+/** A date and time of day in the user's local time zone and locale. */
+export function formatLocalDateTime(epochMs: number, locale: string): string {
+  try {
+    return new Date(epochMs).toLocaleString(locale, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+  } catch {
+    return new Date(epochMs).toLocaleString();
+  }
+}
+
 type TFn = (key: string, options?: Record<string, unknown>) => string;
 
 /**
