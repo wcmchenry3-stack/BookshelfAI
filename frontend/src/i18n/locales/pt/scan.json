@@ -81,7 +81,10 @@
   "catalogTokenInvalidManyMessage": "Estes {{count}} resultados estão desatualizados. Escaneie ou busque os livros novamente.",
   "notSavedSummaryMessage": "{{added}} adicionados, {{notSaved}} não salvos.",
   "notSavedSummaryOwnedMessage": "{{added}} adicionados, {{owned}} já na sua biblioteca, {{notSaved}} não salvos.",
-  "reasonNotInCatalog": "Fora do catálogo: busque pelo título.",
-  "reasonTokenInvalid": "Desatualizado: escaneie ou busque de novo.",
-  "retryOthersHint": "Toque em Adicionar para tentar os outros de novo."
+  "reasonNotInCatalog": "{{count}} fora do catálogo: busque pelo título.",
+  "reasonTokenInvalid": "{{count}} desatualizados: escaneie ou busque de novo.",
+  "retryOthersHint": "Toque em Adicionar para tentar os outros de novo.",
+  "notSavedOwnedOnlyMessage": "{{owned}} já na sua biblioteca, {{notSaved}} não salvos.",
+  "notSavedOnlyMessage": "{{notSaved}} não salvos.",
+  "ownedNotSavedRetryMessage": "{{owned}} já na sua biblioteca, {{failed}} não salvos. Toque em Adicionar."
 }

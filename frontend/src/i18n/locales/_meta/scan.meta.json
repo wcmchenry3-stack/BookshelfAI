@@ -433,18 +433,38 @@
     "placeholders": ["{{added}}", "{{owned}}", "{{notSaved}}"]
   },
   "reasonNotInCatalog": {
-    "description": "Sentence after the summary: some books are not in the catalog; suggests searching by title.",
+    "description": "Sentence after the summary: {{count}} books are not in the catalog; suggests searching by title.",
     "tone": "friendly",
-    "characterLimit": 60
+    "characterLimit": 70,
+    "placeholders": ["{{count}}"]
   },
   "reasonTokenInvalid": {
-    "description": "Sentence after the summary: some results are out of date; suggests scanning or searching again.",
+    "description": "Sentence after the summary: {{count}} results are out of date; suggests scanning or searching again.",
     "tone": "friendly",
-    "characterLimit": 60
+    "characterLimit": 60,
+    "placeholders": ["{{count}}"]
   },
   "retryOthersHint": {
     "description": "Sentence after the reasons: books that failed for other reasons stay in the list; Add retries them.",
     "tone": "friendly",
     "characterLimit": 60
+  },
+  "notSavedOwnedOnlyMessage": {
+    "description": "Error banner summary when no book was added, some were already in the library and some could not be saved. {{owned}} and {{notSaved}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 80,
+    "placeholders": ["{{owned}}", "{{notSaved}}"]
+  },
+  "notSavedOnlyMessage": {
+    "description": "Error banner summary when no book was added and none were already owned. {{notSaved}} is the count of books not saved.",
+    "tone": "friendly",
+    "characterLimit": 40,
+    "placeholders": ["{{notSaved}}"]
+  },
+  "ownedNotSavedRetryMessage": {
+    "description": "Error banner when no book was added, some were already in the library and some failed and stay to retry with Add. {{owned}} and {{failed}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 110,
+    "placeholders": ["{{owned}}", "{{failed}}"]
   }
 }

@@ -81,7 +81,10 @@
   "catalogTokenInvalidManyMessage": "هذه النتائج ({{count}}) قديمة. امسح الكتب ضوئيًا أو ابحث عنها مجددًا.",
   "notSavedSummaryMessage": "تمت إضافة {{added}}، وتعذّر حفظ {{notSaved}}.",
   "notSavedSummaryOwnedMessage": "تمت إضافة {{added}}، و{{owned}} في مكتبتك مسبقًا، وتعذّر حفظ {{notSaved}}.",
-  "reasonNotInCatalog": "غير موجود في الفهرس: ابحث بالعنوان.",
-  "reasonTokenInvalid": "نتيجة قديمة: امسح أو ابحث مجددًا.",
-  "retryOthersHint": "اضغط إضافة لإعادة محاولة البقية."
+  "reasonNotInCatalog": "غير موجودة في الفهرس: {{count}}. ابحث بالعنوان.",
+  "reasonTokenInvalid": "قديمة: {{count}}. امسح أو ابحث مجددًا.",
+  "retryOthersHint": "اضغط إضافة لإعادة محاولة البقية.",
+  "notSavedOwnedOnlyMessage": "موجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{notSaved}}.",
+  "notSavedOnlyMessage": "لم يُحفظ: {{notSaved}}.",
+  "ownedNotSavedRetryMessage": "موجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا."
 }

@@ -160,7 +160,7 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
     expect(hook.result.current.banner.banner).toEqual(
       expect.objectContaining({
         message:
-          'Added 1, 2 not saved. Not in our catalog: try searching by title. Tap Add to retry the others.',
+          'Added 1, 2 not saved. 1 not in our catalog: try searching by title. Tap Add to retry the others.',
         type: 'error',
       })
     );
@@ -178,10 +178,71 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
         : Promise.reject(httpError(422, 'catalog_token_invalid'))
     );
     expect(hook.result.current.banner.banner?.message).toBe(
-      'Added 1, 1 not saved. Out of date: scan or search again.'
+      'Added 1, 1 not saved. 1 out of date: scan or search again.'
     );
     expect(hook.result.current.scan.reviewingJob).toBeNull();
     expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
+  const own = () => Promise.reject(httpError(409, 'owned_same_edition'));
+  const nic = () => Promise.reject(httpError(422, 'book_not_in_catalog'));
+  const stale = () => Promise.reject(httpError(422, 'catalog_token_invalid'));
+  const boom = () => Promise.reject(httpError(500, 'boom'));
+  const ok = () => Promise.resolve({ data: {} });
+  const pick = (m: Record<string, () => Promise<unknown>>) => (t: string) => m[t]();
+
+  it('mixed: added, owned and not in catalog', async () => {
+    const hook = await scanAndAdd(
+      ['Dune', 'Emma', 'Ulysses'],
+      pick({ Dune: ok, Emma: own, Ulysses: nic })
+    );
+    expect(hook.result.current.banner.banner?.message).toBe(
+      'Added 1, 1 already in your library, 1 not saved. 1 not in our catalog: try searching by title.'
+    );
+    expect(hook.result.current.scan.reviewingJob).toBeNull();
+    expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
+  it('mixed: owned and not in catalog, nothing added, has no "Added 0"', async () => {
+    const hook = await scanAndAdd(['Dune', 'Emma'], pick({ Dune: own, Emma: nic }));
+    expect(hook.result.current.banner.banner?.message).toBe(
+      '1 already in your library, 1 not saved. 1 not in our catalog: try searching by title.'
+    );
+  });
+
+  it('both refusal kinds, nothing added', async () => {
+    const hook = await scanAndAdd(['Dune', 'Emma'], pick({ Dune: nic, Emma: stale }));
+    expect(hook.result.current.banner.banner?.message).toBe(
+      '2 not saved. 1 not in our catalog: try searching by title. 1 out of date: scan or search again.'
+    );
+    expect(hook.result.current.scan.reviewingJob).toBeNull();
+  });
+
+  it('refused plus a 500, nothing added', async () => {
+    const hook = await scanAndAdd(['Dune', 'Emma'], pick({ Dune: nic, Emma: boom }));
+    expect(hook.result.current.banner.banner?.message).toBe(
+      '2 not saved. 1 not in our catalog: try searching by title. Tap Add to retry the others.'
+    );
+    expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual(['Emma']);
+  });
+
+  it('refused, owned and 500 together keep only the 500 to retry', async () => {
+    const hook = await scanAndAdd(
+      ['Dune', 'Emma', 'Ulysses'],
+      pick({ Dune: nic, Emma: own, Ulysses: boom })
+    );
+    expect(hook.result.current.banner.banner?.message).toBe(
+      '1 already in your library, 2 not saved. 1 not in our catalog: try searching by title. Tap Add to retry the others.'
+    );
+    expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual([
+      'Ulysses',
+    ]);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the whole banner, not two lines', async () => {
+    const hook = await scanAndAdd(['Dune', 'Emma'], pick({ Dune: nic, Emma: stale }));
+    expect(hook.result.current.banner.banner?.numberOfLines).toBe(0);
   });
 
   it('a 422 with another detail is still a retryable failure', async () => {

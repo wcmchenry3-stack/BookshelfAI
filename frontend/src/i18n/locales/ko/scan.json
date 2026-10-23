@@ -81,7 +81,10 @@
   "catalogTokenInvalidManyMessage": "이 결과 {{count}}건은 오래되었습니다. 책을 다시 스캔하거나 검색해 주세요.",
   "notSavedSummaryMessage": "{{added}}권 추가, {{notSaved}}권 저장 안 됨.",
   "notSavedSummaryOwnedMessage": "{{added}}권 추가, {{owned}}권은 이미 서재에 있음, {{notSaved}}권 저장 안 됨.",
-  "reasonNotInCatalog": "카탈로그에 없음: 제목으로 검색하세요.",
-  "reasonTokenInvalid": "오래된 결과: 다시 스캔하거나 검색하세요.",
-  "retryOthersHint": "추가를 눌러 나머지를 다시 시도하세요."
+  "reasonNotInCatalog": "{{count}}권이 카탈로그에 없음: 제목으로 검색하세요.",
+  "reasonTokenInvalid": "{{count}}건이 오래됨: 다시 스캔하거나 검색하세요.",
+  "retryOthersHint": "추가를 눌러 나머지를 다시 시도하세요.",
+  "notSavedOwnedOnlyMessage": "{{owned}}권은 이미 서재에 있음, {{notSaved}}권 저장 안 됨.",
+  "notSavedOnlyMessage": "{{notSaved}}권 저장 안 됨.",
+  "ownedNotSavedRetryMessage": "{{owned}}권은 이미 서재에 있음, {{failed}}권 저장 실패. 추가를 눌러 다시 시도하세요."
 }

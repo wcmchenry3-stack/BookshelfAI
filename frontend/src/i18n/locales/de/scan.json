@@ -81,7 +81,10 @@
   "catalogTokenInvalidManyMessage": "Diese {{count}} Ergebnisse sind veraltet. Scanne die Bücher erneut oder suche danach.",
   "notSavedSummaryMessage": "{{added}} hinzugefügt, {{notSaved}} nicht gespeichert.",
   "notSavedSummaryOwnedMessage": "{{added}} hinzugefügt, {{owned}} schon in der Bibliothek, {{notSaved}} nicht gespeichert.",
-  "reasonNotInCatalog": "Nicht im Katalog: Suche nach Titel.",
-  "reasonTokenInvalid": "Veraltet: erneut scannen oder suchen.",
-  "retryOthersHint": "Zum Wiederholen der übrigen auf Hinzufügen tippen."
+  "reasonNotInCatalog": "{{count}} nicht im Katalog: Suche nach Titel.",
+  "reasonTokenInvalid": "{{count}} veraltet: erneut scannen oder suchen.",
+  "retryOthersHint": "Zum Wiederholen der übrigen auf Hinzufügen tippen.",
+  "notSavedOwnedOnlyMessage": "{{owned}} schon in der Bibliothek, {{notSaved}} nicht gespeichert.",
+  "notSavedOnlyMessage": "{{notSaved}} nicht gespeichert.",
+  "ownedNotSavedRetryMessage": "{{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen."
 }

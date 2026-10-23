@@ -679,12 +679,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       const owned = books.filter((_, i) => alreadyOwned(outcomes[i]));
       // A 422 catalog refusal (#612) is final: retrying cannot help, so the
       // book is "not saved" but neither retried nor reported to Sentry.
-      const refusal = (i: number) => {
-        const o = outcomes[i];
-        return o.status === 'rejected' ? catalogRefusal(o.reason) : null;
-      };
-      const notInCatalog = books.filter((_, i) => refusal(i) === 'book_not_in_catalog');
-      const staleResult = books.filter((_, i) => refusal(i) === 'catalog_token_invalid');
+      const refusals = outcomes.map((o) =>
+        o.status === 'rejected' ? catalogRefusal(o.reason) : null
+      );
+      const notInCatalog = books.filter((_, i) => refusals[i] === 'book_not_in_catalog');
+      const staleResult = books.filter((_, i) => refusals[i] === 'catalog_token_invalid');
       const refused = notInCatalog.length + staleResult.length;
       const failed = books.filter(
         (_, i) => outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i])
@@ -692,7 +691,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       // Failures a retry might fix.
       const retryable = books.filter(
         (_, i) =>
-          outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i]) && refusal(i) === null
+          outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i]) && refusals[i] === null
       );
       const newlyAdded = books.length - failed.length - owned.length;
 
@@ -769,29 +768,44 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               : t('catalogTokenInvalidManyMessage', { count: staleResult.length });
         } else {
           const counts = { added: newlyAdded, owned: owned.length, notSaved: failed.length };
+          const summary =
+            newlyAdded > 0
+              ? owned.length > 0
+                ? t('notSavedSummaryOwnedMessage', counts)
+                : t('notSavedSummaryMessage', counts)
+              : owned.length > 0
+                ? t('notSavedOwnedOnlyMessage', counts)
+                : t('notSavedOnlyMessage', counts);
           message = [
-            owned.length > 0
-              ? t('notSavedSummaryOwnedMessage', counts)
-              : t('notSavedSummaryMessage', counts),
-            notInCatalog.length > 0 ? t('reasonNotInCatalog') : '',
-            staleResult.length > 0 ? t('reasonTokenInvalid') : '',
+            summary,
+            notInCatalog.length > 0 ? t('reasonNotInCatalog', { count: notInCatalog.length }) : '',
+            staleResult.length > 0 ? t('reasonTokenInvalid', { count: staleResult.length }) : '',
             retryable.length > 0 ? t('retryOthersHint') : '',
           ]
             .filter(Boolean)
             .join(' ');
         }
       } else if (owned.length > 0) {
-        message = t('addedSomeOwnedMessage', {
-          added: newlyAdded,
-          owned: owned.length,
-          failed: failed.length,
-        });
+        message =
+          newlyAdded > 0
+            ? t('addedSomeOwnedMessage', {
+                added: newlyAdded,
+                owned: owned.length,
+                failed: failed.length,
+              })
+            : t('ownedNotSavedRetryMessage', { owned: owned.length, failed: failed.length });
       } else if (newlyAdded > 0) {
         message = t('addedSomeMessage', { added: newlyAdded, total: books.length });
       } else {
         message = t('couldNotSaveMessage');
       }
-      showBanner({ message, type: 'error', duration: 6000 });
+      // Long, multi-sentence results are shown in full and stay long enough to read.
+      showBanner({
+        message,
+        type: 'error',
+        duration: Math.min(12000, Math.max(6000, message.length * 60)),
+        numberOfLines: 0,
+      });
     },
     [reviewingJobId, dismissJob, updateJob, showBanner, t]
   );

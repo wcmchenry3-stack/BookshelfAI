@@ -103,7 +103,10 @@
   "catalogTokenInvalidManyMessage": "These {{count}} results are out of date. Scan or search for the books again.",
   "notSavedSummaryMessage": "Added {{added}}, {{notSaved}} not saved.",
   "notSavedSummaryOwnedMessage": "Added {{added}}, {{owned}} already in your library, {{notSaved}} not saved.",
-  "reasonNotInCatalog": "Not in our catalog: try searching by title.",
-  "reasonTokenInvalid": "Out of date: scan or search again.",
-  "retryOthersHint": "Tap Add to retry the others."
+  "reasonNotInCatalog": "{{count}} not in our catalog: try searching by title.",
+  "reasonTokenInvalid": "{{count}} out of date: scan or search again.",
+  "retryOthersHint": "Tap Add to retry the others.",
+  "notSavedOwnedOnlyMessage": "{{owned}} already in your library, {{notSaved}} not saved.",
+  "notSavedOnlyMessage": "{{notSaved}} not saved.",
+  "ownedNotSavedRetryMessage": "{{owned}} already in your library, {{failed}} not saved. Tap Add to retry."
 }

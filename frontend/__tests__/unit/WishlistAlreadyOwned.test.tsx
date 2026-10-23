@@ -152,7 +152,7 @@ describe('POST /wishlist 409 = already in your library (#587)', () => {
     // Nothing was added: the owned book is not counted as added.
     expect(hook.result.current.banner.banner).toEqual(
       expect.objectContaining({
-        message: 'Added 0, 1 already in your library, 1 not saved. Tap Add to retry.',
+        message: '1 already in your library, 1 not saved. Tap Add to retry.',
         type: 'error',
       })
     );

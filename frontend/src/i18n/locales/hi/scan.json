@@ -80,8 +80,11 @@
   "catalogTokenInvalidMessage": "यह नतीजा पुराना हो चुका है। किताब को फिर से स्कैन या खोजें।",
   "catalogTokenInvalidManyMessage": "ये {{count}} नतीजे पुराने हो चुके हैं। किताबों को फिर से स्कैन या खोजें।",
   "notSavedSummaryMessage": "{{added}} जोड़ी गईं, {{notSaved}} सहेजी नहीं गईं।",
-  "notSavedSummaryOwnedMessage": "{{added}} जोड़ी गईं, {{owned}} पहले से लाइब्रेरी में, {{notSaved}} सहेजी नहीं गईं।",
-  "reasonNotInCatalog": "कैटलॉग में नहीं: शीर्षक से खोजें।",
-  "reasonTokenInvalid": "पुराना नतीजा: फिर से स्कैन या खोजें।",
-  "retryOthersHint": "बाकी को फिर आज़माने के लिए जोड़ें दबाएँ।"
+  "notSavedSummaryOwnedMessage": "{{added}} जोड़ी गईं, {{owned}} पहले से आपकी लाइब्रेरी में, {{notSaved}} सहेजी नहीं गईं।",
+  "reasonNotInCatalog": "{{count}} कैटलॉग में नहीं: शीर्षक से खोजें।",
+  "reasonTokenInvalid": "{{count}} पुराने नतीजे: फिर से स्कैन या खोजें।",
+  "retryOthersHint": "बाकी को फिर आज़माने के लिए जोड़ें दबाएँ।",
+  "notSavedOwnedOnlyMessage": "{{owned}} पहले से आपकी लाइब्रेरी में, {{notSaved}} सहेजी नहीं गईं।",
+  "notSavedOnlyMessage": "{{notSaved}} सहेजी नहीं गईं।",
+  "ownedNotSavedRetryMessage": "{{owned}} पहले से लाइब्रेरी में, {{failed}} सहेजी नहीं गईं। जोड़ें दबाएं।"
 }

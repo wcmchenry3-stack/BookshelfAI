@@ -81,7 +81,10 @@
   "catalogTokenInvalidManyMessage": "Deze {{count}} resultaten zijn verouderd. Scan de boeken opnieuw of zoek ze op.",
   "notSavedSummaryMessage": "{{added}} toegevoegd, {{notSaved}} niet opgeslagen.",
   "notSavedSummaryOwnedMessage": "{{added}} toegevoegd, {{owned}} al in je bibliotheek, {{notSaved}} niet opgeslagen.",
-  "reasonNotInCatalog": "Niet in catalogus: zoek op titel.",
-  "reasonTokenInvalid": "Verouderd: scan of zoek opnieuw.",
-  "retryOthersHint": "Tik op Toevoegen om de rest opnieuw te proberen."
+  "reasonNotInCatalog": "{{count}} niet in catalogus: zoek op titel.",
+  "reasonTokenInvalid": "{{count}} verouderd: scan of zoek opnieuw.",
+  "retryOthersHint": "Tik op Toevoegen om de rest opnieuw te proberen.",
+  "notSavedOwnedOnlyMessage": "{{owned}} al in je bibliotheek, {{notSaved}} niet opgeslagen.",
+  "notSavedOnlyMessage": "{{notSaved}} niet opgeslagen.",
+  "ownedNotSavedRetryMessage": "{{owned}} al in je bibliotheek, {{failed}} niet opgeslagen. Tik op Toevoegen."
 }

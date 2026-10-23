@@ -81,7 +81,10 @@
   "catalogTokenInvalidManyMessage": "Эти результаты ({{count}}) устарели. Отсканируйте или найдите книги снова.",
   "notSavedSummaryMessage": "Добавлено: {{added}}, не сохранено: {{notSaved}}.",
   "notSavedSummaryOwnedMessage": "Добавлено: {{added}}, уже в библиотеке: {{owned}}, не сохранено: {{notSaved}}.",
-  "reasonNotInCatalog": "Нет в каталоге: найдите по названию.",
-  "reasonTokenInvalid": "Устарело: отсканируйте или найдите снова.",
-  "retryOthersHint": "Нажмите «Добавить», чтобы повторить для остальных."
+  "reasonNotInCatalog": "Нет в каталоге: {{count}}. Найдите по названию.",
+  "reasonTokenInvalid": "Устарело: {{count}}. Отсканируйте или найдите снова.",
+  "retryOthersHint": "Нажмите «Добавить», чтобы повторить для остальных.",
+  "notSavedOwnedOnlyMessage": "Уже в библиотеке: {{owned}}. Не сохранено: {{notSaved}}.",
+  "notSavedOnlyMessage": "Не сохранено: {{notSaved}}.",
+  "ownedNotSavedRetryMessage": "Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить»."
 }

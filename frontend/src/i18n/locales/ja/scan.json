@@ -80,8 +80,11 @@
   "catalogTokenInvalidMessage": "この結果は古くなっています。もう一度スキャンまたは検索してください。",
   "catalogTokenInvalidManyMessage": "この{{count}}件の結果は古くなっています。もう一度スキャンまたは検索してください。",
   "notSavedSummaryMessage": "{{added}}冊を追加、{{notSaved}}冊は未保存です。",
-  "notSavedSummaryOwnedMessage": "{{added}}冊を追加、{{owned}}冊は既に所蔵、{{notSaved}}冊は未保存です。",
-  "reasonNotInCatalog": "カタログにありません：タイトルで検索を。",
-  "reasonTokenInvalid": "古い結果：もう一度スキャンか検索を。",
-  "retryOthersHint": "「追加」をタップして残りを再試行。"
+  "notSavedSummaryOwnedMessage": "{{added}}冊を追加、{{owned}}冊はライブラリにあり、{{notSaved}}冊は未保存です。",
+  "reasonNotInCatalog": "{{count}}冊がカタログにありません：タイトルで検索を。",
+  "reasonTokenInvalid": "{{count}}件が古い結果です：もう一度スキャンか検索を。",
+  "retryOthersHint": "「追加」をタップして残りを再試行。",
+  "notSavedOwnedOnlyMessage": "{{owned}}冊はライブラリにあり、{{notSaved}}冊は未保存です。",
+  "notSavedOnlyMessage": "{{notSaved}}冊は未保存です。",
+  "ownedNotSavedRetryMessage": "{{owned}}冊はライブラリにあり、{{failed}}冊は保存できませんでした。追加で再試行。"
 }
