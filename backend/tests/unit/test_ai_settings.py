@@ -965,7 +965,7 @@ class TestSeeding:
         with (
             patch.object(ai_settings, "_open_session", side_effect=OSError("nope")),
             patch("app.main.cleanup_expired_tokens", new=AsyncMock()),
-            TestClient(app) as c,
+            TestClient(_current_app()) as c,
         ):
             assert c.get("/health").status_code == 200
 
@@ -973,10 +973,19 @@ class TestSeeding:
         with (
             patch("app.main.seed_ai_settings_at_startup", new=AsyncMock()) as seed,
             patch("app.main.cleanup_expired_tokens", new=AsyncMock()),
-            TestClient(app),
+            TestClient(_current_app()),
         ):
             pass
         seed.assert_awaited_once()
+
+
+def _current_app():
+    """``app.main`` is reloaded by test_environment_hardening, so the module
+    level ``app`` can be a stale generation; ``patch("app.main....")`` always
+    targets the current one."""
+    import app.main
+
+    return app.main.app
 
 
 def _pg():

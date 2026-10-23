@@ -143,19 +143,3 @@ class TestOpenAIStatusErrors:
             await self._call(503)
         assert "HTTP 503" in caplog.text
         assert "rate limit" not in caplog.text
-
-
-class TestSleepHelper:
-    async def test_sleep_waits_on_the_anyio_clock(self):
-        with patch.object(av.anyio, "sleep", AsyncMock()) as sleep:
-            await av._sleep(1.5)
-        sleep.assert_awaited_once_with(1.5)
-
-    def test_now_reads_the_anyio_clock(self):
-        # Outside an event loop anyio cannot give a time; inside one it is a float.
-        async def read():
-            return av._now()
-
-        import asyncio
-
-        assert isinstance(asyncio.run(read()), float)

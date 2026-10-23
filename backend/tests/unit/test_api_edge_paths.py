@@ -2,6 +2,7 @@
 logout must ignore, the purchased-book upgrade, and a failing library check."""
 
 import uuid
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -94,7 +95,7 @@ class TestAddPurchased:
 
     def test_existing_entry_is_upgraded_and_linked_to_the_isbn_edition(self):
         edition_id = uuid.uuid4()
-        existing = MagicMock(status="wishlisted", edition_id=None)
+        existing = MagicMock(status="wishlisted", edition_id=None, purchased_at=None)
         returned = _make_user_book(status="purchased")
         db = AsyncMock()
         db.add = MagicMock()
@@ -111,12 +112,14 @@ class TestAddPurchased:
         )
         assert resp.status_code == 201
         assert existing.status == "purchased"
-        assert existing.purchased_at is not None
+        assert isinstance(existing.purchased_at, datetime)
         assert existing.edition_id == edition_id
         db.add.assert_not_called()  # updated in place, not duplicated
 
     def test_without_a_matching_edition_the_existing_edition_is_kept(self):
-        existing = MagicMock(status="wishlisted", edition_id="keep-me")
+        existing = MagicMock(
+            status="wishlisted", edition_id="keep-me", purchased_at=None
+        )
         db = AsyncMock()
         db.add = MagicMock()
         db.execute = AsyncMock(
@@ -132,6 +135,8 @@ class TestAddPurchased:
         )
         assert resp.status_code == 201
         assert existing.edition_id == "keep-me"
+        assert existing.status == "purchased"
+        assert isinstance(existing.purchased_at, datetime)
 
     def test_new_entry_is_created_when_the_user_has_none(self):
         db = AsyncMock()
@@ -148,7 +153,7 @@ class TestAddPurchased:
         created = db.add.call_args.args[0]
         assert created.status == "purchased"
         assert created.user_id == FAKE_USER.id
-        assert created.purchased_at is not None
+        assert isinstance(created.purchased_at, datetime)
         db.commit.assert_awaited_once()
 
 

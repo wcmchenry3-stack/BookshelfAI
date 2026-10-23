@@ -30,8 +30,12 @@ class TestRequestSizeLimit:
         assert resp.status_code == 413
         assert resp.json() == {"detail": "Request body too large"}
 
-    def test_limit_covers_the_5mb_image_cap_with_headroom(self):
-        assert _main().RequestSizeLimitMiddleware.MAX_BODY_SIZE >= 5 * 1024 * 1024 * 2
+    def test_body_just_under_the_limit_is_not_rejected_as_too_large(self):
+        at_limit = _main().RequestSizeLimitMiddleware.MAX_BODY_SIZE
+        resp = TestClient(_main().app).post(
+            "/auth/logout", content=b"{}", headers={"content-length": str(at_limit)}
+        )
+        assert resp.status_code != 413
 
 
 class TestLifespan:
@@ -127,7 +131,7 @@ class TestTestLoginSuccess:
         from app.auth.jwt import decode_token
 
         claims = decode_token(body["access_token"])
-        assert claims["type"] != "refresh"
+        assert claims["type"] == "access"
         added = [c.args[0] for c in db.add.call_args_list]
         kinds = {type(o).__name__ for o in added}
         assert kinds == {"User", "RefreshToken"}
@@ -163,5 +167,6 @@ class TestTestLoginSuccess:
 
 class TestDebugSentryRoute:
     def test_the_debug_route_raises_so_sentry_can_capture_it(self):
-        client = TestClient(_main().app, raise_server_exceptions=False)
-        assert client.get("/debug/sentry-test").status_code == 500
+        client = TestClient(_main().app, raise_server_exceptions=True)
+        with pytest.raises(ZeroDivisionError):
+            client.get("/debug/sentry-test")

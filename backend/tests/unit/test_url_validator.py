@@ -94,8 +94,20 @@ def test_any_private_answer_among_many_rejects():
         validate_safe_url("https://mixed.example.com/x")
 
 
-def test_ip_literal_in_url_is_checked():
+def test_host_resolving_to_loopback_is_rejected():
     with patch(
         "socket.getaddrinfo", return_value=_resolves_to("127.0.0.1")
     ), pytest.raises(ValueError):
         validate_safe_url("https://127.0.0.1/x")
+
+
+@pytest.mark.parametrize("url", ["https://127.0.0.1/x", "https://[::1]/x"])
+def test_ip_literals_are_rejected_without_a_dns_stub(url):
+    def echo(host, *_a, **_k):
+        return _resolves_to(host)
+
+    with (
+        patch("socket.getaddrinfo", side_effect=echo),
+        pytest.raises(ValueError, match="private or reserved"),
+    ):
+        validate_safe_url(url)

@@ -142,10 +142,34 @@ class TestSpecFor:
         spec.name = "not.a.scan.feature"
         assert ai_settings.AISettings({}).spec_for(spec) is spec
 
-    def test_override_applies_to_a_scan_feature(self):
+    def test_provider_model_and_kill_switch_overrides_are_applied(self):
         spec = get_feature("scan.standard")
-        out = ai_settings.AISettings({}).spec_for(spec)
-        assert out.name == spec.name
+        rows = {
+            "scan.standard.provider": "anthropic",
+            "scan.standard.model": "claude-sonnet-5-5",
+            "scan.standard.enabled": False,
+        }
+        out = ai_settings.AISettings(rows).spec_for(spec)
+        assert (out.provider, out.model) == ("anthropic", "claude-sonnet-5-5")
+        assert out.enabled is False
+        # Everything else comes from the registry, untouched.
+        assert out.max_tokens == spec.max_tokens
+
+    def test_registry_rejected_model_is_ignored_but_kill_switch_still_applies(self):
+        spec = get_feature("scan.standard")
+        # An Anthropic model is not allowed on the OpenAI provider.
+        rows = {
+            "scan.standard.model": "claude-sonnet-5-5",
+            "scan.standard.enabled": False,
+        }
+        out = ai_settings.AISettings(rows).spec_for(spec)
+        assert out.model == spec.model
+        assert out.provider == spec.provider
+        assert out.enabled is False
+
+    def test_defaults_leave_the_registry_spec_unchanged(self):
+        spec = get_feature("scan.standard")
+        assert ai_settings.AISettings({}).spec_for(spec) == spec
 
 
 class TestSeedHelpers:

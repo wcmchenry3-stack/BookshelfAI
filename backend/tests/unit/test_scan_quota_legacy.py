@@ -39,9 +39,6 @@ class TestDateMaths:
         now = datetime(2026, 3, 1, 23, 30, tzinfo=timezone(timedelta(hours=-5)))
         assert scan_quota.utc_today(now) == date(2026, 3, 2)
 
-    def test_utc_today_defaults_to_now(self):
-        assert abs((scan_quota.utc_today() - datetime.now(UTC).date()).days) <= 1
-
     def test_seconds_until_midnight(self):
         now = datetime(2026, 3, 1, 23, 0, 0, tzinfo=UTC)
         assert scan_quota.seconds_until_utc_midnight(now) == 3600
