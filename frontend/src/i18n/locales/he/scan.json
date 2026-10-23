@@ -74,5 +74,17 @@
   "alreadyInLibraryMessage": "\"{{title}}\" כבר נמצא בספרייה שלך.",
   "alreadyInLibraryManyMessage": "{{count}} ספרים כבר נמצאים בספרייה שלך.",
   "addedAndOwnedMessage": "נוספו {{added}}. {{owned}} כבר בספרייה שלך.",
-  "addedSomeOwnedMessage": "נוספו {{added}}, {{owned}} כבר בספרייה שלך, {{failed}} לא נשמרו. הקש על הוספה כדי לנסות שוב."
+  "addedSomeOwnedMessage": "נוספו {{added}}, {{owned}} כבר בספרייה שלך, {{failed}} לא נשמרו. הקש על הוספה כדי לנסות שוב.",
+  "notInCatalogMessage": "לא מצאנו את הספר הזה בקטלוג שלנו, ולכן אי אפשר להוסיף אותו עדיין. נסה לחפש לפי שם.",
+  "notInCatalogManyMessage": "לא מצאנו את {{count}} הספרים האלה בקטלוג שלנו, ולכן אי אפשר להוסיף אותם עדיין. נסה לחפש לפי שם.",
+  "catalogTokenInvalidMessage": "התוצאה הזו ישנה. סרוק או חפש את הספר שוב.",
+  "catalogTokenInvalidManyMessage": "{{count}} התוצאות האלה ישנות. סרוק או חפש את הספרים שוב.",
+  "notSavedSummaryMessage": "נוספו {{added}}, {{notSaved}} לא נשמרו.",
+  "notSavedSummaryOwnedMessage": "נוספו {{added}}, {{owned}} כבר בספרייה שלך, {{notSaved}} לא נשמרו.",
+  "reasonNotInCatalog": "{{count}} לא בקטלוג: חפש לפי שם.",
+  "reasonTokenInvalid": "{{count}} תוצאות ישנות: סרוק או חפש שוב.",
+  "retryOthersHint": "הקש על הוספה כדי לנסות שוב את השאר.",
+  "notSavedOwnedOnlyMessage": "{{owned}} כבר בספרייה שלך, {{notSaved}} לא נשמרו.",
+  "notSavedOnlyMessage": "{{notSaved}} לא נשמרו.",
+  "ownedNotSavedRetryMessage": "{{owned}} כבר בספרייה שלך, {{failed}} לא נשמרו. הקש על הוספה כדי לנסות שוב."
 }

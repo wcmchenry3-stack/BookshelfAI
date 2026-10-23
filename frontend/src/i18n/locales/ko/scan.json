@@ -74,5 +74,17 @@
   "alreadyInLibraryMessage": "\"{{title}}\"은(는) 이미 내 서재에 있습니다.",
   "alreadyInLibraryManyMessage": "{{count}}권은 이미 내 서재에 있습니다.",
   "addedAndOwnedMessage": "{{added}}권을 추가했습니다. {{owned}}권은 이미 내 서재에 있습니다.",
-  "addedSomeOwnedMessage": "{{added}}권 추가, {{owned}}권은 이미 서재에 있음, {{failed}}권 저장 실패. 추가를 눌러 다시 시도하세요."
+  "addedSomeOwnedMessage": "{{added}}권 추가, {{owned}}권은 이미 서재에 있음, {{failed}}권 저장 실패. 추가를 눌러 다시 시도하세요.",
+  "notInCatalogMessage": "이 책을 카탈로그에서 찾지 못해 아직 추가할 수 없습니다. 제목으로 검색해 보세요.",
+  "notInCatalogManyMessage": "이 책 {{count}}권을 카탈로그에서 찾지 못해 아직 추가할 수 없습니다. 제목으로 검색해 보세요.",
+  "catalogTokenInvalidMessage": "이 결과는 오래되었습니다. 책을 다시 스캔하거나 검색해 주세요.",
+  "catalogTokenInvalidManyMessage": "이 결과 {{count}}건은 오래되었습니다. 책을 다시 스캔하거나 검색해 주세요.",
+  "notSavedSummaryMessage": "{{added}}권 추가, {{notSaved}}권 저장 안 됨.",
+  "notSavedSummaryOwnedMessage": "{{added}}권 추가, {{owned}}권은 이미 서재에 있음, {{notSaved}}권 저장 안 됨.",
+  "reasonNotInCatalog": "{{count}}권이 카탈로그에 없음: 제목으로 검색하세요.",
+  "reasonTokenInvalid": "{{count}}건이 오래됨: 다시 스캔하거나 검색하세요.",
+  "retryOthersHint": "추가를 눌러 나머지를 다시 시도하세요.",
+  "notSavedOwnedOnlyMessage": "{{owned}}권은 이미 서재에 있음, {{notSaved}}권 저장 안 됨.",
+  "notSavedOnlyMessage": "{{notSaved}}권 저장 안 됨.",
+  "ownedNotSavedRetryMessage": "{{owned}}권은 이미 서재에 있음, {{failed}}권 저장 실패. 추가를 눌러 다시 시도하세요."
 }
