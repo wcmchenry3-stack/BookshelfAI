@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -75,7 +75,9 @@ export function AddUnverifiedBookSheet({
   const [saving, setSaving] = useState(false);
   const [shownKey, setShownKey] = useState(draftKey);
   const draftKeyRef = useRef(draftKey);
-  draftKeyRef.current = draftKey;
+  useEffect(() => {
+    draftKeyRef.current = draftKey;
+  }, [draftKey]);
   if (draftKey !== shownKey) {
     setShownKey(draftKey);
     setSaving(false);

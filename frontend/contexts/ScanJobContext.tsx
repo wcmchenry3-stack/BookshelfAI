@@ -723,7 +723,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const dismissUnverified = useCallback(() => setUnverifiedDrafts([]), []);
 
   const unverifiedDraftsRef = useRef(unverifiedDrafts);
-  unverifiedDraftsRef.current = unverifiedDrafts;
+  useEffect(() => {
+    unverifiedDraftsRef.current = unverifiedDrafts;
+  }, [unverifiedDrafts]);
 
   const unverifiedSaved = useCallback(
     (title: string, draftId?: string) => {
