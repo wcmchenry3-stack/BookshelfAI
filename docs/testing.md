@@ -124,6 +124,8 @@ frontend/__tests__/
 └── integration/     Cross-provider flows (e.g. ScanCaptureFlow)
 ```
 
+Locale guards in `unit/`: `localeKeyParity.test.ts` (every `en` key exists in every locale, plural-aware) and `localeCharacterLimits.test.ts` (`_meta` character limits).
+
 ### Common mock patterns
 
 **expo-crypto (used by ScanJobContext):**

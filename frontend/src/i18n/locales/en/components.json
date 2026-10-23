@@ -32,9 +32,6 @@
     "toDark": "Switch to dark mode",
     "toLight": "Switch to light mode"
   },
-  "inAppBanner": {
-    "dismiss": "Dismiss"
-  },
   "addUnverified": {
     "title": "Add it yourself",
     "intro": "We couldn't find this book in our catalog. Check the details and save it. Only you will see it, marked Unverified.",

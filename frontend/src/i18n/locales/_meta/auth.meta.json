@@ -19,5 +19,10 @@
     "description": "Alert message shown when Google sign-in fails",
     "tone": "reassuring",
     "characterLimit": 60
+  },
+  "signInPrompt": {
+    "description": "Tagline on the sign-in screen",
+    "tone": "friendly",
+    "characterLimit": 60
   }
 }

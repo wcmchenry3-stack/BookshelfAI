@@ -477,5 +477,75 @@
     "tone": "friendly",
     "characterLimit": 100,
     "placeholders": ["{{title}}"]
+  },
+  "bookFound": {
+    "description": "Notice that a book was found in the background. {{title}} is dynamic.",
+    "tone": "neutral",
+    "placeholders": ["{{title}}"]
+  },
+  "viewResults": {
+    "description": "Short button label opening the scan results",
+    "tone": "action",
+    "characterLimit": 12
+  },
+  "retryNow": {
+    "description": "Short button label retrying a failed or paused scan now",
+    "tone": "action",
+    "characterLimit": 15
+  },
+  "saveForLater": {
+    "description": "Button label saving the photo to the scan queue for later",
+    "tone": "action",
+    "characterLimit": 22
+  },
+  "savedOffline": {
+    "description": "Notice that the photo was saved because the device is offline",
+    "tone": "reassuring",
+    "characterLimit": 50
+  },
+  "maxRetries": {
+    "description": "Notice that the scan hit its retry limit and was saved for later",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "noBooksFound": {
+    "description": "Short notice that a scan found no books",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "booksFound": {
+    "description": "Notice with the number of books a scan found. Plural: _one/_other (and locale categories). {{count}} is the number.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "addedManyMessage": {
+    "description": "Banner after adding several books to the wishlist. {{count}} is the number.",
+    "tone": "positive",
+    "placeholders": ["{{count}}"]
+  },
+  "addedSomeMessage": {
+    "description": "Banner after adding only some of the books; tells the user to tap Add to retry the rest. {{added}} and {{total}} are numbers.",
+    "tone": "neutral",
+    "placeholders": ["{{added}}", "{{total}}"]
+  },
+  "tryEnhanced": {
+    "description": "Button label offering an enhanced scan after a scan found nothing",
+    "tone": "action",
+    "characterLimit": 40
+  },
+  "enhancedNoBooksFound": {
+    "description": "Message that the enhanced scan also found no books",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "enhancedNoNewBooks": {
+    "description": "Message that the enhanced scan found no more books and the earlier results are shown",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
+  "enhancedFailed": {
+    "description": "Message that the enhanced scan failed and the earlier results are shown",
+    "tone": "neutral",
+    "characterLimit": 80
   }
 }
