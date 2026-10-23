@@ -34,6 +34,8 @@ class DeduplicationService:
                     Book.open_library_work_id == candidate.open_library_work_id,
                     UserBook.user_id == user_id,
                 )
+                # Existence only: one row is enough.
+                .limit(1)
             )
             if result.scalar_one_or_none():
                 return True
@@ -46,6 +48,10 @@ class DeduplicationService:
                     Book.google_books_id == candidate.google_books_id,
                     UserBook.user_id == user_id,
                 )
+                # google_books_id is not unique (#613): with duplicate Book
+                # rows the user may hold several, which must not raise
+                # MultipleResultsFound.
+                .limit(1)
             )
             if result.scalar_one_or_none():
                 return True

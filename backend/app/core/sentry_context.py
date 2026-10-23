@@ -54,6 +54,7 @@ _REQUEST_DENYLIST = [
     "cf_turnstile_response",  # handler parameter name
     "provided_secret",
     "http.query",
+    "catalog_token",  # POST /wishlist body and EnrichedBook (#602)
 ]
 
 

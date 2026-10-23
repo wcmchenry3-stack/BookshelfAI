@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.auth.dependencies import get_current_user
+from app.core import catalog_token
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.models.user import User
@@ -51,7 +52,8 @@ async def search_books(
     ),
     current_user: User = Depends(get_current_user),
 ) -> list[EnrichedBook]:
-    """Search for books by free text. Returns up to 3 enriched candidates."""
+    """Search for books by free text. Returns up to 3 enriched candidates,
+    each signed for this user (``catalog_token``, #602)."""
     try:
         volumes = await _gb.search_query(q, limit=3)
     except Exception as exc:
@@ -61,4 +63,5 @@ async def search_books(
         return []
 
     candidates = [_volume_to_candidate(v) for v in volumes]
-    return await _enrichment.enrich(candidates)
+    books = await _enrichment.enrich(candidates)
+    return catalog_token.sign_books(books, current_user.id)
