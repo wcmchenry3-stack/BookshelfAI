@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
-import { isAlreadyOwnedError } from '../lib/ownership';
+import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
 import { Sentry } from '../lib/sentry';
 import {
@@ -677,8 +677,21 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       const alreadyOwned = (o: PromiseSettledResult<unknown>) =>
         o.status === 'rejected' && isAlreadyOwnedError(o.reason);
       const owned = books.filter((_, i) => alreadyOwned(outcomes[i]));
+      // A 422 catalog refusal (#612) is final: retrying cannot help, so the
+      // book is "not saved" but neither retried nor reported to Sentry.
+      const refusals = outcomes.map((o) =>
+        o.status === 'rejected' ? catalogRefusal(o.reason) : null
+      );
+      const notInCatalog = books.filter((_, i) => refusals[i] === 'book_not_in_catalog');
+      const staleResult = books.filter((_, i) => refusals[i] === 'catalog_token_invalid');
+      const refused = notInCatalog.length + staleResult.length;
       const failed = books.filter(
         (_, i) => outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i])
+      );
+      // Failures a retry might fix.
+      const retryable = books.filter(
+        (_, i) =>
+          outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i]) && refusals[i] === null
       );
       const newlyAdded = books.length - failed.length - owned.length;
 
@@ -708,30 +721,91 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       }
 
       for (const outcome of outcomes) {
-        if (outcome.status === 'rejected' && !alreadyOwned(outcome)) {
+        if (
+          outcome.status === 'rejected' &&
+          !alreadyOwned(outcome) &&
+          catalogRefusal(outcome.reason) === null
+        ) {
           Sentry.captureException(outcome.reason, {
             tags: { feature: 'scan', action: 'add_books' },
           });
         }
       }
-      // Keep only the books that didn't save so the user can retry just
-      // those (a book already in the library is done with too).
-      if (jobId && failed.length < books.length) updateJob(jobId, { results: failed });
+      // Keep only the books a retry could save; owned and refused books are
+      // done with too.
+      if (jobId && retryable.length < books.length) {
+        if (retryable.length === 0) {
+          dismissJob(jobId);
+          setReviewingJobId(null);
+        } else {
+          updateJob(jobId, { results: retryable });
+        }
+      }
       // Count only the books actually added; say how many were already
       // in the library rather than counting them as added (#587).
       let message: string;
-      if (owned.length > 0) {
-        message = t('addedSomeOwnedMessage', {
-          added: newlyAdded,
-          owned: owned.length,
-          failed: failed.length,
-        });
+      if (refused > 0) {
+        // Not saved, with the specific reason for the refused books (#612).
+        if (
+          newlyAdded === 0 &&
+          owned.length === 0 &&
+          retryable.length === 0 &&
+          staleResult.length === 0
+        ) {
+          message =
+            notInCatalog.length === 1
+              ? t('notInCatalogMessage')
+              : t('notInCatalogManyMessage', { count: notInCatalog.length });
+        } else if (
+          newlyAdded === 0 &&
+          owned.length === 0 &&
+          retryable.length === 0 &&
+          notInCatalog.length === 0
+        ) {
+          message =
+            staleResult.length === 1
+              ? t('catalogTokenInvalidMessage')
+              : t('catalogTokenInvalidManyMessage', { count: staleResult.length });
+        } else {
+          const counts = { added: newlyAdded, owned: owned.length, notSaved: failed.length };
+          const summary =
+            newlyAdded > 0
+              ? owned.length > 0
+                ? t('notSavedSummaryOwnedMessage', counts)
+                : t('notSavedSummaryMessage', counts)
+              : owned.length > 0
+                ? t('notSavedOwnedOnlyMessage', counts)
+                : t('notSavedOnlyMessage', counts);
+          message = [
+            summary,
+            notInCatalog.length > 0 ? t('reasonNotInCatalog', { count: notInCatalog.length }) : '',
+            staleResult.length > 0 ? t('reasonTokenInvalid', { count: staleResult.length }) : '',
+            retryable.length > 0 ? t('retryOthersHint') : '',
+          ]
+            .filter(Boolean)
+            .join(' ');
+        }
+      } else if (owned.length > 0) {
+        message =
+          newlyAdded > 0
+            ? t('addedSomeOwnedMessage', {
+                added: newlyAdded,
+                owned: owned.length,
+                failed: failed.length,
+              })
+            : t('ownedNotSavedRetryMessage', { owned: owned.length, failed: failed.length });
       } else if (newlyAdded > 0) {
         message = t('addedSomeMessage', { added: newlyAdded, total: books.length });
       } else {
         message = t('couldNotSaveMessage');
       }
-      showBanner({ message, type: 'error', duration: 6000 });
+      // Long, multi-sentence results are shown in full and stay long enough to read.
+      showBanner({
+        message,
+        type: 'error',
+        duration: Math.min(12000, Math.max(6000, message.length * 60)),
+        numberOfLines: 0,
+      });
     },
     [reviewingJobId, dismissJob, updateJob, showBanner, t]
   );

@@ -397,5 +397,74 @@
     "tone": "friendly",
     "characterLimit": 110,
     "placeholders": ["{{added}}", "{{owned}}", "{{failed}}"]
+  },
+  "notInCatalogMessage": {
+    "description": "Banner when the server refuses to add one book because it has no catalog match (422 book_not_in_catalog). Suggests searching by title.",
+    "tone": "friendly",
+    "characterLimit": 130
+  },
+  "notInCatalogManyMessage": {
+    "description": "Same as notInCatalogMessage for several books. {{count}} is the number of books (2 or more).",
+    "tone": "friendly",
+    "characterLimit": 150,
+    "placeholders": ["{{count}}"]
+  },
+  "catalogTokenInvalidMessage": {
+    "description": "Banner when the server refuses to add one book because its scan or search result is stale (422 catalog_token_invalid).",
+    "tone": "friendly",
+    "characterLimit": 90
+  },
+  "catalogTokenInvalidManyMessage": {
+    "description": "Same as catalogTokenInvalidMessage for several results. {{count}} is the number (2 or more).",
+    "tone": "friendly",
+    "characterLimit": 100,
+    "placeholders": ["{{count}}"]
+  },
+  "notSavedSummaryMessage": {
+    "description": "First sentence of the error banner when some books could not be saved for a specific reason and none were already owned. {{added}} added, {{notSaved}} not saved.",
+    "tone": "friendly",
+    "characterLimit": 60,
+    "placeholders": ["{{added}}", "{{notSaved}}"]
+  },
+  "notSavedSummaryOwnedMessage": {
+    "description": "Same as notSavedSummaryMessage when some books were already in the library. {{owned}} is that count.",
+    "tone": "friendly",
+    "characterLimit": 90,
+    "placeholders": ["{{added}}", "{{owned}}", "{{notSaved}}"]
+  },
+  "reasonNotInCatalog": {
+    "description": "Sentence after the summary: {{count}} books are not in the catalog; suggests searching by title.",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{count}}"]
+  },
+  "reasonTokenInvalid": {
+    "description": "Sentence after the summary: {{count}} results are out of date; suggests scanning or searching again.",
+    "tone": "friendly",
+    "characterLimit": 60,
+    "placeholders": ["{{count}}"]
+  },
+  "retryOthersHint": {
+    "description": "Sentence after the reasons: books that failed for other reasons stay in the list; Add retries them.",
+    "tone": "friendly",
+    "characterLimit": 60
+  },
+  "notSavedOwnedOnlyMessage": {
+    "description": "Error banner summary when no book was added, some were already in the library and some could not be saved. {{owned}} and {{notSaved}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 80,
+    "placeholders": ["{{owned}}", "{{notSaved}}"]
+  },
+  "notSavedOnlyMessage": {
+    "description": "Error banner summary when no book was added and none were already owned. {{notSaved}} is the count of books not saved.",
+    "tone": "friendly",
+    "characterLimit": 40,
+    "placeholders": ["{{notSaved}}"]
+  },
+  "ownedNotSavedRetryMessage": {
+    "description": "Error banner when no book was added, some were already in the library and some failed and stay to retry with Add. {{owned}} and {{failed}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 110,
+    "placeholders": ["{{owned}}", "{{failed}}"]
   }
 }

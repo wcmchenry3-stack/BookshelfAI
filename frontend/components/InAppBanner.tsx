@@ -66,7 +66,10 @@ export function InAppBanner() {
       accessibilityLiveRegion="assertive"
     >
       <Pressable onPress={dismiss} style={styles.content}>
-        <Text style={[styles.message, { color: textColor }]} numberOfLines={2}>
+        <Text
+          style={[styles.message, { color: textColor }]}
+          numberOfLines={banner.numberOfLines ?? 2}
+        >
           {banner.message}
         </Text>
         {banner.actions && banner.actions.length > 0 && (

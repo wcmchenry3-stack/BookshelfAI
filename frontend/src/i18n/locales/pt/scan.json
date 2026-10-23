@@ -74,5 +74,17 @@
   "alreadyInLibraryMessage": "\"{{title}}\" já está na sua biblioteca.",
   "alreadyInLibraryManyMessage": "{{count}} livros já estão na sua biblioteca.",
   "addedAndOwnedMessage": "{{added}} adicionados. {{owned}} já estão na sua biblioteca.",
-  "addedSomeOwnedMessage": "{{added}} adicionados, {{owned}} já na sua biblioteca, {{failed}} não salvos. Toque em Adicionar."
+  "addedSomeOwnedMessage": "{{added}} adicionados, {{owned}} já na sua biblioteca, {{failed}} não salvos. Toque em Adicionar.",
+  "notInCatalogMessage": "Não encontramos este livro no nosso catálogo, por isso ainda não dá para adicioná-lo. Tente buscar pelo título.",
+  "notInCatalogManyMessage": "Não encontramos estes {{count}} livros no nosso catálogo, por isso ainda não dá para adicioná-los. Tente buscar pelo título.",
+  "catalogTokenInvalidMessage": "Este resultado está desatualizado. Escaneie ou busque o livro novamente.",
+  "catalogTokenInvalidManyMessage": "Estes {{count}} resultados estão desatualizados. Escaneie ou busque os livros novamente.",
+  "notSavedSummaryMessage": "{{added}} adicionados, {{notSaved}} não salvos.",
+  "notSavedSummaryOwnedMessage": "{{added}} adicionados, {{owned}} já na sua biblioteca, {{notSaved}} não salvos.",
+  "reasonNotInCatalog": "{{count}} fora do catálogo: busque pelo título.",
+  "reasonTokenInvalid": "{{count}} desatualizados: escaneie ou busque de novo.",
+  "retryOthersHint": "Toque em Adicionar para tentar os outros de novo.",
+  "notSavedOwnedOnlyMessage": "{{owned}} já na sua biblioteca, {{notSaved}} não salvos.",
+  "notSavedOnlyMessage": "{{notSaved}} não salvos.",
+  "ownedNotSavedRetryMessage": "{{owned}} já na sua biblioteca, {{failed}} não salvos. Toque em Adicionar."
 }

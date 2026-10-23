@@ -10,6 +10,8 @@ export interface BannerConfig {
   type: 'success' | 'error' | 'info';
   actions?: BannerAction[];
   duration?: number;
+  /** Lines of text to show; default 2. 0 shows the whole message. */
+  numberOfLines?: number;
 }
 
 export interface BannerContextValue {

@@ -28,16 +28,18 @@ function BannerTrigger({
   message,
   type,
   actions,
+  numberOfLines,
 }: {
   message: string;
   type: 'success' | 'error' | 'info';
   actions?: { label: string; onPress: () => void }[];
+  numberOfLines?: number;
 }) {
   const { showBanner } = useBanner();
   return (
     <Pressable
       testID="trigger"
-      onPress={() => showBanner({ message, type, actions, duration: 10000 })}
+      onPress={() => showBanner({ message, type, actions, duration: 10000, numberOfLines })}
     >
       <Text>Show</Text>
     </Pressable>
@@ -48,6 +50,7 @@ async function renderWithBanner(triggerProps: {
   message: string;
   type: 'success' | 'error' | 'info';
   actions?: { label: string; onPress: () => void }[];
+  numberOfLines?: number;
 }) {
   return await render(
     <BannerProvider>
@@ -82,6 +85,22 @@ describe('InAppBanner', () => {
     });
     await fireEvent.press(getByTestId('trigger'));
     expect(getByText('Book found!')).toBeTruthy();
+  });
+
+  it('truncates the message to 2 lines by default', async () => {
+    const { getByTestId, getByText } = await renderWithBanner({ message: 'Long', type: 'error' });
+    await fireEvent.press(getByTestId('trigger'));
+    expect(getByText('Long').props.numberOfLines).toBe(2);
+  });
+
+  it('shows the whole message when numberOfLines is 0', async () => {
+    const { getByTestId, getByText } = await renderWithBanner({
+      message: 'Long',
+      type: 'error',
+      numberOfLines: 0,
+    });
+    await fireEvent.press(getByTestId('trigger'));
+    expect(getByText('Long').props.numberOfLines).toBe(0);
   });
 
   it('renders action buttons when provided', async () => {
