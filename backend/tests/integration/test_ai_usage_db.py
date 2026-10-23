@@ -668,6 +668,18 @@ def _load_migration():
     return module
 
 
+# Columns a later migration adds to these tables: 0008 alone does not create
+# them, so their add_column diff against the head models is expected.
+LATER_COLUMNS = {("ai_usage", "attempt")}  # 0014 (#603)
+
+
+def _added_later(diff) -> bool:
+    if not (isinstance(diff, tuple) and diff and diff[0] == "add_column"):
+        return False
+    _, _, table, column = diff
+    return (table, column.name) in LATER_COLUMNS
+
+
 def _migration_cycle(connection) -> None:
     migration = _load_migration()
     assert (migration.revision, migration.down_revision) == ("0008", "0007")
@@ -681,7 +693,7 @@ def _migration_cycle(connection) -> None:
         return [
             d
             for d in compare_metadata(context, Base.metadata)
-            if any(t in repr(d) for t in tables)
+            if any(t in repr(d) for t in tables) and not _added_later(d)
         ]
 
     with Operations.context(context):

@@ -1,6 +1,8 @@
 """The usage ledger never stores content (#530): no prompt, image bytes or raw
-model output, and no client-supplied fields. Asserts the exact column sets,
-so adding any column needs a deliberate change here.
+model output, and no client-supplied fields except ``attempt`` (#603: the
+/scan form field, an integer FastAPI validates to 1..6 before the handler
+runs; informational only). Asserts the exact column sets, so adding any
+column needs a deliberate change here.
 
 Run on its own with:  pytest -m security tests/security/test_ai_usage_ledger_content.py
 """
@@ -46,6 +48,8 @@ def test_ai_usage_columns_are_exactly_counts_and_metadata():
         "cost_micros",
         "status",
         "request_id",
+        # #603: which try of the /scan request (validated 1..6), never content.
+        "attempt",
         "created_at",
     }
 
@@ -116,4 +120,6 @@ def test_usage_insert_accepts_no_content_arguments():
         "cache_write_tokens",
         "request_id",
         "price_version",
+        # #603: which try of the /scan request (validated 1..6), never content.
+        "attempt",
     }

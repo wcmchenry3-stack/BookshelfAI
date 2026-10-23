@@ -2,6 +2,7 @@ import logging
 import uuid
 from datetime import datetime
 from functools import partial
+from typing import Annotated
 
 import anyio
 import anyio.to_thread
@@ -55,6 +56,11 @@ ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 STANDARD_FEATURE = "scan.standard"
 ENHANCED_FEATURE = "scan.enhanced"
+# The ``attempt`` form field (#603): 1 is the first try, 2..6 the app's
+# scheduled retries (#574). Recorded only (ledger row and scan_record log
+# line); never used for charging, limits or ordering.
+SCAN_ATTEMPT_MIN = 1
+SCAN_ATTEMPT_MAX = 6
 
 # Image normalisation is CPU- and memory-heavy (a 40 MP image decodes to
 # hundreds of MB), so it runs in a worker thread to keep the event loop free,
@@ -259,6 +265,8 @@ async def _record_lookup(
     user_id: uuid.UUID,
     fingerprint: str | None,
     ai: AISettings,
+    *,
+    attempt: int,
 ) -> scan_records.Record | None:
     """This user's record for the photo, or None (no record, switched off,
     or any failure: logged without content, then the normal path runs)."""
@@ -276,7 +284,9 @@ async def _record_lookup(
             "scan: scan-record lookup failed (%s); taking the normal path",
             type(exc).__name__,
         )
-        scan_records.log_event("lookup_failed", ai_done=False, enrich_done=False)
+        scan_records.log_event(
+            "lookup_failed", ai_done=False, enrich_done=False, attempt=attempt
+        )
         await _recover_session(db, user)
         return None
 
@@ -300,6 +310,7 @@ async def _save_ai_step(
     reservation: quota.Reservation,
     result: AIResult,
     ai: AISettings,
+    attempt: int,
 ) -> datetime | None:
     """Save the provider's answer as the record's AI step; the step's time,
     or None when not saved. Only outcome ``ok`` is saved, with books or
@@ -313,7 +324,11 @@ async def _save_ai_step(
         return None
     if result.outcome != STATUS_OK:
         scan_records.log_event(
-            "not_saved", ai_done=False, enrich_done=False, reason=result.outcome
+            "not_saved",
+            ai_done=False,
+            enrich_done=False,
+            reason=result.outcome,
+            attempt=attempt,
         )
         return None
     tier = reservation.tier.value if isinstance(reservation.tier, Tier) else "unknown"
@@ -331,7 +346,9 @@ async def _save_ai_step(
         )
     except Exception as exc:  # noqa: BLE001 - scan records never fail a scan
         logger.warning("scan: scan-record save failed (%s)", type(exc).__name__)
-        scan_records.log_event("save_failed", ai_done=False, enrich_done=False)
+        scan_records.log_event(
+            "save_failed", ai_done=False, enrich_done=False, attempt=attempt
+        )
         await _recover_session(db)
         return None
 
@@ -374,6 +391,7 @@ async def _serve_repeat(
     fingerprint: str,
     record: scan_records.Record,
     ai: AISettings,
+    attempt: int,
 ) -> ScanResponse:
     """A repeat of a photo with a saved answer: no provider call and nothing
     taken (no reservation, lease, global count-cap unit, cost settle or
@@ -390,6 +408,7 @@ async def _serve_repeat(
             model=record.model,
             status=STATUS_CACHE_HIT,
             request_id=ledger.current_request_id(),
+            attempt=attempt,
         )
     except Exception as exc:  # noqa: BLE001 - never fail a repeat on the ledger
         logger.warning("scan: repeat ledger row failed (%s)", type(exc).__name__)
@@ -414,6 +433,7 @@ async def _serve_repeat(
         enrich_done=enrich_done,
         books=len(books),
         in_library=sum(1 for b in books if b.already_in_library),
+        attempt=attempt,
     )
     try:
         remaining = await quota.enhanced_remaining_for(
@@ -547,13 +567,15 @@ def _usage_row(
     ai: AISettings,
     status: str | None = None,
     result: AIResult | None = None,
+    attempt: int,
 ) -> Executable | None:
     """The ledger insert for this scan's provider call (#530), or None.
 
     With ``result`` (the provider answered) the status is its outcome
     (``ok``/``refused``/``truncated``/``malformed``) and the tokens are its
     usage; otherwise
-    ``status`` is given and the tokens are 0. Never raises: a ledger problem
+    ``status`` is given and the tokens are 0. ``attempt`` (#603) is the
+    request's validated ``attempt`` field, stored as is. Never raises: a ledger problem
     (e.g. a model with no price) is logged and the row skipped, so it cannot
     turn a scan into an error or mask the original exception.
     """
@@ -570,6 +592,7 @@ def _usage_row(
                 cache_read_tokens=result.cache_read_tokens,
                 cache_write_tokens=result.cache_write_tokens,
                 request_id=ledger.current_request_id(),
+                attempt=attempt,
             )
         return ledger.usage_insert(
             call_id=call_id,
@@ -579,6 +602,7 @@ def _usage_row(
             model=resolve_spec(feature, ai).model,
             status=status,
             request_id=ledger.current_request_id(),
+            attempt=attempt,
         )
     except Exception:
         logger.exception("scan: could not build the usage ledger row")
@@ -594,6 +618,15 @@ async def scan(
     db: AsyncSession = Depends(get_db),
     cf_turnstile_response: str | None = Form(None, alias="cf-turnstile-response"),
     enhanced: bool = Form(False),
+    # Which try this is (#603): 1 the first, 2..6 the app's scheduled
+    # retries; missing means 1. Validated by FastAPI with the other form
+    # fields, before the handler runs: anything else (not an integer, or out
+    # of range) is a 422 with nothing counted, reserved or recorded, like a
+    # bad ``enhanced``. Only recorded (each ledger row and the scan_record
+    # log line); never used for charging, limits or ordering.
+    attempt: Annotated[int, Form(ge=SCAN_ATTEMPT_MIN, le=SCAN_ATTEMPT_MAX)] = (
+        SCAN_ATTEMPT_MIN
+    ),
 ) -> ScanResponse:
     # --- Kill switches (ai_settings table, no release needed) ---
     # Checked first: before the upload is read, Turnstile is called or any
@@ -729,7 +762,9 @@ async def scan(
     # Premium) gets the same 403 enhanced_requires_premium as a new photo.
     # Any scan-record failure takes the normal path.
     fingerprint = _fingerprint(image_bytes, ai)
-    record = await _record_lookup(db, current_user, user_id, fingerprint, ai)
+    record = await _record_lookup(
+        db, current_user, user_id, fingerprint, ai, attempt=attempt
+    )
     if (
         fingerprint is not None
         and record is not None
@@ -745,6 +780,7 @@ async def scan(
             fingerprint=fingerprint,
             record=record,
             ai=ai,
+            attempt=attempt,
         )
 
     reservation = await _reserve_scan_quota(db, current_user, feature, ai, enhanced)
@@ -797,7 +833,14 @@ async def scan(
     # failed or cancelled call keeps the estimate as spend (real cost
     # unknown, likely billed).
     call_id = uuid.uuid4()
-    row = partial(_usage_row, call_id=call_id, user_id=user_id, feature=feature, ai=ai)
+    row = partial(
+        _usage_row,
+        call_id=call_id,
+        user_id=user_id,
+        feature=feature,
+        ai=ai,
+        attempt=attempt,
+    )
     ledger_row: Executable | None = None
     # Cost settle (#531): None gives the estimate back (refunded calls).
     spend = partial(_settlement, reservation=reservation, feature=feature, ai=ai)
@@ -885,6 +928,7 @@ async def scan(
         reservation=reservation,
         result=result,
         ai=ai,
+        attempt=attempt,
     )
     books, complete = await _enrich(result.candidates)
     enrich_done = False
@@ -904,6 +948,7 @@ async def scan(
             enrich_done=enrich_done,
             books=len(books),
             in_library=sum(1 for b in books if b.already_in_library),
+            attempt=attempt,
         )
 
     return ScanResponse(

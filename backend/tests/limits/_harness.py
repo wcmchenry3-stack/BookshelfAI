@@ -292,11 +292,18 @@ class ScanOutcome:
 
 
 async def call_scan(
-    factory, user_id: uuid.UUID, *, enhanced: bool, image: bytes | None = None
+    factory,
+    user_id: uuid.UUID,
+    *,
+    enhanced: bool,
+    image: bytes | None = None,
+    attempt: int | None = None,
 ) -> ScanOutcome:
     """One /scan request. ``image``: the photo's bytes (default: a new photo
     every call, see :func:`distinct_jpeg`); pass the same bytes twice to
-    send a repeat."""
+    send a repeat. ``attempt`` (#603): the form field, left out (the
+    handler's default) when None."""
+    extra = {} if attempt is None else {"attempt": attempt}
     async with factory() as db:
         user = await db.get(User, user_id)
         try:
@@ -307,6 +314,7 @@ async def call_scan(
                 db=db,
                 cf_turnstile_response=None,
                 enhanced=enhanced,
+                **extra,
             )
         except HTTPException as exc:
             return ScanOutcome(exc.status_code, exc.detail, exc.headers)
