@@ -192,6 +192,8 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 
 Represents the **conceptual work** — the thing a user would say "I own Dune" about. Editions are separate.
 
+**Who writes `books` and `editions` (#602).** Only `WishlistService` (`POST /wishlist`) creates them, and only from a book whose server-signed `catalog_token` verifies (data the server produced from Open Library / Google Books for that user). Without one it may only reference existing rows. No request ever updates an existing `books` or `editions` row. See [security.md](security.md#shared-catalog-trust-model).
+
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | generated |

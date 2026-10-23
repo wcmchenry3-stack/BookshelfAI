@@ -209,6 +209,8 @@ The server owns all library state. The client never holds a competing copy of it
 - When connectivity returns, `ScanJobContext` drains the queue. Dismissing a job deletes its image; on launch, any file in `scan-queue/` that no job refers to (for example after a crash) is removed.
 - Identifying the book is still a server call. Only *capturing* is offline; the result, and adding it to the wishlist, need a connection.
 
+**Adding a result to the wishlist — the shared catalog (#602).** `books` and `editions` are shared by all users and written only from server-produced data. `POST /scan` and `GET /books/search` sign every `EnrichedBook` they return for the requesting user (`catalog_token`, `app/core/catalog_token.py`; HMAC-SHA256 keyed from `JWT_PRIVATE_KEY`, 30-day expiry). The app keeps the book object unchanged in the job's `results` (in memory; `saveJobs` strips results) and the review sheet, and `ScanJobContext.handleAddBooks` posts each chosen book as received to `POST /wishlist`. `WishlistService` verifies the token against the received fields and the authenticated user: valid, it may create a missing `Book` / `Edition`; otherwise it only links an existing `Book` (and an existing `Edition` of it), or refuses with `422 catalog_token_invalid`, which the app shows as its "couldn't save" message. Existing catalog rows are never modified from a request. See [security.md](security.md#shared-catalog-trust-model).
+
 ## Architectural decision records
 
 ### ADR: JWT RS256 over HS256

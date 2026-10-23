@@ -23,6 +23,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
 | Upload normalisation | Every `/scan` image is fully decoded, bomb-checked, stripped of metadata, downscaled and re-encoded as JPEG before any paid call. See [Upload pipeline](#upload-pipeline-post-scan) |
 | SQL injection | SQLAlchemy ORM throughout; no raw SQL |
+| Shared-catalog integrity | `books` / `editions` are written only from server-produced provider data, via server-signed results (`catalog_token`). See [Shared catalog trust model](#shared-catalog-trust-model) |
 | HTTPS | Render TLS termination; HSTS header (hardened — staging + production); Cloudflare Full-strict TLS |
 | Secret scanning | `gitleaks` pre-commit hook + GitHub Secret Scanning |
 | Dependency CVEs | Dependabot + `pip-audit` + `npm audit` + Trivy (OSV+NVD) in CI |
@@ -33,6 +34,17 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Security headers | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Permissions-Policy |
 | Error disclosure | Exception messages stripped from HTTP error responses; logged server-side only |
 | Error-report PII | Three layers in `app/core/sentry_context.py` (`sentry_privacy_options()`): (1) `include_local_variables=False` — frame locals are never sent, because auth frames hold ID/refresh tokens inside model reprs that no key-name list can see; (2) `before_send` / `before_send_transaction` / `before_breadcrumb` strip URL query strings (the Google Books key travels as `?key=`); (3) a recursive `EventScrubber` for request bodies, headers and extras — request token names plus every secret-looking `Settings` field, derived from `Settings.model_fields` so it cannot drift, plus the configured origin-lockdown header name (`ORIGIN_AUTH_HEADER`). `send_default_pii=False`. Deployed events carry `release=bookshelf-api@<RENDER_GIT_COMMIT>` and the `environment` tag |
+
+## Shared catalog trust model
+
+`books` and `editions` are shared by every user (and `editions.isbn_13` is globally unique, so the first writer of an ISBN fixes that edition for everyone). The rule (#602): **they are written only from data the server itself produced** (Open Library / Google Books lookups during `POST /scan` and `GET /books/search`). Client input lands only in the user's own rows (`user_books`).
+
+- **Signing.** Every `EnrichedBook` from `POST /scan` (new scans and repeats served from a scan record) and `GET /books/search` carries `catalog_token` (`app/core/catalog_token.py`): an HMAC-SHA256 over the canonical JSON (sorted keys, no whitespace) of the catalog fields, the requesting user's ID, the expiry and the version. Format: `base64url({"exp": <unix s>, "v": "v1"}) "." base64url(mac)`. Expiry: the end of the issuing UTC day plus 30 days (`CATALOG_TOKEN_TTL`, the scan-record retention, since results can wait in the app). Tokens are never stored in scan records.
+- **Key.** `HMAC-SHA256(JWT_PRIVATE_KEY, "bookshelf-catalog-token-v1")`. `JWT_PRIVATE_KEY` is the one secret every instance shares (Render runs two), so any instance verifies any other's tokens. In a hardened environment (staging, production) without it the app refuses to boot (`_validate_config`), and signing / verifying refuse too; development and test use a fixed, clearly named dev-only key. Rotating `JWT_PRIVATE_KEY` invalidates outstanding catalog tokens: those books can then only be linked if already in the catalog. A new token version gets a new label.
+- **Verification (`POST /wishlist`).** The MAC is recomputed over the received fields and the authenticated user and compared with `hmac.compare_digest`. Valid: a missing `Book` / `Edition` may be created from those fields. Anything else (missing, malformed, wrong version, expired, another user's, any field changed): the request may only link the user to an existing `Book` (by work ID or Google Books ID) and an existing `Edition` of that book (by ISBN-13); otherwise `422 catalog_token_invalid`, nothing written. Existing catalog rows are never modified from a request, signed or not.
+- **Other paths.** `POST /purchased` takes a `book_id` and optional `isbn_13` / `edition_id` and only references existing rows; `PATCH` / `DELETE /user-books/*` touch only the user's `user_books` row. No other code constructs `Book` or `Edition`.
+- **Logging.** Only the reason a token failed (`missing`, `malformed`, `wrong_version`, `expired`, `mismatch`) is logged, never the key or a token.
+- **Tests.** `tests/security/test_wishlist_catalog_authority.py` (`pytest -m security`, no database), `tests/unit/test_catalog_token.py`, and on Postgres `tests/integration/test_wishlist_catalog_token_db.py`.
 
 ## Upload pipeline (`POST /scan`)
 

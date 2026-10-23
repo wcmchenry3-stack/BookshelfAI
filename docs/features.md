@@ -48,13 +48,13 @@ sequenceDiagram
   GB-->>API: metadata
   API->>DB: dedup check vs user's UserBooks
   DB-->>API: already_in_library flags
-  API-->>SJ: 3 EnrichedBook results
+  API-->>SJ: 3 EnrichedBook results (each with catalog_token, #602)
   SJ->>SJ: status=complete, show banner
   U->>P: Tap "View results"
   P->>U: Show 3 candidates with covers
   U->>P: Select one
-  P->>API: POST /wishlist
-  API->>DB: Create UserBook(status=wishlisted)
+  P->>API: POST /wishlist (the book as received, catalog_token included)
+  API->>DB: Verify token; create missing Book/Edition only if valid; create UserBook(status=wishlisted)
   DB-->>API: OK
   API-->>P: UserBook
   P-->>U: Confirmation + back to scan
