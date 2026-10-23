@@ -112,10 +112,22 @@ def build_scenarios(cost_micros: int, est_micros: int) -> dict[str, Scenario]:
             locust_env={
                 "PERF_FLIP_AT_S": 8,
                 "PERF_TTL_S": TTL_S,
-                "PERF_MARGIN_S": 1.0,
+                "PERF_MARGIN_S": 2.0,
             },
         ),
     }
+
+
+# Locust's exit code when an assertion failed (locustfile_scan.ASSERTION_EXIT_CODE).
+ASSERTION_EXIT_CODE = 3
+# The assertions every healthy run passes, whatever is tampered with.
+HEALTH_CHECKS = ("responses", "no_500", "expected_only", "sampling")
+# Per scenario: the assertion(s) its tampering must make fail.
+TAMPER_TARGETS = {
+    "abuse": ("ok_le_cap", "calls_le_cap"),
+    "breaker": ("calls_window",),
+    "kill": ("late_requests", "first_refusal"),
+}
 
 
 def tamper(scenario: Scenario) -> None:
@@ -127,8 +139,29 @@ def tamper(scenario: Scenario) -> None:
     elif scenario.name == "breaker":
         env["PERF_CEILING_MICROS"] = env["PERF_CEILING_MICROS"] // 2
     elif scenario.name == "kill":
+        # A negative margin puts the cutoff before the switch, so the
+        # successful requests made before it count as late.
         env["PERF_TTL_S"] = 0.2
-        env["PERF_MARGIN_S"] = 0.0
+        env["PERF_MARGIN_S"] = -3.0
+
+
+def tamper_proven(name: str, returncode: int, results: dict | None) -> bool:
+    """A tampered scenario counts only when it failed on its target
+    assertions with a healthy run (exit code and result file), not because
+    the app, the stub or Locust crashed."""
+    if returncode != ASSERTION_EXIT_CODE or not results:
+        return False
+    if not all(results.get(k) is True for k in HEALTH_CHECKS):
+        return False
+    return any(results.get(k) is False for k in TAMPER_TARGETS[name])
+
+
+def port_in_use(port: int) -> bool:
+    import socket
+
+    with socket.socket() as sock:
+        sock.settimeout(1)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
 def wait_for(url: str, timeout_s: float, what: str) -> None:
@@ -152,20 +185,18 @@ def stop(proc: subprocess.Popen) -> None:
 
 
 def run_scenario(
-    scenario: Scenario, *, stub_url: str, api_port: int, app_env: dict, log_dir: Path
+    scenario: Scenario,
+    *,
+    stub_url: str,
+    api_port: int,
+    app_env: dict,
+    log_dir: Path,
+    tampered: bool = False,
 ) -> bool:
     from perf import perf_setup
 
     print(f"\n=== scenario: {scenario.name} ===", flush=True)
     tokens = asyncio.run(perf_setup.prepare(scenario.tokens, scenario.settings))
-    urllib.request.urlopen(
-        urllib.request.Request(
-            stub_url + "/__config",
-            data=json.dumps({"latency_ms": scenario.latency_ms}).encode(),
-            method="POST",
-        )
-    ).read()
-
     log_dir.mkdir(parents=True, exist_ok=True)
     with open(log_dir / f"api-{scenario.name}.log", "wb") as api_log:
         api = subprocess.Popen(
@@ -192,12 +223,14 @@ def run_scenario(
             with tempfile.TemporaryDirectory() as tmp:
                 token_file = Path(tmp) / "tokens.json"
                 token_file.write_text(json.dumps(tokens))
+                result_file = Path(tmp) / "results.json"
                 env = {
                     **app_env,
                     "PERF_SCENARIO": scenario.name,
                     "PERF_STUB_URL": stub_url,
                     "PERF_TOKENS_FILE": str(token_file),
                     "PERF_LATENCY_MS": str(scenario.latency_ms),
+                    "PERF_RESULT_FILE": str(result_file),
                     **{k: str(v) for k, v in scenario.locust_env.items()},
                 }
                 result = subprocess.run(
@@ -222,8 +255,24 @@ def run_scenario(
                     env=env,
                     check=False,
                 )
+                try:
+                    results = json.loads(result_file.read_text())
+                except (OSError, ValueError):
+                    results = None
         finally:
             stop(api)
+    if tampered:
+        proven = tamper_proven(scenario.name, result.returncode, results)
+        print(
+            f"tamper {scenario.name}: "
+            + (
+                "failed on its target assertions"
+                if proven
+                else f"NOT PROVEN (exit {result.returncode}, results {results})"
+            ),
+            flush=True,
+        )
+        return proven
     return result.returncode == 0
 
 
@@ -295,30 +344,16 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
 
-    # The cost of one fake reply and the breaker's estimate, from the app's
-    # own price table and registry (imported after the environment is set).
-    from app.ai.prices import CURRENT_PRICE_VERSION, cost_micros
-    from app.ai.registry import default_model, get_feature
-    from perf import fake_provider
-
-    est = get_feature(STANDARD_FEATURE).est_cost_ceiling_micros
-    cost = cost_micros(
-        default_model(STANDARD_FEATURE, "anthropic"),
-        CURRENT_PRICE_VERSION,
-        input_tokens=fake_provider.DEFAULT_INPUT_TOKENS,
-        output_tokens=fake_provider.DEFAULT_OUTPUT_TOKENS,
-    )
-    if cost > est:
-        raise SystemExit(
-            f"the fake reply costs {cost} micros, above the {est} estimate; "
-            "lower its token counts"
-        )
-
-    scenarios = build_scenarios(cost, est)
-    names = list(scenarios) if args.scenario == "all" else [args.scenario]
+    scenarios = None  # built once the stub is up: it reports its token counts
 
     stub = None
     if not args.external_stub:
+        if port_in_use(args.stub_port):
+            raise SystemExit(
+                f"something already answers on port {args.stub_port}: a stale "
+                "fake provider would carry old counters and settings. Stop it, "
+                "pick another --stub-port, or pass --external-stub."
+            )
         stub = subprocess.Popen(
             [
                 sys.executable,
@@ -329,6 +364,27 @@ def main(argv: list[str] | None = None) -> int:
         )
     try:
         wait_for(stub_url + "/__count", 15, "the fake provider")
+        # The cost of one fake reply, from the tokens the stub itself reports
+        # and the app's own price table, and the breaker's estimate.
+        from app.ai.prices import CURRENT_PRICE_VERSION, cost_micros
+        from app.ai.registry import default_model, get_feature
+
+        with urllib.request.urlopen(stub_url + "/__count", timeout=5) as resp:
+            reported = json.loads(resp.read())
+        est = get_feature(STANDARD_FEATURE).est_cost_ceiling_micros
+        cost = cost_micros(
+            default_model(STANDARD_FEATURE, "anthropic"),
+            CURRENT_PRICE_VERSION,
+            input_tokens=reported["input_tokens"],
+            output_tokens=reported["output_tokens"],
+        )
+        if cost > est:
+            raise SystemExit(
+                f"the fake reply costs {cost} micros, above the {est} estimate; "
+                "lower its token counts"
+            )
+        scenarios = build_scenarios(cost, est)
+        names = list(scenarios) if args.scenario == "all" else [args.scenario]
         outcomes = {}
         for name in names:
             scenario = scenarios[name]
@@ -340,22 +396,28 @@ def main(argv: list[str] | None = None) -> int:
                 api_port=args.api_port,
                 app_env=app_env,
                 log_dir=args.log_dir,
+                tampered=args.tamper,
             )
     finally:
         if stub is not None:
             stop(stub)
 
     print("\n=== summary ===")
+    if args.tamper:
+        for name, proven in outcomes.items():
+            print(
+                f"{name}: {'failed on its target assertions' if proven else 'NOT PROVEN'}"
+            )
+        if outcomes and all(outcomes.values()):
+            print(
+                "tamper check: every scenario failed on its target assertions, as it must"
+            )
+            return 0
+        print("tamper check: a scenario did not fail the way a wrong expectation must")
+        return 1
     for name, passed in outcomes.items():
         print(f"{name}: {'passed' if passed else 'FAILED'}")
     failed = [n for n, ok in outcomes.items() if not ok]
-    if args.tamper:
-        # Inverted: every tampered scenario must have failed.
-        if len(failed) == len(outcomes):
-            print("tamper check: every scenario failed, as it must")
-            return 0
-        print("tamper check: a scenario passed with a wrong expectation")
-        return 1
     return 1 if failed else 0
 
 

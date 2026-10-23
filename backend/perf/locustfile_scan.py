@@ -82,7 +82,18 @@ if os.environ.get("PERF_TOKENS_FILE"):
 RESULTS: list[tuple[float, int, str]] = []
 # (time, provider calls) every half second, from the fake's /__count.
 SAMPLES: list[tuple[float, int]] = []
-STATE = {"flipped_at": None, "first_refusal_calls": None}
+STATE: dict = {
+    "flip_started_at": None,
+    "flipped_at": None,
+    "calls_before_flip": None,
+    "sample_errors": 0,
+    "sample_attempts": 0,
+}
+# Exit code of a run whose assertions failed (Locust's own failure exit is 1),
+# so the runner can tell "an assertion failed" from "something crashed".
+ASSERTION_EXIT_CODE = 3
+# Fewest samples that make a "calls stopped" check meaningful.
+MIN_SAMPLES = 4
 
 
 def stub_get(path: str) -> dict:
@@ -167,15 +178,22 @@ elif SCENARIO in {"breaker", "kill"}:
 
 def _sampler() -> None:
     while True:
+        STATE["sample_attempts"] += 1
         try:
             SAMPLES.append((time.time(), stub_get("/__count")["calls"]))
-        except OSError:
-            pass
+        except (OSError, ValueError, KeyError):
+            STATE["sample_errors"] += 1
         gevent.sleep(0.5)
 
 
 def _flip_kill_switch() -> None:
     gevent.sleep(_env_float("PERF_FLIP_AT_S", 10))
+    try:
+        STATE["calls_before_flip"] = stub_get("/__count")["calls"]
+    except (OSError, ValueError, KeyError):
+        pass
+    # Before the CLI starts: the earliest the switch can take effect.
+    STATE["flip_started_at"] = time.time()
     # The operator's own tool, so the real validation and write path is used.
     subprocess.run(
         [
@@ -192,7 +210,7 @@ def _flip_kill_switch() -> None:
         check=True,
         capture_output=True,
     )
-    # After the commit: the cache TTL counts from here at the latest.
+    # After the commit: the switch has taken effect by here at the latest.
     STATE["flipped_at"] = time.time()
 
 
@@ -203,6 +221,7 @@ def _on_start(environment, **_kwargs) -> None:
     if not TOKENS:
         raise SystemExit("PERF_TOKENS_FILE is empty or unset")
     stub_post("/__reset")
+    stub_post("/__config", {"latency_ms": _env_float("PERF_LATENCY_MS", 0)})
     gevent.spawn(_sampler)
     if SCENARIO == "kill":
         gevent.spawn(_flip_kill_switch)
@@ -214,13 +233,24 @@ def _on_start(environment, **_kwargs) -> None:
 
 
 class Report:
+    """Assertions with ids. ``PERF_RESULT_FILE`` gets them as JSON, so the
+    runner can check that a deliberately wrong expectation failed for the
+    right reason."""
+
     def __init__(self) -> None:
+        self.results: dict[str, bool] = {}
         self.failures: list[str] = []
 
-    def check(self, ok: bool, text: str) -> None:
+    def check(self, key: str, ok: bool, text: str) -> None:
         print(f"PERF {'PASS' if ok else 'FAIL'}: {text}", flush=True)
+        self.results[key] = ok
         if not ok:
             self.failures.append(text)
+
+    def write(self) -> None:
+        path = os.environ.get("PERF_RESULT_FILE")
+        if path:
+            Path(path).write_text(json.dumps(self.results))
 
 
 def _count(status: int, detail: str | None = None) -> int:
@@ -236,44 +266,77 @@ def _common(report: Report, final: dict) -> None:
         histogram[key] = histogram.get(key, 0) + 1
     print(f"PERF responses: {json.dumps(histogram, sort_keys=True)}", flush=True)
     print(f"PERF provider stub: {json.dumps(final, sort_keys=True)}", flush=True)
-    report.check(len(RESULTS) > 0, f"{len(RESULTS)} /scan responses recorded")
-    report.check(_count(500) == 0, "no 500 responses")
+    report.check(
+        "responses", len(RESULTS) > 0, f"{len(RESULTS)} /scan responses recorded"
+    )
+    report.check("no_500", _count(500) == 0, "no 500 responses")
     allowed = EXPECTED_REFUSALS[SCENARIO]
     unexpected = {
         f"{s} {d}".strip() for _t, s, d in RESULTS if s != 200 and (s, d) not in allowed
     }
-    report.check(not unexpected, f"no unexpected responses {sorted(unexpected)}")
+    report.check(
+        "expected_only", not unexpected, f"no unexpected responses {sorted(unexpected)}"
+    )
+    attempts, errors = STATE["sample_attempts"], STATE["sample_errors"]
+    report.check(
+        "sampling",
+        attempts > 0 and errors * 4 <= attempts,
+        f"provider-count sampling worked: {attempts - errors} of {attempts} samples "
+        f"({errors} errors)",
+    )
 
 
 def _assert_abuse(report: Report, final: dict) -> None:
     cap = _env_int("PERF_CAP", 3)
     ok = _count(200)
-    report.check(ok >= 1, f"{ok} scans succeeded (the run reached the provider)")
-    report.check(ok <= cap, f"{ok} successful scans <= daily limit {cap}")
     report.check(
+        "ok_ge_1", ok >= 1, f"{ok} scans succeeded (the run reached the provider)"
+    )
+    report.check("ok_le_cap", ok <= cap, f"{ok} successful scans <= daily limit {cap}")
+    report.check(
+        "calls_ge_1",
+        final["calls"] >= 1,
+        f"the provider was called ({final['calls']} calls)",
+    )
+    report.check(
+        "calls_le_cap",
         final["calls"] <= cap + final["errors"],
         f"provider calls {final['calls']} <= daily limit {cap} "
         f"(+ {final['errors']} injected errors)",
     )
+    # Every photo is new, so every 200 is exactly one provider call.
     report.check(
+        "calls_eq_ok",
+        final["calls"] - final["errors"] == ok,
+        f"provider calls {final['calls']} - {final['errors']} errors == "
+        f"{ok} successful scans",
+    )
+    report.check(
+        "limit_hit",
         _count(429, "daily_scan_limit") >= 1,
         "the limit was hit: 429 daily_scan_limit seen",
     )
     report.check(
+        "in_progress",
         _count(429, "scan_in_progress") >= 1,
         "parallel requests were refused: 429 scan_in_progress seen",
     )
     report.check(
-        final["max_in_flight"] <= 1,
-        f"at most 1 provider call at once for one user (saw {final['max_in_flight']})",
+        "one_at_a_time",
+        1 <= final["max_in_flight"] <= 1,
+        f"exactly 1 provider call at once for one user (saw {final['max_in_flight']})",
     )
+
+
+def _tail_stable(end: float, tail_s: float) -> tuple[list[int], bool]:
+    tail = [c for t, c in SAMPLES if t >= end - tail_s]
+    return tail, len(tail) >= MIN_SAMPLES and len(set(tail)) == 1
 
 
 def _assert_breaker(report: Report, final: dict) -> None:
     ceiling = _env_int("PERF_CEILING_MICROS", 60_000)
     cost = _env_int("PERF_COST_MICROS", 7_000)
     est = _env_int("PERF_EST_MICROS", 10_000)
-    users = _env_int("PERF_USERS", 8)
     calls = final["calls"]
     # A Free call is admitted only while reserved + settled + est <= ceiling,
     # and est >= cost, so at most (ceiling - est) // cost + 1 calls are ever
@@ -282,71 +345,85 @@ def _assert_breaker(report: Report, final: dict) -> None:
     high = (ceiling - est) // cost + 1
     low = ceiling // est
     report.check(
+        "opened",
         _count(503, "ai_budget_reached") >= 1,
         "the breaker opened: 503 ai_budget_reached seen",
     )
     report.check(
-        low <= calls <= high,
+        "calls_window",
+        low <= calls <= high and calls >= 1,
         f"provider calls {calls} within [{low}, {high}] for ceiling {ceiling}, "
         f"call cost {cost}, estimate {est} micros",
     )
-    report.check(
-        final["max_in_flight"] <= users,
-        f"at most {users} provider calls at once, one per user "
-        f"(saw {final['max_in_flight']})",
-    )
     tail_s = _env_float("PERF_TAIL_S", 3)
     end = SAMPLES[-1][0] if SAMPLES else 0.0
-    tail = [calls_ for t, calls_ in SAMPLES if t >= end - tail_s]
+    tail, stable = _tail_stable(end, tail_s)
     refused_in_tail = sum(
         1
         for t, s, d in RESULTS
         if t >= end - tail_s and (s, d) == (503, "ai_budget_reached")
     )
     report.check(
-        len(tail) >= 2 and len(set(tail)) == 1 and refused_in_tail >= 1,
-        f"provider calls stopped: unchanged for the last {tail_s:g}s while "
-        f"{refused_in_tail} requests were refused",
+        "stopped",
+        stable and refused_in_tail >= 1 and tail[-1] == calls,
+        f"provider calls stopped: {len(tail)} samples over the last {tail_s:g}s "
+        f"all equal {calls} while {refused_in_tail} requests were refused",
     )
 
 
 def _assert_kill(report: Report, final: dict) -> None:
     ttl = _env_float("PERF_TTL_S", 2)
-    margin = _env_float("PERF_MARGIN_S", 1.0)
+    margin = _env_float("PERF_MARGIN_S", 2.0)
     latency_s = _env_float("PERF_LATENCY_MS", 0) / 1000
-    flipped = STATE["flipped_at"]
-    report.check(flipped is not None, "the kill switch was flipped mid-run")
-    if flipped is None:
+    started, flipped = STATE["flip_started_at"], STATE["flipped_at"]
+    report.check("flipped", flipped is not None, "the kill switch was flipped mid-run")
+    if flipped is None or started is None:
         return
+    # Late requests: measured from AFTER the CLI returned (the commit is done
+    # by then). Measuring from before would blame requests that legitimately
+    # still hit a cache filled just before the commit.
     cutoff = flipped + ttl + margin
-    before = [r for r in RESULTS if r[0] < flipped]
+    before = [r for r in RESULTS if r[0] < started]
     after = [r for r in RESULTS if r[0] >= cutoff]
     report.check(
+        "ok_before",
         any(s == 200 for _t, s, _d in before),
         f"{sum(1 for r in before if r[1] == 200)} scans succeeded before the switch",
     )
     report.check(
+        "calls_before",
+        (STATE["calls_before_flip"] or 0) >= 1,
+        f"the provider was called {STATE['calls_before_flip']} times before the switch",
+    )
+    report.check(
+        "after",
         len(after) >= 1,
         f"{len(after)} requests were made after the cache TTL ({ttl:g}s + {margin:g}s)",
     )
     late = [r for r in after if (r[1], r[2]) != (503, "scan_disabled")]
     report.check(
+        "late_requests",
         not late,
         f"every request started {ttl:g}s + {margin:g}s after the switch got "
         f"503 scan_disabled ({len(late)} did not)",
     )
+    # First refusal: measured from BEFORE the CLI started, the strictest
+    # reading (the switch took effect somewhere after it); the margin has to
+    # cover the CLI's own start-up.
     disabled = [t for t, s, d in RESULTS if (s, d) == (503, "scan_disabled")]
-    first = min(disabled) - flipped if disabled else None
+    first = min(disabled) - started if disabled else None
     report.check(
+        "first_refusal",
         first is not None and first <= ttl + margin,
         f"first 503 scan_disabled at {first if first is None else round(first, 2)}s "
-        f"after the switch (limit {ttl + margin:g}s)",
+        f"after the CLI started (limit {ttl + margin:g}s)",
     )
-    settled = [c for t, c in SAMPLES if t >= cutoff + latency_s]
+    post = [c for t, c in SAMPLES if t >= flipped + ttl + latency_s]
     report.check(
-        bool(settled) and final["calls"] == settled[0],
-        f"provider calls stopped: {settled[0] if settled else '?'} when the "
-        f"TTL passed, {final['calls']} at the end",
+        "stopped",
+        len(post) >= MIN_SAMPLES and set(post) == {final["calls"]},
+        f"provider calls stopped: {len(post)} samples after the TTL"
+        f" ({sorted(set(post))}), final read {final['calls']}",
     )
 
 
@@ -359,9 +436,8 @@ def _on_quitting(environment, **_kwargs) -> None:
         final = stub_get("/__count")
     except OSError as exc:
         print(f"PERF FAIL: the fake provider is not reachable ({exc})", flush=True)
-        environment.process_exit_code = 1
+        environment.process_exit_code = ASSERTION_EXIT_CODE
         return
-    SAMPLES.append((time.time(), final["calls"]))
     _common(report, final)
     {"abuse": _assert_abuse, "breaker": _assert_breaker, "kill": _assert_kill}[
         SCENARIO
@@ -371,5 +447,6 @@ def _on_quitting(environment, **_kwargs) -> None:
         + ("all assertions passed" if not report.failures else "FAILED"),
         flush=True,
     )
+    report.write()
     if report.failures:
-        environment.process_exit_code = 1
+        environment.process_exit_code = ASSERTION_EXIT_CODE

@@ -488,6 +488,15 @@ class AnthropicVisionProvider:
         }
 
     def _client(self) -> anthropic.AsyncAnthropic:
+        extra: dict[str, Any] = {}
+        if settings.ai_anthropic_base_url:
+            # Only with the local override (the load run's fake): never follow
+            # a redirect, so a local endpoint cannot bounce the request, with
+            # its API-key header and the photo, to another host. The default
+            # client is unchanged.
+            extra["http_client"] = anthropic.DefaultAsyncHttpxClient(
+                follow_redirects=False
+            )
         return anthropic.AsyncAnthropic(
             api_key=settings.anthropic_api_key,
             base_url=settings.ai_anthropic_base_url or ANTHROPIC_BASE_URL,
@@ -495,6 +504,7 @@ class AnthropicVisionProvider:
             # Our loop below is the only retry loop, so its count and the
             # deadline hold.
             max_retries=0,
+            **extra,
         )
 
     async def identify(self, image_bytes: bytes) -> ProviderResult:

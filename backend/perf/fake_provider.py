@@ -12,8 +12,11 @@ model or a real catalog:
   enrichment makes no outbound call (``OPEN_LIBRARY_BASE_URL`` points here).
 - ``GET /__count``: what the load run asserts on, as JSON:
   ``calls`` (every Messages request), ``errors`` (those answered with the
-  injected error), ``in_flight`` and ``max_in_flight`` (concurrent requests).
-- ``POST /__reset``: zero the counters.
+  injected error), ``in_flight`` and ``max_in_flight`` (concurrent requests),
+  and the ``input_tokens`` / ``output_tokens`` every reply reports (the load
+  run prices a call from these).
+- ``POST /__reset``: zero the counters and restore the start-up latency and
+  error rate.
 - ``POST /__config``: change ``latency_ms`` and ``error_rate`` while running.
 
 Run: ``python perf/fake_provider.py --port 18080 --latency-ms 200``. The
@@ -74,6 +77,9 @@ class State:
         self.error_rate = error_rate
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+        # What /__reset restores, so a run never inherits a previous
+        # scenario's latency or error rate.
+        self._initial = (latency_ms, error_rate)
         self.calls = 0
         self.errors = 0
         self.in_flight = 0
@@ -82,6 +88,7 @@ class State:
     def reset(self) -> None:
         with self.lock:
             self.calls = self.errors = self.in_flight = self.max_in_flight = 0
+            self.latency_ms, self.error_rate = self._initial
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -92,6 +99,8 @@ class State:
                 "max_in_flight": self.max_in_flight,
                 "latency_ms": self.latency_ms,
                 "error_rate": self.error_rate,
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
             }
 
 

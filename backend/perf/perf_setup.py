@@ -1,10 +1,23 @@
 """Database and credential setup for the /scan load run (#539).
 
-Everything here writes to the DATABASE_URL database, so it refuses to run
-unless that database is on this machine AND ``PERF_CONFIRM_ISOLATED_DB=yes``
-says it is a throwaway one (the workflow's own Postgres service, or a scratch
-database for a local run). It deletes every row of the AI quota, spend, usage,
-scan-record and settings tables and of the perf users, then creates new users.
+DANGER: this wipes data. For the database named by DATABASE_URL it deletes
+
+- EVERY row of ``ai_settings``, ``ai_quota``, ``ai_inflight``,
+  ``ai_spend_daily``, ``ai_usage``, ``ai_usage_daily``,
+  ``ai_enhanced_zero_results``, ``scan_records`` and ``scan_usage_daily``
+  (``ai_settings`` included: that is every operator dial and kill switch, and
+  why the database must be throwaway);
+- the users whose email ends in ``@perf.invalid`` and only THEIR
+  ``refresh_tokens``;
+
+then creates new users. It therefore refuses to run unless DATABASE_URL
+
+- parses (SQLAlchemy ``make_url``) to a LOCAL host (localhost, 127.0.0.1,
+  ::1), with no ``host`` / ``hostaddr`` / ``service`` style query parameter
+  that could name another one,
+- names a database whose name contains ``perf`` (the workflow uses ``perf``,
+  a local run e.g. ``bs539_perf``), and
+- comes with ``PERF_CONFIRM_ISOLATED_DB=yes``.
 
 The app modules are imported inside the functions, after the caller has put
 the throwaway JWT key pair and the other settings in ``os.environ``.
@@ -14,30 +27,56 @@ from __future__ import annotations
 
 import os
 import uuid
-from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from sqlalchemy.engine import make_url
 
 EMAIL_DOMAIN = "perf.invalid"
 LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "::1"}
+REQUIRED_DB_NAME_PART = "perf"
+# Connection parameters that can point the driver at another server.
+FORBIDDEN_QUERY_KEYS = frozenset(
+    {"host", "hostaddr", "service", "servicefile", "target_session_attrs"}
+)
 
 
 class UnsafeDatabaseError(RuntimeError):
     pass
 
 
-def require_isolated_db() -> None:
-    url = os.environ.get("DATABASE_URL", "")
-    host = urlsplit(url).hostname
-    if host not in LOCAL_DB_HOSTS:
-        raise UnsafeDatabaseError("DATABASE_URL must point at a local database")
-    if os.environ.get("PERF_CONFIRM_ISOLATED_DB") != "yes":
+def check_database_url(url: str, confirmed: str | None) -> None:
+    """Raise :class:`UnsafeDatabaseError` unless ``url`` is a local database
+    named ``*perf*`` and ``confirmed`` is ``yes``. Messages never include the
+    URL (it may hold a password)."""
+    try:
+        parsed = make_url(url)
+    except Exception:  # noqa: BLE001 - any parse failure is a refusal
+        raise UnsafeDatabaseError("DATABASE_URL cannot be parsed") from None
+    if parsed.host not in LOCAL_DB_HOSTS:
+        raise UnsafeDatabaseError("DATABASE_URL must name a local host")
+    bad = sorted(k for k in parsed.query if k.lower() in FORBIDDEN_QUERY_KEYS)
+    if bad:
+        raise UnsafeDatabaseError(
+            f"DATABASE_URL must not set {', '.join(bad)}: it could name another server"
+        )
+    if REQUIRED_DB_NAME_PART not in (parsed.database or "").lower():
+        raise UnsafeDatabaseError(
+            f"the database name must contain {REQUIRED_DB_NAME_PART!r} "
+            "(a throwaway database made for this run)"
+        )
+    if confirmed != "yes":
         raise UnsafeDatabaseError(
             "set PERF_CONFIRM_ISOLATED_DB=yes to confirm DATABASE_URL is a "
-            "throwaway database: the load run deletes AI quota, spend, usage, "
-            "scan-record and settings rows"
+            "throwaway database: the load run deletes every ai_settings, AI "
+            "quota, spend, usage and scan-record row"
         )
+
+
+def require_isolated_db() -> None:
+    check_database_url(
+        os.environ.get("DATABASE_URL", ""), os.environ.get("PERF_CONFIRM_ISOLATED_DB")
+    )
 
 
 def generate_jwt_keys() -> tuple[str, str]:
@@ -64,7 +103,7 @@ async def _reset_and_create_users(count: int) -> list[str]:
     return one access token for each (minted with the app's own
     ``create_access_token`` and the throwaway key)."""
     require_isolated_db()
-    from sqlalchemy import delete
+    from sqlalchemy import delete, select
 
     from app.auth.jwt import create_access_token
     from app.core import database
@@ -92,11 +131,15 @@ async def _reset_and_create_users(count: int) -> list[str]:
             AISpendDaily,
             AIUsage,
             AIUsageDaily,
-            RefreshToken,
             ScanRecord,
             ScanUsageDaily,
         ):
             await db.execute(delete(model))
+        # Only the perf users' tokens; the users themselves go next.
+        perf_users = select(User.id).where(User.email.like(f"%@{EMAIL_DOMAIN}"))
+        await db.execute(
+            delete(RefreshToken).where(RefreshToken.user_id.in_(perf_users))
+        )
         await db.execute(delete(User).where(User.email.like(f"%@{EMAIL_DOMAIN}")))
         for _ in range(count):
             user_id = uuid.uuid4()

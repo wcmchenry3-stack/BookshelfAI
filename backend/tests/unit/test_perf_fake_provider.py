@@ -10,6 +10,7 @@ import dataclasses
 import json
 import threading
 import urllib.request
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -96,8 +97,17 @@ def test_count_reset_and_config_endpoints(stub):
     config = _post(base + "/__config", {"latency_ms": 5, "error_rate": 7})
     assert config["latency_ms"] == 5 and config["error_rate"] == 1.0  # clamped
 
-    assert _post(base + "/__reset")["calls"] == 0
+    reset = _post(base + "/__reset")
+    # Counters AND the start-up latency / error rate come back.
+    assert reset["calls"] == 0 and reset["latency_ms"] == 0 and reset["error_rate"] == 0
     assert _get(base + "/__count")["max_in_flight"] == 0
+
+
+def test_count_reports_the_tokens_every_reply_carries(stub):
+    base, _state = stub
+    counted = _get(base + "/__count")
+    assert counted["input_tokens"] == fake_provider.DEFAULT_INPUT_TOKENS
+    assert counted["output_tokens"] == fake_provider.DEFAULT_OUTPUT_TOKENS
 
 
 def test_bad_config_and_unknown_paths(stub):
@@ -119,20 +129,44 @@ def test_open_library_answers_with_no_documents(stub):
 
 
 class TestIsolatedDatabaseGuard:
-    def test_remote_database_is_refused(self, monkeypatch):
-        monkeypatch.setenv("PERF_CONFIRM_ISOLATED_DB", "yes")
-        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@db.example.com/x")
-        with pytest.raises(perf_setup.UnsafeDatabaseError):
-            perf_setup.require_isolated_db()
+    OK = "postgresql+asyncpg://test:test@localhost:5432/bs539_perf"
 
-    def test_local_database_needs_the_confirmation(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/x")
+    def test_confirmed_local_perf_database_is_allowed(self):
+        perf_setup.check_database_url(self.OK, "yes")
+        perf_setup.check_database_url("postgresql+asyncpg://u:p@127.0.0.1/perf", "yes")
+        perf_setup.check_database_url("postgresql+asyncpg://u:p@[::1]/perf", "yes")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "postgresql+asyncpg://u:p@db.example.com/perf",
+            "postgresql+asyncpg://u:p@localhost.evil.example.com/perf",
+            "postgresql+asyncpg://u:p@localhost,db.example.com/perf",
+            "postgresql+asyncpg:///perf",  # no host: the default socket
+            "postgresql+asyncpg://u:p@localhost/perf?host=db.example.com",
+            "postgresql+asyncpg://u:p@localhost/perf?HOSTADDR=10.0.0.5",
+            "postgresql+asyncpg://u:p@localhost/perf?service=prod",
+            "postgresql+asyncpg://u:p@localhost/bookshelf",
+            "postgresql+asyncpg://u:p@localhost/",
+            "not a url",
+            "",
+        ],
+    )
+    def test_unsafe_url_is_refused(self, url):
+        with pytest.raises(perf_setup.UnsafeDatabaseError) as exc:
+            perf_setup.check_database_url(url, "yes")
+        assert "u:p" not in str(exc.value)
+
+    @pytest.mark.parametrize("confirmed", [None, "", "no", "YES", "true"])
+    def test_needs_the_confirmation(self, confirmed):
+        with pytest.raises(perf_setup.UnsafeDatabaseError):
+            perf_setup.check_database_url(self.OK, confirmed)
+
+    def test_require_reads_the_environment(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", self.OK)
         monkeypatch.delenv("PERF_CONFIRM_ISOLATED_DB", raising=False)
         with pytest.raises(perf_setup.UnsafeDatabaseError):
             perf_setup.require_isolated_db()
-
-    def test_confirmed_local_database_is_allowed(self, monkeypatch):
-        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@127.0.0.1/x")
         monkeypatch.setenv("PERF_CONFIRM_ISOLATED_DB", "yes")
         perf_setup.require_isolated_db()
 
@@ -182,3 +216,48 @@ class TestScenarioPlan:
             output_tokens=fake_provider.DEFAULT_OUTPUT_TOKENS,
         )
         assert 0 < cost <= FEATURES["scan.standard"].est_cost_ceiling_micros
+
+
+class TestTamperProof:
+    HEALTHY: ClassVar[dict] = {
+        "responses": True,
+        "no_500": True,
+        "expected_only": True,
+        "sampling": True,
+    }
+
+    def test_target_assertion_failing_with_a_healthy_run_is_proof(self):
+        results = {**self.HEALTHY, "ok_le_cap": False, "calls_le_cap": False}
+        assert run_scan_abuse.tamper_proven("abuse", 3, results)
+
+    @pytest.mark.parametrize("code", [0, 1, 2, -9])
+    def test_other_exit_codes_are_not_proof(self, code):
+        results = {**self.HEALTHY, "calls_window": False}
+        assert not run_scan_abuse.tamper_proven("breaker", code, results)
+
+    def test_a_crashed_run_is_not_proof(self):
+        assert not run_scan_abuse.tamper_proven("kill", 3, None)
+        assert not run_scan_abuse.tamper_proven("kill", 3, {})
+        unhealthy = {**self.HEALTHY, "responses": False, "late_requests": False}
+        assert not run_scan_abuse.tamper_proven("kill", 3, unhealthy)
+
+    def test_failing_something_else_is_not_proof(self):
+        results = {
+            **self.HEALTHY,
+            "stopped": False,
+            "late_requests": True,
+            "first_refusal": True,
+        }
+        assert not run_scan_abuse.tamper_proven("kill", 3, results)
+
+    def test_kill_tamper_puts_the_cutoff_before_the_switch(self):
+        scenario = run_scan_abuse.build_scenarios(7_000, 10_000)["kill"]
+        run_scan_abuse.tamper(scenario)
+        env = scenario.locust_env
+        assert env["PERF_TTL_S"] + env["PERF_MARGIN_S"] < 0
+
+
+def test_port_in_use_sees_a_running_stub(stub):
+    base, _state = stub
+    port = int(base.rsplit(":", 1)[1])
+    assert run_scan_abuse.port_in_use(port)

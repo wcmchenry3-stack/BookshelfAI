@@ -185,8 +185,8 @@ class TestScanAiSettingsValidation:
 
 
 class TestAnthropicBaseUrl:
-    """AI_ANTHROPIC_BASE_URL (#539): unset by default; a hardened environment
-    accepts only a local host, so it can never redirect production traffic."""
+    """AI_ANTHROPIC_BASE_URL (#539): unset by default; only a local host in any
+    environment, and nothing at all in staging or production."""
 
     DB = "postgresql+asyncpg://u:p@localhost/db"
 
@@ -212,36 +212,22 @@ class TestAnthropicBaseUrl:
         [
             "http://127.0.0.1:18080",
             "http://localhost:18080",
-            "https://gateway.example.com/anthropic",
+            "http://[::1]:18080",
+            "https://localhost",
+            "http://localhost/anthropic",
         ],
     )
-    def test_any_http_url_is_accepted_outside_hardened_environments(
+    def test_local_url_is_accepted_outside_hardened_environments(
         self, url, environment
     ):
         assert self._settings(url, environment).ai_anthropic_base_url == url
 
-    @pytest.mark.parametrize("environment", ["staging", "production"])
+    @pytest.mark.parametrize("environment", ["development", "test"])
     @pytest.mark.parametrize(
         "url",
         [
-            "",
-            "   ",
-            "http://127.0.0.1:18080",
-            "http://localhost:18080",
-            "http://[::1]:18080",
-        ],
-    )
-    def test_unset_or_local_is_accepted_in_hardened_environments(
-        self, url, environment
-    ):
-        assert self._settings(url, environment).ai_anthropic_base_url == url.strip()
-
-    @pytest.mark.parametrize("environment", ["staging", "production"])
-    @pytest.mark.parametrize(
-        "url",
-        [
+            "https://gateway.example.com/anthropic",
             "https://api.anthropic.com",
-            "https://evil.example.com",
             "http://127.0.0.1.evil.example.com",
             "http://localhost.evil.example.com",
             "http://10.0.0.5:8080",
@@ -249,7 +235,29 @@ class TestAnthropicBaseUrl:
             "http://localhost@evil.example.com",
         ],
     )
-    def test_non_local_url_is_rejected_in_hardened_environments(self, url, environment):
+    def test_non_local_url_is_rejected_in_every_environment(self, url, environment):
+        # ENVIRONMENT defaults to development: a deployment that forgot to set
+        # it must not be able to redirect the API key and photos.
+        with pytest.raises(ValidationError) as exc:
+            self._settings(url, environment)
+        assert "AI_ANTHROPIC_BASE_URL" in str(exc.value)
+
+    @pytest.mark.parametrize("environment", ["staging", "production"])
+    @pytest.mark.parametrize("url", ["", "   "])
+    def test_unset_is_accepted_in_hardened_environments(self, url, environment):
+        assert self._settings(url, environment).ai_anthropic_base_url == ""
+
+    @pytest.mark.parametrize("environment", ["staging", "production"])
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:18080",
+            "http://localhost:18080",
+            "http://[::1]:18080",
+            "https://evil.example.com",
+        ],
+    )
+    def test_any_value_fails_boot_in_hardened_environments(self, url, environment):
         with pytest.raises(ValidationError) as exc:
             self._settings(url, environment)
         assert "AI_ANTHROPIC_BASE_URL" in str(exc.value)
@@ -265,14 +273,22 @@ class TestAnthropicBaseUrl:
             "http://127.0.0.1:18080?x=1",
             "http://127.0.0.1:18080#frag",
             "http://[::1",
+            "http://localhost:abc",
+            "http://localhost:99999",
+            "http://127.0.0.1:-1",
         ],
     )
     def test_malformed_url_is_rejected_everywhere(self, url):
         with pytest.raises(ValidationError) as exc:
             self._settings(url)
         assert "secret" not in str(exc.value)
+        assert "AI_ANTHROPIC_BASE_URL" in str(exc.value)
 
     def test_the_value_is_never_echoed_in_the_error(self):
+        for environment in ("development", "production"):
+            with pytest.raises(ValidationError) as exc:
+                self._settings("https://evil.example.com/token-abc123", environment)
+            assert "abc123" not in str(exc.value)
         with pytest.raises(ValidationError) as exc:
-            self._settings("https://evil.example.com/token-abc123", "production")
+            self._settings("http://localhost:abc123")
         assert "abc123" not in str(exc.value)

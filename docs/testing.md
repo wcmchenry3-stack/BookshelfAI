@@ -87,9 +87,9 @@ What each scenario asserts (the real refusal codes: `daily_scan_limit`, `scan_in
 
 | Scenario | Drive | Assertions |
 |---|---|---|
-| `abuse` (a) | 4 connections of ONE user, `quota.free.found_daily` = 3 | provider calls <= 3 (plus injected errors); 429 `daily_scan_limit` and 429 `scan_in_progress` seen; never more than 1 provider call at once for the user (the in-flight lock) |
-| `breaker` (b) | 8 users, `breaker.free_daily_ceiling_micros` = 6 x the 10,000-micro estimate, a reply that costs 7,000 | 503 `ai_budget_reached` seen; provider calls inside the window the ceiling allows (`ceiling // estimate` .. `(ceiling - estimate) // cost + 1`, here 6..8); calls stop (unchanged over the last 3 s while requests are refused) |
-| `kill` (c) | 4 users; `python -m app.ai.settings set scan.standard.enabled false` 8 s in | every request started more than the settings cache TTL (2 s, plus 1 s margin) after the switch got 503 `scan_disabled`; the first one within that time; provider calls stop |
+| `abuse` (a) | 4 connections of ONE user, `quota.free.found_daily` = 3 | provider calls >= 1, <= 3 (plus injected errors) and equal to the successful scans (every photo is new); 429 `daily_scan_limit` and 429 `scan_in_progress` seen; exactly 1 provider call at once for the user (the in-flight lock) |
+| `breaker` (b) | 8 users, `breaker.free_daily_ceiling_micros` = 6 x the 10,000-micro estimate, a reply that costs 7,000 | 503 `ai_budget_reached` seen; provider calls inside the window the ceiling allows (`ceiling // estimate` .. `(ceiling - estimate) // cost + 1`, here 6..8); calls stop (at least 4 samples over the last 3 s, all equal to the final count, while requests are refused) |
+| `kill` (c) | 4 users; `python -m app.ai.settings set scan.standard.enabled false` 8 s in | the provider was called before the switch; every request started more than the cache TTL (2 s) plus a 2 s margin after the CLI returned got 503 `scan_disabled`; the first one came within TTL + margin of the moment the CLI STARTED (the strictest reading, so the margin covers the CLI's start-up); at least 4 independent samples after the TTL show the provider count frozen at the final read |
 
 All scenarios also assert there are no 500s and no response outside the documented set (200 and the refusals above). Every photo is random pixel noise, so scan records (#585) never answer a request: the run measures the quota, not the cache. `scan.standard` is switched to the Anthropic adapter with the real `switch_provider`, and the adapter reaches the fake through `AI_ANTHROPIC_BASE_URL` (only set in the processes the runner starts; see `docs/deployment.md`).
 
@@ -100,12 +100,12 @@ Run it locally (about 75 s for all three scenarios):
 ```bash
 cd backend
 pip install -r requirements-perf.txt
-createdb perf && DATABASE_URL=postgresql+asyncpg://localhost/perf alembic upgrade head   # a THROWAWAY database
-PERF_CONFIRM_ISOLATED_DB=yes DATABASE_URL=postgresql+asyncpg://localhost/perf \
+createdb bs539_perf && DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf alembic upgrade head   # a THROWAWAY database, its name must contain "perf"
+PERF_CONFIRM_ISOLATED_DB=yes DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf \
   python perf/run_scan_abuse.py                      # or --scenario abuse|breaker|kill
 ```
 
-The runner deletes AI quota, spend, usage, scan-record and settings rows and its `*@perf.invalid` users, so it refuses a database that is not on this machine and one without `PERF_CONFIRM_ISOLATED_DB=yes`. `--tamper` asserts a deliberately wrong cap, ceiling and TTL while the app keeps its real settings: it exits 0 only when every scenario fails, which shows the assertions can fail the run. The API's log for each scenario is in `backend/perf-logs/` (uploaded as an artifact by the workflow). A story that changes a scan limit, the breaker or the kill switch should re-run it.
+**The runner wipes data.** For every scenario it deletes ALL rows of `ai_settings` (every operator dial and kill switch, which is why the database must be throwaway), `ai_quota`, `ai_inflight`, `ai_spend_daily`, `ai_usage`, `ai_usage_daily`, `ai_enhanced_zero_results`, `scan_records` and `scan_usage_daily`, plus the `*@perf.invalid` users and only their `refresh_tokens`. It therefore refuses to start unless `DATABASE_URL` parses to a local host (`localhost`, `127.0.0.1`, `::1`) with no `host` / `hostaddr` / `service` query parameter, names a database containing `perf` (the workflow uses `perf`), and `PERF_CONFIRM_ISOLATED_DB=yes` is set. It also refuses to start its own fake provider when something already answers on the stub port (a stale one would carry old counters); pass `--external-stub` when the workflow started it. `--tamper` asserts a deliberately wrong cap, ceiling and TTL/margin while the app keeps its real settings. It exits 0 only when every scenario failed on its own target assertion (read from the result file) with Locust's assertion exit code 3 and the health checks (responses recorded, no 500, no unexpected status, sampling) passing; a scenario that crashed counts as "not proven". The API's log for each scenario is in `backend/perf-logs/` (uploaded as an artifact by the workflow). A story that changes a scan limit, the breaker or the kill switch should re-run it.
 
 ### Writing a new backend test
 
@@ -269,7 +269,7 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 
 ## Coverage targets
 
-- **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/` and `alembic/` and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
+- **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/`, `alembic/` and `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
 - **Frontend:** tracked via `npx jest --coverage`, no hard threshold enforced by default
 
 ## Rule + memory references
