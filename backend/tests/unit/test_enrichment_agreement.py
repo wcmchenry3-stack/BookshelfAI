@@ -92,6 +92,17 @@ class TestRecordsAgree:
             ),
         )
 
+    def test_google_books_separate_subtitle_is_compared(self):
+        # Codex P2 on #611: Google Books returns the subtitle in its own field.
+        vol = _volume(title="Dune", authors=["Frank Herbert"])
+        vol["volumeInfo"]["subtitle"] = "The Graphic Novel, Book 2: Muad\u2019Dib"
+        assert not records_agree(_doc(title="Dune", authors=["Frank Herbert"]), vol)
+
+    def test_google_books_separate_edition_note_subtitle_agrees(self):
+        vol = _volume(title="Dune", authors=["Frank Herbert"])
+        vol["volumeInfo"]["subtitle"] = "Deluxe Edition"
+        assert records_agree(_doc(title="Dune", authors=["Frank Herbert"]), vol)
+
     def test_same_subtitle_different_main_title_disagrees(self):
         assert not records_agree(
             _doc(title="Dune: Deluxe Edition", authors=["Frank Herbert"]),

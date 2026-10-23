@@ -157,6 +157,15 @@ def _surname(authors: object) -> str:
     return words[-1] if words else ""
 
 
+def _gb_full_title(info: dict) -> object:
+    """Google Books' title with its separate ``subtitle`` folded in as
+    "title: subtitle", so a distinguishing subtitle is compared too."""
+    title, subtitle = info.get("title"), info.get("subtitle")
+    if isinstance(title, str) and isinstance(subtitle, str) and subtitle.strip():
+        return f"{title}: {subtitle}"
+    return title
+
+
 def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     """Whether an Open Library doc and a Google Books volume describe the
     same book: they share an ISBN, or their titles agree (:func:`titles_agree`:
@@ -171,7 +180,7 @@ def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     return (
         bool(ol_author)
         and ol_author == gb_author
-        and titles_agree(ol_doc.get("title"), info.get("title"))
+        and titles_agree(ol_doc.get("title"), _gb_full_title(info))
     )
 
 
