@@ -32,8 +32,11 @@ class FakeQuotaStore:
         self.zero_warned: set[uuid.UUID] = set()
 
     async def global_units_today(self, _db, day: date) -> int:
+        # #586: the /scan request counter is not an AI call.
         return self.extra_global + sum(
-            n for (_, _, kind, d), n in self.rows.items() if kind == "day" and d == day
+            n
+            for (_, feature, kind, d), n in self.rows.items()
+            if kind == "day" and d == day and feature not in quota.NON_AI_QUOTA_FEATURES
         )
 
     async def acquire_lease(self, _db, user_id, seconds) -> uuid.UUID | None:

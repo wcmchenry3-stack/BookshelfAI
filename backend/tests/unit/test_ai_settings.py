@@ -28,6 +28,17 @@ USER = User(
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_scan_request_count():
+    """#586: /scan counts each request with a DB upsert before any other
+    work, which this file's fake DB cannot run. Stubbed here; the count is
+    covered by tests/unit/test_scan_request_limit.py and tests/limits/."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.api.scan._count_scan_request", new=AsyncMock()):
+        yield
+
+
 def _jpeg(size=(32, 24)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", size, (10, 120, 200)).save(buf, format="JPEG")
@@ -623,6 +634,8 @@ _VALID = {
     "scan_records.enabled": [True, False],
     "scan_records.retention_days": [1, 30],
     "scan_records.max_per_user": [1, 500, 10_000],
+    # #586 /scan requests per user per day
+    "scan.requests_per_user_daily": [1, 100, 10_000],
 }
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
@@ -661,6 +674,8 @@ _INVALID = {
     "scan_records.enabled": ["true", 1, 0, None],
     "scan_records.retention_days": [0, 31, -1, False, 30.0, "30", None],
     "scan_records.max_per_user": [0, -1, 10_001, True, 5.0, "500", None],
+    # #586
+    "scan.requests_per_user_daily": [0, -1, 10_001, True, 100.0, "100", None],
 }
 
 
@@ -694,6 +709,8 @@ def test_initial_key_set():
         "scan_records.enabled",
         "scan_records.retention_days",
         "scan_records.max_per_user",
+        # #586
+        "scan.requests_per_user_daily",
     }
 
 
@@ -896,6 +913,8 @@ class TestSeeding:
             "scan_records.enabled": True,
             "scan_records.retention_days": 30,
             "scan_records.max_per_user": 500,
+            # #586: code default
+            "scan.requests_per_user_daily": 100,
         }
 
     async def test_seed_is_insert_if_missing(self):

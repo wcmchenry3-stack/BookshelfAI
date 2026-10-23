@@ -18,6 +18,17 @@ from app.ai.providers.base import ProviderResult
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_scan_request_count():
+    """#586: /scan counts each request with a DB upsert before any other
+    work, which this file's fake DB cannot run. Stubbed here; the count is
+    covered by tests/unit/test_scan_request_limit.py and tests/limits/."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.api.scan._count_scan_request", new=AsyncMock()):
+        yield
+
+
 def _make_jpeg(width: int = 10, height: int = 10) -> bytes:
     buf = io.BytesIO()
     img = Image.new("RGB", (width, height), color=(255, 0, 0))

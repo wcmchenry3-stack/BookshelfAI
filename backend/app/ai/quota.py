@@ -100,6 +100,21 @@ counts only rise within a day, so that is at most once per user per day
 once more). After a lost commit acknowledgement the retry does not move and
 sends nothing (fewer alerts, never more).
 
+**/scan requests per user per day (#586).** Before any of the steps above,
+and before the scan-record lookup, ``/scan`` calls
+:func:`count_scan_request`: one more request under
+:data:`SCAN_REQUESTS_QUOTA_FEATURE` for the user's UTC day, with the same
+exact conditional upsert (``units_used < scan.requests_per_user_daily``),
+or :class:`ScanRequestsDailyLimitReached` (429
+``scan_requests_daily_limit``, Retry-After to UTC midnight) with nothing
+written. It counts every request past authentication and the kill
+switches, new photo or repeat, allowed or refused later, and nothing is
+ever given back. It is the abuse control for repeats, which are free
+(decision #573 point 3). It counts requests, not AI calls, so
+:func:`global_units_today` leaves the key out
+(:data:`NON_AI_QUOTA_FEATURES`); the rows are day rows, purged with the
+others.
+
 **Enhanced scans (#533).** ``reserve(..., enhanced=True)`` adds two steps:
 
 - right after the tier is resolved, a non-Premium tier is refused
@@ -195,6 +210,14 @@ SCAN_QUOTA_FEATURE = "scan"
 # provider answered properly but found no book. The found counter is
 # SCAN_QUOTA_FEATURE.
 SCAN_NO_MATCH_QUOTA_FEATURE = "scan.no_match"
+# The ai_quota counter key of /scan requests (#586): every authenticated
+# /scan request past the kill switches, new photo or repeat, refused or not.
+# A request count, not an AI call, so the service-wide count
+# (global_units_today) leaves it out (NON_AI_QUOTA_FEATURES).
+SCAN_REQUESTS_QUOTA_FEATURE = "scan.requests"
+# ai_quota keys that count something other than AI calls: never summed into
+# the global daily cap.
+NON_AI_QUOTA_FEATURES = (SCAN_REQUESTS_QUOTA_FEATURE,)
 # What /scan says about a no-match (ScanResponse.no_match, #577).
 NO_MATCH_FREE = "free"
 NO_MATCH_COUNTED = "counted"
@@ -310,6 +333,15 @@ class DailyLimitReached(QuotaRefusal):
 
     def __init__(self, retry_after: int) -> None:
         super().__init__("daily_scan_limit")
+        self.retry_after = retry_after
+
+
+class ScanRequestsDailyLimitReached(QuotaRefusal):
+    """The user has made today's allowed number of /scan requests (#586,
+    429 ``scan_requests_daily_limit``); resets at UTC midnight."""
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("scan_requests_daily_limit")
         self.retry_after = retry_after
 
 
@@ -645,14 +677,62 @@ async def units_used(
     return int(result.scalar_one_or_none() or 0)
 
 
+def global_units_filter(day: date):
+    """The ``ai_quota`` rows the service-wide count sums: ``day``'s day rows
+    of every AI-call key, so not the /scan request counter (#586:
+    :data:`NON_AI_QUOTA_FEATURES`)."""
+    return and_(
+        AIQuota.window_kind == WINDOW_DAY,
+        AIQuota.window_start == day,
+        AIQuota.feature.not_in(NON_AI_QUOTA_FEATURES),
+    )
+
+
 async def global_units_today(db: AsyncSession, day: date) -> int:
-    """Units reserved on ``day`` across all users and features."""
+    """AI-call units reserved on ``day`` across all users and features
+    (found and no-match); /scan request counts are left out (#586)."""
     result = await db.execute(
         select(func.coalesce(func.sum(AIQuota.units_used), 0)).where(
-            AIQuota.window_kind == WINDOW_DAY, AIQuota.window_start == day
+            global_units_filter(day)
         )
     )
     return int(result.scalar_one())
+
+
+# ---------------------------------------------------------------------------
+# /scan requests per user per UTC day (#586)
+# ---------------------------------------------------------------------------
+
+
+async def count_scan_request(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    ai: AISettings,
+    now: datetime | None = None,
+) -> int:
+    """Count one /scan request for ``user_id`` today (UTC) and return the
+    new count, or raise :class:`ScanRequestsDailyLimitReached` (nothing
+    written) when ``scan.requests_per_user_daily`` requests were already
+    made today.
+
+    The same exact conditional upsert as the daily unit (``units_used + 1
+    WHERE units_used < limit``, committed straight away), so parallel
+    requests on any number of instances never pass the limit. It counts
+    requests, not scans: nothing is ever given back, whatever happens to
+    the request afterwards. Not a lease or allowance step and not an AI
+    call, so it is kept out of :func:`global_units_today`."""
+    now = now or utc_now()
+    used = await reserve_unit(
+        db,
+        user_id,
+        SCAN_REQUESTS_QUOTA_FEATURE,
+        WINDOW_DAY,
+        utc_today(now),
+        ai.scan_requests_per_user_daily,
+    )
+    if used is None:
+        raise ScanRequestsDailyLimitReached(retry_after=seconds_until_utc_midnight(now))
+    return used
 
 
 # ---------------------------------------------------------------------------

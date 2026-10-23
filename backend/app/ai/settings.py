@@ -47,13 +47,17 @@ key                         type     meaning
 ``retention_days``                   served; older ones are purged daily
 ``scan_records.``           int      1..10,000 scan records per user; the
 ``max_per_user``                     oldest are evicted first
+``scan.requests_per_``      int      1..10,000 ``/scan`` requests per user per
+``user_daily``                       UTC day, new photo or repeat, refused or
+                                     not (#586; 429
+                                     ``scan_requests_daily_limit``)
 ==========================  =======  =========================================
 
 Enhanced scans are Premium-only (#533): non-Premium tiers are refused (403
 ``enhanced_requires_premium``) before any reservation. The three ``scan.enhanced.zero_result_*`` keys are seeded from
 code defaults (3, 24, ``charge``), not from the env, as are the three
 ``scan_records.*`` keys (``enabled`` ``true``, ``retention_days`` 30,
-``max_per_user`` 500).
+``max_per_user`` 500), and ``scan.requests_per_user_daily`` (100, #586).
 
 The ``quota.*`` allowances are per tier. The found allowance is shared by
 standard and enhanced scans (one ``ai_quota`` counter per user and UTC day,
@@ -92,7 +96,8 @@ down) falls back to that same env/registry default.
 
 **Validation.** Writes (the CLI below) are validated against the same rules
 and refused when invalid. On read, an invalid provider, model, pixel cap,
-global cap, allowance, cost ceiling or zero-result setting is ignored with a warning (log + Sentry) and the default is used, so a bad hand
+global cap, allowance, cost ceiling, zero-result, scan-record or request-limit
+setting is ignored with a warning (log + Sentry) and the default is used, so a bad hand
 edit can never widen what the registry allows: a model must be in the
 allow-list of the provider it is paired with, and the registry still
 re-validates the per-request spec. An invalid ``*.enabled`` row (anything but
@@ -205,6 +210,10 @@ SCAN_RECORDS_MAX_PER_USER_BOUNDS = (1, 10_000)
 DEFAULT_SCAN_RECORDS_ENABLED = True
 DEFAULT_SCAN_RECORDS_RETENTION_DAYS = 30
 DEFAULT_SCAN_RECORDS_MAX_PER_USER = 500
+# /scan requests per user per UTC day (#586, decision #573 point 3).
+SCAN_REQUESTS_PER_USER_DAILY_KEY = "scan.requests_per_user_daily"
+SCAN_REQUESTS_PER_USER_DAILY_BOUNDS = (1, 10_000)
+DEFAULT_SCAN_REQUESTS_PER_USER_DAILY = 100
 # Keys removed by #582 (no monthly limits). Unknown to the CLI and the seed;
 # a stored row is skipped on read without a warning until a contract
 # migration deletes it.
@@ -303,6 +312,7 @@ _zero_result_threshold = _bounded_int(ZERO_RESULT_THRESHOLD_BOUNDS)
 _zero_result_window_hours = _bounded_int(ZERO_RESULT_WINDOW_HOURS_BOUNDS)
 _scan_records_retention_days = _bounded_int(SCAN_RECORDS_RETENTION_DAYS_BOUNDS)
 _scan_records_max_per_user = _bounded_int(SCAN_RECORDS_MAX_PER_USER_BOUNDS)
+_scan_requests_per_user_daily = _bounded_int(SCAN_REQUESTS_PER_USER_DAILY_BOUNDS)
 
 
 def found_key(tier: str) -> str:
@@ -452,6 +462,13 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: DEFAULT_SCAN_RECORDS_MAX_PER_USER,
             "scan records kept per user, oldest evicted first "
             "(seed: code default 500)",
+        ),
+        SettingDefinition(
+            SCAN_REQUESTS_PER_USER_DAILY_KEY,
+            _scan_requests_per_user_daily,
+            lambda: DEFAULT_SCAN_REQUESTS_PER_USER_DAILY,
+            "/scan requests per user per UTC day, new photo or repeat, "
+            "refused or not (seed: code default 100)",
         ),
     ]
     return MappingProxyType({d.key: d for d in defs})
@@ -645,6 +662,10 @@ class AISettings:
     @property
     def scan_records_max_per_user(self) -> int:
         return self.get(SCAN_RECORDS_MAX_PER_USER_KEY)
+
+    @property
+    def scan_requests_per_user_daily(self) -> int:
+        return self.get(SCAN_REQUESTS_PER_USER_DAILY_KEY)
 
     def daily_allowance(self, tier: str) -> int:
         """Found scans per UTC day for ``tier`` (``"free"`` or ``"premium"``):
