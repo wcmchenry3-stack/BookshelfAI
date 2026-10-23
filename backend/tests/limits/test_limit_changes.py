@@ -66,12 +66,12 @@ async def test_next_request_obeys_a_change_after_the_cache_ttl_without_restart(
 ):
     db = ai_settings_table
     day, user_id = db.make_day(), await db.make_user()
-    await _set("quota.free.daily", "1")
+    await _set("quota.free.found_daily", "1")
 
     assert (await _scan(db, user_id, day)).status == 200
     assert (await _scan(db, user_id, day)).code == "daily_scan_limit"
 
-    await _set("quota.free.daily", "2")
+    await _set("quota.free.found_daily", "2")
     # Inside the TTL this process still serves the value it read.
     assert (await _scan(db, user_id, day)).code == "daily_scan_limit"
     settings_clock.expire()
@@ -86,13 +86,13 @@ async def test_raising_a_limit_lets_a_refused_user_scan_again_the_same_day(
 ):
     db = ai_settings_table
     day, user_id = db.make_day(), await db.make_user()
-    await _set("quota.free.daily", "2")
+    await _set("quota.free.found_daily", "2")
     for _ in range(2):
         assert (await _scan(db, user_id, day)).status == 200
     refused = await _scan(db, user_id, day)
     assert (refused.status, refused.code) == (429, "daily_scan_limit")
 
-    await _set("quota.free.daily", "3")
+    await _set("quota.free.found_daily", "3")
     settings_clock.expire()
     # The daily window has room now, and there is no monthly one (#582).
     assert (await _scan(db, user_id, day)).status == 200
@@ -108,7 +108,7 @@ async def test_lowering_a_limit_below_todays_usage_refuses_the_next_scan(
 ):
     db = ai_settings_table
     day, user_id = db.make_day(), await db.make_user()
-    key, code, status = "quota.free.daily", "daily_scan_limit", 429
+    key, code, status = "quota.free.found_daily", "daily_scan_limit", 429
     await _set(key, "10")
     for _ in range(3):
         assert (await _scan(db, user_id, day)).status == 200
@@ -140,10 +140,10 @@ async def test_lowering_a_limit_while_a_scan_is_in_flight_refunds_without_going_
     the limit dropped to 0: its units come back exactly, never below 0."""
     db = ai_settings_table
     day, user_id = db.make_day(), await db.make_user()
-    await _set("quota.free.daily", "5")
+    await _set("quota.free.found_daily", "5")
 
     async def lower_mid_call():
-        await _set("quota.free.daily", "0")
+        await _set("quota.free.found_daily", "0")
         settings_clock.expire()
 
     with h.FakeProvider("unavailable", on_call=lower_mid_call).patch():
@@ -162,12 +162,12 @@ async def test_lowering_a_limit_while_a_scan_is_in_flight_refunds_without_going_
 @pytest.mark.parametrize(
     "key, value",
     [
-        ("quota.free.daily", "1001"),
-        ("quota.free.daily", "-1"),
-        ("quota.free.daily", "2.5"),
-        ("quota.free.daily", "true"),
-        ("quota.free.daily", "five"),
-        ("quota.premium.daily", "1001"),
+        ("quota.free.found_daily", "1001"),
+        ("quota.free.found_daily", "-1"),
+        ("quota.free.found_daily", "2.5"),
+        ("quota.free.found_daily", "true"),
+        ("quota.free.found_daily", "five"),
+        ("quota.premium.found_daily", "1001"),
         ("scan.global_daily_limit", "0"),
         ("scan.global_daily_limit", "1000001"),
         ("breaker.free_daily_ceiling_micros", "-1"),
@@ -206,11 +206,13 @@ async def test_a_hand_edited_out_of_bounds_row_is_ignored(
     db = ai_settings_table
     day, user_id = db.make_day(), await db.make_user()
     async with db.factory() as session:
-        session.add(AISetting(key="quota.free.daily", value=-3, updated_by="hand"))
+        session.add(
+            AISetting(key="quota.free.found_daily", value=-3, updated_by="hand")
+        )
         await session.commit()
     async with db.factory() as session:
         current = await ai_settings.get_ai_settings(session)
-    default_daily = ai_settings.DEFINITIONS["quota.free.daily"].default()
+    default_daily = ai_settings.DEFINITIONS["quota.free.found_daily"].default()
     assert current.daily_allowance("free") == default_daily
     usage = await _usage(db, user_id, day)
     assert usage.daily_limit == default_daily
@@ -244,30 +246,30 @@ async def test_every_change_records_who_made_it(
     ai_settings_table, monkeypatch, settings_clock
 ):
     db = ai_settings_table
-    await _set("quota.free.daily", "4", by="ops-alice")
-    first = await h.stored_setting(db.factory, "quota.free.daily")
+    await _set("quota.free.found_daily", "4", by="ops-alice")
+    first = await h.stored_setting(db.factory, "quota.free.found_daily")
     assert (first.value, first.updated_by) == (4, "ops-alice")
 
-    await _set("quota.free.daily", "6", by="ops-bob")
-    second = await h.stored_setting(db.factory, "quota.free.daily")
+    await _set("quota.free.found_daily", "6", by="ops-bob")
+    second = await h.stored_setting(db.factory, "quota.free.found_daily")
     assert (second.value, second.updated_by) == (6, "ops-bob")
     assert second.updated_at >= first.updated_at
 
     # Without --by: $USER, else "cli".
     monkeypatch.setenv("USER", "carol")
-    assert (await h.cli("set", "quota.free.daily", "7")).code == 0
-    third = await h.stored_setting(db.factory, "quota.free.daily")
+    assert (await h.cli("set", "quota.free.found_daily", "7")).code == 0
+    third = await h.stored_setting(db.factory, "quota.free.found_daily")
     assert (third.value, third.updated_by) == (7, "carol")
     monkeypatch.delenv("USER")
-    assert (await h.cli("set", "quota.free.daily", "8")).code == 0
-    fourth = await h.stored_setting(db.factory, "quota.free.daily")
+    assert (await h.cli("set", "quota.free.found_daily", "8")).code == 0
+    fourth = await h.stored_setting(db.factory, "quota.free.found_daily")
     assert (fourth.value, fourth.updated_by) == (8, ai_settings.DEFAULT_CLI_ACTOR)
 
     # A blank actor is refused and changes nothing.
-    assert (await h.cli("set", "quota.free.daily", "9", "--by", " ")).code == 2
-    assert (await h.stored_setting(db.factory, "quota.free.daily")).value == 8
+    assert (await h.cli("set", "quota.free.found_daily", "9", "--by", " ")).code == 2
+    assert (await h.stored_setting(db.factory, "quota.free.found_daily")).value == 8
 
     # `get` shows who changed it.
-    shown = await h.cli("get", "quota.free.daily")
+    shown = await h.cli("get", "quota.free.found_daily")
     assert shown.code == 0 and "by cli" in shown.out
     assert timedelta(0) <= fourth.updated_at - first.updated_at

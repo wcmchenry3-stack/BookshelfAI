@@ -151,7 +151,7 @@ class TestRefusalResponses:
         assert resp.json() == {"detail": "scan_capacity"}
 
     def test_allowance_comes_from_ai_settings(self, client, store, provider):
-        ai_settings.reset_cache({"quota.free.daily": 1})
+        ai_settings.reset_cache({"quota.free.found_daily": 1})
         assert client.post("/scan", files=_file()).status_code == 200
         resp = client.post("/scan", files=_file())
         assert resp.json() == {"detail": "daily_scan_limit"}
@@ -223,7 +223,7 @@ class TestOrderAndSettle:
     def test_three_standard_and_two_enhanced_exhaust_a_daily_limit_of_5(
         self, client, store, provider, sixth, premium
     ):
-        ai_settings.reset_cache({"quota.premium.daily": 5})
+        ai_settings.reset_cache({"quota.premium.found_daily": 5})
         enhanced = {"enhanced": "true"}
         for data in ({}, {}, {}, enhanced, enhanced):
             assert client.post("/scan", files=_file(), data=data).status_code == 200
@@ -307,6 +307,11 @@ class TestUsageEndpoint:
         assert resp.json() == {
             "used_today": 2,
             "daily_limit": 5,
+            # #577: the found counter again, and the no-match counter.
+            "found_used_today": 2,
+            "found_daily_limit": 5,
+            "no_match_used_today": 0,
+            "no_match_daily_limit": 0,
             "used_month": None,
             "monthly_limit": None,
             "period_end": None,
@@ -323,9 +328,12 @@ class TestUsageEndpoint:
             db,
             user=USER,
             feature=quota.SCAN_QUOTA_FEATURE,
-            ai=ai_settings.AISettings({"quota.free.daily": 9}),
+            ai=ai_settings.AISettings({"quota.free.found_daily": 9}),
         )
-        assert usage == quota.Usage(used_today=2, daily_limit=9)
+        # #577: the fake returns 2 for the found and the no-match read.
+        assert usage == quota.Usage(
+            used_today=2, daily_limit=9, no_match_used_today=2, no_match_daily_limit=5
+        )
 
     def test_ai_settings_unavailable_is_503(self, client):
         with patch(

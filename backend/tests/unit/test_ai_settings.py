@@ -608,8 +608,11 @@ _VALID = {
     "scan.max_image_pixels": [1_000_000, 40_000_000, 100_000_000],
     # #528 allowance keys and the global ceiling.
     "scan.global_daily_limit": [1, 2000, 1_000_000],
-    "quota.free.daily": [0, 5, 1000],
-    "quota.premium.daily": [0, 30, 1000],
+    "quota.free.found_daily": [0, 5, 1000],
+    "quota.premium.found_daily": [0, 30, 1000],
+    # #577 no-match allowances
+    "quota.free.no_match_daily": [0, 5, 1000],
+    "quota.premium.no_match_daily": [0, 5, 1000],
     # #531 cost ceiling (micro-dollars)
     "breaker.free_daily_ceiling_micros": [0, 10_000_000, 1_000_000_000],
     # #533 enhanced allowance and zero-result limits
@@ -630,8 +633,10 @@ _INVALID = {
     "scan.enhanced.model": ["claude-3", None],
     "scan.max_image_pixels": [999_999, 100_000_001, 0, -1, True, 1e7, "4e7", None],
     "scan.global_daily_limit": [0, -1, 1_000_001, True, 2.5, "2000", None],
-    "quota.free.daily": [-1, 1001, True, False, 5.0, "5", None],
-    "quota.premium.daily": [-1, 1001, True, None],
+    "quota.free.found_daily": [-1, 1001, True, False, 5.0, "5", None],
+    "quota.premium.found_daily": [-1, 1001, True, None],
+    "quota.free.no_match_daily": [-1, 1001, True, False, 5.0, "5", None],
+    "quota.premium.no_match_daily": [-1, 1001, True, None],
     "breaker.free_daily_ceiling_micros": [
         -1,
         1_000_000_001,
@@ -674,8 +679,11 @@ def test_initial_key_set():
         "scan.max_image_pixels",
         # #528
         "scan.global_daily_limit",
-        "quota.free.daily",
-        "quota.premium.daily",
+        "quota.free.found_daily",
+        "quota.premium.found_daily",
+        # #577
+        "quota.free.no_match_daily",
+        "quota.premium.no_match_daily",
         # #531
         "breaker.free_daily_ceiling_micros",
         # #533 (quota.premium.enhanced_monthly retired by #582)
@@ -762,8 +770,8 @@ class TestBounds:
             patch.object(ai_settings.sentry_sdk, "capture_message") as capture,
             caplog.at_level("INFO", logger="app.ai.settings"),
         ):
-            ai_settings.reset_cache({key: 0, "quota.free.daily": 5})
-        assert dict(ai_settings._cache.rows) == {"quota.free.daily": 5}
+            ai_settings.reset_cache({key: 0, "quota.free.found_daily": 5})
+        assert dict(ai_settings._cache.rows) == {"quota.free.found_daily": 5}
         capture.assert_not_called()
         assert key not in caplog.text
 
@@ -873,8 +881,11 @@ class TestSeeding:
             "scan.enhanced.model": FEATURES["scan.enhanced"].model,
             "scan.max_image_pixels": 2_000_000,
             "scan.global_daily_limit": 77,
-            "quota.free.daily": 4,
-            "quota.premium.daily": 31,
+            "quota.free.found_daily": 4,
+            "quota.premium.found_daily": 31,
+            # #577: env defaults
+            "quota.free.no_match_daily": 5,
+            "quota.premium.no_match_daily": 5,
             "breaker.free_daily_ceiling_micros": 42,
             # #533: code defaults (the retired monthly env vars seed nothing,
             # #582)
@@ -889,8 +900,12 @@ class TestSeeding:
 
     async def test_seed_is_insert_if_missing(self):
         db = AsyncMock()
-        db.execute.return_value = MagicMock()
-        db.execute.return_value.scalars.return_value.all.return_value = ["k"]
+        # #577: the seed first reads the stored rows (for the carry-over).
+        stored = MagicMock()
+        stored.scalars.return_value.all.return_value = []
+        inserted = MagicMock()
+        inserted.scalars.return_value.all.return_value = ["k"]
+        db.execute.side_effect = [stored, inserted]
         assert await ai_settings.seed_ai_settings(db) == 1
         sql = str(db.execute.await_args.args[0].compile(dialect=_pg()))
         assert "INSERT INTO ai_settings" in sql
@@ -1117,7 +1132,7 @@ class TestLoadRowsTransactionChoice:
         db.dirty = []
         db.deleted = []
         result = MagicMock()
-        result.all.return_value = [("scan.standard.enabled", True)]
+        result.all.return_value = [("scan.standard.enabled", True, "seed")]
         db.execute = AsyncMock(return_value=result)
         db.begin = MagicMock(return_value=AsyncMock())
         db.begin_nested = MagicMock(return_value=AsyncMock())

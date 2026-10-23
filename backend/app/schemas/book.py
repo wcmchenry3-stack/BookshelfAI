@@ -91,3 +91,8 @@ class ScanResponse(BaseModel):
     # True when the answer came from the user's saved scan record for this
     # exact photo (#585): no AI call and nothing charged.
     repeat: bool = False
+    # A standard scan where the model answered but found no book (#577):
+    # "free" = it did not use a scan (moved to the no-match allowance);
+    # "counted" = it used a scan because today's no-match allowance is used
+    # up. None otherwise (books found, enhanced, a repeat, or not known).
+    no_match: Literal["free", "counted"] | None = None

@@ -48,7 +48,7 @@ _FORGED = {
     "used_today": "0",
     "used_month": "0",
     "quota": "1000",
-    "quota.free.daily": "1000",
+    "quota.free.found_daily": "1000",
     "quota.free.monthly": "1000",
     "scan.global_daily_limit": "1000000",
     "lease_id": str(uuid.uuid4()),

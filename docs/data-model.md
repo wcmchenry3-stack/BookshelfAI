@@ -279,21 +279,21 @@ Counts scans that reached the vision provider, per user per UTC day. Backed the 
 
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 
-Per-user count of AI calls reserved, per quota key and window (#528). Backs the daily scan allowance and the global daily ceiling. There is no monthly allowance since #582: month rows are legacy, no longer read or written ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
+Per-user count of AI calls reserved, per quota key and window (#528). Backs the daily found and no-match scan allowances (#577) and the global daily ceiling. There is no monthly allowance since #582: month rows are legacy, no longer read or written ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
 
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
-| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`). Legacy: `scan.enhanced` month rows, from the Premium enhanced monthly allowance #582 removed |
+| `feature` | varchar(64), PK part | the quota key: `scan` is the **found** counter, the unit every scan, standard or enhanced, reserves before the provider (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`); `scan.no_match` is the **no-match** counter (#577; `quota.SCAN_NO_MATCH_QUOTA_FEATURE`): standard scans whose provider answered but found no book, moved off `scan` in the settle while under `quota.<tier>.no_match_daily`. Both are day rows; the global daily sum counts both. Legacy: `scan.enhanced` month rows, from the Premium enhanced monthly allowance #582 removed |
 | `window_kind` | varchar(8), PK part, CHECK `IN ('day', 'month')` | `day`; `month` rows are legacy (written before #582, never since) |
 | `window_start` | date, PK part | the UTC day (legacy month rows: the 1st of the UTC calendar month) |
-| `units_used` | int, not null, server default 0, CHECK `>= 0` | incremented by the reservation upsert, decremented (never below 0) on a refund |
+| `units_used` | int, not null, server default 0, CHECK `>= 0` | incremented by the reservation upsert, decremented (never below 0) on a refund or (found, #577) when a no-match moves to `scan.no_match` |
 
 **Keys and indexes:** the composite primary key `(user_id, feature, window_kind, window_start)` is the unique key the reservation upsert targets (`INSERT … ON CONFLICT … DO UPDATE SET units_used = units_used + 1 WHERE units_used < limit`). `ix_ai_quota_window (window_kind, window_start)` serves the global daily sum and the retention purge.
 
-**Writes:** only `app/ai/quota.py` (reserve, refund, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
+**Writes:** only `app/ai/quota.py` (reserve, refund, the no-match move, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
 
-**Volume and retention:** about 70 bytes per row. Per active user, one day row for each day they scan: roughly 70 bytes per active user per day. No month rows are written since #582. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month (so the legacy month rows are gone 13 months after the last one was written; until then they are kept so a rollback to the previous release finds its counters), in batches of 5,000 and at most 20 batches per window kind per run. This table is not used for reporting: monthly spend and call counts come from `ai_usage` / `ai_usage_daily`.
+**Volume and retention:** about 70 bytes per row. Per active user, one or two day rows for each day they scan (`scan`, and `scan.no_match` on a day with a no-match, #577): at most about 140 bytes per active user per day. No month rows are written since #582. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month (so the legacy month rows are gone 13 months after the last one was written; until then they are kept so a rollback to the previous release finds its counters), in batches of 5,000 and at most 20 batches per window kind per run. This table is not used for reporting: monthly spend and call counts come from `ai_usage` / `ai_usage_daily`.
 
 ### `ai_inflight` (`backend/app/models/ai_quota.py`)
 

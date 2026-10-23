@@ -45,7 +45,7 @@ def free():
 async def test_the_daily_counter_resets_at_utc_midnight(limits_db, downstream, free):
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
-    h.use_settings({**BASE, "quota.free.daily": 2})
+    h.use_settings({**BASE, "quota.free.found_daily": 2})
     clock = h.Clock(h.at(day, 23, 59, 58))
     with clock.patch(), h.FakeProvider("books").patch() as fake:
         for _ in range(2):
@@ -131,7 +131,9 @@ async def test_an_enhanced_scan_across_the_month_end_is_charged_to_its_day(
         got = await h.call_scan(db.factory, user_id, enhanced=True)
     assert got.status == 200
     # The daily allowance left on the day it was reserved.
-    assert got.response.enhanced_scans_remaining == BASE["quota.premium.daily"] - 1
+    assert (
+        got.response.enhanced_scans_remaining == BASE["quota.premium.found_daily"] - 1
+    )
     assert await db.units(user_id, feature=h.SCAN, kind="day", start=last) == 1
     assert await db.row(user_id, feature=h.SCAN, kind="day", start=new) is None
     for start in (old, new):
@@ -158,7 +160,7 @@ async def test_a_month_boundary_changes_nothing(limits_db, downstream, free, mon
     if month == 12:
         assert first == date(last.year + 1, 1, 1)
     user_id = await db.make_user()
-    h.use_settings({**BASE, "quota.free.daily": 2, "quota.free.monthly": 2})
+    h.use_settings({**BASE, "quota.free.found_daily": 2, "quota.free.monthly": 2})
     old_month = last.replace(day=1)
     await db.seed_units(
         user_id, feature=h.SCAN, kind="month", start=old_month, units=10_000
@@ -225,7 +227,7 @@ async def test_40_days_at_the_free_daily_limit_are_never_refused_monthly(
     the limit is allowed, every day's next scan is refused for the daily
     reason only, and no month row is written."""
     db = limits_db
-    days, limit = 40, BASE["quota.free.daily"]
+    days, limit = 40, BASE["quota.free.found_daily"]
     start = _far_start_crossing_months(db, days)
     user_id = await db.make_user()
     h.use_settings(BASE)
@@ -249,7 +251,7 @@ async def test_premium_enhanced_scans_past_the_old_monthly_allowances(
     old enhanced monthly allowance of 20, across a month end) is never
     refused for a monthly reason; the daily limit holds every day."""
     db = limits_db
-    days, limit = 11, BASE["quota.premium.daily"]
+    days, limit = 11, BASE["quota.premium.found_daily"]
     start = _far_start_crossing_months(db, days)
     user_id = await db.make_user()
     h.use_settings(BASE)

@@ -17,8 +17,15 @@ key                         type     meaning
 ``scan.max_image_pixels``   int      1,000,000..100,000,000 decoded pixels
 ``scan.global_daily_limit`` int      1..1,000,000 scans per UTC day, all users
                                      (503 ``scan_capacity``)
-``quota.free.daily``        int      0..1,000 scans per user per UTC day
-``quota.premium.daily``     int      0..1,000 (as above, Premium tier)
+``quota.free.found_daily``  int      0..1,000 scans per user per UTC day in
+                                     which the provider found books (#577)
+``quota.free.``             int      0..1,000 scans per user per UTC day in
+``no_match_daily``                   which the provider answered properly
+                                     but found no book (#577)
+``quota.premium.``          int      0..1,000 (as ``quota.free.found_daily``,
+``found_daily``                      Premium tier)
+``quota.premium.``          int      0..1,000 (as ``quota.free.no_match_daily``,
+``no_match_daily``                   Premium tier)
 ``breaker.free_daily_``     int      0..1,000,000,000 micro-dollars of AI spend
 ``ceiling_micros``                   per UTC day, all tiers counted, above which
                                      Free-tier scans get 503 ``ai_budget_reached``
@@ -48,9 +55,21 @@ code defaults (3, 24, ``charge``), not from the env, as are the three
 ``scan_records.*`` keys (``enabled`` ``true``, ``retention_days`` 30,
 ``max_per_user`` 500).
 
-The ``quota.*`` allowances are per tier and shared by standard and enhanced
-scans (one ``ai_quota`` counter per user and UTC day, under
-``quota.SCAN_QUOTA_FEATURE``, OD-1); see ``app/ai/quota.py``.
+The ``quota.*`` allowances are per tier. The found allowance is shared by
+standard and enhanced scans (one ``ai_quota`` counter per user and UTC day,
+under ``quota.SCAN_QUOTA_FEATURE``, OD-1); the no-match allowance has its own
+counter (``quota.SCAN_NO_MATCH_QUOTA_FEATURE``) and only standard scans move
+to it (#577); see ``app/ai/quota.py``.
+
+**Found / no-match (#577).** ``quota.<tier>.daily`` is retired
+(:data:`RETIRED_KEYS`): it became ``quota.<tier>.found_daily``. Carry-over:
+an operator may have customised the old key, so a stored ``quota.<tier>.daily``
+row that was NOT written by the seed (``updated_by`` is not ``seed``) and is
+valid is used as ``quota.<tier>.found_daily`` while no ``found_daily`` row
+exists: at seeding (the new row is inserted with the old value) and on read
+(when seeding has not run yet). A seeded old row (the env default) is not
+carried, so the new default applies (Premium: 30 before, 5 now). Once a
+``found_daily`` row exists the old row is ignored. See :func:`carried_over`.
 
 **No monthly keys (#582).** ``quota.free.monthly``, ``quota.premium.monthly``
 and ``quota.premium.enhanced_monthly`` are retired (:data:`RETIRED_KEYS`):
@@ -62,7 +81,9 @@ once no running release reads them.
 **Seeding.** At startup :func:`seed_ai_settings_at_startup` inserts every key
 that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
 ``SCAN_MAX_IMAGE_PIXELS``, ``SCAN_GLOBAL_DAILY_LIMIT``, ``SCAN_FREE_DAILY_LIMIT``,
-``SCAN_PREMIUM_DAILY_LIMIT``, ``SCAN_FREE_DAILY_CEILING_MICROS``), the code
+``SCAN_PREMIUM_DAILY_LIMIT``, which seed the ``found_daily`` keys since #577,
+``SCAN_FREE_NO_MATCH_DAILY_LIMIT``, ``SCAN_PREMIUM_NO_MATCH_DAILY_LIMIT``,
+``SCAN_FREE_DAILY_CEILING_MICROS``), the code
 defaults above and the registry defaults (``SCAN_MODEL``,
 ``SCAN_ENHANCED_MODEL``). Existing rows are never touched, so after the first
 boot the row is the source of truth and the env vars are initial defaults
@@ -187,10 +208,19 @@ DEFAULT_SCAN_RECORDS_MAX_PER_USER = 500
 # Keys removed by #582 (no monthly limits). Unknown to the CLI and the seed;
 # a stored row is skipped on read without a warning until a contract
 # migration deletes it.
+# #577 retired quota.<tier>.daily: it became quota.<tier>.found_daily (with
+# the carry-over in carried_over()).
 RETIRED_KEYS = frozenset(
-    {"quota.free.monthly", "quota.premium.monthly", "quota.premium.enhanced_monthly"}
+    {
+        "quota.free.monthly",
+        "quota.premium.monthly",
+        "quota.premium.enhanced_monthly",
+        "quota.free.daily",
+        "quota.premium.daily",
+    }
 )
-# Tiers with allowance keys: quota.<tier>.daily. Plain
+# Tiers with allowance keys: quota.<tier>.found_daily and
+# quota.<tier>.no_match_daily (#577). Plain
 # strings (the Tier enum values) so this module stays free of request-side
 # imports; app/ai/quota.py maps a Tier to its keys.
 QUOTA_TIERS = ("free", "premium")
@@ -275,6 +305,21 @@ _scan_records_retention_days = _bounded_int(SCAN_RECORDS_RETENTION_DAYS_BOUNDS)
 _scan_records_max_per_user = _bounded_int(SCAN_RECORDS_MAX_PER_USER_BOUNDS)
 
 
+def found_key(tier: str) -> str:
+    """The found-scans allowance key of ``tier`` (#577)."""
+    return f"quota.{tier}.found_daily"
+
+
+def no_match_key(tier: str) -> str:
+    """The no-match allowance key of ``tier`` (#577)."""
+    return f"quota.{tier}.no_match_daily"
+
+
+def legacy_daily_key(tier: str) -> str:
+    """The retired allowance key of ``tier`` (#577: now ``found_daily``)."""
+    return f"quota.{tier}.daily"
+
+
 def _zero_result_action(value: Any) -> str:
     if not isinstance(value, str) or value not in ZERO_RESULT_ACTIONS:
         raise AISettingValueError(f"must be one of: {', '.join(ZERO_RESULT_ACTIONS)}")
@@ -340,11 +385,20 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
     for tier in QUOTA_TIERS:
         defs += [
             SettingDefinition(
-                f"quota.{tier}.daily",
+                found_key(tier),
                 _daily_allowance,
                 lambda t=tier: getattr(settings, f"scan_{t}_daily_limit"),
-                f"{tier} scans per user per UTC day, standard and enhanced "
-                f"combined (seed: SCAN_{tier.upper()}_DAILY_LIMIT)",
+                f"{tier} scans per user per UTC day that found books, standard "
+                f"and enhanced combined; also the units a scan needs to start "
+                f"(seed: SCAN_{tier.upper()}_DAILY_LIMIT)",
+            ),
+            SettingDefinition(
+                no_match_key(tier),
+                _daily_allowance,
+                lambda t=tier: getattr(settings, f"scan_{t}_no_match_daily_limit"),
+                f"{tier} standard scans per user per UTC day where the model "
+                f"answered but found no book, not counted as a found scan "
+                f"(seed: SCAN_{tier.upper()}_NO_MATCH_DAILY_LIMIT)",
             ),
         ]
     defs.append(
@@ -470,6 +524,32 @@ def _warn_switch_disabled(key: str, reason: str) -> None:
     )
 
 
+def carried_over(
+    values: Mapping[str, Any], actors: Mapping[str, str | None]
+) -> dict[str, Any]:
+    """The ``found_daily`` values carried over from the retired
+    ``quota.<tier>.daily`` rows (#577), given the stored ``values`` and who
+    wrote each row (``actors``, the ``updated_by`` column).
+
+    A tier's old value is carried when no ``found_daily`` row is stored, the
+    old row was written by an operator (not :data:`SEED_ACTOR`: a seeded row
+    is only the env default, and the new default applies) and it is valid.
+    Never raises; an invalid old value is not carried (the default applies,
+    without a warning: the key is retired)."""
+    carried: dict[str, Any] = {}
+    for tier in QUOTA_TIERS:
+        old, new = legacy_daily_key(tier), found_key(tier)
+        if new in values or old not in values:
+            continue
+        if actors.get(old) == SEED_ACTOR:
+            continue
+        try:
+            carried[new] = _daily_allowance(values[old])
+        except AISettingValueError:
+            continue
+    return carried
+
+
 def _sanitise_rows(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Validate rows read from the table.
 
@@ -567,9 +647,14 @@ class AISettings:
         return self.get(SCAN_RECORDS_MAX_PER_USER_KEY)
 
     def daily_allowance(self, tier: str) -> int:
-        """Scans per UTC day for ``tier`` (``"free"`` or ``"premium"``). There
-        is no monthly allowance (#582)."""
-        return self.get(f"quota.{tier}.daily")
+        """Found scans per UTC day for ``tier`` (``"free"`` or ``"premium"``):
+        the unit every scan reserves before the provider (#577). There is no
+        monthly allowance (#582)."""
+        return self.get(found_key(tier))
+
+    def no_match_allowance(self, tier: str) -> int:
+        """No-match scans per UTC day for ``tier`` (#577)."""
+        return self.get(no_match_key(tier))
 
     def feature_enabled(self, feature: str) -> bool:
         """``scan.standard.enabled`` is the master switch for every scan."""
@@ -614,8 +699,19 @@ def reset_cache(rows: Mapping[str, Any] | None = None) -> None:
     )
 
 
+def _with_carry_over(result) -> dict[str, Any]:
+    """Rows ``(key, value, updated_by)`` as ``{key: value}``, with the #577
+    carry-over (:func:`carried_over`) added."""
+    values: dict[str, Any] = {}
+    actors: dict[str, str | None] = {}
+    for key, value, updated_by in result.all():
+        values[key] = value
+        actors[key] = updated_by
+    return {**values, **carried_over(values, actors)}
+
+
 async def _load_rows(db: AsyncSession) -> dict[str, Any]:
-    query = select(AISetting.key, AISetting.value)
+    query = select(AISetting.key, AISetting.value, AISetting.updated_by)
     if (
         not db.in_transaction()
         and not db.identity_map
@@ -627,7 +723,7 @@ async def _load_rows(db: AsyncSession) -> dict[str, Any]:
         # failed outermost rollback would expire every loaded object.
         async with db.begin():
             result = await db.execute(query)
-            return {key: value for key, value in result.all()}
+            return _with_carry_over(result)
     # Otherwise (a transaction is open, or the session holds objects or
     # pending changes): a SAVEPOINT, so a failed read rolls back only itself;
     # the session stays usable and objects it already loaded (the current
@@ -635,7 +731,7 @@ async def _load_rows(db: AsyncSession) -> dict[str, Any]:
     # autobegun transaction stays open until the caller commits or closes.
     async with db.begin_nested():
         result = await db.execute(query)
-        return {key: value for key, value in result.all()}
+        return _with_carry_over(result)
 
 
 async def get_ai_settings(db: AsyncSession) -> AISettings:
@@ -702,14 +798,25 @@ def seed_values() -> dict[str, Any]:
 async def seed_ai_settings(db: AsyncSession) -> int:
     """Insert every missing key; existing rows are left as they are.
 
+    A ``found_daily`` key is seeded with the value carried over from an
+    operator's ``quota.<tier>.daily`` row when there is one (#577,
+    :func:`carried_over`), written by :data:`SEED_ACTOR` like any seed.
+
     Returns how many rows were inserted. Idempotent.
     """
+    stored = await read_rows(db)
+    carried = carried_over(
+        {k: r.value for k, r in stored.items()},
+        {k: r.updated_by for k, r in stored.items()},
+    )
+    for key in carried:
+        logger.info("ai_settings: %s carried over from the retired daily key", key)
     stmt = (
         insert(AISetting)
         .values(
             [
                 {"key": key, "value": value, "updated_by": SEED_ACTOR}
-                for key, value in seed_values().items()
+                for key, value in {**seed_values(), **carried}.items()
             ]
         )
         .on_conflict_do_nothing(index_elements=[AISetting.key])
@@ -859,6 +966,15 @@ def _printable(text: str) -> str:
 def _describe(key: str, stored: Mapping[str, AISetting]) -> str:
     row = stored.get(key)
     if row is None:
+        carried = carried_over(
+            {k: r.value for k, r in stored.items()},
+            {k: r.updated_by for k, r in stored.items()},
+        )
+        if key in carried:
+            return (
+                f"{key} = {json.dumps(carried[key])}  (no row; carried over "
+                "from the retired quota.<tier>.daily row)"
+            )
         value = DEFINITIONS[key].default()
         return f"{key} = {json.dumps(value)}  (no row; env/registry default)"
     current = _sanitise_rows({k: r.value for k, r in stored.items()})

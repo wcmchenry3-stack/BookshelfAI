@@ -399,7 +399,11 @@ class TestReserveFlow:
         factory, make_user = sessions
         user_id = await make_user()
         ai = AISettings(
-            {"quota.free.daily": 5, "quota.free.monthly": 0, "quota.premium.monthly": 0}
+            {
+                "quota.free.found_daily": 5,
+                "quota.free.monthly": 0,
+                "quota.premium.monthly": 0,
+            }
         )
         now = quota.utc_now()
         today = quota.utc_today(now)
@@ -469,7 +473,7 @@ class TestReserveFlow:
     async def test_daily_refusal_releases_lease(self, sessions):
         factory, make_user = sessions
         user_id = await make_user()
-        ai = AISettings({"quota.free.daily": 0})
+        ai = AISettings({"quota.free.found_daily": 0})
         async with factory() as db:
             user = await db.get(User, user_id)
             with pytest.raises(quota.DailyLimitReached):
@@ -772,7 +776,9 @@ class TestScanEndpoint:
             usage = await quota.usage_for(
                 db, user=user, feature=FEATURE, ai=AISettings({})
             )
-        assert usage == quota.Usage(used_today=1, daily_limit=5)
+        assert usage == quota.Usage(
+            used_today=1, daily_limit=5, no_match_used_today=0, no_match_daily_limit=5
+        )
 
 
 class TestPurge:

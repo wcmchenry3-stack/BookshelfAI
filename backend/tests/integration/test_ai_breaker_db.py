@@ -320,7 +320,17 @@ class TestScan:
         assert len(reached) == 3
         assert await _totals(factory, day) == (0, 3 * USAGE_COST, 0)
         units = [await _units(factory, u, day) for u in users]
-        assert sorted(units) == [0] * 7 + [1] * 3
+        # #577: the provider found no book, so each of the 3 calls moved its
+        # found unit to the no-match counter.
+        assert units == [0] * 10
+        async with factory() as db:
+            no_match = [
+                await quota.units_used(
+                    db, u, quota.SCAN_NO_MATCH_QUOTA_FEATURE, "day", day
+                )
+                for u in users
+            ]
+        assert sorted(no_match) == [0] * 7 + [1] * 3
 
     async def test_premium_at_the_ceiling_reaches_provider_and_adds_spend(
         self, env, downstream, monkeypatch

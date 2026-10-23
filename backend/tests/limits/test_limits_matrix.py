@@ -38,18 +38,25 @@ Done:
   and the retired monthly keys never refuse a scan, every row asserts that
   no month row moves, and ``test_limits_time.py`` scans at the daily limit
   for 40 days across month ends without a monthly refusal
+- #577 found / no-match counters: ``daily`` is the found counter (every scan
+  reserves a found unit first); a standard scan whose provider answered
+  ``ok`` with no books moves it to ``no_match`` while that has room
+  (``no_match`` in the response: ``free``), else it stays charged
+  (``counted``). Every row asserts the no-match counter's move (``Delta``)
+  and the response field; ``global`` moves with both counters. The retired
+  ``quota.<tier>.daily`` keys are ignored (``retired_daily_key`` rows).
 
 Rules that do not exist yet get their rows from their own stories:
 
 - #586 the per-user 100/day /scan request limit (decision #573 point 3)
-- #577 found / no-match counters
 - #583 Premium escalation
 - #574 retries
 - #581 adds a drift test of the limits overview against the settings registry
 
 Write a row as ``Case(...)`` with a readable ``id``
 (``<tier>-<scan>-<what happens>``). Starting counters may be ``LIMIT`` (at
-the tier's daily limit, or the global cap for ``global_others``). If a new rule needs a new input or
+the tier's found or no-match limit, or the global cap for ``global_others``
+and ``others_no_match``). If a new rule needs a new input or
 expectation, add a field to ``Start`` / ``Case`` with a default that keeps
 the existing rows unchanged.
 """
@@ -82,8 +89,10 @@ BASE: dict[str, Any] = {
     "scan.standard.enabled": True,
     "scan.enhanced.enabled": True,
     "scan.global_daily_limit": 2_000,
-    "quota.free.daily": 5,
-    "quota.premium.daily": 30,
+    "quota.free.found_daily": 5,
+    "quota.free.no_match_daily": 5,
+    "quota.premium.found_daily": 5,
+    "quota.premium.no_match_daily": 5,
     "breaker.free_daily_ceiling_micros": 10_000_000,
     "scan.enhanced.zero_result_threshold": 3,
     "scan.enhanced.zero_result_window_hours": 24,
@@ -100,13 +109,19 @@ NO_SPEND, ESTIMATE, COST = "none", "estimate", "cost"
 
 @dataclass(frozen=True)
 class Start:
+    # The found counter (#577; the shared daily unit).
     daily: int | str = 0
+    # The no-match counter (#577), or LIMIT (the tier's no-match ceiling).
+    no_match: int | str = 0
     # Month rows left by the previous release (#582): the shared monthly and
     # the Premium enhanced monthly counters. Seeded to prove they are ignored.
     legacy_month: int = 0
     legacy_enhanced_month: int = 0
     # Day units of OTHER users today (the service-wide count), or LIMIT.
     global_others: int | str = 0
+    # No-match day units of another user today, or LIMIT (the global cap):
+    # the service-wide count includes them (#577).
+    others_no_match: int | str = 0
     # Settled spend today in micro-dollars, or LIMIT (the Free ceiling minus
     # less than one estimate: the next Free scan does not fit), or FITS (the
     # ceiling minus exactly one estimate: the next Free scan just fits).
@@ -119,9 +134,13 @@ class Start:
 class Delta:
     daily: int = 0
     zero_results: int = 0
+    no_match: int = 0
 
 
 CHARGED = Delta(daily=1)
+# A no-match moved off the found counter (#577): the found unit given back,
+# one no-match unit taken.
+MOVED = Delta(no_match=1)
 # An enhanced scan takes the same shared daily unit and nothing else (#582).
 CHARGED_ENHANCED = CHARGED
 NOTHING = Delta()
@@ -151,6 +170,8 @@ class Case:
     settings: dict[str, Any] = field(default_factory=dict)
     # The ai_usage status of the call's ledger row, when the row checks it.
     ledger: str | None = None
+    # ScanResponse.no_match on a 200 (#577): "free", "counted" or None.
+    no_match: str | None = None
 
 
 # fmt: off
@@ -158,8 +179,41 @@ CASES: list[Case] = [
     # ---- Free, standard scan: charged whenever the provider answered -----
     Case("free-standard-books_found-charged", FREE, False, "books",
          ALLOWED, None, CHARGED, COST),
-    Case("free-standard-zero_books-charged", FREE, False, "no_books",
-         ALLOWED, None, CHARGED, COST),
+    # ---- Free, standard: found / no-match counters (#577) ---------------
+    # A genuine no-match (outcome ok, no books) moves the found unit to the
+    # no-match counter while it has room.
+    Case("free-standard-no_match-moved", FREE, False, "no_books",
+         ALLOWED, None, MOVED, COST, no_match="free"),
+    Case("free-standard-no_match_last_unit-moved", FREE, False, "no_books",
+         ALLOWED, None, MOVED, COST, Start(no_match=4), no_match="free"),
+    Case("free-standard-no_match_with_found_full_but_one-moved", FREE, False,
+         "no_books", ALLOWED, None, MOVED, COST, Start(daily=4), no_match="free"),
+    # No-match full: the found unit stays charged.
+    Case("free-standard-no_match_full-counted", FREE, False, "no_books",
+         ALLOWED, None, CHARGED, COST, Start(no_match=LIMIT), no_match="counted"),
+    Case("free-standard-no_match_ceiling_0-counted", FREE, False, "no_books",
+         ALLOWED, None, CHARGED, COST,
+         settings={"quota.free.no_match_daily": 0}, no_match="counted"),
+    # Found full: refused before the provider even with no-match room (the
+    # next photo might find books).
+    Case("free-standard-found_full_with_no_match_room-refused", FREE, False,
+         None, 429, "daily_scan_limit", NOTHING, NO_SPEND,
+         Start(daily=LIMIT, no_match=2)),
+    Case("free-standard-found_and_no_match_full-refused", FREE, False, None,
+         429, "daily_scan_limit", NOTHING, NO_SPEND,
+         Start(daily=LIMIT, no_match=LIMIT)),
+    Case("free-standard-books_found_with_no_match_full-charged", FREE, False,
+         "books", ALLOWED, None, CHARGED, COST, Start(no_match=LIMIT)),
+    # The global cap counts no-match units too (they are provider calls).
+    Case("free-standard-global_cap_of_no_match_units-refused", FREE, False,
+         None, 503, "scan_capacity", NOTHING, NO_SPEND,
+         Start(others_no_match=LIMIT), {"scan.global_daily_limit": 3}),
+    # The retired quota.free.daily key (now found_daily) is ignored.
+    Case("free-standard-retired_daily_key_at_zero-ignored", FREE, False,
+         "books", ALLOWED, None, CHARGED, COST,
+         settings={"quota.free.daily": 0}),
+    # A refusal, a truncated reply with books and a malformed reply never
+    # move (malformed is refunded below).
     Case("free-standard-provider_refused-charged", FREE, False, "refused",
          ALLOWED, None, CHARGED, COST),
     Case("free-standard-truncated-charged", FREE, False, "truncated",
@@ -203,7 +257,7 @@ CASES: list[Case] = [
          429, "daily_scan_limit", NOTHING, NO_SPEND, Start(daily=LIMIT)),
     Case("free-standard-zero_daily_allowance-refused", FREE, False, None,
          429, "daily_scan_limit", NOTHING, NO_SPEND,
-         settings={"quota.free.daily": 0}),
+         settings={"quota.free.found_daily": 0}),
     Case("free-standard-global_cap-refused", FREE, False, None,
          503, "scan_capacity", NOTHING, NO_SPEND, Start(global_others=LIMIT),
          {"scan.global_daily_limit": 3}),
@@ -233,8 +287,21 @@ CASES: list[Case] = [
     # ---- Premium, standard -----------------------------------------------
     Case("premium-standard-books_found-charged", PREMIUM, False, "books",
          ALLOWED, None, CHARGED, COST),
-    Case("premium-standard-zero_books-charged", PREMIUM, False, "no_books",
-         ALLOWED, None, CHARGED, COST),
+    Case("premium-standard-no_match-moved", PREMIUM, False, "no_books",
+         ALLOWED, None, MOVED, COST, no_match="free"),
+    Case("premium-standard-no_match_full-counted", PREMIUM, False, "no_books",
+         ALLOWED, None, CHARGED, COST, Start(no_match=LIMIT), no_match="counted"),
+    Case("premium-standard-found_full_with_no_match_room-refused", PREMIUM,
+         False, None, 429, "daily_scan_limit", NOTHING, NO_SPEND,
+         Start(daily=LIMIT, no_match=1)),
+    Case("premium-standard-global_cap_of_no_match_units-refused", PREMIUM,
+         False, None, 503, "scan_capacity", NOTHING, NO_SPEND,
+         Start(others_no_match=LIMIT), {"scan.global_daily_limit": 3}),
+    Case("premium-standard-retired_daily_key_at_zero-ignored", PREMIUM, False,
+         "books", ALLOWED, None, CHARGED, COST,
+         settings={"quota.premium.daily": 0}),
+    Case("premium-standard-provider_refused-charged", PREMIUM, False,
+         "refused", ALLOWED, None, CHARGED, COST),
     Case("premium-standard-unavailable-refunded", PREMIUM, False, "unavailable",
          503, "scan_unavailable", NOTHING, NO_SPEND),
     Case("premium-standard-timeout-refunded_estimate_spent", PREMIUM, False,
@@ -252,7 +319,7 @@ CASES: list[Case] = [
          PREMIUM, False, "books", ALLOWED, None, CHARGED, COST,
          Start(legacy_month=FAR_OVER_OLD_MONTHLY), RETIRED_MONTHLY_KEYS_AT_ZERO),
     Case("premium-standard-last_daily_unit-charged", PREMIUM, False, "books",
-         ALLOWED, None, CHARGED, COST, Start(daily=29)),
+         ALLOWED, None, CHARGED, COST, Start(daily=4)),
     Case("premium-standard-global_cap-refused", PREMIUM, False, None,
          503, "scan_capacity", NOTHING, NO_SPEND, Start(global_others=LIMIT),
          {"scan.global_daily_limit": 3}),
@@ -280,6 +347,11 @@ CASES: list[Case] = [
     Case("premium-enhanced-provider_refused_below_threshold-recorded",
          PREMIUM, True, "refused", ALLOWED, None,
          Delta(daily=1, zero_results=1), COST),
+    # Enhanced scans never move to no-match (#577: the #533 rule stays),
+    # even with no-match room.
+    Case("premium-enhanced-zero_books_with_no_match_room-not_moved",
+         PREMIUM, True, "no_books", ALLOWED, None,
+         Delta(daily=1, zero_results=1), COST, Start(no_match=0)),
     Case("premium-enhanced-zero_books_at_threshold_charge-not_recorded",
          PREMIUM, True, "no_books", ALLOWED, None, CHARGED_ENHANCED, COST,
          Start(zero_results=3)),
@@ -324,12 +396,12 @@ CASES: list[Case] = [
     # Standard and enhanced share one daily allowance (OD-1); it is what
     # limits enhanced scans until #583 adds a daily Sonnet counter.
     Case("premium-enhanced-last_daily_unit-charged", PREMIUM, True, "books",
-         ALLOWED, None, CHARGED_ENHANCED, COST, Start(daily=29)),
+         ALLOWED, None, CHARGED_ENHANCED, COST, Start(daily=4)),
     Case("premium-enhanced-shared_daily_limit-refused", PREMIUM, True, None,
          429, "daily_scan_limit", NOTHING, NO_SPEND, Start(daily=LIMIT)),
     Case("premium-enhanced-zero_daily_allowance-refused", PREMIUM, True, None,
          429, "daily_scan_limit", NOTHING, NO_SPEND,
-         settings={"quota.premium.daily": 0}),
+         settings={"quota.premium.found_daily": 0}),
     Case("premium-enhanced-global_cap-refused", PREMIUM, True, None,
          503, "scan_capacity", NOTHING, NO_SPEND, Start(global_others=LIMIT),
          {"scan.global_daily_limit": 3}),
@@ -354,7 +426,8 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     db = limits_db
     rows = {**BASE, **case.settings}
     tier = case.tier.value
-    daily_limit = rows[f"quota.{tier}.daily"]
+    daily_limit = rows[f"quota.{tier}.found_daily"]
+    no_match_limit = rows[f"quota.{tier}.no_match_daily"]
     global_limit = rows["scan.global_daily_limit"]
     ceiling = rows["breaker.free_daily_ceiling_micros"]
     est = h.estimate(case.enhanced)
@@ -368,6 +441,8 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     s = case.start
     for uid, feature, kind, start, units in (
         (user_id, h.SCAN, "day", day, _resolve(s.daily, daily_limit)),
+        (user_id, h.NO_MATCH, "day", day, _resolve(s.no_match, no_match_limit)),
+        (other, h.NO_MATCH, "day", day, _resolve(s.others_no_match, global_limit)),
         (user_id, h.SCAN, "month", month, s.legacy_month),
         (user_id, h.ENHANCED, "month", month, s.legacy_enhanced_month),
         (other, h.SCAN, "day", day, _resolve(s.global_others, global_limit)),
@@ -408,6 +483,8 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
             assert remaining == max(0, daily_limit - after_daily)
         else:
             assert remaining is None
+        # #577: whether a no-match used a scan.
+        assert got.response.no_match == case.no_match
 
     # -- the provider -------------------------------------------------------
     reached = case.provider is not None
@@ -421,11 +498,13 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
         # No scan takes, checks or gives back a month unit (#582).
         "monthly": 0,
         "enhanced": 0,
-        # The service-wide count moves with this user's day unit only.
-        "global": case.delta.daily,
+        # The service-wide count moves with this user's day units only, found
+        # and no-match (#577: it counts every provider call).
+        "global": case.delta.daily + case.delta.no_match,
         "zero_results": case.delta.zero_results,
     }
     assert after.delta(before) == expected
+    assert after.no_match - before.no_match == case.delta.no_match
     assert await db.negative_counters() == 0
 
     # -- spend: nothing left reserved; settled as the row says --------------
@@ -556,7 +635,7 @@ REPEATS: list[Repeat] = [
     # The lookup comes before the allowance and every backstop.
     Repeat("free-standard-repeat_at_daily_limit-free", FREE, (False, "books"),
            False, None, ALLOWED, None, **FREE_REPEAT,
-           settings_after={"quota.free.daily": 1},
+           settings_after={"quota.free.found_daily": 1},
            new_photo=(429, "daily_scan_limit")),
     # Global cap and spend ceiling: checked inside quota.reserve, after the
     # lookup, so a repeat is still served (it costs nothing).
@@ -629,7 +708,7 @@ REPEATS: list[Repeat] = [
     # still served at it.
     Repeat("premium-enhanced-repeat_at_daily_limit-free", PREMIUM,
            (True, "books"), True, None, ALLOWED, None, **FREE_REPEAT,
-           settings_after={"quota.premium.daily": 1},
+           settings_after={"quota.premium.found_daily": 1},
            new_photo=(429, "daily_scan_limit")),
     # The Premium-only gate still applies to an enhanced repeat (a user who
     # has left Premium).
@@ -686,7 +765,7 @@ async def test_limits_matrix_repeats(case: Repeat, limits_db: h.LimitsDb, downst
         assert got.response.repeat is case.repeat
         if case.enhanced:
             # #582: the Premium daily allowance left.
-            limit = rows["quota.premium.daily"]
+            limit = rows["quota.premium.found_daily"]
             assert got.response.enhanced_scans_remaining == max(
                 0, limit - (before.daily + case.delta.daily)
             )
@@ -702,9 +781,10 @@ async def test_limits_matrix_repeats(case: Repeat, limits_db: h.LimitsDb, downst
         "daily": case.delta.daily,
         "monthly": 0,
         "enhanced": 0,
-        "global": case.delta.daily,
+        "global": case.delta.daily + case.delta.no_match,
         "zero_results": case.delta.zero_results,
     }
+    assert after.no_match - before.no_match == case.delta.no_match
     assert await db.negative_counters() == 0
     settled = {
         NO_SPEND: 0,

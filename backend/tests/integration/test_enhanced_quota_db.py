@@ -94,7 +94,7 @@ def premium():
 def _settings(**rows):
     ai_settings.reset_cache(
         {
-            "quota.premium.daily": 1000,
+            "quota.premium.found_daily": 1000,
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -248,7 +248,7 @@ class TestConcurrency:
     ):
         factory, make_user = sessions
         users = [await make_user() for _ in range(3)]
-        _settings(**{"quota.premium.daily": 3})
+        _settings(**{"quota.premium.found_daily": 3})
         provider = _Provider(books=True, delay=0.02)
         refusals: list[str] = []
 
@@ -464,9 +464,9 @@ class TestThreshold:
         assert provider.calls == 3  # two enhanced + the standard one
         async with factory() as db:
             assert await db.get(AIInflight, user_id) is None
-        # The refused scan gave its daily unit back; only the standard scan
-        # added one.
-        assert await _daily_used(factory, user_id) == units_before + 1
+        # The refused scan gave its daily unit back; the standard scan found
+        # no book, so its unit moved to the no-match counter (#577).
+        assert await _daily_used(factory, user_id) == units_before
         assert await _month_rows(factory, user_id) == 0
 
     async def test_window_expiry_records_zero_results_again(

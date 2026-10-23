@@ -60,6 +60,8 @@ from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 SCAN = quota.SCAN_QUOTA_FEATURE
+# The no-match counter (#577); SCAN is the found counter.
+NO_MATCH = quota.SCAN_NO_MATCH_QUOTA_FEATURE
 # The ai_quota key of the Premium enhanced monthly allowance #582 removed.
 # Month rows under it (and under SCAN) are what the previous release wrote;
 # the tests seed them to prove they are ignored, and read them to prove no
@@ -319,13 +321,16 @@ async def call_scan(
 @dataclass(frozen=True)
 class Counters:
     """``monthly`` and ``enhanced`` are the legacy month rows (#582: no scan
-    may move them)."""
+    may move them). ``daily`` is the found counter; ``no_match`` the
+    no-match counter (#577), left out of :meth:`delta` (rows assert it on
+    its own) so the existing delta dicts keep their shape."""
 
     daily: int
     monthly: int
     enhanced: int
     global_: int
     zero_results: int
+    no_match: int = 0
 
     def delta(self, before: "Counters") -> dict[str, int]:
         return {
@@ -468,6 +473,7 @@ class LimitsDb:
                 db, user_id, ENHANCED, WINDOW_MONTH, month
             )
             global_ = await quota.global_units_today(db, day)
+            no_match = await quota.units_used(db, user_id, NO_MATCH, WINDOW_DAY, day)
             zero = (
                 await db.execute(
                     select(func.count())
@@ -475,7 +481,7 @@ class LimitsDb:
                     .where(AIEnhancedZeroResult.user_id == user_id)
                 )
             ).scalar_one()
-        return Counters(daily, monthly, enhanced, global_, int(zero))
+        return Counters(daily, monthly, enhanced, global_, int(zero), no_match)
 
     async def month_rows(self, user_id) -> int:
         """The user's month-window rows (#582: no scan writes one)."""

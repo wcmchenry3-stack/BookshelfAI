@@ -145,7 +145,7 @@ class TestKillSwitches:
 class TestPerUserDailyLimit:
     def test_allows_limit_then_429_with_retry_after(self, client, store, provider):
         # Since #528 the per-user daily cap is the ai_settings key
-        # quota.free.daily (seeded from SCAN_FREE_DAILY_LIMIT).
+        # quota.free.found_daily (seeded from SCAN_FREE_DAILY_LIMIT).
         with _set(scan_free_daily_limit=3):
             codes = [client.post("/scan", files=_file()).status_code for _ in range(3)]
             resp = client.post("/scan", files=_file())

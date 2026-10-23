@@ -4,8 +4,9 @@ Every paid scan goes through :func:`reserve` before the provider is called.
 In order (#528):
 
 1. **Entitlement.** The tier comes from ``entitlements.tier_for(db, user)``
-   (server-side only); the allowance comes from ``ai_settings``
-   (``quota.<tier>.daily``). Nothing in the request can change either.
+   (server-side only); the allowances come from ``ai_settings``
+   (``quota.<tier>.found_daily`` and ``quota.<tier>.no_match_daily``, #577).
+   Nothing in the request can change either.
 2. **Global ceiling** (``scan.global_daily_limit``, approximate). Today's day
    rows are summed across users and features and compared before anything is
    reserved, so no per-user row or lease is taken when the service-wide
@@ -71,6 +72,33 @@ given back once without the gate, on the first attempt only; a unit whose
 take was never acknowledged stays charged (fails toward charging). The
 ``monthly_taken`` and ``enhanced_taken`` columns are no longer set (#582);
 a takeover still clears them.
+
+**Found and no-match counters (#577).** Each user has two daily counters:
+``found`` (:data:`SCAN_QUOTA_FEATURE`, the daily unit above: every scan takes
+one before the provider, so a scan is refused with 429 ``daily_scan_limit``
+when found is full, even if no-match has room, since the next photo may find
+books) and ``no_match`` (:data:`SCAN_NO_MATCH_QUOTA_FEATURE`). When a
+**standard** scan's provider answered properly (outcome ``ok``) with no
+candidates, the caller passes a :class:`NoMatch` to :func:`release`, and in
+the settle transaction (the same gate as the cost settle and the #566
+zero-result record: the ledger insert, or the lease, so a retried settle
+never moves twice) :func:`move_to_no_match` moves the unit: one no-match unit
+is taken (``units_used < no_match ceiling``, the same exact conditional
+upsert) and the found unit given back, both under the lock of the request's
+own lease row and only while its ``daily_taken`` flag is set (cleared in the
+same transaction). If no-match is full, the found unit stays charged
+(``counted``). The move runs in a SAVEPOINT: a failure there keeps the scan
+charged and never breaks the settle or the response. Enhanced scans never
+move (the #533 zero-result rule stays for them), nor do malformed (already
+refunded), refused or truncated replies. The service-wide count sums every
+day row, so it still counts every provider call, found or no-match. So a
+user's provider calls per day never exceed found + no-match ceilings. The
+move that brings no-match to its ceiling also logs a line and, after the
+commit, sends one Sentry warning (:func:`send_no_match_ceiling_warning`):
+counts only rise within a day, so that is at most once per user per day
+(per ceiling value: raising the ceiling mid-day lets the new one be reached
+once more). After a lost commit acknowledgement the retry does not move and
+sends nothing (fewer alerts, never more).
 
 **Enhanced scans (#533).** ``reserve(..., enhanced=True)`` adds two steps:
 
@@ -163,6 +191,13 @@ logger = logging.getLogger(__name__)
 # The ai_quota counter key for every scan, standard or enhanced: one shared
 # daily allowance per user (OD-1). Not a gateway feature name.
 SCAN_QUOTA_FEATURE = "scan"
+# The ai_quota counter key of no-match scans (#577): standard scans whose
+# provider answered properly but found no book. The found counter is
+# SCAN_QUOTA_FEATURE.
+SCAN_NO_MATCH_QUOTA_FEATURE = "scan.no_match"
+# What /scan says about a no-match (ScanResponse.no_match, #577).
+NO_MATCH_FREE = "free"
+NO_MATCH_COUNTED = "counted"
 # The Sentry tag for the zero-result warning (the gateway feature name).
 ENHANCED_FEATURE_TAG = "scan.enhanced"
 
@@ -231,15 +266,20 @@ def lease_seconds(timeout_s: float) -> int:
 
 @dataclass(frozen=True)
 class Allowance:
-    """The tier's per-user allowance. Daily only: there is no monthly
-    allowance (#582)."""
+    """The tier's per-user allowances. Daily only: there is no monthly
+    allowance (#582). ``daily`` is the found counter's ceiling (#577: every
+    scan reserves a found unit); ``no_match`` the no-match ceiling."""
 
     daily: int
+    no_match: int = 0
 
 
 def allowance_for(ai: AISettings, tier: Tier) -> Allowance:
-    """The tier's allowance from ``ai_settings`` (validated, bounded)."""
-    return Allowance(daily=ai.daily_allowance(tier.value))
+    """The tier's allowances from ``ai_settings`` (validated, bounded)."""
+    return Allowance(
+        daily=ai.daily_allowance(tier.value),
+        no_match=ai.no_match_allowance(tier.value),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +333,26 @@ class ZeroResult:
     ``call_id`` (None when the settle has no ledger row)."""
 
     ledger_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class NoMatch:
+    """Passed to :func:`release` when a standard scan's provider answered
+    properly (outcome ``ok``) with no candidates (#577): the settle moves the
+    found unit to the no-match counter when it has room."""
+
+
+@dataclass(frozen=True)
+class NoMatchMoved:
+    """What the no-match decision did: ``outcome`` is :data:`NO_MATCH_FREE`
+    (moved: no found unit used) or :data:`NO_MATCH_COUNTED` (no-match was
+    full: the found unit stays charged); ``count`` is the user's no-match
+    count after it; ``warn`` whether this move brought it to the ceiling
+    (the ceiling warning's claim)."""
+
+    outcome: str
+    count: int
+    warn: bool = False
 
 
 @dataclass(frozen=True)
@@ -774,6 +834,117 @@ async def record_zero_result(
         return None
 
 
+async def move_to_no_match(
+    db: AsyncSession, reservation: "Reservation"
+) -> NoMatchMoved | None:
+    """The no-match move (#577), inside the caller's settle transaction (no
+    commit): take one no-match unit if under the ceiling and give back the
+    found unit. Returns what it did, or ``None`` when nothing was decided
+    (the request no longer holds its lease, its found unit is not flagged as
+    taken, or the move failed): the scan then stays charged.
+
+    Gate: the settle runs this only when it is the attempt that writes the
+    call's ledger row (or, without one, the attempt that deletes the lease),
+    exactly like :func:`record_zero_result`, so a retry after a lost commit
+    acknowledgement never moves twice. Here the request's own lease row is
+    locked (``FOR UPDATE``) and must still carry ``daily_taken``; the flag is
+    cleared in the same transaction, so nothing can give the found unit back
+    again. The lease delete later in the settle releases the lock at commit.
+
+    The no-match take is the exact conditional upsert of the found unit
+    (``units_used + 1 WHERE units_used < ceiling``), so concurrent moves
+    never pass the ceiling. Ceiling 0: never moves.
+
+    Runs in a SAVEPOINT: on a failure only it is rolled back (logged) and the
+    scan stays charged; the settle still commits the usage row, the cost and
+    the lease delete.
+    """
+    unit_flag = _flag_column(FLAG_DAILY)
+    try:
+        async with db.begin_nested():
+            held = await db.execute(
+                select(AIInflight.lease_id)
+                .where(
+                    _held(reservation.user_id, reservation.lease_id),
+                    unit_flag.is_(True),
+                )
+                .with_for_update()
+            )
+            if held.scalar_one_or_none() is None:
+                return None
+            ceiling = reservation.allowance.no_match
+            taken = None
+            if ceiling > 0:
+                result = await db.execute(
+                    _unit_upsert(
+                        reservation.user_id,
+                        SCAN_NO_MATCH_QUOTA_FEATURE,
+                        WINDOW_DAY,
+                        reservation.day,
+                        ceiling,
+                    )
+                )
+                taken = result.scalar_one_or_none()
+            if taken is None:
+                # No-match is full: the found unit stays charged.
+                logger.info(
+                    "ai_quota: no-match counted as a scan, ceiling reached "
+                    "(tier=%s, ceiling=%d)",
+                    _tier_tag(reservation.tier),
+                    ceiling,
+                )
+                return NoMatchMoved(NO_MATCH_COUNTED, ceiling)
+            await db.execute(
+                update(AIQuota)
+                .where(
+                    AIQuota.user_id == reservation.user_id,
+                    AIQuota.feature == reservation.feature,
+                    AIQuota.window_kind == WINDOW_DAY,
+                    AIQuota.window_start == reservation.day,
+                    AIQuota.units_used > 0,
+                )
+                .values(units_used=AIQuota.units_used - 1)
+            )
+            await db.execute(
+                update(AIInflight)
+                .where(_held(reservation.user_id, reservation.lease_id))
+                .values({FLAG_DAILY: False})
+            )
+            count = int(taken)
+            warn = count == ceiling
+            if warn:
+                logger.warning(
+                    "ai_quota: a user's no-match scans reached the daily ceiling "
+                    "(tier=%s, ceiling=%d)",
+                    _tier_tag(reservation.tier),
+                    ceiling,
+                )
+            return NoMatchMoved(NO_MATCH_FREE, count, warn)
+    except Exception:
+        logger.exception("ai_quota: no-match move failed; the scan stays charged")
+        return None
+
+
+def _tier_tag(tier: object) -> str:
+    return tier.value if isinstance(tier, Tier) else "unknown"
+
+
+def send_no_match_ceiling_warning(*, tier: object, ceiling: int) -> None:
+    """One Sentry warning: a user's no-match scans reached the daily ceiling
+    (#577). Only the tier and the ceiling: no user id, image, hash or
+    content (emptied, stripped scopes, :mod:`app.ai.alerts`). Never
+    raises."""
+    try:
+        alerts.capture_service_warning(
+            "ai-quota: a user's no-match scans reached the daily ceiling",
+            fingerprint=["ai-no-match-ceiling"],
+            tags={"tier": _tier_tag(tier)},
+            extras={"ceiling": ceiling},
+        )
+    except Exception:  # a warning must never fail a request
+        logger.exception("ai_quota: could not send the no-match ceiling warning")
+
+
 def send_zero_result_warning(
     *, count: int, threshold: int, window_hours: int, action: str
 ) -> None:
@@ -871,8 +1042,17 @@ async def release(
     ledger_row: Executable | None = None,
     settlement: breaker.Settlement | None = None,
     zero_result: ZeroResult | None = None,
-) -> None:
+    no_match: NoMatch | None = None,
+) -> NoMatchMoved | None:
     """Release the lease held by ``reservation`` (settle). Never raises.
+
+    ``no_match`` (#577, standard reservations only): the provider answered
+    with no books, so the no-match move (:func:`move_to_no_match`) runs in
+    the same transaction as the cost settle and under the same gate. Returns
+    what it decided once the settle committed, else ``None`` (no
+    ``no_match``, an enhanced reservation, a retried or failed settle, or a
+    lost lease: the scan stays charged). The ceiling warning is sent after
+    the commit.
 
     ``zero_result`` (#533, enhanced reservations only): the scan found no
     books, so the zero-result record (:func:`record_zero_result`) runs in the
@@ -915,24 +1095,33 @@ async def release(
     cost = settlement.cost_micros if settlement is not None else 0
     settled: list[tuple[int, int, int] | None] = []
     recorded: list[ZeroResultRecorded] = []
+    moved: list[NoMatchMoved] = []
     attempts = 0
     decide = zero_result is not None and reservation.enhanced
+    # Enhanced scans never move (#577: the #533 zero-result rule stays).
+    move = no_match is not None and not reservation.enhanced
 
     async def settle_spend() -> None:
         settled.clear()
         recorded.clear()
+        moved.clear()
         if est or cost:
             settled.append(await breaker.settle(db, reservation.day, est, cost))
         if decide:
             count = await record_zero_result(db, reservation, zero_result.ledger_id)
             if count is not None:
                 recorded.append(count)
+        if move:
+            decision = await move_to_no_match(db, reservation)
+            if decision is not None:
+                moved.append(decision)
 
     async def settle_after_lease() -> None:
         # The lease delete commits on its own here, then the spend. If the
         # spend then fails, the estimate stays reserved (fails safe).
         settled.clear()
         recorded.clear()
+        moved.clear()
         if await release_lease(db, reservation.user_id, reservation.lease_id):
             await settle_spend()
             await db.commit()
@@ -948,7 +1137,7 @@ async def release(
         inserted = True
         if ledger_row is not None:
             result = await db.execute(ledger_row)
-            if est or cost or decide:
+            if est or cost or decide or move:
                 # ON CONFLICT (call_id) DO NOTHING RETURNING call_id: no row
                 # back means an earlier attempt already committed this call's
                 # row, and with it the spend settle and the lease delete (a
@@ -959,6 +1148,7 @@ async def release(
         else:
             settled.clear()
             recorded.clear()
+            moved.clear()
         await release_lease(db, reservation.user_id, reservation.lease_id)
 
     if ledger_row is None:
@@ -970,7 +1160,7 @@ async def release(
                 "ai_quota: settle timed out; the lease is left to expire, "
                 "and the usage row may be missing"
             )
-            return
+            return None
         if outcome == GIVE_BACK_FAILED:
             logger.error("ai_quota: usage row dropped; releasing the lease without it")
             outcome = await _give_back(db, "lease release", settle_after_lease)
@@ -985,6 +1175,15 @@ async def release(
             window_hours=reservation.zero_result_window_hours,
             action=reservation.zero_result_action,
         )
+    if outcome != GIVE_BACK_DONE or not moved:
+        return None
+    if moved[0].warn:
+        # Claimed by the move that brought the count to the ceiling, now
+        # committed: at most once per user per day.
+        send_no_match_ceiling_warning(
+            tier=reservation.tier, ceiling=reservation.allowance.no_match
+        )
+    return moved[0]
 
 
 async def _alert(
@@ -1293,11 +1492,14 @@ async def reserve(
 
 @dataclass(frozen=True)
 class Usage:
-    """Scans reserved today (UTC) and the tier's daily allowance. There is
-    no monthly count or limit (#582)."""
+    """Found scans reserved today (UTC) and the tier's found allowance
+    (``used_today`` / ``daily_limit``), and the no-match counter and its
+    ceiling (#577). There is no monthly count or limit (#582)."""
 
     used_today: int
     daily_limit: int
+    no_match_used_today: int = 0
+    no_match_daily_limit: int = 0
 
 
 async def usage_for(
@@ -1310,8 +1512,17 @@ async def usage_for(
 ) -> Usage:
     tier = await entitlements.tier_for(db, user)
     allowance = allowance_for(ai, tier)
-    used = await units_used(db, user.id, feature, WINDOW_DAY, utc_today(now))
-    return Usage(used_today=used, daily_limit=allowance.daily)
+    today = utc_today(now)
+    used = await units_used(db, user.id, feature, WINDOW_DAY, today)
+    no_match = await units_used(
+        db, user.id, SCAN_NO_MATCH_QUOTA_FEATURE, WINDOW_DAY, today
+    )
+    return Usage(
+        used_today=used,
+        daily_limit=allowance.daily,
+        no_match_used_today=no_match,
+        no_match_daily_limit=allowance.no_match,
+    )
 
 
 async def enhanced_remaining(db: AsyncSession, reservation: Reservation) -> int | None:

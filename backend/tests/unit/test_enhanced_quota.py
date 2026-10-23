@@ -113,7 +113,7 @@ def premium(monkeypatch):
 def _settings(**rows):
     ai_settings.reset_cache(
         {
-            "quota.premium.daily": 30,
+            "quota.premium.found_daily": 30,
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -280,7 +280,7 @@ class TestEnhancedUsesTheDailyUnit:
     def test_reserves_and_keeps_the_daily_unit_when_books_found(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.daily": 5})
+        _settings(**{"quota.premium.found_daily": 5})
         _finds_books(provider)
         resp = _enhanced(client)
         assert resp.json()["enhanced_scans_remaining"] == 4
@@ -290,7 +290,7 @@ class TestEnhancedUsesTheDailyUnit:
     def test_standard_and_enhanced_share_the_daily_allowance(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.daily": 5})
+        _settings(**{"quota.premium.found_daily": 5})
         _finds_books(provider)
         resp = client.post("/scan", files=_file())
         assert resp.json()["enhanced_scans_remaining"] == 4
@@ -308,7 +308,7 @@ class TestEnhancedUsesTheDailyUnit:
     def test_daily_exhausted_is_429_and_gives_everything_back(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.daily": 1})
+        _settings(**{"quota.premium.found_daily": 1})
         _finds_books(provider)
         first = _enhanced(client)
         assert first.status_code == 200
@@ -336,7 +336,7 @@ class TestEnhancedUsesTheDailyUnit:
     def test_zero_daily_allowance_refuses_before_the_provider(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.daily": 0})
+        _settings(**{"quota.premium.found_daily": 0})
         resp = _enhanced(client)
         assert resp.json()["detail"] == "daily_scan_limit"
         provider.assert_not_called()
@@ -745,9 +745,13 @@ class TestUsage:
             db,
             user=USER,
             feature=quota.SCAN_QUOTA_FEATURE,
-            ai=ai_settings.AISettings({"quota.premium.daily": 7}),
+            ai=ai_settings.AISettings({"quota.premium.found_daily": 7}),
         )
-        assert usage == quota.Usage(used_today=4, daily_limit=7)
+        # #577: the found row, then the no-match row (the fake returns 4 for
+        # both reads).
+        assert usage == quota.Usage(
+            used_today=4, daily_limit=7, no_match_used_today=4, no_match_daily_limit=5
+        )
         sql = str(db.execute.await_args.args[0].compile(dialect=postgresql.dialect()))
         assert "ai_quota.window_kind" in sql
         assert db.execute.await_args.args[0].compile().params["window_kind_1"] == "day"
@@ -760,6 +764,11 @@ class TestUsage:
         assert body == {
             "used_today": 1,
             "daily_limit": 30,
+            # #577: the found counter again, and the no-match counter.
+            "found_used_today": 1,
+            "found_daily_limit": 30,
+            "no_match_used_today": 0,
+            "no_match_daily_limit": 0,
             "used_month": None,
             "monthly_limit": None,
             "period_end": None,
@@ -841,7 +850,7 @@ class TestReserveEnhancedGiveBack:
             user=USER,
             feature=quota.SCAN_QUOTA_FEATURE,
             timeout_s=1,
-            ai=ai_settings.AISettings({"quota.premium.daily": 5}),
+            ai=ai_settings.AISettings({"quota.premium.found_daily": 5}),
             est_cost_micros=10,
             enhanced=True,
         )

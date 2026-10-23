@@ -217,7 +217,7 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 **Response `200`:** a `ScanResponse` object (`backend/app/schemas/book.py`):
 - `books` — array of 0–15 `EnrichedBook` objects (at most `SCAN_MAX_BOOKS`), one per distinct book in the photo
 - `enhanced` — `true` when the enhanced model was used
-- `enhanced_scans_remaining` — integer or `null`: how many more enhanced scans the user can make today, i.e. the Premium daily allowance left after this scan (`quota.premium.daily` minus today's scans; an enhanced scan uses the shared daily unit, #582); `null` when the user is not Premium (#533). Before #582 it was the enhanced monthly allowance left. Replaces the removed `enhanced_scan_credits` field
+- `enhanced_scans_remaining` — integer or `null`: how many more enhanced scans the user can make today, i.e. the Premium found allowance left after this scan (`quota.premium.found_daily` minus today's found count; an enhanced scan uses the shared found unit, #582, #577); `null` when the user is not Premium (#533). Before #582 it was the enhanced monthly allowance left. Replaces the removed `enhanced_scan_credits` field
 ```json
 {
   "books": [
@@ -240,11 +240,14 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
   ],
   "enhanced": false,
   "enhanced_scans_remaining": null,
-  "repeat": false
+  "repeat": false,
+  "no_match": null
 }
 ```
 
 `book_id` is `null` when the work isn't yet in the `books` table — it's created on `POST /wishlist` or `POST /purchased`. `already_in_library` is `true` when the user already has a `UserBook` for this work (dedup keyed on work_id / volume_id — see [data-model.md](data-model.md#dedup-strategy--why-work_id-not-isbn)). `in_library` (#585) carries the same value under the name the app's repeat flow uses; edition-level matching is #587. `repeat` (#585) is `true` when the answer came from the user's saved scan record for this exact photo (no AI call, nothing charged; see "Scan records" below) and `false` otherwise. Both fields are additive: older clients can ignore them.
+
+`no_match` (#577) is set only for a **standard** scan whose provider answered properly but found no book (`"books": []`, a genuine no-match): `"free"` — it did not use a scan (it moved to the day's no-match allowance); `"counted"` — it used a scan, because today's no-match allowance is used up. It is `null` otherwise: books found, an enhanced scan, a repeat served from a scan record, or when the decision could not be made or confirmed (a lost database acknowledgement or a failed move: the scan then stays counted as a scan). Additive: older clients can ignore it.
 
 **Errors:**
 - `400` — Turnstile token missing (when configured)
@@ -256,22 +259,26 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 - `403` — `enhanced=true` from a user who is not Premium (`detail: "enhanced_requires_premium"`, #533). The tier is decided on the server (`entitlements.tier_for`); nothing is reserved and no provider is called
 - No `402`. There is no monthly limit (#582), so `402 scan_limit_reached` (monthly allowance) and `402 enhanced_limit_reached` (Premium enhanced monthly allowance) are never sent. Clients should still treat an unexpected `402` from an older server as a generic failure.
 - `429` — another scan by the same user is still running (`detail: "scan_in_progress"`, `Retry-After: 2`). One paid scan per user may be in flight at a time.
-- `429` — the user's daily scan limit is reached (standard and enhanced scans count together; `detail: "daily_scan_limit"`). `Retry-After` gives the seconds until the next UTC midnight, when the count resets.
+- `429` — the user's daily scan limit is reached (the **found** counter, #577; standard and enhanced scans count together; `detail: "daily_scan_limit"`). It is sent when found is full even if the no-match allowance has room: the next photo might find books. `Retry-After` gives the seconds until the next UTC midnight, when the count resets.
 - `429` — enhanced scans are throttled for this user (`detail: "enhanced_throttled"`, #533): `scan.enhanced.zero_result_action` is `throttle` and the user already has `scan.enhanced.zero_result_threshold` empty enhanced scans recorded inside the last `scan.enhanced.zero_result_window_hours`. `Retry-After` gives the seconds until enough of them leave the window (at least 1; the whole window when the threshold is 0). Standard scans are not affected
-- `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily allowance. The same `503 scan_unavailable` is returned when the provider answered but its reply was malformed (#572: missing, not JSON, the wrong shape, a non-empty list in which every item is structurally broken, an unexpected stop reason, or cut off by the token limit before a single complete book): the user gets a retryable "try again", never "no books found", and the daily unit is refunded. A genuine "no books" answer is still a `200` with `"books": []` and is charged
+- `503` — OpenAI unavailable (returns `detail: "scan_unavailable"`); the scan is not counted against the daily allowance. The same `503 scan_unavailable` is returned when the provider answered but its reply was malformed (#572: missing, not JSON, the wrong shape, a non-empty list in which every item is structurally broken, an unexpected stop reason, or cut off by the token limit before a single complete book): the user gets a retryable "try again", never "no books found", and the daily unit is refunded. A genuine "no books" answer is still a `200` with `"books": []` and uses the no-match allowance while it lasts (#577), else a scan
 - `503` — scanning switched off by the operator (`detail: "scan_disabled"`, `ai_settings` key `scan.standard.enabled=false`); returned before the upload is read, Turnstile is called or any provider is contacted (the multipart body is still received by the framework)
 - `503` — enhanced scanning switched off (`detail: "enhanced_scan_disabled"`, `ai_settings` key `scan.enhanced.enabled=false`); standard scans still work
 - `503` — the server's AI settings cannot be read and none are cached (`detail: "ai_unavailable"`); returned before the upload is read
 - `503` — the service's daily AI budget is reached and the user is on the Free tier (`detail: "ai_budget_reached"`, #531, owner decision on #531): Free scans pause until UTC midnight. The frontend shows it as "Scanning is paused". The ceiling is the `ai_settings` key `breaker.free_daily_ceiling_micros` (micro-dollars, seeded from `SCAN_FREE_DAILY_CEILING_MICROS`, default 10,000,000 = $10). Premium scans are not paused by it (decision #544); they are bound by their own daily allowance and the count cap below. Nothing is reserved for the user and no provider is called
 - `503` — the service-wide daily scan capacity is used up (`detail: "scan_capacity"`, `ai_settings` key `scan.global_daily_limit`, seeded from `SCAN_GLOBAL_DAILY_LIMIT`, default 2000)
 
-Allowances (`ai_settings`, by tier; everyone is Free until purchases exist): Free 5 scans a day (`quota.free.daily`), Premium 30 (`quota.premium.daily`). Days are UTC days. Standard and enhanced scans share one allowance (quota key `scan`, OD-1): for example 3 standard + 2 enhanced scans use a daily limit of 5.
+Allowances (`ai_settings`, by tier; everyone is Free until purchases exist; #577). Each user has two daily counters (UTC days):
+- **found** (quota key `scan`): Free 5 a day (`quota.free.found_daily`), Premium 5 (`quota.premium.found_daily`). Every scan reserves a found unit before the provider is called; when it is full the scan is refused (`429 daily_scan_limit`). Standard and enhanced scans share it (OD-1): 3 standard + 2 enhanced scans use a found limit of 5.
+- **no-match** (quota key `scan.no_match`): Free 5 a day (`quota.free.no_match_daily`), Premium 5 (`quota.premium.no_match_daily`). When a **standard** scan's provider answered properly but found no book, its found unit is given back and a no-match unit is taken instead (`"no_match": "free"`), so an unlucky photo does not use a scan. When no-match is full the found unit stays used (`"no_match": "counted"`).
+
+So a user's provider calls per day never exceed found + no-match. Only real provider calls count: a repeat from a scan record, a malformed reply and a provider failure touch neither counter; a refusal by the model or a reply cut off with books found counts as found. Enhanced no-match scans never move to no-match (they keep the zero-result rule below). The service-wide `scan.global_daily_limit` counts both counters. The old keys `quota.free.daily` / `quota.premium.daily` are retired (the CLI rejects them; a row is ignored, except that an operator-set value is carried over to `found_daily` while no `found_daily` row exists).
 
 **No monthly limit (#582).** There is no monthly allowance for any tier and no Premium enhanced monthly allowance; no scan is refused for a monthly reason. A month is bounded by each user's daily limit (at most 31 days of it), the service-wide `scan.global_daily_limit`, the daily spend ceiling (`breaker.free_daily_ceiling_micros`, so at most about 31 × the ceiling a month for Free) and, outside the service, the monthly spend limit set in the provider console (#542). Spend and call counts per month stay visible in the usage ledger (`ai_usage` / `ai_usage_daily`): tracking, not a limit.
 
-Enhanced scans (#533) are Premium-only. An enhanced scan uses the shared daily unit and nothing else (#582; a per-model daily Sonnet counter comes with #583), so the daily allowance is what limits enhanced scans. When the provider answered but returned no books, the scan is recorded (table `ai_enhanced_zero_results`) as long as the user has fewer than `scan.enhanced.zero_result_threshold` (default 3) such recorded scans in the last `scan.enhanced.zero_result_window_hours` (default 24, sliding); the count reaching the threshold sends one Sentry warning per user per window. At or above the threshold, `scan.enhanced.zero_result_action` decides: `charge` (default) records nothing more until the window clears; `throttle` refuses further enhanced scans (`429 enhanced_throttled`). Threshold 0: with `charge` nothing is recorded; with `throttle` every enhanced scan is refused. The daily unit is counted for every scan, empty or not. A provider error, timeout or malformed reply (#572) is never an empty scan: nothing is recorded. None of these settings can be read or changed by a client.
+Enhanced scans (#533) are Premium-only. An enhanced scan uses the shared daily unit and nothing else (#582; a per-model daily Sonnet counter comes with #583), so the daily allowance is what limits enhanced scans. When the provider answered but returned no books, the scan stays counted as a found scan (no move to no-match, #577) and is recorded (table `ai_enhanced_zero_results`) as long as the user has fewer than `scan.enhanced.zero_result_threshold` (default 3) such recorded scans in the last `scan.enhanced.zero_result_window_hours` (default 24, sliding); the count reaching the threshold sends one Sentry warning per user per window. At or above the threshold, `scan.enhanced.zero_result_action` decides: `charge` (default) records nothing more until the window clears; `throttle` refuses further enhanced scans (`429 enhanced_throttled`). Threshold 0: with `charge` nothing is recorded; with `throttle` every enhanced scan is refused. The daily unit is counted for every scan, empty or not. A provider error, timeout or malformed reply (#572) is never an empty scan: nothing is recorded. None of these settings can be read or changed by a client.
 
-Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → scan-record lookup (#585) → entitlement (tier; `enhanced_requires_premium` for a non-Premium enhanced scan) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → zero-result throttle (`enhanced_throttled`, enhanced with action `throttle` only) → daily allowance (`daily_scan_limit`) → vision provider. Every refusal gives back what was already taken (the cost estimate, the lease, the daily reservation) and happens before the provider is called. A scan counts toward the daily allowance once it reaches the provider, even if nothing is found; it is refunded only when the provider is unavailable or its reply was malformed (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan.
+Check order: AI settings read (`ai_unavailable`) → kill switches → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → scan-record lookup (#585) → entitlement (tier; `enhanced_requires_premium` for a non-Premium enhanced scan) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → zero-result throttle (`enhanced_throttled`, enhanced with action `throttle` only) → found allowance (`daily_scan_limit`) → vision provider → (a standard no-match) the move to the no-match allowance, in the settle. Every refusal gives back what was already taken (the cost estimate, the lease, the daily reservation) and happens before the provider is called. A scan counts toward the found allowance once it reaches the provider; a standard scan that finds no book moves to the no-match allowance while it has room (#577); it is refunded only when the provider is unavailable or its reply was malformed (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan.
 
 **Scan records (#585).** Every photo is fingerprinted on the server (the SHA-256 of the image after normalisation, so only the exact same file matches). For each user the server keeps a scan record per fingerprint: the AI's answer, the Open Library / Google Books result, and which of those steps finished. Records are kept `scan_records.retention_days` (default 30) and are not keyed on the prompt or model, so an old answer is still served after either changes. The lookup happens after normalisation and before any allowance:
 - **The same photo, all steps done:** the saved result is returned with `"repeat": true`. No AI call, no Google Books / Open Library call, no daily allowance used, no lease (so no `scan_in_progress`), not counted by the global capacity or the cost ceiling; `enhanced_scans_remaining` and `GET /scan/usage` are unchanged. There is no cap on repeats (the per-minute rate limit still applies).
@@ -287,7 +294,7 @@ curl -X POST https://bookshelfapi.buffingchi.com/scan \
   -F "file=@/path/to/cover.jpg"
 ```
 
-### `GET /scan/usage` — the current user's scan allowance
+### `GET /scan/usage` — the current user's scan allowances
 
 Auth required (`401` without a valid access token). Rate limit: `rate_limit_reads`. Read only; takes no parameters (any sent are ignored).
 
@@ -296,6 +303,10 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 {
   "used_today": 2,
   "daily_limit": 5,
+  "found_used_today": 2,
+  "found_daily_limit": 5,
+  "no_match_used_today": 1,
+  "no_match_daily_limit": 5,
   "used_month": null,
   "monthly_limit": null,
   "period_end": null,
@@ -304,7 +315,9 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 }
 ```
 
-`used_today` counts all scans, standard and enhanced together, in the current UTC day (one shared allowance, quota key `scan`); `daily_limit` is the caller's tier allowance from `ai_settings`.
+`found_used_today` counts the scans that used a scan in the current UTC day (books found, no-match scans counted because the no-match allowance was used up, and calls kept after an error), standard and enhanced together (quota key `scan`); `found_daily_limit` is the caller's tier found allowance (`quota.<tier>.found_daily`). `no_match_used_today` counts standard scans that found no book and did not use a scan (quota key `scan.no_match`); `no_match_daily_limit` is `quota.<tier>.no_match_daily` (#577).
+
+`used_today` and `daily_limit` carry the found counter again: kept for one release for older app builds, then removed.
 
 **Deprecated, always `null` (#582):** `used_month`, `monthly_limit`, `period_end`, `enhanced_used_month` and `enhanced_monthly_limit`. There is no monthly limit any more. They stay in the body for one release so an older app build still gets the keys it reads, and are removed after it. (An older build that requires them to be numbers hides its usage counter instead of crashing.) The app offers an enhanced re-scan from `enhanced_scans_remaining` on scan responses.
 
