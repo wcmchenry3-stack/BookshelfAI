@@ -46,6 +46,31 @@ class TestNormaliseTitle:
 
 
 class TestRecordsAgree:
+    @pytest.mark.parametrize(
+        "gb_title",
+        [
+            "Dune: Deluxe Edition",
+            "Dune (40th Anniversary Edition)",
+            "Dune - A Novel",
+            "Dune \u2014 Book One",
+        ],
+    )
+    def test_a_subtitle_still_agrees(self, gb_title):
+        # A subtitle or edition note alone must not drop the volume (it
+        # carries the cover and description).
+        assert records_agree(
+            _doc(title="Dune", authors=["Frank Herbert"]),
+            _volume(title=gb_title, authors=["Frank Herbert"]),
+        )
+
+    def test_same_subtitle_different_main_title_disagrees(self):
+        assert not records_agree(
+            _doc(title="Dune: Deluxe Edition", authors=["Frank Herbert"]),
+            _volume(
+                title="Children of Dune: Deluxe Edition", authors=["Frank Herbert"]
+            ),
+        )
+
     def test_shared_isbn(self):
         assert records_agree(
             _doc(title="Dune", isbns=["9780441013593", "0441013597"]),

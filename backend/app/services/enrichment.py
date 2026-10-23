@@ -108,6 +108,19 @@ def normalise_title(value: object) -> str:
     return _LEADING_ARTICLE.sub("", _normalise(value), count=1)
 
 
+# Where a subtitle or edition note starts: "Dune: Deluxe Edition",
+# "Dune (40th Anniversary)", "Dune - A Novel", "Dune — Book One".
+_SUBTITLE = re.compile(r"\s*[:(\[\u2013\u2014]|\s+-\s+")
+
+
+def main_title(value: object) -> str:
+    """:func:`normalise_title` of the title without its subtitle, so one
+    provider's "Dune: Deluxe Edition" agrees with the other's "Dune"."""
+    if not isinstance(value, str):
+        return ""
+    return normalise_title(_SUBTITLE.split(value, maxsplit=1)[0])
+
+
 def _surname(authors: object) -> str:
     """The normalised last word of the first author's name."""
     if not isinstance(authors, list) or not authors:
@@ -118,14 +131,15 @@ def _surname(authors: object) -> str:
 
 def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     """Whether an Open Library doc and a Google Books volume describe the
-    same book: they share an ISBN, or their normalised titles and
-    first-author surnames both match (and are non-empty)."""
+    same book: they share an ISBN, or their normalised main titles
+    (subtitle dropped) and first-author surnames both match (and are
+    non-empty)."""
     if _ol_isbns(ol_doc) & _gb_isbns(gb_volume):
         return True
     info = gb_volume.get("volumeInfo") or {}
-    ol_title, gb_title = normalise_title(ol_doc.get("title")), normalise_title(
-        info.get("title")
-    )
+    # Main titles: providers often differ only by a subtitle or edition note,
+    # and dropping an agreeing volume loses its cover and description.
+    ol_title, gb_title = main_title(ol_doc.get("title")), main_title(info.get("title"))
     ol_author, gb_author = _surname(ol_doc.get("author_name")), _surname(
         info.get("authors")
     )
