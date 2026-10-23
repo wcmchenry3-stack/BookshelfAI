@@ -26,10 +26,10 @@
   "errorLoadBooks": "책을 불러올 수 없습니다.",
   "errorUpdateStatus": "상태를 업데이트할 수 없습니다.",
   "errorRemoveBook": "책을 삭제할 수 없습니다.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "서재 검색...",
+  "searchA11y": "서재 검색",
+  "sectionTitle": "내 서재",
+  "bookCount": "컬렉션에 {{count}}권이 있습니다.",
   "heroSubtitle": "나의 독서 생활 한눈에",
   "archiveSummary": "권 등록됨"
 }
