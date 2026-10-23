@@ -67,6 +67,8 @@ export const REFUSAL_ERRORS: readonly string[] = [
   'paused',
   'in_progress',
   'monthly_limit',
+  // #604: waiting on the retry schedule (503 scan_unavailable).
+  'unavailable',
 ];
 
 /**
@@ -131,6 +133,13 @@ export const SCAN_RETRY_DELAYS_MS: readonly number[] = [
   60 * 60 * 1000, // attempt 4 after 1 h
   4 * 60 * 60 * 1000, // attempt 5 after 4 h
 ];
+
+/**
+ * The longest wait on the schedule (4 h). No retry is ever scheduled further
+ * ahead: a saved next try time beyond it (clock moved back, corrupt data) is
+ * brought forward to it, and the retry timer never waits longer.
+ */
+export const MAX_SCAN_RETRY_DELAY_MS = Math.max(...SCAN_RETRY_DELAYS_MS);
 
 /** Attempts per photo before it is failed: the first try plus the schedule. */
 export const MAX_SCAN_ATTEMPTS = SCAN_RETRY_DELAYS_MS.length + 1;

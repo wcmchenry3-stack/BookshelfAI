@@ -281,27 +281,32 @@ describe('offline pauses the schedule (#604)', () => {
     expect(result.current.scan.jobs[0].status).toBe('complete');
   });
 
-  it('a network failure on a retry is not a failed attempt', async () => {
-    mockPost
-      .mockRejectedValueOnce(UNAVAILABLE)
-      .mockRejectedValueOnce(NETWORK_ERROR)
-      .mockResolvedValue(OK);
+  it('a network failure on a retry is not a failed attempt, and waits 30 s (no tight loop)', async () => {
+    // Codex B: NetInfo still says connected, every request gets no response.
+    mockPost.mockRejectedValueOnce(UNAVAILABLE).mockRejectedValue(NETWORK_ERROR);
     const { result } = await setup();
     await act(async () => {
       await result.current.scan.startScan('image', 'file:///a.jpg');
     });
     await advance(30_000);
     expect(mockPost).toHaveBeenCalledTimes(2);
+    const before = Date.now();
     expect(result.current.scan.jobs[0]).toEqual(
-      expect.objectContaining({ status: 'queued', attempts: 1 })
+      expect.objectContaining({ status: 'queued', attempts: 1, nextAttemptAt: before + 30_000 })
     );
+    // Not resent at once, nor on a reconnect event, before the 30 s floor.
     await act(async () => {
       mockNetListener?.({ isConnected: true });
-      await jest.advanceTimersByTimeAsync(0);
+      await jest.advanceTimersByTimeAsync(29_000);
     });
+    expect(mockPost).toHaveBeenCalledTimes(2);
+
+    mockPost.mockResolvedValue(OK);
+    await advance(1_000);
     expect(mockPost).toHaveBeenCalledTimes(3);
     // The same attempt number again: the lost request did not count.
     expect(attempts()).toEqual(['1', '2', '2']);
+    expect(result.current.scan.jobs[0].status).toBe('complete');
   });
 });
 
@@ -426,9 +431,7 @@ describe('final failure (#604)', () => {
     );
     expect(job.nextAttemptAt).toBeUndefined();
     expect(result.current.scan.pendingCount).toBe(0);
-    expect(result.current.banner.banner?.message).toBe(
-      'This scan failed. Open the queue to retry or delete it.'
-    );
+    expect(result.current.banner.banner?.message).toBe('This scan failed. Tap Retry to try again.');
     expect(result.current.banner.banner?.type).toBe('error');
     expect(result.current.scan.scanNotice).toBeNull();
   });
@@ -504,5 +507,247 @@ describe('the retry timer (#604)', () => {
     });
     expect(result.current.scan.jobs[0].status).toBe('complete');
     expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('a photo that fails for good releases the queue (#604, Codex A)', () => {
+  it('after attempt 5 the rest of the queue is sent', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1), queuedJob(2), queuedJob(3)]);
+    for (let i = 0; i < MAX_SCAN_ATTEMPTS; i++) mockPost.mockRejectedValueOnce(UNAVAILABLE);
+    mockPost.mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    for (const delay of SCAN_RETRY_DELAYS_MS) await advance(delay);
+    await advance(10_000);
+    expect(mockPost).toHaveBeenCalledTimes(7);
+    expect(attempts()).toEqual(['1', '2', '3', '4', '5', '1', '1']);
+    const byId = Object.fromEntries(result.current.scan.jobs.map((j) => [j.id, j.status]));
+    expect(byId).toEqual({ 'q-1': 'failed', 'q-2': 'complete', 'q-3': 'complete' });
+  });
+});
+
+describe('a success brings waiting photos forward (#604)', () => {
+  it('a new capture during a wait is sent at once, and its success sends the waiting photo now', async () => {
+    mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    await advance(5_000);
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///b.jpg');
+    });
+    await advance(100);
+    // a (attempt 1), b (attempt 1, straight away), a again well before its 30 s.
+    expect(attempts()).toEqual(['1', '1', '2']);
+    expect(result.current.scan.jobs.every((j) => j.status === 'complete')).toBe(true);
+  });
+
+  it('a drained photo that succeeds brings the other waiting photos forward', async () => {
+    const now = Date.now();
+    mockLoadJobs.mockResolvedValue([
+      queuedJob(1, { error: 'unavailable', attempts: 1, nextAttemptAt: now - 1000 }),
+      queuedJob(2, { error: 'unavailable', attempts: 3, nextAttemptAt: now + 3_600_000 }),
+    ]);
+    mockPost.mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    // q-2 keeps its attempt count: attempt 4, not 1.
+    expect(attempts()).toEqual(['2', '4']);
+    expect(result.current.scan.jobs.every((j) => j.status === 'complete')).toBe(true);
+  });
+
+  it('a new capture that also gets 503 starts its own schedule; the notice stays until its first retry', async () => {
+    mockPost.mockRejectedValue(UNAVAILABLE);
+    const { result } = await setup();
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    await advance(5_000);
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///b.jpg');
+    });
+    expect(attempts()).toEqual(['1', '1']);
+    expect(result.current.scan.scanNotice).toEqual({ kind: 'paused' });
+    const [b, a] = result.current.scan.jobs;
+    expect(a.nextAttemptAt! + 5_000).toBe(b.nextAttemptAt);
+
+    // a's attempt 2 at 30 s: b's first retry is still pending, so the notice stays.
+    await advance(25_000);
+    expect(attempts()).toEqual(['1', '1', '2']);
+    expect(result.current.scan.scanNotice).toEqual({ kind: 'paused' });
+    // b's attempt 2 at 35 s: no first retry pending any more.
+    await advance(5_000);
+    expect(attempts()).toEqual(['1', '1', '2', '2']);
+    expect(result.current.scan.scanNotice).toBeNull();
+  });
+});
+
+describe('enhanced re-scans keep the paused path (#604)', () => {
+  it('an enhanced job with no earlier results is queued as paused, not scheduled', async () => {
+    mockPost
+      .mockResolvedValueOnce({
+        data: { books: [], enhanced: false, no_match: 'counted', enhanced_scans_remaining: 3 },
+      })
+      .mockRejectedValue(UNAVAILABLE);
+    const { result } = await setup();
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    const id = result.current.scan.jobs[0].id;
+    await act(async () => {
+      await result.current.scan.requestEnhancedScan(id);
+    });
+    const job = result.current.scan.jobs[0];
+    expect(job).toEqual(expect.objectContaining({ status: 'queued', error: 'paused' }));
+    expect(job.nextAttemptAt).toBeUndefined();
+    expect(job.attempts).toBeUndefined();
+    expect(result.current.scan.scanNotice).toEqual({ kind: 'paused' });
+    await advance(5 * 3_600_000);
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(result.current.banner.banner?.message).not.toBe(
+      'This scan failed. Tap Retry to try again.'
+    );
+  });
+});
+
+describe('connectivity on the timer (#604)', () => {
+  it('an unknown connection state (isConnected null) counts as online', async () => {
+    mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    mockNetFetch.mockResolvedValue({ isConnected: null });
+    await advance(30_000);
+    expect(attempts()).toEqual(['1', '2']);
+    expect(result.current.scan.jobs[0].status).toBe('complete');
+  });
+
+  it('offline when the timer fires: checks again after 60 s without a reconnect event', async () => {
+    mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    mockNetFetch.mockResolvedValue({ isConnected: false });
+    await advance(30_000);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    // Back online, but no NetInfo event arrives.
+    mockNetFetch.mockResolvedValue({ isConnected: true });
+    await advance(59_000);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    await advance(1_000);
+    expect(attempts()).toEqual(['1', '2']);
+    expect(result.current.scan.jobs[0].status).toBe('complete');
+  });
+});
+
+describe('the wait is capped at 4 h (#604)', () => {
+  it('a saved next try time further ahead is brought forward on load', async () => {
+    const now = Date.now();
+    mockLoadJobs.mockResolvedValue([
+      queuedJob(1, { error: 'unavailable', attempts: 1, nextAttemptAt: now + 10 * 24 * 3_600_000 }),
+    ]);
+    mockPost.mockResolvedValue(OK);
+    const { result } = await setup();
+    expect(result.current.scan.jobs[0].nextAttemptAt).toBeLessThanOrEqual(
+      Date.now() + 4 * 3_600_000
+    );
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+    await advance(4 * 3_600_000);
+    expect(attempts()).toEqual(['2']);
+  });
+});
+
+describe('the drain while a photo waits (#604)', () => {
+  const TEXT_OK = { data: [{ title: 'Dune', author: 'Herbert' }] };
+  function textJob(i: number): ScanJob {
+    return {
+      id: `t-${i}`,
+      type: 'text',
+      status: 'queued',
+      createdAt: 100 + i,
+      query: `book ${i}`,
+      retryCount: 0,
+    };
+  }
+
+  it('a queued text search still goes out', async () => {
+    mockLoadJobs.mockResolvedValue([
+      queuedJob(1, { error: 'unavailable', attempts: 1, nextAttemptAt: Date.now() + 60_000 }),
+      textJob(1),
+    ]);
+    mockGet.mockResolvedValue(TEXT_OK);
+    const { result } = await setup();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(result.current.scan.jobs.find((j) => j.id === 't-1')?.status).toBe('complete');
+  });
+
+  it('the timer firing during a drain checks again until the drain ends, then sends', async () => {
+    // The photo comes first, so the drain skips it (not due yet) and moves on
+    // to five text searches, 2 s apart: the drain runs until about 8 s.
+    mockLoadJobs.mockResolvedValue([
+      queuedJob(1, { error: 'unavailable', attempts: 1, nextAttemptAt: Date.now() + 3_000 }),
+      ...[1, 2, 3, 4, 5].map(textJob),
+    ]);
+    mockGet.mockResolvedValue(TEXT_OK);
+    mockPost.mockResolvedValue(OK);
+    await setup();
+    await act(async () => {
+      mockNetListener?.({ isConnected: true });
+      await jest.advanceTimersByTimeAsync(7_000);
+    });
+    // Due at 3 s, but the drain is still running.
+    expect(mockGet).toHaveBeenCalledTimes(4);
+    expect(mockPost).not.toHaveBeenCalled();
+    await advance(3_000);
+    expect(mockGet).toHaveBeenCalledTimes(5);
+    expect(attempts()).toEqual(['2']);
+  });
+
+  it('does not double-send a pending job that is in flight (inFlightRef)', async () => {
+    mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
+    const { result } = await setup();
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    await advance(29_000);
+    // A capture whose connectivity check is still running: the job is
+    // 'pending' (not 'searching') and only inFlightRef keeps a drain off it.
+    let releaseNet: (v: unknown) => void = () => {};
+    mockNetFetch.mockImplementationOnce(() => new Promise((r) => (releaseNet = r)));
+    let capture: Promise<void> = Promise.resolve();
+    await act(async () => {
+      capture = Promise.resolve(result.current.scan.startScan('image', 'file:///b.jpg'));
+    });
+    expect(result.current.scan.jobs[0].status).toBe('pending');
+    // The timer drains at 30 s: it sends a (due) and must skip b.
+    await advance(10_000);
+    expect(attempts()).toEqual(['1', '2']);
+    await act(async () => {
+      releaseNet({ isConnected: true });
+      await capture;
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    await advance(60_000);
+    expect(attempts()).toEqual(['1', '2', '1']);
+    expect(result.current.scan.jobs.every((j) => j.status === 'complete')).toBe(true);
   });
 });

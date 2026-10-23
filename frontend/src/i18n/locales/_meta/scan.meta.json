@@ -256,7 +256,7 @@
     "characterLimit": 120
   },
   "scanFailedFinal": {
-    "description": "Error banner (#604) when a photo still failed after every automatic retry because the scanner was unavailable. Points to the scan queue, where the user can retry or delete the photo. Not the user's fault.",
+    "description": "Error banner (#604) when a photo still failed after every automatic retry because the scanner was unavailable. Tells the user to tap the banner's Retry button (scanFailedFinalRetry; use the same word) to try again. Do not mention a queue or deleting: there is no queue screen yet (#605). Not the user's fault.",
     "tone": "neutral",
     "characterLimit": 80
   },

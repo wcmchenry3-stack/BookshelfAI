@@ -47,6 +47,6 @@
   "repeatNotInLibrary": "Je hebt dit al gescand, maar het staat niet in je bibliotheek. Opnieuw toevoegen?",
   "repeatReAdd": "Opnieuw",
   "repeatNoMatch": "Op deze foto vonden we eerder geen boek. Probeer een scherpere foto of een andere hoek.",
-  "scanFailedFinal": "Scan mislukt. Open de wachtrij om opnieuw te proberen of te verwijderen.",
+  "scanFailedFinal": "Deze scan is mislukt. Tik op ‘Opnieuw’ om het nog eens te proberen.",
   "scanFailedFinalRetry": "Opnieuw"
 }

@@ -47,6 +47,6 @@
   "repeatNotInLibrary": "Vous avez déjà numérisé ceci, mais ce n'est pas dans votre bibliothèque. Le rajouter?",
   "repeatReAdd": "Rajouter",
   "repeatNoMatch": "Nous n'avions trouvé aucun livre dans cette photo. Essayez une photo plus nette ou un autre angle.",
-  "scanFailedFinal": "Cette numérisation a échoué. Ouvrez la file pour réessayer ou la supprimer.",
+  "scanFailedFinal": "Cette numérisation a échoué. Touchez « Réessayer » pour recommencer.",
   "scanFailedFinalRetry": "Réessayer"
 }

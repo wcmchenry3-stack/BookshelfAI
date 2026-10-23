@@ -14,6 +14,7 @@ import {
   hasRefusedJobs,
   MAX_IN_PROGRESS_RETRIES,
   MAX_SCAN_ATTEMPTS,
+  MAX_SCAN_RETRY_DELAY_MS,
   SCAN_RETRY_DELAYS_MS,
   toScanNotice,
   type ScanNotice,
@@ -36,6 +37,8 @@ const MAX_RETRIES = 3;
 const QUEUE_DRAIN_DELAY = 2000;
 // When the retry timer fires during a drain, check again after this long.
 const RETRY_TIMER_BUSY_DELAY = 1000;
+// When the retry timer fires while offline, check again after this long (#604).
+const RETRY_TIMER_OFFLINE_DELAY = 60 * 1000;
 
 export interface ScanJobContextValue {
   jobs: ScanJob[];
@@ -101,10 +104,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const [usageRefreshKey, setUsageRefreshKey] = useState(0);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
+  // The ref is the source of truth: every change goes through setJobsAndRef,
+  // which updates the ref first and then hands React the same list. There is
+  // no effect copying `jobs` back into the ref, because a render with an older
+  // `jobs` could overwrite a newer ref (a drain started by the retry timer,
+  // #604, would then resend a job that just settled).
   const jobsRef = useRef(jobs);
-  useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
+  const setJobsAndRef = useCallback((updater: (prev: ScanJob[]) => ScanJob[]) => {
+    const next = updater(jobsRef.current);
+    jobsRef.current = next;
+    setJobs(next);
+  }, []);
 
   const drainingRef = useRef(false);
   // Which photos the current drain stops sending after a refusal: all of
@@ -156,23 +166,28 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       // Completed jobs are persisted without their results (see saveJobs), so
       // there is nothing left to review — drop them. The sweep below then
       // removes their images, since no remaining job refers to them.
+      // A next try time beyond the longest wait (#604: the clock moved back,
+      // or corrupt data) is brought forward to it.
+      const latestRetryAt = launchedAt + MAX_SCAN_RETRY_DELAY_MS;
       const restored = persisted
         .filter((j) => j.status !== 'complete')
-        .map((j) => (j.status === 'searching' ? { ...j, status: 'pending' as const } : j));
-      setJobs(restored);
+        .map((j) => (j.status === 'searching' ? { ...j, status: 'pending' as const } : j))
+        .map((j) =>
+          j.nextAttemptAt != null && j.nextAttemptAt > latestRetryAt
+            ? { ...j, nextAttemptAt: latestRetryAt }
+            : j
+        );
+      setJobsAndRef(() => restored);
       setLoaded(true);
       await sweepOrphanedScanFiles(restored, launchedAt);
     })();
-  }, []);
+  }, [setJobsAndRef]);
 
-  function updateJob(jobId: string, updates: Partial<ScanJob>) {
-    const apply = (list: ScanJob[]) => list.map((j) => (j.id === jobId ? { ...j, ...updates } : j));
-    // Mirror the update into the ref now, not on the next render: a drain
-    // started right after a scan settled (the retry timer, #604) must not
-    // read the job's old status and send it again.
-    jobsRef.current = apply(jobsRef.current);
-    setJobs(apply);
-  }
+  const updateJob = useCallback(
+    (jobId: string, updates: Partial<ScanJob>) =>
+      setJobsAndRef((list) => list.map((j) => (j.id === jobId ? { ...j, ...updates } : j))),
+    [setJobsAndRef]
+  );
 
   // Drain queued/pending jobs when connectivity is restored. Declared before
   // the connectivity effect to satisfy no-use-before-define. Only uses stable
@@ -193,14 +208,25 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         .filter((j) => isAwaitingRetry(j) && j.nextAttemptAt! <= startedAt)
         .sort((a, b) => a.nextAttemptAt! - b.nextAttemptAt!);
       const queuedJobs = [...due, ...pending.filter((j) => !due.includes(j))];
-      const waitingForRetry = pending.some(
-        (j) => j.type === 'image' && isAwaitingRetry(j) && j.nextAttemptAt! > startedAt
-      );
+      // Re-read on every step, not once: a photo can stop waiting during the
+      // drain (failed after its last attempt, or made due by a success).
+      const waitingForRetry = () => {
+        const now = Date.now();
+        return jobsRef.current.some(
+          (j) =>
+            j.type === 'image' &&
+            isAwaitingRetry(j) &&
+            j.nextAttemptAt! > now &&
+            !inFlightRef.current.has(j.id)
+        );
+      };
 
       stopDrainRef.current = 'none';
       for (const job of queuedJobs) {
         const netState = await NetInfo.fetch();
-        if (!netState.isConnected) break;
+        // Only a known-offline state stops the drain; null ("unknown") counts
+        // as connected, as in handleAddBooks (#604).
+        if (netState.isConnected === false) break;
         // The list above is a snapshot: skip jobs dismissed, sent or being
         // sent (startScan/retryScan) since.
         const current = jobsRef.current.find((j) => j.id === job.id);
@@ -216,7 +242,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             (stop === 'images' ||
               (stop === 'enhanced' && !!current.enhanced) ||
               // Not due yet, or another photo is waiting for its retry.
-              (isAwaitingRetry(current) ? current.nextAttemptAt! > Date.now() : waitingForRetry)))
+              (isAwaitingRetry(current) ? current.nextAttemptAt! > Date.now() : waitingForRetry())))
         ) {
           continue;
         }
@@ -251,9 +277,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // earliest scheduled attempt is due. Re-armed whenever jobs change (a new
   // schedule, a sent or dismissed photo) and cleared on unmount. On launch
   // the connectivity listener's first event drains whatever is already due.
-  // Offline, it does nothing (no attempt is used); the reconnect drain sends
-  // a photo whose wait has passed. The drain never sends a job that is in
-  // flight (inFlightRef), so the timer can't double-send.
+  // A wait is never armed for longer than the longest step of the schedule.
+  // Known offline (isConnected === false), nothing is sent and no attempt is
+  // used: it checks again after RETRY_TIMER_OFFLINE_DELAY (or on reconnect).
+  // The drain never sends a job that is in flight (inFlightRef), so the timer
+  // can't double-send.
   const nextRetryAt = useMemo(() => {
     let next: number | null = null;
     for (const j of jobs) {
@@ -268,7 +296,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const arm = (delay: number) => {
-      timer = setTimeout(() => void fire(), Math.max(0, delay));
+      timer = setTimeout(() => void fire(), Math.min(Math.max(0, delay), MAX_SCAN_RETRY_DELAY_MS));
     };
     async function fire() {
       if (cancelled) return;
@@ -277,8 +305,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       if (remaining > 0) return arm(remaining);
       if (drainingRef.current) return arm(RETRY_TIMER_BUSY_DELAY);
       const netState = await NetInfo.fetch();
-      if (cancelled || !netState.isConnected || drainingRef.current) return;
-      void drainQueue();
+      if (cancelled) return;
+      if (netState.isConnected === false) return arm(RETRY_TIMER_OFFLINE_DELAY);
+      if (drainingRef.current) return arm(RETRY_TIMER_BUSY_DELAY);
+      await drainQueue();
+      // A drain that sent the due photo changed the jobs, which re-ran this
+      // effect (cancelled). If it could not (it went offline mid-drain), look
+      // again later rather than wait for an event that may not come.
+      if (!cancelled) arm(RETRY_TIMER_OFFLINE_DELAY);
     }
     arm(nextRetryAt - Date.now());
     return () => {
@@ -324,7 +358,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           data: { jobId: job.id, type: job.type },
         });
 
-        setJobs((prev) => [job, ...prev]);
+        setJobsAndRef((prev) => [job, ...prev]);
         // Held across the connectivity check below, where the job is already
         // 'pending' but not yet sent: a reconnect drain must skip it.
         startedId = job.id;
@@ -385,7 +419,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         status: 'pending' as const,
         error: undefined,
       };
-      setJobs((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
+      setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
       await executeScanRef.current(updated);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -394,40 +428,49 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
   // "Retry" on the final-failure banner (#604): send the photo again now,
   // with the schedule restarted at attempt 1.
-  const restartScanSchedule = useCallback(async (jobId: string) => {
-    const job = jobsRef.current.find((j) => j.id === jobId);
-    if (!job || job.status !== 'failed' || inFlightRef.current.has(jobId)) return;
-    const updated: ScanJob = {
-      ...job,
-      status: 'pending',
-      error: undefined,
-      retryCount: 0,
-      attempts: undefined,
-      nextAttemptAt: undefined,
-    };
-    setJobs((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
-    await executeScanRef.current(updated);
-  }, []);
+  const restartScanSchedule = useCallback(
+    async (jobId: string) => {
+      const job = jobsRef.current.find((j) => j.id === jobId);
+      if (!job || job.status !== 'failed' || inFlightRef.current.has(jobId)) return;
+      const updated: ScanJob = {
+        ...job,
+        status: 'pending',
+        error: undefined,
+        retryCount: 0,
+        attempts: undefined,
+        nextAttemptAt: undefined,
+      };
+      setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
+      await executeScanRef.current(updated);
+    },
+    [setJobsAndRef]
+  );
 
-  const queueForLater = useCallback((jobId: string) => {
-    updateJob(jobId, { status: 'queued' });
-  }, []);
+  const queueForLater = useCallback(
+    (jobId: string) => {
+      updateJob(jobId, { status: 'queued' });
+    },
+    [updateJob]
+  );
 
   const reviewJob = useCallback((jobId: string) => {
     setReviewingJobId(jobId);
   }, []);
 
-  const dismissJob = useCallback((jobId: string) => {
-    // Read the latest jobs and review id, not this render's: runScan calls
-    // this from a long-lived closure, which would otherwise see a stale
-    // snapshot and skip deleting the photo (#588).
-    const job = jobsRef.current.find((j) => j.id === jobId);
-    setJobs((prev) => prev.filter((j) => j.id !== jobId));
-    setReviewingJobId((current) => (current === jobId ? null : current));
+  const dismissJob = useCallback(
+    (jobId: string) => {
+      // Read the latest jobs and review id, not this render's: runScan calls
+      // this from a long-lived closure, which would otherwise see a stale
+      // snapshot and skip deleting the photo (#588).
+      const job = jobsRef.current.find((j) => j.id === jobId);
+      setJobsAndRef((prev) => prev.filter((j) => j.id !== jobId));
+      setReviewingJobId((current) => (current === jobId ? null : current));
 
-    // Clean up persisted image if it exists.
-    if (job?.imageUri) deleteScanImage(job.imageUri);
-  }, []);
+      // Clean up persisted image if it exists.
+      if (job?.imageUri) deleteScanImage(job.imageUri);
+    },
+    [setJobsAndRef]
+  );
 
   // Closing the review is the user's "done with this photo": a completed job
   // has no other way back into view, so discard it (and free its image,
@@ -440,22 +483,25 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     setReviewingJobId(null);
   }, [reviewingJobId, dismissJob]);
 
-  const requestEnhancedScan = useCallback(async (jobId: string) => {
-    const job = jobsRef.current.find((j) => j.id === jobId);
-    if (!job || job.type !== 'image' || !job.imageUri) return;
+  const requestEnhancedScan = useCallback(
+    async (jobId: string) => {
+      const job = jobsRef.current.find((j) => j.id === jobId);
+      if (!job || job.type !== 'image' || !job.imageUri) return;
 
-    Sentry.addBreadcrumb({
-      category: 'scan',
-      message: 'Enhanced scan requested',
-      level: 'info',
-      data: { jobId, hadResults: (job.results?.length ?? 0) > 0 },
-    });
+      Sentry.addBreadcrumb({
+        category: 'scan',
+        message: 'Enhanced scan requested',
+        level: 'info',
+        data: { jobId, hadResults: (job.results?.length ?? 0) > 0 },
+      });
 
-    const updated: ScanJob = { ...job, enhanced: true, status: 'pending', error: undefined };
-    setJobs((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
-    setReviewingJobId(null);
-    await executeScanRef.current(updated);
-  }, []);
+      const updated: ScanJob = { ...job, enhanced: true, status: 'pending', error: undefined };
+      setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
+      setReviewingJobId(null);
+      await executeScanRef.current(updated);
+    },
+    [setJobsAndRef]
+  );
 
   const handleAddBooks = useCallback(
     async (books: EnrichedBook[]) => {
@@ -519,7 +565,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         duration: 6000,
       });
     },
-    [reviewingJobId, dismissJob, showBanner, t]
+    [reviewingJobId, dismissJob, updateJob, showBanner, t]
   );
 
   // Keep executeScan in a ref so useCallbacks always call the latest version
@@ -587,7 +633,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       attempt: number,
       state: Extract<ScanUiState, { kind: 'unavailable' }>
     ) {
-      stopDrainRef.current = 'images';
       Sentry.addBreadcrumb({
         category: 'scan',
         message: `Scan unavailable: attempt ${attempt}`,
@@ -595,7 +640,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         data: { jobId: job.id, attempt },
       });
       // The short notice is only for the first retry; no message per later retry.
-      const clearRetryNotice = () => setScanNotice((n) => (n?.kind === 'paused' ? null : n));
+      // It stays while another photo's first retry is pending (a capture sent
+      // during a wait that got 503 too starts its own schedule).
+      const clearRetryNotice = () => {
+        const otherFirstRetryPending = jobsRef.current.some(
+          (j) => j.id !== job.id && isAwaitingRetry(j) && j.attempts === 1
+        );
+        if (!otherFirstRetryPending) setScanNotice((n) => (n?.kind === 'paused' ? null : n));
+      };
       if (attempt >= MAX_SCAN_ATTEMPTS) {
         updateJob(job.id, {
           status: 'failed',
@@ -604,6 +656,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           nextAttemptAt: undefined,
         });
         clearRetryNotice();
+        // The photo no longer holds the queue: the drain sending it (which
+        // never stopped, see below) goes on with the rest, and if none is
+        // running one starts.
+        const othersWaiting = jobsRef.current.some(
+          (j) => j.id !== job.id && isPendingUpload(j) && !inFlightRef.current.has(j.id)
+        );
+        if (othersWaiting && !drainingRef.current) void drainQueue();
         // No image, URI or user content: just the counts and the code.
         Sentry.captureMessage('Scan failed after all retries', {
           level: 'warning',
@@ -620,6 +679,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         });
         return;
       }
+      // The photo holds the queue until its next attempt: this drain sends no
+      // more photos (text searches still go).
+      stopDrainRef.current = 'images';
       updateJob(job.id, {
         status: 'queued',
         error: 'unavailable',
@@ -682,6 +744,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       // How the server says this photo relates to an earlier scan (#588).
       let repeat: RepeatOutcome = 'none';
       // This request's attempt on the retry schedule (#604), 1 for a first try.
+      // The cap is a backstop only: no path sends a job whose attempts are
+      // used up. After attempt MAX_SCAN_ATTEMPTS the job is `failed` with no
+      // nextAttemptAt (the drain sends only queued/pending jobs), and the
+      // banner's Retry (restartScanSchedule) clears `attempts` first.
       const attempt = Math.min((job.attempts ?? 0) + 1, MAX_SCAN_ATTEMPTS);
 
       try {
@@ -750,6 +816,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           // The service evidently accepts scans again: send any scans that were
           // refused earlier. Never re-entrant (drainingRef), and a drain sends
           // each job once and stops at the first refusal, so this can't loop.
+          // A photo waiting on the retry schedule (#604) is made due now,
+          // keeping its attempt count: the service is evidently back.
+          const now = Date.now();
+          const pullForward = (j: ScanJob) =>
+            j.id !== job.id && isAwaitingRetry(j) && j.nextAttemptAt! > now;
+          if (jobsRef.current.some(pullForward)) {
+            setJobsAndRef((list) =>
+              list.map((j) => (pullForward(j) ? { ...j, nextAttemptAt: now } : j))
+            );
+          }
           const waiting = jobsRef.current.some(
             (j) =>
               j.id !== job.id &&
@@ -806,7 +882,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           // Discard it here with the job in hand: the jobs list this closure
           // or a ref can see may not hold it yet, which would keep the photo
           // on disk.
-          setJobs((prev) => prev.filter((j) => j.id !== job.id));
+          setJobsAndRef((prev) => prev.filter((j) => j.id !== job.id));
           if (job.imageUri) deleteScanImage(job.imageUri);
           showBanner({
             message: results.length === 1 ? t('repeatAlreadyHaveOne') : t('repeatAlreadyHaveMany'),
@@ -860,7 +936,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             level: 'warning',
             data: { jobId: job.id },
           });
-          updateJob(job.id, { status: 'queued' });
+          // No response is not a failed attempt (#604): the attempt count
+          // stays. A photo on the retry schedule waits at least the first
+          // step again, so a device that still reports "connected" can't
+          // resend it in a tight loop.
+          updateJob(
+            job.id,
+            job.attempts != null
+              ? { status: 'queued', nextAttemptAt: Date.now() + SCAN_RETRY_DELAYS_MS[0] }
+              : { status: 'queued' }
+          );
           showBanner({
             message: t('savedOffline'),
             type: 'info',
@@ -900,9 +985,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (uiState.kind === 'unavailable') {
-          // An enhanced re-scan with earlier results is not retried: like
-          // before #604 it gets the paused notice and its earlier books back.
-          if (job.enhanced && job.results?.length) {
+          // An enhanced re-scan is never retried: like before #604 it takes
+          // the paused path (its earlier books back if it has any, otherwise
+          // queued with the paused notice). No schedule, banner or Sentry event.
+          if (job.enhanced) {
             handleScanRefusal(job, { kind: 'paused' });
           } else {
             handleUnavailable(job, attempt, uiState);

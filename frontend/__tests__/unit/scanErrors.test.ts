@@ -183,6 +183,12 @@ describe('hasRefusedJobs', () => {
     expect(hasRefusedJobs([{ status: 'queued', error: 'monthly_limit' }])).toBe(true);
   });
 
+  it('counts a photo waiting on the retry schedule (#604), so a full queue reads "limited"', () => {
+    const waiting = [{ status: 'queued', error: 'unavailable' }];
+    expect(hasRefusedJobs(waiting)).toBe(true);
+    expect(isScanningLimited(null, waiting)).toBe(true);
+  });
+
   it('ignores other errors and jobs that are not queued', () => {
     expect(hasRefusedJobs([{ status: 'queued', error: 'network' }])).toBe(false);
     expect(hasRefusedJobs([{ status: 'failed', error: 'daily_limit' }])).toBe(false);
