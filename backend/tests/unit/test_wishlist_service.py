@@ -30,6 +30,8 @@ def _mock_db():
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    # A SAVEPOINT around each catalog insert (#602 race handling).
+    db.begin_nested = MagicMock(return_value=MagicMock())
     return db
 
 
@@ -105,7 +107,7 @@ class TestFindOrCreateBook:
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(None))
 
-        await service._find_or_create_book(db, BASE_REQUEST)
+        await service._find_or_create_book(db, BASE_REQUEST, create=True)
 
         db.add.assert_called_once()
         db.flush.assert_called_once()
@@ -119,10 +121,12 @@ class TestFindOrCreateEdition:
     async def test_finds_existing_edition_by_isbn(
         self, service, existing_book, existing_edition
     ):
+        # An edition of this book (#602: never another book's edition).
+        existing_edition.book_id = existing_book.id
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(existing_edition))
         result = await service._find_or_create_edition(
-            db, existing_book.id, BASE_REQUEST
+            db, existing_book.id, BASE_REQUEST, create=True
         )
         assert result is existing_edition
         db.add.assert_not_called()
@@ -131,7 +135,7 @@ class TestFindOrCreateEdition:
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(None))
         result = await service._find_or_create_edition(
-            db, existing_book.id, BASE_REQUEST
+            db, existing_book.id, BASE_REQUEST, create=True
         )
         db.add.assert_called_once()
         assert result is not None

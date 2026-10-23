@@ -22,6 +22,7 @@ from app.api.auth import router as auth_router
 from app.api.books import router as books_router
 from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
+from app.core import catalog_token
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.limiter import limiter
@@ -118,6 +119,9 @@ async def _validate_config() -> None:
             "Set TURNSTILE_REQUIRED=false to explicitly disable bot protection "
             "(dev / test environments only)."
         )
+    # The catalog-token key (#602) is derived from JWT_PRIVATE_KEY; a
+    # hardened environment without it must not start.
+    catalog_token.check_configured(settings)
 
 
 @asynccontextmanager

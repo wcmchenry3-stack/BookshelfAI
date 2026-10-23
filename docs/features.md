@@ -44,17 +44,17 @@ sequenceDiagram
   SJ->>API: POST /scan (multipart)
   API->>GPT: identify(base64 image)
   GPT-->>API: 3 candidates {title, author, confidence, isbn}
-  API->>GB: enrich each (cover, work_id, description)
-  GB-->>API: metadata
+  API->>GB: enrich each (title, author, cover, work_id, description)
+  GB-->>API: metadata (the provider's title/author replace the AI's reading)
   API->>DB: dedup check vs user's UserBooks
   DB-->>API: already_in_library flags
-  API-->>SJ: 3 EnrichedBook results
+  API-->>SJ: 3 EnrichedBook results (each with catalog_token, #602)
   SJ->>SJ: status=complete, show banner
   U->>P: Tap "View results"
   P->>U: Show 3 candidates with covers
   U->>P: Select one
-  P->>API: POST /wishlist
-  API->>DB: Create UserBook(status=wishlisted)
+  P->>API: POST /wishlist (the book as received, catalog_token included)
+  API->>DB: Verify token; create missing Book/Edition only if valid; create UserBook(status=wishlisted)
   DB-->>API: OK
   API-->>P: UserBook
   P-->>U: Confirmation + back to scan
@@ -64,6 +64,7 @@ sequenceDiagram
 - Images are persisted to `scan-queue/` (expo-file-system) on native so the job survives app backgrounding. Web doesn't persist — blob URLs die on navigation.
 - `ScanJobContext.startScan()` is wrapped in try/catch with Sentry capture; any sync throw (like a crypto/uuid failure) becomes a handled banner, not a crash.
 - Scan job IDs are minted with `Crypto.randomUUID()` from `expo-crypto` (native-backed, Hermes-safe — see the uuid regression in `frontend/.eslintrc.js`).
+- **The title shown is the catalog's (#602).** The AI's reading of the photo is only used to look the book up. When Open Library or Google Books finds it, the result shows (and the wishlist stores) their title and author, so a mis-read or doctored cover cannot rename a book for everyone. When neither finds it, the result shows what the AI read, but it cannot be added to the wishlist (the app shows its "couldn't save" message). Results saved for a re-scan before this change are looked up again on the next re-scan (still free, no AI call).
 - Text search (`/books/search`) uses the same `ScanJob` pipeline with `type='text'` — different input path, same state machine.
 
 ### Scan limits — what users see

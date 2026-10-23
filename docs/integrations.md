@@ -96,6 +96,8 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Fallback behaviour:** if Google Books returns no items or the call fails, enrichment still produces a candidate — it just won't have a cover / description. `/books/search` raises `502` on Google Books errors; `/scan` absorbs them silently.
 
+**Catalog data comes from the providers (#602).** The book's title, author, IDs, cover, description and edition details are taken from these provider records, never from the vision model's reading of a photo or from the request body. When Open Library and Google Books both match, the Google Books volume is used only if it agrees with the Open Library doc (a shared ISBN, or the same title and first-author surname, where a differing subtitle may only be an edition note); otherwise nothing from it is used. An ISBN is kept only if a record used lists it. A result neither provider matched still shows in the app, but it has no catalog token and can't be added to the wishlist (`422 book_not_in_catalog`). See [security.md → Shared catalog trust model](security.md).
+
 ## Open Library
 
 **Role:** work-level identity (`work_id`) — the primary dedup key.

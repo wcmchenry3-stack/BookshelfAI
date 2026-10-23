@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.catalog_token import CATALOG_TOKEN_MAX_LENGTH
 from app.core.url_validator import validate_safe_url
 from app.schemas.book import BookRead, EditionPreview, EditionRead
 
@@ -13,7 +14,10 @@ BookStatus = Literal["wishlisted", "purchased", "reading", "read"]
 
 
 class WishlistRequest(BaseModel):
-    """Body for POST /wishlist — full book data from scan (book may not exist in DB yet)."""
+    """Body for POST /wishlist — an ``EnrichedBook`` from /scan or
+    /books/search, posted back with its ``catalog_token`` (#602). Only a
+    valid token lets the server create ``books`` / ``editions`` rows from
+    these fields; without one the request may only link an existing book."""
 
     open_library_work_id: str | None = Field(None, max_length=50)
     google_books_id: str | None = Field(None, max_length=50)
@@ -23,6 +27,7 @@ class WishlistRequest(BaseModel):
     cover_url: str | None = Field(None, max_length=2048)
     subjects: list[str] = []
     editions: list[EditionPreview] = []
+    catalog_token: str | None = Field(None, max_length=CATALOG_TOKEN_MAX_LENGTH)
 
     @field_validator("cover_url", mode="before")
     @classmethod

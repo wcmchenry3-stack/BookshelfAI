@@ -25,6 +25,7 @@ from app.ai.prices import CURRENT_PRICE_VERSION, cost_micros
 from app.ai.registry import get_feature
 from app.ai.settings import AISettings, AISettingsUnavailableError, get_ai_settings
 from app.auth.dependencies import get_current_user
+from app.core import catalog_token
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.file_security import sanitize_image, scan_for_malware
@@ -444,7 +445,7 @@ async def _serve_repeat(
         await _recover_session(db)
         remaining = None
     return ScanResponse(
-        books=books,
+        books=catalog_token.sign_books(books, user_id),
         enhanced=enhanced,
         enhanced_scans_remaining=remaining,
         repeat=True,
@@ -952,7 +953,7 @@ async def scan(
         )
 
     return ScanResponse(
-        books=books,
+        books=catalog_token.sign_books(books, user_id),
         enhanced=enhanced,
         enhanced_scans_remaining=await _enhanced_remaining(db, reservation),
         no_match=_no_match_field(moved),
