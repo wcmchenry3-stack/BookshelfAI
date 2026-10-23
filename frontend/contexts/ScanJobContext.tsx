@@ -135,6 +135,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const stopDrainRef = useRef<'none' | 'enhanced' | 'images'>('none');
   // Ids of jobs being sent right now, so a drain can't send the same job twice.
   const inFlightRef = useRef<Set<string>>(new Set());
+  // Whether a photo is being sent right now.
+  const imageInFlight = useCallback(
+    () =>
+      [...inFlightRef.current].some(
+        (id) => jobsRef.current.find((j) => j.id === id)?.type === 'image'
+      ),
+    []
+  );
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
   // Set when the initial load fails, so the persist effect below doesn't
   // immediately overwrite storage with the empty `jobs` state it starts
@@ -499,9 +507,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       // running, or a photo waits on its retry schedule, hand this one to the
       // drain instead of sending it now.
       const now = Date.now();
-      const imageSending = [...inFlightRef.current].some(
-        (id) => jobsRef.current.find((j) => j.id === id)?.type === 'image'
-      );
+      const imageSending = imageInFlight();
       const photoWaiting = jobsRef.current.some(
         (j) => j.id !== jobId && j.type === 'image' && isAwaitingRetry(j) && j.nextAttemptAt! > now
       );
@@ -539,7 +545,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
       await executeScanRef.current(updated);
     },
-    [setJobsAndRef, drainQueue]
+    [setJobsAndRef, drainQueue, imageInFlight]
   );
 
   // Failed scans are kept 7 days (#605): on launch (the load above) and when
@@ -850,8 +856,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       } finally {
         inFlightRef.current.delete(job.id);
         // A retry queued behind this send (outside a drain; a drain handles
-        // it when it ends).
-        if (drainAgainRef.current && !drainingRef.current) {
+        // it when it ends). Left for a photo still being sent, so a text
+        // search finishing first doesn't send the retry alongside it.
+        if (drainAgainRef.current && !drainingRef.current && !imageInFlight()) {
           drainAgainRef.current = false;
           void drainQueue();
         }

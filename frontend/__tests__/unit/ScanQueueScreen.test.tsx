@@ -19,8 +19,9 @@ import { FAILED_SCAN_RETENTION_MS, isFailedScanExpired, type ScanJob } from '../
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
 
 const mockPost = jest.fn();
+const mockGet = jest.fn();
 jest.mock('../../lib/api', () => ({
-  api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
+  api: { post: (...a: unknown[]) => mockPost(...a), get: (...a: unknown[]) => mockGet(...a) },
 }));
 
 const mockSaveJobs = jest.fn();
@@ -46,7 +47,8 @@ jest.mock('@react-native-community/netinfo', () => ({
 jest.mock('../../lib/sentry', () => ({
   Sentry: { addBreadcrumb: jest.fn(), captureException: jest.fn(), captureMessage: jest.fn() },
 }));
-jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
+let mockUuid = 0;
+jest.mock('expo-crypto', () => ({ randomUUID: () => `uuid-${++mockUuid}` }));
 
 const mockPush = jest.fn();
 const mockBack = jest.fn();
@@ -347,6 +349,42 @@ describe('Retry respects one photo at a time (#604)', () => {
     });
     expect(mockPost).toHaveBeenCalledTimes(2);
     expect(hook.result.current.jobs.find((j) => j.id === 'bad')?.status).not.toBe('queued');
+  });
+
+  it('does not send a retried photo when a text search ends before the photo being sent', async () => {
+    let finishPhoto!: (v: unknown) => void;
+    let finishText!: (v: unknown) => void;
+    mockPost.mockReturnValueOnce(new Promise((r) => (finishPhoto = r)));
+    mockPost.mockResolvedValue(okBody);
+    mockGet.mockReturnValueOnce(new Promise((r) => (finishText = r)));
+    const hook = await setup([job('bad', { failedAt: NOW - 1000, attempts: 5, retryCount: 2 })]);
+
+    await act(async () => {
+      void hook.result.current.startScan('image', 'file:///docs/scan-queue/first.jpg');
+      void hook.result.current.startScan('text', undefined, 'Dune');
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await hook.result.current.restartScanSchedule('bad');
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishText({ data: [] });
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    // The photo is still being sent: the retry keeps waiting.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishPhoto(okBody);
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(2);
   });
 
   it('sends a retried photo now when nothing else is going on', async () => {
