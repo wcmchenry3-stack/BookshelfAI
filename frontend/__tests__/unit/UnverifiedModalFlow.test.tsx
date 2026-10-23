@@ -169,43 +169,70 @@ afterEach(() => {
 const settle = () => act(async () => void jest.advanceTimersByTime(IOS_DISMISS_FALLBACK_MS + 50));
 
 describe('"Add it yourself" from the picker keeps the other candidates (#616)', () => {
-  it('real _layout wiring: only that candidate leaves the job, the sheet opens, the picker returns', async () => {
+  it('real _layout wiring: the job survives, the sheet opens, and a cancel brings the book back', async () => {
     seedJob([POND, DUNE, EMMA]);
-    const { getByLabelText, queryByLabelText, getByText, queryByText } = await open();
+    const { getByLabelText, getByText, queryByText } = await open();
     expect(getByText('Pond Notes')).toBeTruthy();
 
     await fireEvent.press(getByLabelText('Add Pond Notes yourself'));
     await settle();
 
-    // The job (and its photo) survives with the other two candidates.
+    // The job (and its photo) survives with every candidate.
     expect(ctx.jobs).toHaveLength(1);
     expect(ctx.jobs[0].imageUri).toBe('file:///scan.jpg');
-    expect(ctx.jobs[0].results?.map((b) => b.title)).toEqual(['Dune', 'Emma']);
+    expect(ctx.jobs[0].results?.map((b) => b.title)).toEqual(['Pond Notes', 'Dune', 'Emma']);
     // One sheet at a time: the form is up, the picker is not.
     expect(ctx.reviewingJob).toBeNull();
     expect(getByText('Add it yourself')).toBeTruthy();
     expect(queryByText('Dune')).toBeNull();
 
-    // Closing the form reopens the review on what is left.
+    // Cancelling the form reopens the review with Pond Notes still in it.
     await fireEvent.press(getByLabelText('Close form'));
     await settle();
     expect(ctx.unverifiedDrafts).toEqual([]);
     expect(ctx.reviewingJob?.id).toBe(ctx.jobs[0].id);
     expect(getByText('Dune')).toBeTruthy();
     expect(getByText('Emma')).toBeTruthy();
+    expect(getByLabelText('Add Pond Notes yourself')).toBeTruthy();
+  });
+
+  it('saving the form takes only that book out of the job, then the review returns', async () => {
+    seedJob([POND, DUNE, EMMA]);
+    const { getByLabelText, getByText, queryByLabelText } = await open();
+    await fireEvent.press(getByLabelText('Add Pond Notes yourself'));
+    await settle();
+
+    await act(() => ctx.unverifiedSaved('Pond Notes'));
+    await settle();
+
+    expect(ctx.jobs[0].results?.map((b) => b.title)).toEqual(['Dune', 'Emma']);
+    expect(ctx.reviewingJob?.id).toBe(ctx.jobs[0].id);
+    expect(getByText('Dune')).toBeTruthy();
     expect(queryByLabelText('Add Pond Notes yourself')).toBeNull();
   });
 
-  it('when it was the only candidate the job is discarded and nothing reopens', async () => {
+  it('when it was the only candidate and is saved, the job is discarded and nothing reopens', async () => {
     seedJob([POND]);
     const { getByLabelText } = await open();
     await fireEvent.press(getByLabelText('Add Pond Notes yourself'));
     await settle();
-    expect(ctx.jobs).toEqual([]);
+    expect(ctx.jobs).toHaveLength(1);
     expect(ctx.unverifiedDrafts).toHaveLength(1);
+    await act(() => ctx.unverifiedSaved('Pond Notes'));
+    await settle();
+    expect(ctx.jobs).toEqual([]);
+    expect(ctx.reviewingJob).toBeNull();
+  });
+
+  it('when it was the only candidate and the form is cancelled, the review returns with it', async () => {
+    seedJob([POND]);
+    const { getByLabelText } = await open();
+    await fireEvent.press(getByLabelText('Add Pond Notes yourself'));
+    await settle();
     await act(() => ctx.dismissUnverified());
     await settle();
-    expect(ctx.reviewingJob).toBeNull();
+    expect(ctx.jobs).toHaveLength(1);
+    expect(ctx.reviewingJob?.results?.map((b) => b.title)).toEqual(['Pond Notes']);
   });
 });
 
@@ -245,12 +272,12 @@ describe('mixed add outcome keeps the refused book reachable (#616)', () => {
     await settle();
 
     expect(ctx.reviewingJob).toBeNull();
-    expect(ctx.jobs[0].results?.map((b) => b.title)).toEqual(['Dune']);
+    expect(ctx.jobs[0].results?.map((b) => b.title)).toEqual(['Pond Notes', 'Dune']);
     expect(ctx.unverifiedDrafts.map((d) => d.title)).toEqual(['Pond Notes']);
     expect(getByText('Save')).toBeTruthy();
     expect(queryByText('Dune')).toBeNull();
 
-    await act(() => ctx.dismissUnverified());
+    await act(() => ctx.unverifiedSaved('Pond Notes'));
     await settle();
     expect(ctx.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
   });

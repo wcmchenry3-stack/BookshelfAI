@@ -139,6 +139,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const reviewingJobIdRef = useRef<string | null>(null);
   // The job whose review to reopen after the "Add it yourself" forms close.
   const reopenReviewJobIdRef = useRef<string | null>(null);
+  // candidateKey of the book behind each entry of unverifiedDrafts, in order.
+  const draftKeysRef = useRef<string[]>([]);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
   // The ref is the source of truth: every change goes through setJobsAndRef,
   // which updates the ref first and then hands React the same list. There is
@@ -677,43 +679,45 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
   // "Add it yourself" (#616). One sheet at a time: close the review picker
   // WITHOUT dismissing its job (dismissReview would delete the whole job and
-  // photo), take just these books out of the job's results, and reopen the
-  // review on what is left once the form closes (see the effect below).
-  const addYourself = useCallback(
-    (books: EnrichedBook[]) => {
-      if (books.length === 0) return;
-      const jobId = reviewingJobIdRef.current;
-      const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
-      setReviewingJobId(null);
-      if (job) {
-        const taken = new Set(books.map(candidateKey));
-        const rest = (job.results ?? []).filter((b) => !taken.has(candidateKey(b)));
-        if (rest.length === 0) {
-          dismissJob(job.id);
-        } else {
-          updateJob(job.id, { results: rest });
-          reopenReviewJobIdRef.current = job.id;
-        }
-      }
-      setUnverifiedDrafts(books.map(draftFromBook));
-    },
-    [dismissJob, updateJob]
-  );
+  // photo). A book leaves the job only once its form is saved, so cancelling
+  // the form brings the review back with that book still in it.
+  const addYourself = useCallback((books: EnrichedBook[]) => {
+    if (books.length === 0) return;
+    const jobId = reviewingJobIdRef.current;
+    const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
+    setReviewingJobId(null);
+    reopenReviewJobIdRef.current = job ? job.id : null;
+    draftKeysRef.current = books.map(candidateKey);
+    setUnverifiedDrafts(books.map(draftFromBook));
+  }, []);
 
-  // When the forms are done, show the review again if the job still has books.
+  // When the forms are done, show the review again if the job still has
+  // books; a job whose every book was saved this way is finished.
   useEffect(() => {
     if (unverifiedDrafts.length > 0) return;
+    draftKeysRef.current = [];
     const jobId = reopenReviewJobIdRef.current;
     if (!jobId) return;
     reopenReviewJobIdRef.current = null;
     const job = jobsRef.current.find((j) => j.id === jobId);
-    if (job && (job.results?.length ?? 0) > 0) setReviewingJobId(jobId);
-  }, [unverifiedDrafts]);
+    if (!job) return;
+    if ((job.results?.length ?? 0) > 0) setReviewingJobId(jobId);
+    else if (job.status === 'complete') dismissJob(jobId);
+  }, [unverifiedDrafts, dismissJob]);
 
   const dismissUnverified = useCallback(() => setUnverifiedDrafts([]), []);
 
   const unverifiedSaved = useCallback(
     (title: string) => {
+      const savedKey = draftKeysRef.current[0];
+      draftKeysRef.current = draftKeysRef.current.slice(1);
+      const jobId = reopenReviewJobIdRef.current;
+      const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
+      if (job && savedKey !== undefined) {
+        updateJob(job.id, {
+          results: (job.results ?? []).filter((b) => candidateKey(b) !== savedKey),
+        });
+      }
       setUnverifiedDrafts((prev) => prev.slice(1));
       showBanner({
         message: t('unverifiedSavedMessage', { title }),
@@ -721,7 +725,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         duration: 4000,
       });
     },
-    [showBanner, t]
+    [showBanner, t, updateJob]
   );
 
   const handleAddBooks = useCallback(
