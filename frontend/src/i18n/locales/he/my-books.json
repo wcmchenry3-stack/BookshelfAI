@@ -16,6 +16,7 @@
   },
   "filterBy": "סנן לפי {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — לא מאומת",
   "bookCardHint": "הקש לפרטים ואפשרויות",
   "markAs": "סמן כ{{status}}",
   "markAsA11y": "סמן כ{{status}}",

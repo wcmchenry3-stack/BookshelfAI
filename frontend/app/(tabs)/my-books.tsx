@@ -338,7 +338,9 @@ export default function MyBooksScreen() {
                 ]}
                 onPress={() => setSelected(item)}
                 accessibilityRole="button"
-                accessibilityLabel={t('bookCardA11y', {
+                // This label replaces the card's children for a screen reader,
+                // so the Unverified badge (#616) must be said here.
+                accessibilityLabel={t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', {
                   title: item.book.title,
                   status: item.status,
                 })}

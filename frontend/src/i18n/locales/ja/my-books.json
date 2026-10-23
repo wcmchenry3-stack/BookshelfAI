@@ -16,6 +16,7 @@
   },
   "filterBy": "{{label}}で絞り込む",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 未確認",
   "bookCardHint": "タップして詳細とオプションを見る",
   "markAs": "{{status}}にする",
   "markAsA11y": "{{status}}にする",

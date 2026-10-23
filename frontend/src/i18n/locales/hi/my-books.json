@@ -16,6 +16,7 @@
   },
   "filterBy": "{{label}} द्वारा फ़िल्टर करें",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — असत्यापित",
   "bookCardHint": "विवरण और विकल्प देखने के लिए टैप करें",
   "markAs": "{{status}} चिह्नित करें",
   "markAsA11y": "{{status}} के रूप में चिह्नित करें",

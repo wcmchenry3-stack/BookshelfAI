@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
 
 import { AddUnverifiedBookSheet } from '../../components/AddUnverifiedBookSheet';
 import { BookCandidatePicker, type EnrichedBook } from '../../components/BookCandidatePicker';
@@ -226,6 +226,21 @@ describe('BookCandidatePicker "Add it yourself" (#616)', () => {
     expect(getByText('Not in our catalog')).toBeTruthy();
     await fireEvent.press(buttons[0]);
     expect(onAddYourself).toHaveBeenCalledWith(NO_MATCH);
+  });
+
+  it('the button is a sibling of the row checkbox, so a screen reader can reach it', async () => {
+    const { getByRole, getByLabelText } = await render(
+      <BookCandidatePicker
+        visible
+        candidates={[NO_MATCH]}
+        onConfirm={jest.fn()}
+        onDismiss={jest.fn()}
+        onAddYourself={jest.fn()}
+      />
+    );
+    const checkbox = getByRole('checkbox');
+    expect(within(checkbox).queryByLabelText('Add Pond Notes yourself')).toBeNull();
+    expect(getByLabelText('Add Pond Notes yourself')).toBeTruthy();
   });
 
   it('is not offered without a handler', async () => {

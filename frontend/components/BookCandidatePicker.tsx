@@ -65,6 +65,8 @@ interface Props {
    * offers "Add it yourself" (#616), which calls this with the book.
    */
   onAddYourself?: (book: EnrichedBook) => void;
+  /** The sheet has finished dismissing (iOS only): the Modal's onDismiss. */
+  onHidden?: () => void;
 }
 
 function initialSelection(candidates: EnrichedBook[], preselect: boolean): Set<number> {
@@ -102,6 +104,7 @@ export function BookCandidatePicker({
   onEnhance,
   enhancedScansRemaining = null,
   onAddYourself,
+  onHidden,
 }: Props) {
   const { theme } = useTheme();
   const { t } = useTranslation('components');
@@ -138,6 +141,7 @@ export function BookCandidatePicker({
       animationType="slide"
       presentationStyle="pageSheet"
       onRequestClose={onDismiss}
+      onDismiss={onHidden}
       accessibilityViewIsModal
     >
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -187,7 +191,7 @@ export function BookCandidatePicker({
             const owned = isOwned(book);
             const ownedNote = ownedNoteKey(book);
             return (
-              <Pressable
+              <View
                 key={`${book.open_library_work_id ?? book.title}-${i}`}
                 style={[
                   styles.card,
@@ -196,51 +200,45 @@ export function BookCandidatePicker({
                     borderColor: checked ? theme.colors.primary : theme.colors.border,
                   },
                 ]}
-                onPress={() => toggle(i)}
-                disabled={owned}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked, disabled: owned }}
-                accessibilityLabel={t('bookCandidatePicker.selectBook', {
-                  title: book.title,
-                  author: book.author,
-                })}
               >
-                {book.cover_url ? (
-                  <Image
-                    source={{ uri: book.cover_url }}
-                    style={styles.cover}
-                    accessibilityLabel={t('coverAlt', { ns: 'common', title: book.title })}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.cover,
-                      styles.coverPlaceholder,
-                      { backgroundColor: theme.colors.border },
-                    ]}
-                    accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
-                  />
-                )}
+                <Pressable
+                  style={styles.cardMain}
+                  onPress={() => toggle(i)}
+                  disabled={owned}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked, disabled: owned }}
+                  accessibilityLabel={t('bookCandidatePicker.selectBook', {
+                    title: book.title,
+                    author: book.author,
+                  })}
+                >
+                  {book.cover_url ? (
+                    <Image
+                      source={{ uri: book.cover_url }}
+                      style={styles.cover}
+                      accessibilityLabel={t('coverAlt', { ns: 'common', title: book.title })}
+                    />
+                  ) : (
+                    <View
+                      style={[
+                        styles.cover,
+                        styles.coverPlaceholder,
+                        { backgroundColor: theme.colors.border },
+                      ]}
+                      accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
+                    />
+                  )}
 
-                <View style={styles.info}>
-                  <Text
-                    style={[
-                      styles.bookTitle,
-                      { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
-                    ]}
-                    numberOfLines={2}
-                  >
-                    {book.title}
-                  </Text>
-                  <Text
-                    style={[
-                      { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {book.author}
-                  </Text>
-                  {book.editions[0]?.publish_year && (
+                  <View style={styles.info}>
+                    <Text
+                      style={[
+                        styles.bookTitle,
+                        { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {book.title}
+                    </Text>
                     <Text
                       style={[
                         {
@@ -248,51 +246,66 @@ export function BookCandidatePicker({
                           fontSize: theme.typography.fontSizeSM,
                         },
                       ]}
+                      numberOfLines={1}
                     >
-                      {book.editions[0].publish_year}
+                      {book.author}
                     </Text>
-                  )}
-                  {ownedNote && (
-                    <View style={[styles.badge, { backgroundColor: theme.colors.success }]}>
-                      <Text style={[styles.badgeText, { color: theme.colors.onSuccess }]}>
-                        {t(ownedNote)}
-                      </Text>
-                    </View>
-                  )}
-                  {onAddYourself && hasNoCatalogMatch(book) && (
-                    <>
+                    {book.editions[0]?.publish_year && (
                       <Text
-                        style={{
-                          color: theme.colors.textSecondary,
-                          fontSize: theme.typography.fontSizeSM,
-                        }}
+                        style={[
+                          {
+                            color: theme.colors.textSecondary,
+                            fontSize: theme.typography.fontSizeSM,
+                          },
+                        ]}
                       >
-                        {t('bookCandidatePicker.notInCatalog')}
+                        {book.editions[0].publish_year}
                       </Text>
-                      <Pressable
-                        onPress={() => onAddYourself(book)}
-                        style={[styles.addYourself, { borderColor: theme.colors.primary }]}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('bookCandidatePicker.addYourselfA11y', {
-                          title: book.title,
-                        })}
-                      >
-                        <Text style={[styles.addYourselfText, { color: theme.colors.primary }]}>
-                          {t('bookCandidatePicker.addYourself')}
+                    )}
+                    {ownedNote && (
+                      <View style={[styles.badge, { backgroundColor: theme.colors.success }]}>
+                        <Text style={[styles.badgeText, { color: theme.colors.onSuccess }]}>
+                          {t(ownedNote)}
                         </Text>
-                      </Pressable>
-                    </>
-                  )}
-                </View>
+                      </View>
+                    )}
+                  </View>
 
-                <View style={[styles.checkbox, owned && styles.checkboxDisabled]}>
-                  <MaterialIcons
-                    name={checked ? 'check-box' : 'check-box-outline-blank'}
-                    size={28}
-                    color={checked ? theme.colors.primary : theme.colors.textSecondary}
-                  />
-                </View>
-              </Pressable>
+                  <View style={[styles.checkbox, owned && styles.checkboxDisabled]}>
+                    <MaterialIcons
+                      name={checked ? 'check-box' : 'check-box-outline-blank'}
+                      size={28}
+                      color={checked ? theme.colors.primary : theme.colors.textSecondary}
+                    />
+                  </View>
+                </Pressable>
+                {onAddYourself && hasNoCatalogMatch(book) && (
+                  // A sibling of the checkbox, not inside it: a nested button
+                  // is unreachable by screen readers.
+                  <View style={styles.noMatchRow}>
+                    <Text
+                      style={{
+                        color: theme.colors.textSecondary,
+                        fontSize: theme.typography.fontSizeSM,
+                      }}
+                    >
+                      {t('bookCandidatePicker.notInCatalog')}
+                    </Text>
+                    <Pressable
+                      onPress={() => onAddYourself(book)}
+                      style={[styles.addYourself, { borderColor: theme.colors.primary }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('bookCandidatePicker.addYourselfA11y', {
+                        title: book.title,
+                      })}
+                    >
+                      <Text style={[styles.addYourselfText, { color: theme.colors.primary }]}>
+                        {t('bookCandidatePicker.addYourself')}
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
             );
           })}
 
@@ -378,11 +391,19 @@ const styles = StyleSheet.create({
   },
   list: { padding: 16, paddingTop: 0, gap: 12 },
   card: {
-    flexDirection: 'row',
     borderRadius: 8,
     borderWidth: 1,
     overflow: 'hidden',
     minHeight: 44,
+  },
+  cardMain: { flexDirection: 'row', minHeight: 44 },
+  noMatchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
   },
   cover: { width: 72, height: 108 },
   coverPlaceholder: { opacity: 0.4 },
@@ -406,7 +427,6 @@ const styles = StyleSheet.create({
     minHeight: 44,
     minWidth: 44,
     justifyContent: 'center',
-    marginTop: 4,
   },
   addYourselfText: { fontWeight: '600' },
   enhanceButton: {

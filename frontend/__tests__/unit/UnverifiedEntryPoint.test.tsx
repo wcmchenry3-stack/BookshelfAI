@@ -207,3 +207,14 @@ describe('Unverified badge in the library (#616)', () => {
     );
   });
 });
+
+describe('Card accessibility label (#616)', () => {
+  it('my books says "Unverified" in the card label, which replaces the badge for a screen reader', async () => {
+    mockGet.mockResolvedValue({ data: [UNVERIFIED_ENTRY, CATALOG_ENTRY] });
+    const { findByLabelText } = await render(<MyBooksScreen />);
+    const card = await findByLabelText('Pond Notes — wishlisted — Unverified');
+    expect(card.props.accessibilityRole).toBe('button');
+    // A catalog book's label is unchanged.
+    expect(await findByLabelText('Dune — wishlisted')).toBeTruthy();
+  });
+});

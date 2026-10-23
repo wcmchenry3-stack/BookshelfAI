@@ -16,6 +16,7 @@
   },
   "filterBy": "Filtrer par {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Non vérifié",
   "bookCardHint": "Touchez pour détails et options",
   "markAs": "Marquer comme {{status}}",
   "markAsA11y": "Marquer comme {{status}}",

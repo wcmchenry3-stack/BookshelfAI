@@ -119,6 +119,11 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   dismissUnverified: () => {},
 });
 
+/** Identifies a scan result within its job (title and author, as read). */
+function candidateKey(book: EnrichedBook): string {
+  return `${book.title}\u0000${book.author}`;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -131,6 +136,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const [usageRefreshKey, setUsageRefreshKey] = useState(0);
   const [unverifiedDrafts, setUnverifiedDrafts] = useState<UnverifiedDraft[]>([]);
+  const reviewingJobIdRef = useRef<string | null>(null);
+  // The job whose review to reopen after the "Add it yourself" forms close.
+  const reopenReviewJobIdRef = useRef<string | null>(null);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
   // The ref is the source of truth: every change goes through setJobsAndRef,
   // which updates the ref first and then hands React the same list. There is
@@ -662,9 +670,45 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     [setJobsAndRef]
   );
 
-  const addYourself = useCallback((books: EnrichedBook[]) => {
-    setUnverifiedDrafts(books.map(draftFromBook));
-  }, []);
+  // Keep the review id readable from long-lived closures (the banner action).
+  useEffect(() => {
+    reviewingJobIdRef.current = reviewingJobId;
+  }, [reviewingJobId]);
+
+  // "Add it yourself" (#616). One sheet at a time: close the review picker
+  // WITHOUT dismissing its job (dismissReview would delete the whole job and
+  // photo), take just these books out of the job's results, and reopen the
+  // review on what is left once the form closes (see the effect below).
+  const addYourself = useCallback(
+    (books: EnrichedBook[]) => {
+      if (books.length === 0) return;
+      const jobId = reviewingJobIdRef.current;
+      const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
+      setReviewingJobId(null);
+      if (job) {
+        const taken = new Set(books.map(candidateKey));
+        const rest = (job.results ?? []).filter((b) => !taken.has(candidateKey(b)));
+        if (rest.length === 0) {
+          dismissJob(job.id);
+        } else {
+          updateJob(job.id, { results: rest });
+          reopenReviewJobIdRef.current = job.id;
+        }
+      }
+      setUnverifiedDrafts(books.map(draftFromBook));
+    },
+    [dismissJob, updateJob]
+  );
+
+  // When the forms are done, show the review again if the job still has books.
+  useEffect(() => {
+    if (unverifiedDrafts.length > 0) return;
+    const jobId = reopenReviewJobIdRef.current;
+    if (!jobId) return;
+    reopenReviewJobIdRef.current = null;
+    const job = jobsRef.current.find((j) => j.id === jobId);
+    if (job && (job.results?.length ?? 0) > 0) setReviewingJobId(jobId);
+  }, [unverifiedDrafts]);
 
   const dismissUnverified = useCallback(() => setUnverifiedDrafts([]), []);
 
@@ -766,14 +810,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           });
         }
       }
-      // Keep only the books a retry could save; owned and refused books are
-      // done with too.
+      // Keep only the books a retry could save; owned and stale books are
+      // done with. While the picker stays open (something is retryable) a
+      // book no catalog matched stays too, so its "Add it yourself" button
+      // remains reachable (#616).
+      const kept = books.filter((b) => retryable.includes(b) || notInCatalog.includes(b));
       if (jobId && retryable.length < books.length) {
         if (retryable.length === 0) {
           dismissJob(jobId);
           setReviewingJobId(null);
         } else {
-          updateJob(jobId, { results: retryable });
+          updateJob(jobId, { results: kept });
         }
       }
       // Count only the books actually added; say how many were already

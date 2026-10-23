@@ -148,7 +148,7 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
     );
   });
 
-  it('mixed: one added, one not in catalog, one 500 keeps only the 500 to retry', async () => {
+  it('mixed: one added, one not in catalog, one 500 keeps the 500 and the not-in-catalog book', async () => {
     const hook = await scanAndAdd(['Dune', 'Emma', 'Ulysses'], (title) =>
       title === 'Dune'
         ? Promise.resolve({ data: {} })
@@ -163,7 +163,10 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
         type: 'error',
       })
     );
+    // The not-in-catalog book stays in the open picker so its "Add it yourself"
+    // button is still reachable (#616); the added book is gone.
     expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual([
+      'Emma',
       'Ulysses',
     ]);
     // Only the 500 is reported.
@@ -222,10 +225,15 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
     expect(hook.result.current.banner.banner?.message).toBe(
       '2 not saved. 1 not in our catalog: try searching by title. Tap Add to retry the others.'
     );
-    expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual(['Emma']);
+    // Both stay in the open picker: the 500 to retry, the refused book for
+    // "Add it yourself" (#616).
+    expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual([
+      'Dune',
+      'Emma',
+    ]);
   });
 
-  it('refused, owned and 500 together keep only the 500 to retry', async () => {
+  it('refused, owned and 500 together keep the 500 and the refused book', async () => {
     const hook = await scanAndAdd(
       ['Dune', 'Emma', 'Ulysses'],
       pick({ Dune: nic, Emma: own, Ulysses: boom })
@@ -234,6 +242,7 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
       '1 already in your library, 2 not saved. 1 not in our catalog: try searching by title. Tap Add to retry the others.'
     );
     expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual([
+      'Dune',
       'Ulysses',
     ]);
     expect(mockCaptureException).toHaveBeenCalledTimes(1);

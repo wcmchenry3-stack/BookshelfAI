@@ -16,6 +16,7 @@
   },
   "filterBy": "按{{label}}筛选",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 未验证",
   "bookCardHint": "点击查看详情和选项",
   "markAs": "标记为{{status}}",
   "markAsA11y": "标记为{{status}}",

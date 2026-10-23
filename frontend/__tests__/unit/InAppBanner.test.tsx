@@ -142,6 +142,26 @@ describe('InAppBanner', () => {
     expect(queryByText('Done!')).toBeNull();
   });
 
+  it('does not auto-dismiss a banner that carries an action', async () => {
+    const onPress = jest.fn();
+    const { getByTestId, getByText, getByLabelText } = await renderWithBanner({
+      message: 'Not in our catalog',
+      type: 'error',
+      actions: [{ label: 'Add it yourself', onPress }],
+    });
+    await fireEvent.press(getByTestId('trigger'));
+
+    // Well past the banner's own duration (10 s) and the slide-out.
+    await act(async () => {
+      jest.advanceTimersByTime(60000);
+    });
+    expect(getByText('Not in our catalog')).toBeTruthy();
+
+    // The action is still there to use.
+    await fireEvent.press(getByLabelText('Add it yourself'));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
   it('dismisses on tap', async () => {
     const { getByTestId, getByText, queryByText } = await renderWithBanner({
       message: 'Tap to dismiss',

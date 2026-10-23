@@ -41,13 +41,15 @@ interface Props {
   /** Called with the new library entry once POST /wishlist/unverified succeeds. */
   onSaved: (entry: SavedUnverifiedBook) => void;
   onDismiss: () => void;
+  /** The sheet has finished dismissing (iOS only): the Modal's onDismiss. */
+  onHidden?: () => void;
 }
 
 /**
  * "Add it yourself" (#616): a short form, pre-filled from the scan, that saves
  * a book the catalog could not find as the user's own unverified entry.
  */
-export function AddUnverifiedBookSheet({ visible, draft, onSaved, onDismiss }: Props) {
+export function AddUnverifiedBookSheet({ visible, draft, onSaved, onDismiss, onHidden }: Props) {
   const { theme } = useTheme();
   const { colors } = theme;
   const { t } = useTranslation('components');
@@ -98,6 +100,7 @@ export function AddUnverifiedBookSheet({ visible, draft, onSaved, onDismiss }: P
       animationType="slide"
       presentationStyle="pageSheet"
       onRequestClose={onDismiss}
+      onDismiss={onHidden}
       accessibilityViewIsModal
     >
       <View style={[styles.container, { backgroundColor: colors.background }]}>
