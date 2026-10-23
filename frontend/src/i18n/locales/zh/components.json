@@ -7,7 +7,10 @@
     "addToWishlistHint": "将此书加入愿望清单",
     "alreadyOwned": "已拥有",
     "noneOfThese": "都不是",
-    "noneOfTheseA11y": "没有匹配的书"
+    "noneOfTheseA11y": "没有匹配的书",
+    "ownedSameEdition": "你已拥有这本书",
+    "ownedOtherEdition": "你已拥有这本书的其他版本",
+    "ownedEditionUnknown": "你已拥有这本书"
   },
   "themeToggle": {
     "toDark": "切换到深色模式",

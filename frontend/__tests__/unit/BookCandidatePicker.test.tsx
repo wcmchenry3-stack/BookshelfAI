@@ -158,7 +158,7 @@ describe('BookCandidatePicker', () => {
     expect(onConfirm).toHaveBeenCalledWith([BOOKS[0]]);
   });
 
-  it('select all ticks every book, then clear all unticks them', async () => {
+  it('select all ticks every book not already owned, then clear all unticks them', async () => {
     const { getByLabelText, getByText } = await render(
       <BookCandidatePicker
         visible={true}
@@ -168,8 +168,9 @@ describe('BookCandidatePicker', () => {
       />
     );
     await fireEvent.press(getByLabelText('Select all books'));
-    await fireEvent.press(getByText('Add 2 books to wishlist'));
-    expect(onConfirm).toHaveBeenCalledWith(BOOKS);
+    // Foundation is already in the library, so it can't be added (#587).
+    await fireEvent.press(getByText('Add 1 book to wishlist'));
+    expect(onConfirm).toHaveBeenCalledWith([BOOKS[0]]);
 
     await fireEvent.press(getByLabelText('Clear all selections'));
     expect(getByText('Select books to add')).toBeTruthy();
@@ -270,5 +271,79 @@ describe('BookCandidatePicker', () => {
       />
     );
     expect(getByLabelText('Cover of Dune')).toBeTruthy();
+  });
+  describe('edition-level ownership (#587)', () => {
+    const owned = (ownership: EnrichedBook['ownership']): EnrichedBook => ({
+      ...BOOKS[0],
+      already_in_library: ownership !== 'not_owned',
+      in_library: ownership !== 'not_owned',
+      ownership,
+    });
+
+    it.each([
+      ['owned_same_edition', 'You already have this book'],
+      ['owned_other_edition', 'You already have this book in another edition'],
+      ['owned_edition_unknown', 'You already have this book'],
+    ] as const)('%s shows "%s"', async (ownership, text) => {
+      const { getByText, queryByText } = await render(
+        <BookCandidatePicker
+          visible={true}
+          candidates={[owned(ownership)]}
+          onConfirm={onConfirm}
+          onDismiss={onDismiss}
+        />
+      );
+      expect(getByText(text)).toBeTruthy();
+      expect(queryByText('Already owned')).toBeNull();
+    });
+
+    it('shows no note for a book not owned', async () => {
+      const { queryByText } = await render(
+        <BookCandidatePicker
+          visible={true}
+          candidates={[owned('not_owned')]}
+          onConfirm={onConfirm}
+          onDismiss={onDismiss}
+        />
+      );
+      expect(queryByText(/You already have this book/)).toBeNull();
+    });
+
+    it.each(['owned_same_edition', 'owned_other_edition', 'owned_edition_unknown'] as const)(
+      'a %s book cannot be ticked or added',
+      async (ownership) => {
+        const { getByLabelText, getByText } = await render(
+          <BookCandidatePicker
+            visible={true}
+            candidates={[owned(ownership)]}
+            onConfirm={onConfirm}
+            onDismiss={onDismiss}
+            preselect
+          />
+        );
+        const card = getByLabelText('Select Dune by Frank Herbert');
+        expect(card.props.accessibilityState).toEqual(
+          expect.objectContaining({ checked: false, disabled: true })
+        );
+        await fireEvent.press(card);
+        await fireEvent.press(getByText('Select books to add'));
+        expect(onConfirm).not.toHaveBeenCalled();
+      }
+    );
+
+    it('select all skips owned books', async () => {
+      const books = [owned('not_owned'), { ...owned('owned_other_edition'), title: 'Emma' }];
+      const { getByLabelText, getByText } = await render(
+        <BookCandidatePicker
+          visible={true}
+          candidates={books}
+          onConfirm={onConfirm}
+          onDismiss={onDismiss}
+        />
+      );
+      await fireEvent.press(getByLabelText('Select all books'));
+      await fireEvent.press(getByText('Add 1 book to wishlist'));
+      expect(onConfirm).toHaveBeenCalledWith([books[0]]);
+    });
   });
 });

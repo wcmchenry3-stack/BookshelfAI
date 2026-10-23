@@ -264,5 +264,22 @@
     "description": "Button on the final scan failure banner (#604): sends the photo again now and restarts its automatic retries. One short word.",
     "tone": "neutral",
     "characterLimit": 16
+  },
+  "alreadyInLibraryMessage": {
+    "description": "Banner after adding one book that was already in the user's library, so nothing was added. {{title}} is the book title.",
+    "tone": "friendly",
+    "placeholders": ["{{title}}"]
+  },
+  "alreadyInLibraryManyMessage": {
+    "description": "Banner after adding several books that were all already in the user's library. {{count}} is the number of books (2 or more).",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{count}}"]
+  },
+  "addedAndOwnedMessage": {
+    "description": "Banner after adding books when some were added and the rest were already in the user's library. {{added}} and {{owned}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{added}}", "{{owned}}"]
   }
 }

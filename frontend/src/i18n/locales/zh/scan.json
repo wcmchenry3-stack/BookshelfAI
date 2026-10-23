@@ -48,5 +48,8 @@
   "repeatReAdd": "重新添加",
   "repeatNoMatch": "之前在这张照片中没有找到书。请试试更清晰的照片或换个角度。",
   "scanFailedFinal": "此次扫描失败。点击“重试”再试一次。",
-  "scanFailedFinalRetry": "重试"
+  "scanFailedFinalRetry": "重试",
+  "alreadyInLibraryMessage": "“{{title}}”已在你的书库中。",
+  "alreadyInLibraryManyMessage": "{{count}} 本书已在你的书库中。",
+  "addedAndOwnedMessage": "已添加 {{added}} 本，{{owned}} 本已在你的书库中。"
 }

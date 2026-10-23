@@ -48,5 +48,8 @@
   "repeatReAdd": "הוסף שוב",
   "repeatNoMatch": "לא מצאנו ספר בתמונה הזו בעבר. נסה תמונה ברורה יותר או זווית אחרת.",
   "scanFailedFinal": "הסריקה נכשלה. הקש על ״נסה שוב״ כדי לסרוק מחדש.",
-  "scanFailedFinalRetry": "נסה שוב"
+  "scanFailedFinalRetry": "נסה שוב",
+  "alreadyInLibraryMessage": "\"{{title}}\" כבר נמצא בספרייה שלך.",
+  "alreadyInLibraryManyMessage": "{{count}} ספרים כבר נמצאים בספרייה שלך.",
+  "addedAndOwnedMessage": "נוספו {{added}}. {{owned}} כבר בספרייה שלך."
 }

@@ -20,7 +20,10 @@
     "enhanceCostsCredit": "Uses 1 enhanced scan if it finds books",
     "creditsLeft_one": "{{count}} enhanced scan left",
     "creditsLeft_other": "{{count}} enhanced scans left",
-    "noCreditsLeft": "No enhanced scans left"
+    "noCreditsLeft": "No enhanced scans left",
+    "ownedSameEdition": "You already have this book",
+    "ownedOtherEdition": "You already have this book in another edition",
+    "ownedEditionUnknown": "You already have this book"
   },
   "themeToggle": {
     "toDark": "Switch to dark mode",

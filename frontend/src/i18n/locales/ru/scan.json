@@ -48,5 +48,8 @@
   "repeatReAdd": "Добавить снова",
   "repeatNoMatch": "Раньше мы не нашли книгу на этом фото. Попробуйте более чёткое фото или другой ракурс.",
   "scanFailedFinal": "Сканирование не удалось. Нажмите «Повторить», чтобы попробовать снова.",
-  "scanFailedFinalRetry": "Повторить"
+  "scanFailedFinalRetry": "Повторить",
+  "alreadyInLibraryMessage": "\"{{title}}\" уже есть в вашей библиотеке.",
+  "alreadyInLibraryManyMessage": "Уже в вашей библиотеке: {{count}}.",
+  "addedAndOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}."
 }

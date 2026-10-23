@@ -48,5 +48,8 @@
   "repeatReAdd": "다시 추가",
   "repeatNoMatch": "전에 이 사진에서 책을 찾지 못했습니다. 더 선명한 사진이나 다른 각도로 시도해 보세요.",
   "scanFailedFinal": "이 스캔에 실패했습니다. 다시 시도하려면 '다시 시도'를 탭하세요.",
-  "scanFailedFinalRetry": "다시 시도"
+  "scanFailedFinalRetry": "다시 시도",
+  "alreadyInLibraryMessage": "\"{{title}}\"은(는) 이미 내 서재에 있습니다.",
+  "alreadyInLibraryManyMessage": "{{count}}권은 이미 내 서재에 있습니다.",
+  "addedAndOwnedMessage": "{{added}}권을 추가했습니다. {{owned}}권은 이미 내 서재에 있습니다."
 }

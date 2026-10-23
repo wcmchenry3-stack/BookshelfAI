@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
+import { isAlreadyOwnedError } from '../lib/ownership';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
@@ -556,25 +557,44 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       }
 
       const outcomes = await Promise.allSettled(books.map((book) => api.post('/wishlist', book)));
-      const failed = books.filter((_, i) => outcomes[i].status === 'rejected');
+      // A 409 with an ownership code means the book is already in the
+      // library (#587): nothing to retry and not a failure.
+      const alreadyOwned = (o: PromiseSettledResult<unknown>) =>
+        o.status === 'rejected' && isAlreadyOwnedError(o.reason);
+      const owned = books.filter((_, i) => alreadyOwned(outcomes[i]));
+      const failed = books.filter(
+        (_, i) => outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i])
+      );
       const addedCount = books.length - failed.length;
+      const newlyAdded = addedCount - owned.length;
 
       if (failed.length === 0) {
         if (jobId) dismissJob(jobId);
         setReviewingJobId(null);
-        showBanner({
-          message:
+        let message: string;
+        if (owned.length === 0) {
+          message =
             books.length === 1
               ? t('addedMessage', { title: books[0].title })
-              : t('addedManyMessage', { count: books.length }),
-          type: 'success',
+              : t('addedManyMessage', { count: books.length });
+        } else if (newlyAdded === 0) {
+          message =
+            owned.length === 1
+              ? t('alreadyInLibraryMessage', { title: owned[0].title })
+              : t('alreadyInLibraryManyMessage', { count: owned.length });
+        } else {
+          message = t('addedAndOwnedMessage', { added: newlyAdded, owned: owned.length });
+        }
+        showBanner({
+          message,
+          type: newlyAdded === 0 ? 'info' : 'success',
           duration: 4000,
         });
         return;
       }
 
       for (const outcome of outcomes) {
-        if (outcome.status === 'rejected') {
+        if (outcome.status === 'rejected' && !alreadyOwned(outcome)) {
           Sentry.captureException(outcome.reason, {
             tags: { feature: 'scan', action: 'add_books' },
           });

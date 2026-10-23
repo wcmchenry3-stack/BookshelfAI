@@ -48,5 +48,8 @@
   "repeatReAdd": "Neu hinzufügen",
   "repeatNoMatch": "Auf diesem Foto haben wir zuvor kein Buch gefunden. Versuche ein klareres Foto oder einen anderen Winkel.",
   "scanFailedFinal": "Scan fehlgeschlagen. Tippe auf „Wiederholen“, um es erneut zu versuchen.",
-  "scanFailedFinalRetry": "Wiederholen"
+  "scanFailedFinalRetry": "Wiederholen",
+  "alreadyInLibraryMessage": "\"{{title}}\" ist bereits in deiner Bibliothek.",
+  "alreadyInLibraryManyMessage": "{{count}} Bücher sind bereits in deiner Bibliothek.",
+  "addedAndOwnedMessage": "{{added}} hinzugefügt. {{owned}} bereits in deiner Bibliothek."
 }

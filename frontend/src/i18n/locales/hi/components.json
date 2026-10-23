@@ -7,7 +7,10 @@
     "addToWishlistHint": "इसे आपकी विशलिस्ट में जोड़ता है",
     "alreadyOwned": "पहले से मौजूद",
     "noneOfThese": "इनमें से कोई नहीं",
-    "noneOfTheseA11y": "इनमें से कोई किताब मेल नहीं खाती"
+    "noneOfTheseA11y": "इनमें से कोई किताब मेल नहीं खाती",
+    "ownedSameEdition": "यह किताब आपके पास पहले से है",
+    "ownedOtherEdition": "यह किताब आपके पास दूसरे संस्करण में पहले से है",
+    "ownedEditionUnknown": "यह किताब आपके पास पहले से है"
   },
   "themeToggle": {
     "toDark": "डार्क मोड में स्विच करें",

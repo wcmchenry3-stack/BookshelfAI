@@ -48,5 +48,8 @@
   "repeatReAdd": "Rajouter",
   "repeatNoMatch": "Nous n'avions trouvé aucun livre dans cette photo. Essayez une photo plus nette ou un autre angle.",
   "scanFailedFinal": "Cette numérisation a échoué. Touchez « Réessayer » pour recommencer.",
-  "scanFailedFinalRetry": "Réessayer"
+  "scanFailedFinalRetry": "Réessayer",
+  "alreadyInLibraryMessage": "\"{{title}}\" est déjà dans votre bibliothèque.",
+  "alreadyInLibraryManyMessage": "{{count}} livres sont déjà dans votre bibliothèque.",
+  "addedAndOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}."
 }

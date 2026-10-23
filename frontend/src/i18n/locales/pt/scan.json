@@ -48,5 +48,8 @@
   "repeatReAdd": "Readicionar",
   "repeatNoMatch": "Antes não encontramos nenhum livro nesta foto. Tente uma foto mais nítida ou outro ângulo.",
   "scanFailedFinal": "Este escaneamento falhou. Toque em “Tentar de novo” para repetir.",
-  "scanFailedFinalRetry": "Tentar de novo"
+  "scanFailedFinalRetry": "Tentar de novo",
+  "alreadyInLibraryMessage": "\"{{title}}\" já está na sua biblioteca.",
+  "alreadyInLibraryManyMessage": "{{count}} livros já estão na sua biblioteca.",
+  "addedAndOwnedMessage": "{{added}} adicionados. {{owned}} já estão na sua biblioteca."
 }

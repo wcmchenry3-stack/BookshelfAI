@@ -7,7 +7,10 @@
     "addToWishlistHint": "Добавить книгу в список желаний",
     "alreadyOwned": "Уже в библиотеке",
     "noneOfThese": "Ничего из этого",
-    "noneOfTheseA11y": "Ни одна из этих книг не подходит"
+    "noneOfTheseA11y": "Ни одна из этих книг не подходит",
+    "ownedSameEdition": "Эта книга у вас уже есть",
+    "ownedOtherEdition": "Эта книга уже есть у вас в другом издании",
+    "ownedEditionUnknown": "Эта книга у вас уже есть"
   },
   "themeToggle": {
     "toDark": "Переключить на тёмную тему",

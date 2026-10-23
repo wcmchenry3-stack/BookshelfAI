@@ -48,5 +48,8 @@
   "repeatReAdd": "Opnieuw",
   "repeatNoMatch": "Op deze foto vonden we eerder geen boek. Probeer een scherpere foto of een andere hoek.",
   "scanFailedFinal": "Deze scan is mislukt. Tik op ‘Opnieuw’ om het nog eens te proberen.",
-  "scanFailedFinalRetry": "Opnieuw"
+  "scanFailedFinalRetry": "Opnieuw",
+  "alreadyInLibraryMessage": "\"{{title}}\" staat al in je bibliotheek.",
+  "alreadyInLibraryManyMessage": "{{count}} boeken staan al in je bibliotheek.",
+  "addedAndOwnedMessage": "{{added}} toegevoegd. {{owned}} stond al in je bibliotheek."
 }

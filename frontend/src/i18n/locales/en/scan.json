@@ -70,5 +70,8 @@
   "repeatReAdd": "Re-add",
   "repeatNoMatch": "We couldn't find a book in this photo before. Try a clearer photo or a different angle.",
   "scanFailedFinal": "This scan failed. Tap Retry to try again.",
-  "scanFailedFinalRetry": "Retry"
+  "scanFailedFinalRetry": "Retry",
+  "alreadyInLibraryMessage": "\"{{title}}\" is already in your library.",
+  "alreadyInLibraryManyMessage": "{{count}} books are already in your library.",
+  "addedAndOwnedMessage": "Added {{added}}. {{owned}} already in your library."
 }

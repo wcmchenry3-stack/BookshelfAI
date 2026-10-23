@@ -48,5 +48,8 @@
   "repeatReAdd": "फिर जोड़ें",
   "repeatNoMatch": "पहले इस फ़ोटो में कोई किताब नहीं मिली थी। साफ़ फ़ोटो या अलग कोण से कोशिश करें।",
   "scanFailedFinal": "यह स्कैन विफल रहा। दोबारा कोशिश करने के लिए “फिर कोशिश करें” पर टैप करें।",
-  "scanFailedFinalRetry": "फिर कोशिश करें"
+  "scanFailedFinalRetry": "फिर कोशिश करें",
+  "alreadyInLibraryMessage": "\"{{title}}\" पहले से आपकी लाइब्रेरी में है।",
+  "alreadyInLibraryManyMessage": "{{count}} किताबें पहले से आपकी लाइब्रेरी में हैं।",
+  "addedAndOwnedMessage": "{{added}} जोड़ी गईं। {{owned}} पहले से आपकी लाइब्रेरी में हैं।"
 }

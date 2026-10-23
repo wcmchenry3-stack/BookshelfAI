@@ -7,7 +7,10 @@
     "addToWishlistHint": "Añade este libro a tu lista",
     "alreadyOwned": "Ya en tu colección",
     "noneOfThese": "Ninguno de estos",
-    "noneOfTheseA11y": "Ninguno de estos libros coincide"
+    "noneOfTheseA11y": "Ninguno de estos libros coincide",
+    "ownedSameEdition": "Ya tienes este libro",
+    "ownedOtherEdition": "Ya tienes este libro en otra edición",
+    "ownedEditionUnknown": "Ya tienes este libro"
   },
   "themeToggle": {
     "toDark": "Cambiar a modo oscuro",
