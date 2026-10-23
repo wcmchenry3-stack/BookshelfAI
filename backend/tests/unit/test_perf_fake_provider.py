@@ -146,6 +146,11 @@ class TestIsolatedDatabaseGuard:
             "postgresql+asyncpg://u:p@localhost/perf?host=db.example.com",
             "postgresql+asyncpg://u:p@localhost/perf?HOSTADDR=10.0.0.5",
             "postgresql+asyncpg://u:p@localhost/perf?service=prod",
+            "postgresql+asyncpg://u:p@localhost/perf?database=bookshelf",
+            "postgresql+asyncpg://u:p@localhost/perf?Database=x",
+            "postgresql+asyncpg://u:p@localhost/perf?dbname=bookshelf",
+            "postgresql+asyncpg://u:p@localhost/perf?user=admin",
+            "postgresql+asyncpg://u:p@localhost/perf?sslmode=disable",
             "postgresql+asyncpg://u:p@localhost/bookshelf",
             "postgresql+asyncpg://u:p@localhost/",
             "not a url",
@@ -156,6 +161,33 @@ class TestIsolatedDatabaseGuard:
         with pytest.raises(perf_setup.UnsafeDatabaseError) as exc:
             perf_setup.check_database_url(url, "yes")
         assert "u:p" not in str(exc.value)
+
+    @pytest.mark.parametrize(
+        ("database", "address"),
+        [
+            ("bs539_perf", None),
+            ("perf", "127.0.0.1"),
+            ("PERF_x", "127.3.4.5"),
+            ("perf", "::1"),
+            ("perf", "127.0.0.1/32"),
+        ],
+    )
+    def test_connected_server_identity_accepted(self, database, address):
+        perf_setup.check_server_identity(database, address)
+
+    @pytest.mark.parametrize(
+        ("database", "address"),
+        [
+            ("bookshelf", None),
+            (None, None),
+            ("perf", "10.0.0.5"),
+            ("perf", "::2"),
+            ("perf", "garbage"),
+        ],
+    )
+    def test_connected_server_identity_refused(self, database, address):
+        with pytest.raises(perf_setup.UnsafeDatabaseError):
+            perf_setup.check_server_identity(database, address)
 
     @pytest.mark.parametrize("confirmed", [None, "", "no", "YES", "true"])
     def test_needs_the_confirmation(self, confirmed):
@@ -261,3 +293,55 @@ def test_port_in_use_sees_a_running_stub(stub):
     base, _state = stub
     port = int(base.rsplit(":", 1)[1])
     assert run_scan_abuse.port_in_use(port)
+
+
+@pytest.mark.integration
+class TestServerIdentityOnRealPostgres:
+    """The post-connect check against the real server: the database it
+    reports must be a perf one before anything is deleted."""
+
+    @staticmethod
+    def _url(name: str) -> str:
+        import os
+
+        from sqlalchemy.engine import make_url
+
+        return (
+            make_url(os.environ["DATABASE_URL"])
+            .set(database=name)
+            .render_as_string(hide_password=False)
+        )
+
+    async def _verify(self, name: str):
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        engine = create_async_engine(self._url(name))
+        try:
+            async with engine.connect() as conn:
+                await perf_setup.verify_connected_database(conn)
+        finally:
+            await engine.dispose()
+
+    async def test_non_perf_database_is_refused_and_perf_is_accepted(self):
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        admin = create_async_engine(self._url("postgres"), isolation_level="AUTOCOMMIT")
+        try:
+            async with admin.connect() as conn:
+                await conn.execute(text("DROP DATABASE IF EXISTS guardcheck_tmp"))
+                await conn.execute(text("DROP DATABASE IF EXISTS guardcheck_perf_tmp"))
+                await conn.execute(text("CREATE DATABASE guardcheck_tmp"))
+                await conn.execute(text("CREATE DATABASE guardcheck_perf_tmp"))
+            try:
+                with pytest.raises(perf_setup.UnsafeDatabaseError):
+                    await self._verify("guardcheck_tmp")
+                await self._verify("guardcheck_perf_tmp")
+            finally:
+                async with admin.connect() as conn:
+                    await conn.execute(text("DROP DATABASE IF EXISTS guardcheck_tmp"))
+                    await conn.execute(
+                        text("DROP DATABASE IF EXISTS guardcheck_perf_tmp")
+                    )
+        finally:
+            await admin.dispose()
