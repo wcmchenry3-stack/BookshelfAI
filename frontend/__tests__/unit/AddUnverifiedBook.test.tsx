@@ -108,7 +108,13 @@ describe('AddUnverifiedBookSheet', () => {
     const onSaved = jest.fn();
     const onDismiss = jest.fn();
     const utils = await render(
-      <AddUnverifiedBookSheet visible draft={draft} onSaved={onSaved} onDismiss={onDismiss} />
+      <AddUnverifiedBookSheet
+        visible
+        draft={draft}
+        draftKey="k1"
+        onSaved={onSaved}
+        onDismiss={onDismiss}
+      />
     );
     return { ...utils, onSaved, onDismiss };
   }

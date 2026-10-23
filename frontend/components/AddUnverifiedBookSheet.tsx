@@ -36,8 +36,14 @@ export interface SavedUnverifiedBook {
 
 interface Props {
   visible: boolean;
-  /** Starting values, from what the scan read. Remount (via `key`) for a new draft. */
+  /** Starting values, from what the scan read. */
   draft: UnverifiedDraft;
+  /**
+   * Identifies the draft. When it changes the fields reset to the new draft
+   * in place: the Modal stays mounted, because iOS can fail to present a page
+   * sheet in the same commit that unmounts another (#616).
+   */
+  draftKey: string;
   /** Called with the new library entry once POST /wishlist/unverified succeeds. */
   onSaved: (entry: SavedUnverifiedBook) => void;
   onDismiss: () => void;
@@ -49,7 +55,14 @@ interface Props {
  * "Add it yourself" (#616): a short form, pre-filled from the scan, that saves
  * a book the catalog could not find as the user's own unverified entry.
  */
-export function AddUnverifiedBookSheet({ visible, draft, onSaved, onDismiss, onHidden }: Props) {
+export function AddUnverifiedBookSheet({
+  visible,
+  draft,
+  draftKey,
+  onSaved,
+  onDismiss,
+  onHidden,
+}: Props) {
   const { theme } = useTheme();
   const { colors } = theme;
   const { t } = useTranslation('components');
@@ -60,6 +73,16 @@ export function AddUnverifiedBookSheet({ visible, draft, onSaved, onDismiss, onH
   const [authorError, setAuthorError] = useState('');
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [shownKey, setShownKey] = useState(draftKey);
+  if (draftKey !== shownKey) {
+    setShownKey(draftKey);
+    setTitle(draft.title);
+    setAuthor(draft.author);
+    setIsbn(draft.isbn);
+    setTitleError('');
+    setAuthorError('');
+    setFormError('');
+  }
 
   async function save() {
     if (saving) return;

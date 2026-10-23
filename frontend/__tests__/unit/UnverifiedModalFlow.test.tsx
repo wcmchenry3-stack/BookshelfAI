@@ -87,13 +87,18 @@ jest.mock('../../components/ErrorBoundary', () => ({
 // Record every Modal render so the test can fire the iOS-only onDismiss.
 type ModalProps = { onRequestClose?: unknown; onDismiss?: () => void };
 let mockModalRenders: ModalProps[] = [];
+// Counts Modal mounts: a remount is a fresh native presentation on iOS.
+let mockModalMounts = 0;
 jest.mock('react-native/Libraries/Modal/Modal', () => {
   const React = require('react');
   const Actual = jest.requireActual('@react-native/jest-preset/jest/mocks/Modal').default;
   return {
     __esModule: true,
-    default: (props: ModalProps) => {
+    default: function MockModal(props: ModalProps) {
       mockModalRenders.push(props);
+      React.useEffect(() => {
+        mockModalMounts += 1;
+      }, []);
       return React.createElement(Actual, props);
     },
   };
@@ -157,6 +162,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPost.mockReset();
   mockModalRenders = [];
+  mockModalMounts = 0;
   jest.useFakeTimers();
   setOS('android');
 });
@@ -319,6 +325,24 @@ describe('one Modal at a time (#616)', () => {
     expect(utils.queryByText('Save')).toBeNull();
     await act(async () => void jest.advanceTimersByTime(IOS_DISMISS_FALLBACK_MS + 50));
     expect(utils.getByText('Save')).toBeTruthy();
+  });
+
+  it('iOS: queued drafts share one sheet Modal; the next draft resets the fields in place', async () => {
+    setOS('ios');
+    const { getByTestId } = await render(<RootLayout />);
+    await act(async () => {});
+    await act(() => ctx.addYourself([POND, book('Marsh Log', false)]));
+    await settle();
+    expect(getByTestId('unverified-title-input').props.value).toBe('Pond Notes');
+    const mounts = mockModalMounts;
+
+    await act(() => ctx.unverifiedSaved('Pond Notes'));
+    await settle();
+
+    expect(ctx.unverifiedDrafts.map((d) => d.title)).toEqual(['Marsh Log']);
+    expect(getByTestId('unverified-title-input').props.value).toBe('Marsh Log');
+    // No Modal was unmounted and re-presented between the two forms.
+    expect(mockModalMounts).toBe(mounts);
   });
 
   it('Android and web: the sheet opens on the next tick, with no onDismiss', async () => {

@@ -141,8 +141,9 @@ function GlobalScanModals() {
       />
       {draft && pickerGate.clear ? (
         <AddUnverifiedBookSheet
-          // Remount per draft so the fields reset to the next book's reading.
-          key={`${unverifiedDrafts.length}-${draft.title}-${draft.isbn}`}
+          // One Modal for the whole queue: the next draft resets the fields
+          // in place rather than remounting (and re-presenting) the sheet.
+          draftKey={`${unverifiedDrafts.length}-${draft.title}-${draft.isbn}`}
           visible
           draft={draft}
           onSaved={(entry) => unverifiedSaved(entry.book.title)}
