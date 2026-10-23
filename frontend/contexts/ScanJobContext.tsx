@@ -21,6 +21,8 @@ import {
   isPendingUpload,
   MAX_QUEUE_SIZE,
   noMatchMessage,
+  repeatOutcome,
+  type RepeatOutcome,
   type ScanJob,
   type ScanJobType,
   type ScanResponse,
@@ -334,17 +336,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     setReviewingJobId(jobId);
   }, []);
 
-  const dismissJob = useCallback(
-    (jobId: string) => {
-      setJobs((prev) => prev.filter((j) => j.id !== jobId));
-      if (reviewingJobId === jobId) setReviewingJobId(null);
+  const dismissJob = useCallback((jobId: string) => {
+    // Read the latest jobs and review id, not this render's: runScan calls
+    // this from a long-lived closure, which would otherwise see a stale
+    // snapshot and skip deleting the photo (#588).
+    const job = jobsRef.current.find((j) => j.id === jobId);
+    setJobs((prev) => prev.filter((j) => j.id !== jobId));
+    setReviewingJobId((current) => (current === jobId ? null : current));
 
-      // Clean up persisted image if it exists.
-      const job = jobs.find((j) => j.id === jobId);
-      if (job?.imageUri) deleteScanImage(job.imageUri);
-    },
-    [jobs, reviewingJobId]
-  );
+    // Clean up persisted image if it exists.
+    if (job?.imageUri) deleteScanImage(job.imageUri);
+  }, []);
 
   // Closing the review is the user's "done with this photo": a completed job
   // has no other way back into view, so discard it (and free its image,
@@ -532,6 +534,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       let reportedRemaining: number | null = enhancedScansRemaining;
       // Whether a no-match used a scan, as the server reports it (#577).
       let noMatch: ScanResponse['no_match'] = null;
+      // How the server says this photo relates to an earlier scan (#588).
+      let repeat: RepeatOutcome = 'none';
 
       try {
         let results: EnrichedBook[];
@@ -584,8 +588,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               await sleep(state.retryAfterSeconds * 1000);
             }
           }
-          // A scan reached the server, so the usage counters are stale.
-          bumpUsage();
+          repeat = repeatOutcome(response.data);
+          // A scan reached the server, so the usage counters are stale. A
+          // repeat is answered from the saved record and charges nothing, so
+          // the counters have not moved (#588).
+          if (repeat === 'none') bumpUsage();
           setScanNotice(null);
           // The service evidently accepts scans again: send any scans that were
           // refused earlier. Never re-entrant (drainingRef), and a drain sends
@@ -628,7 +635,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           showBanner({
             message: job.enhanced
               ? t('enhancedNoBooksFound')
-              : noMatchMessage(noMatch, t('noBooksFoundTitle'), t),
+              : repeat === 'no_match'
+                ? t('repeatNoMatch')
+                : noMatchMessage(noMatch, t('noBooksFoundTitle'), t),
             type: 'info',
             duration: canEnhance ? 8000 : 4000,
             actions: canEnhance
@@ -638,9 +647,36 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
+        // A repeat whose books are all in the library: just say so (#588).
+        // An enhanced re-scan can be a repeat too (a photo already enhanced).
+        if (repeat === 'all_in_library') {
+          // Discard it here with the job in hand: the jobs list this closure
+          // or a ref can see may not hold it yet, which would keep the photo
+          // on disk.
+          setJobs((prev) => prev.filter((j) => j.id !== job.id));
+          if (job.imageUri) deleteScanImage(job.imageUri);
+          showBanner({
+            message: results.length === 1 ? t('repeatAlreadyHaveOne') : t('repeatAlreadyHaveMany'),
+            type: 'info',
+            duration: 5000,
+          });
+          return;
+        }
+
         // Keep the image: the user may still ask for an enhanced re-scan from the
         // review sheet. It's deleted when the job is dismissed.
         updateJob(job.id, { status: 'complete', results, error: undefined });
+        // A repeat with books missing from the library: offer to re-add from
+        // the saved result (the review sheet, then POST /wishlist only) (#588).
+        if (repeat === 'not_in_library') {
+          showBanner({
+            message: t('repeatNotInLibrary'),
+            type: 'info',
+            duration: 8000,
+            actions: [{ label: t('repeatReAdd'), onPress: () => setReviewingJobId(job.id) }],
+          });
+          return;
+        }
         showBanner({
           message:
             job.type === 'image'

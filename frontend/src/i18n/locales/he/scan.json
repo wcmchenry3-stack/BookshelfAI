@@ -41,5 +41,10 @@
   "sendPendingNow": "שלח עכשיו",
   "enhancedRequiresPremium": "סריקות משופרות הן חלק מ-Premium.",
   "enhancedThrottled": "כמה סריקות משופרות אחרונות לא מצאו ספרים. נסה שוב אחרי {{time}}.",
-  "enhancedThrottledLater": "כמה סריקות משופרות אחרונות לא מצאו ספרים. נסה שוב מאוחר יותר."
+  "enhancedThrottledLater": "כמה סריקות משופרות אחרונות לא מצאו ספרים. נסה שוב מאוחר יותר.",
+  "repeatAlreadyHaveOne": "הספר הזה כבר אצלך.",
+  "repeatAlreadyHaveMany": "הספרים האלה כבר אצלך.",
+  "repeatNotInLibrary": "סרקת את זה בעבר והוא לא בספרייה שלך. להוסיף שוב?",
+  "repeatReAdd": "הוסף שוב",
+  "repeatNoMatch": "לא מצאנו ספר בתמונה הזו בעבר. נסה תמונה ברורה יותר או זווית אחרת."
 }

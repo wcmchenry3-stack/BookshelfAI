@@ -41,5 +41,10 @@
   "sendPendingNow": "立即发送",
   "enhancedRequiresPremium": "增强扫描是 Premium 功能。",
   "enhancedThrottled": "最近几次增强扫描都未找到书籍。请在 {{time}} 之后重试。",
-  "enhancedThrottledLater": "最近几次增强扫描都未找到书籍。请稍后重试。"
+  "enhancedThrottledLater": "最近几次增强扫描都未找到书籍。请稍后重试。",
+  "repeatAlreadyHaveOne": "你已经有这本书了。",
+  "repeatAlreadyHaveMany": "你已经有这些书了。",
+  "repeatNotInLibrary": "你之前扫描过，但它不在你的书库中。要重新添加吗？",
+  "repeatReAdd": "重新添加",
+  "repeatNoMatch": "之前在这张照片中没有找到书。请试试更清晰的照片或换个角度。"
 }

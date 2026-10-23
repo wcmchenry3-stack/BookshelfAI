@@ -229,5 +229,30 @@
     "description": "Same as enhancedThrottled, when the time enhanced scans are allowed again is unknown.",
     "tone": "neutral",
     "characterLimit": 120
+  },
+  "repeatAlreadyHaveOne": {
+    "description": "Info banner (#588) when the user re-sends a photo already scanned and its one book is already in their library.",
+    "tone": "neutral",
+    "characterLimit": 50
+  },
+  "repeatAlreadyHaveMany": {
+    "description": "Info banner (#588) when the user re-sends a photo already scanned and all its books (two or more) are already in their library. No number is shown, so this is a fixed plural, not an i18next count plural.",
+    "tone": "neutral",
+    "characterLimit": 50
+  },
+  "repeatNotInLibrary": {
+    "description": "Banner (#588) for a photo scanned before whose books are not all in the library (rejected, deleted or not saved). Ends with a question; the Re-add button sits beside it. Re-adding uses the saved result.",
+    "tone": "friendly",
+    "characterLimit": 90
+  },
+  "repeatReAdd": {
+    "description": "Button on the repeat-photo banner (#588): opens the earlier results so the user can add the books again. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "repeatNoMatch": {
+    "description": "Banner (#588) for a photo scanned before in which no book was found. Suggests a clearer photo or another angle. The user is not charged, but do not mention scans or charges.",
+    "tone": "reassuring",
+    "characterLimit": 120
   }
 }

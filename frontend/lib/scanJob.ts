@@ -60,3 +60,20 @@ export function noMatchMessage(
   if (noMatch === 'counted') return t('noBooksFoundCounted');
   return fallback;
 }
+
+export type RepeatOutcome = 'none' | 'all_in_library' | 'not_in_library' | 'no_match';
+
+/**
+ * How the app explains a photo the user already scanned (#588), from the
+ * `repeat` / `in_library` fields the server sends (#585). 'none' = not a
+ * repeat, so the scan is shown as usual. Nothing here asks the server again.
+ */
+export function repeatOutcome(
+  response: Pick<ScanResponse, 'repeat' | 'books'> | null | undefined
+): RepeatOutcome {
+  if (!response?.repeat) return 'none';
+  const books = response.books ?? [];
+  if (books.length === 0) return 'no_match';
+  const allIn = books.every((b) => (b.in_library ?? b.already_in_library) === true);
+  return allIn ? 'all_in_library' : 'not_in_library';
+}

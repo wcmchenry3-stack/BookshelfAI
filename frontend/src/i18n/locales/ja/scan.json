@@ -41,5 +41,10 @@
   "sendPendingNow": "今すぐ送信",
   "enhancedRequiresPremium": "強化スキャンはPremiumの機能です。",
   "enhancedThrottled": "最近の強化スキャンで本が見つからないことが続きました。{{time}} 以降にもう一度お試しください。",
-  "enhancedThrottledLater": "最近の強化スキャンで本が見つからないことが続きました。しばらくしてからもう一度お試しください。"
+  "enhancedThrottledLater": "最近の強化スキャンで本が見つからないことが続きました。しばらくしてからもう一度お試しください。",
+  "repeatAlreadyHaveOne": "この本はすでにライブラリにあります。",
+  "repeatAlreadyHaveMany": "これらの本はすでにライブラリにあります。",
+  "repeatNotInLibrary": "以前スキャンしましたが、ライブラリにありません。もう一度追加しますか？",
+  "repeatReAdd": "再追加",
+  "repeatNoMatch": "この写真では以前、本が見つかりませんでした。より鮮明な写真や別の角度でお試しください。"
 }
