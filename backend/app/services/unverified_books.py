@@ -21,8 +21,11 @@ Refusals (nothing written):
   ``settings.unverified_books_per_user_max`` unverified entries.
 
 The check and the insert run with the user's ``users`` row locked
-(``SELECT ... FOR UPDATE``), so concurrent requests from one user are
-serialised and can neither exceed the cap nor add the same book twice.
+(``SELECT ... FOR NO KEY UPDATE``), so concurrent requests from one user
+are serialised and can neither exceed the cap nor add the same book twice.
+That lock conflicts with itself, which is all that is needed, but not with
+the ``FOR KEY SHARE`` lock that an insert into a table referencing ``users``
+takes, so it does not block those inserts the way ``FOR UPDATE`` would.
 """
 
 import logging
@@ -52,8 +55,15 @@ class UnverifiedLimitError(Exception):
     ``unverified_limit_reached``)."""
 
 
+def _part(value: str) -> str:
+    """One half of the duplicate key: the normalised text, or, when that is
+    empty (a title or author of only punctuation), the stripped, casefolded
+    text itself, so "!!!" and "???" are not the same book as "..." and "—"."""
+    return normalise_text(value) or value.strip().casefold()
+
+
 def _key(title: str, author: str) -> tuple[str, str]:
-    return normalise_text(title), normalise_text(author)
+    return _part(title), _part(author)
 
 
 class UnverifiedBookService:
@@ -62,7 +72,9 @@ class UnverifiedBookService:
     ) -> UserBook:
         # Serialise this user's adds: the cap and the duplicate check below
         # read the user's entries, and two concurrent adds must not both pass.
-        await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+        await db.execute(
+            select(User.id).where(User.id == user_id).with_for_update(key_share=True)
+        )
 
         result = await db.execute(
             select(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -56,8 +57,14 @@ def _isbn_10_valid(value: str) -> bool:
 def normalise_user_isbn(value: str) -> str:
     """A user-typed ISBN as an ISBN-13 (#616): hyphens and spaces dropped,
     an ISBN-10 converted (978 prefix). Raises ValueError unless it is a
-    well-formed ISBN-13 or ISBN-10 with a correct check digit."""
-    compact = value.replace("-", "").replace(" ", "").upper()
+    well-formed ISBN-13 or ISBN-10 with a correct check digit. Digits written
+    in another script are read as the ASCII digits they stand for."""
+    compact = "".join(
+        # Decimal digits of any script (Arabic-Indic, fullwidth, ...) become
+        # their ASCII digit, so the stored and compared ISBN is always ASCII.
+        str(d) if (d := unicodedata.decimal(c, None)) is not None else c
+        for c in value.replace("-", "").replace(" ", "").upper()
+    )
     if len(compact) == 13 and compact.isdigit() and _isbn_13_valid(compact):
         return compact
     if (
@@ -136,6 +143,10 @@ class UserBookUpdate(BaseModel):
         return v
 
 
+# The UserBookRead fields that are not read off the library row (#616).
+_UNVERIFIED_FIELDS = ("unverified", "unverified_isbn_13")
+
+
 class UserBookRead(BaseModel):
     """Returned by GET /user-books."""
 
@@ -170,19 +181,25 @@ class UserBookRead(BaseModel):
         when it is needed (and was loaded)."""
         if isinstance(data, dict):
             return data
-        if not isinstance(getattr(data, "custom_book_id", None), uuid.UUID):
+        # Every field the row supplies; the two unverified fields are set below.
+        row_fields = [
+            name for name in cls.model_fields if name not in _UNVERIFIED_FIELDS
+        ]
+        if getattr(data, "custom_book_id", None) is None:
             return {
-                **{name: getattr(data, name, None) for name in _ROW_FIELDS},
+                **{name: getattr(data, name, None) for name in row_fields},
                 "unverified": False,
                 "unverified_isbn_13": None,
             }
         custom = data.custom_book  # type: ignore[attr-defined]
         return {
-            **{name: getattr(data, name, None) for name in _ROW_FIELDS},
+            **{name: getattr(data, name, None) for name in row_fields},
             "book": {
                 "id": custom.id,
                 "title": custom.title,
                 "author": custom.author,
+                # Not a catalog book: no language was ever read for it.
+                "language": None,
                 "created_at": custom.created_at,
                 "updated_at": custom.updated_at,
             },
@@ -190,20 +207,3 @@ class UserBookRead(BaseModel):
             "unverified": True,
             "unverified_isbn_13": custom.isbn_13,
         }
-
-
-# The library-row fields UserBookRead reads from a ``UserBook``.
-_ROW_FIELDS = (
-    "id",
-    "book",
-    "edition",
-    "status",
-    "wishlisted_at",
-    "purchased_at",
-    "started_at",
-    "finished_at",
-    "notes",
-    "rating",
-    "created_at",
-    "updated_at",
-)

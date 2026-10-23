@@ -112,6 +112,8 @@ Two options:
 
 If a migration is the problem, the rollback deploy will re-run `alembic upgrade head` which is a no-op against the current schema. You may need an explicit `alembic downgrade -1` migration to reverse the schema change.
 
+**Rolling back past the unverified-books release (#616, migration `0016`) needs `alembic downgrade 0015` first, and that deletes data.** Users' private unverified library entries (`user_books` rows with `custom_book_id` set, and their `user_custom_books` rows) are removed by the downgrade. Do not skip it: the previous release's `UserBookRead` cannot serialise a library row whose `book` is `None`, so with those rows still in the table `GET /user-books`, `POST /wishlist` and the other endpoints that return a library entry would answer `500` for every user who has one. Run `alembic downgrade 0015` (against the production database, before or while switching traffic to the older deploy), then roll the deploy back. The entries cannot be restored by rolling forward again; take a database backup first if they matter.
+
 ## Web frontend — Render
 
 **Service name:** `bookshelf-web`

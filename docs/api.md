@@ -412,9 +412,9 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 { "title": "Pond Notes", "author": "A. Local", "isbn": "0-306-40615-2" }
 ```
 - `title`, `author` — required, 1–500 characters after trimming, no control characters.
-- `isbn` — optional, at most 20 characters; an ISBN-13 or ISBN-10 with a correct check digit, hyphens and spaces allowed. An ISBN-10 is converted to ISBN-13. Empty or blank means none.
+- `isbn` — optional, at most 20 characters; an ISBN-13 or ISBN-10 with a correct check digit, hyphens and spaces allowed; digits written in another script (Arabic-Indic, fullwidth) are read as the ASCII digits they stand for and only ASCII is stored. An ISBN-10 is converted to ISBN-13. Empty or blank means none.
 
-**Response `201`:** a `UserBookRead` with `unverified: true`. `book` carries the entry's own `id`, `title` and `author` only (no provider IDs, cover, description or editions), `edition` is `null`, and `unverified_isbn_13` is the normalised ISBN (or `null`):
+**Response `201`:** a `UserBookRead` with `unverified: true`. `book` carries the entry's own `id`, `title` and `author` only (no provider IDs, cover, description or editions; `language` is `null`), `edition` is `null`, and `unverified_isbn_13` is the normalised ISBN (or `null`):
 ```json
 {
   "id": "...",
@@ -429,7 +429,7 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 
 **Errors:**
 - `422` — validation failure (`detail` is a list; `loc` names the field, e.g. `["body", "isbn"]`), or an unknown field
-- `409 unverified_duplicate` — the user already has an unverified entry with the same title and author (casefolded, punctuation and spacing ignored) or the same ISBN; nothing was written. Other users' entries never count
+- `409 unverified_duplicate` — the user already has an unverified entry with the same title and author (casefolded, punctuation and spacing ignored; text that is only punctuation is compared as typed, so `!!!` and `???` differ) or the same ISBN; nothing was written. Other users' entries never count
 - `409 unverified_limit_reached` — the user already holds `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) unverified entries; nothing was written. Deleting one (`DELETE /user-books/{id}`) frees a place
 
 ---

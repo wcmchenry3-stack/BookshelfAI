@@ -43,6 +43,8 @@ class BookBase(BaseModel):
 
 
 class BookRead(BookBase):
+    # None for a user's own unverified entry (#616): no catalog language.
+    language: str | None = Field("en", max_length=10)
     id: uuid.UUID
     open_library_work_id: str | None = None
     google_books_id: str | None = None

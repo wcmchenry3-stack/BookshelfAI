@@ -219,6 +219,41 @@ async def test_duplicate_and_isbn_duplicate_refused(env):
     assert other.unverified_isbn_13 == ISBN_13
 
 
+async def test_non_ascii_digits_are_stored_ascii_and_match_duplicates(env):
+    factory, make_user, _ = env
+    alice = await make_user()
+    arabic_indic = "٩٧٨٠٣٠٦٤٠٦١٥٧"  # 9780306406157
+    first = await _add(factory, alice, title="One", isbn=arabic_indic)
+    assert first.unverified_isbn_13 == ISBN_13
+    async with factory() as db:
+        stored = await db.scalar(
+            select(UserCustomBook.isbn_13).where(UserCustomBook.user_id == alice.id)
+        )
+    assert stored == ISBN_13 and stored.isascii()
+
+    # The ASCII form of the same ISBN is the same book.
+    with pytest.raises(HTTPException) as exc:
+        await _add(factory, alice, title="Two", isbn=ISBN_13)
+    assert exc.value.detail == "unverified_duplicate"
+
+
+async def test_punctuation_only_titles_are_not_duplicates_of_each_other(env):
+    factory, make_user, _ = env
+    alice = await make_user()
+    await _add(factory, alice, title="!!!", author="A. Local")
+    # A different punctuation-only title is a different book...
+    other = await _add(factory, alice, title="???", author="A. Local")
+    assert other.book.title == "???"
+    await _add(factory, alice, title="...", author="A. Local")
+    # ...but the same one again is a duplicate.
+    with pytest.raises(HTTPException) as exc:
+        await _add(factory, alice, title=" !!! ", author="A. Local")
+    assert exc.value.detail == "unverified_duplicate"
+    # Likewise for an author of punctuation only.
+    await _add(factory, alice, title="Same", author="—")
+    await _add(factory, alice, title="Same", author="...")
+
+
 async def test_cap_is_enforced_and_freed_by_delete(env):
     factory, make_user, _ = env
     alice = await make_user()
