@@ -48,7 +48,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout` |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
-| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /purchased`, `PATCH` / `DELETE /user-books/*` |
+| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*` |
 | `rate_limit_reads` | 120/min | `GET /user-books`, `GET /auth/me`, `GET /scan/usage` |
 | `rate_limit_health` | 60/min | `GET /health`, `GET /health/db` |
 
@@ -397,6 +397,43 @@ The `EnrichedBook` returned by `/scan` or `/books/search`, posted back as receiv
 
 ---
 
+### `POST /wishlist/unverified` — add a book the catalog can't find, as the user's own unverified entry
+
+For a book neither Open Library nor Google Books finds (`422 book_not_in_catalog` above), #616. Creates a private `user_custom_books` row and a `user_books` row (`status=wishlisted`, `custom_book_id` set, no `book_id`, no edition) for the requesting user only. **It never reads or writes `books` or `editions`**: the entry is visible only to its creator, no other user's scan, search, wishlist add or library check can match it, and its ISBN is never written to the shared `editions.isbn_13` (see [Shared catalog trust model](security.md#shared-catalog-trust-model)). It also never counts as "already owned" for a scan or search result (even the creator's), so it never blocks or changes adding a real catalog book later.
+
+Concurrent adds by one user are serialised (the user's `users` row is locked), so the cap and the duplicate check hold under concurrency.
+
+**Auth:** required
+**Rate limit:** `rate_limit_writes`
+**Source:** `backend/app/api/user_books.py:add_unverified_to_wishlist`, `backend/app/services/unverified_books.py`
+
+**Request** (no other field is accepted: provider IDs, `cover_url`, `catalog_token`, `user_id`, `status` and so on are refused with `422`):
+```json
+{ "title": "Pond Notes", "author": "A. Local", "isbn": "0-306-40615-2" }
+```
+- `title`, `author` — required, 1–500 characters after trimming, no control characters.
+- `isbn` — optional, at most 20 characters; an ISBN-13 or ISBN-10 with a correct check digit, hyphens and spaces allowed. An ISBN-10 is converted to ISBN-13. Empty or blank means none.
+
+**Response `201`:** a `UserBookRead` with `unverified: true`. `book` carries the entry's own `id`, `title` and `author` only (no provider IDs, cover, description or editions), `edition` is `null`, and `unverified_isbn_13` is the normalised ISBN (or `null`):
+```json
+{
+  "id": "...",
+  "status": "wishlisted",
+  "unverified": true,
+  "unverified_isbn_13": "9780306406157",
+  "book": { "id": "...", "title": "Pond Notes", "author": "A. Local", "open_library_work_id": null, "google_books_id": null, "cover_url": null, "editions": [], ... },
+  "edition": null,
+  "wishlisted_at": "...", "created_at": "...", "updated_at": "..."
+}
+```
+
+**Errors:**
+- `422` — validation failure (`detail` is a list; `loc` names the field, e.g. `["body", "isbn"]`), or an unknown field
+- `409 unverified_duplicate` — the user already has an unverified entry with the same title and author (casefolded, punctuation and spacing ignored) or the same ISBN; nothing was written. Other users' entries never count
+- `409 unverified_limit_reached` — the user already holds `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) unverified entries; nothing was written. Deleting one (`DELETE /user-books/{id}`) frees a place
+
+---
+
 ### `GET /user-books` — list all books in user's library
 
 **Auth:** required
@@ -406,7 +443,7 @@ The `EnrichedBook` returned by `/scan` or `/books/search`, posted back as receiv
 **Query params:**
 - `status` (optional) — filter by `wishlisted` / `purchased` / `reading` / `read`
 
-**Response `200`:** array of `UserBookRead`, ordered by `created_at DESC`, with `Book` + `editions` + optional `Edition` eager-loaded.
+**Response `200`:** array of `UserBookRead`, ordered by `created_at DESC`, with `Book` + `editions` + optional `Edition` eager-loaded. Every row has `unverified` (#616): `false` for a catalog book; `true` for the user's own unverified entry, which is shaped as in `POST /wishlist/unverified` (`book` holds only its `id`, `title` and `author`; `unverified_isbn_13`). `PATCH` and `DELETE /user-books/{id}` work on both kinds; deleting an unverified entry also deletes its `user_custom_books` row. `POST /purchased` takes only catalog books (an unverified entry's `book.id` is `404`); use `PATCH` to change an unverified entry's status.
 
 **Example:**
 ```bash
