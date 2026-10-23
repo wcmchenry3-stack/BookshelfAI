@@ -83,7 +83,11 @@ from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 logger = logging.getLogger(__name__)
 
-# Pinned so ANTHROPIC_BASE_URL in the environment cannot redirect paid calls.
+# The Anthropic API host. Always passed to the client explicitly, so the SDK's
+# own reading of ANTHROPIC_BASE_URL never applies. ``settings.anthropic_base_url``
+# (the same variable, validated at boot: only a local host in staging and
+# production) replaces it only when set, which the nightly load run does to
+# reach its fake provider (#539).
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 
 USER_TEXT = "Identify every book in this photo."
@@ -486,7 +490,7 @@ class AnthropicVisionProvider:
     def _client(self) -> anthropic.AsyncAnthropic:
         return anthropic.AsyncAnthropic(
             api_key=settings.anthropic_api_key,
-            base_url=ANTHROPIC_BASE_URL,
+            base_url=settings.anthropic_base_url or ANTHROPIC_BASE_URL,
             timeout=self.spec.timeout_s,
             # Our loop below is the only retry loop, so its count and the
             # deadline hold.

@@ -182,3 +182,93 @@ class TestScanAiSettingsValidation:
             scan_timeout_seconds=1.0,
         )
         assert s.scan_model == "gpt-4o-2024-08-06"
+
+
+class TestAnthropicBaseUrl:
+    """ANTHROPIC_BASE_URL (#539): unset by default; a hardened environment
+    accepts only a local host, so it can never redirect production traffic."""
+
+    DB = "postgresql+asyncpg://u:p@localhost/db"
+
+    def _settings(self, url: str | None, environment: str = "development"):
+        kwargs = {} if url is None else {"anthropic_base_url": url}
+        return Settings(database_url=self.DB, environment=environment, **kwargs)
+
+    def test_unset_by_default(self):
+        assert self._settings(None).anthropic_base_url == ""
+
+    def test_read_from_the_environment(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:18080")
+        s = Settings(database_url=self.DB, environment="development")
+        assert s.anthropic_base_url == "http://127.0.0.1:18080"
+
+    @pytest.mark.parametrize("environment", ["development", "test"])
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:18080",
+            "http://localhost:18080",
+            "https://gateway.example.com/anthropic",
+        ],
+    )
+    def test_any_http_url_is_accepted_outside_hardened_environments(
+        self, url, environment
+    ):
+        assert self._settings(url, environment).anthropic_base_url == url
+
+    @pytest.mark.parametrize("environment", ["staging", "production"])
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "",
+            "   ",
+            "http://127.0.0.1:18080",
+            "http://localhost:18080",
+            "http://[::1]:18080",
+        ],
+    )
+    def test_unset_or_local_is_accepted_in_hardened_environments(
+        self, url, environment
+    ):
+        assert self._settings(url, environment).anthropic_base_url == url.strip()
+
+    @pytest.mark.parametrize("environment", ["staging", "production"])
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://api.anthropic.com",
+            "https://evil.example.com",
+            "http://127.0.0.1.evil.example.com",
+            "http://localhost.evil.example.com",
+            "http://10.0.0.5:8080",
+            "http://0.0.0.0:8080",
+            "http://localhost@evil.example.com",
+        ],
+    )
+    def test_non_local_url_is_rejected_in_hardened_environments(self, url, environment):
+        with pytest.raises(ValidationError) as exc:
+            self._settings(url, environment)
+        assert "ANTHROPIC_BASE_URL" in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "ftp://127.0.0.1/x",
+            "127.0.0.1:18080",
+            "http://",
+            "file:///etc/passwd",
+            "http://user:secret@127.0.0.1:18080",
+            "http://127.0.0.1:18080?x=1",
+            "http://127.0.0.1:18080#frag",
+            "http://[::1",
+        ],
+    )
+    def test_malformed_url_is_rejected_everywhere(self, url):
+        with pytest.raises(ValidationError) as exc:
+            self._settings(url)
+        assert "secret" not in str(exc.value)
+
+    def test_the_value_is_never_echoed_in_the_error(self):
+        with pytest.raises(ValidationError) as exc:
+            self._settings("https://evil.example.com/token-abc123", "production")
+        assert "abc123" not in str(exc.value)
