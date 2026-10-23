@@ -38,11 +38,27 @@ export interface ScanJob {
   enhanced?: boolean;
   error?: string;
   retryCount: number;
+  /**
+   * Retry schedule (#604): attempts at POST /scan this photo has used up on
+   * a retryable outcome (503 scan_unavailable). Absent = none yet; the next
+   * request sends `attempt` = this + 1.
+   */
+  attempts?: number;
+  /** Epoch ms of the photo's next scheduled attempt (#604); absent when none is scheduled. */
+  nextAttemptAt?: number;
 }
 
 /** A job still waiting to be uploaded/processed (counts toward the queue cap). */
 export function isPendingUpload(job: ScanJob): boolean {
   return job.status === 'queued' || job.status === 'pending';
+}
+
+/**
+ * True when the job is waiting on the retry schedule (#604): queued (or
+ * reset to pending by a restart) with a next attempt time.
+ */
+export function isAwaitingRetry(job: ScanJob): boolean {
+  return isPendingUpload(job) && job.nextAttemptAt != null;
 }
 
 /**

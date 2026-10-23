@@ -68,7 +68,13 @@ describe('classifyScanError: every backend code maps to exactly one UI state', (
     ['503 scan_capacity', err(503, 'scan_capacity'), { kind: 'paused' }],
     ['503 ai_unavailable', err(503, 'ai_unavailable'), { kind: 'paused' }],
     ['503 ai_budget_reached', err(503, 'ai_budget_reached'), { kind: 'paused' }],
-    ['503 scan_unavailable', err(503, 'scan_unavailable'), { kind: 'paused' }],
+    // #604: the provider was unavailable (or sent a malformed reply, #572):
+    // retryable on the app's schedule, no longer `paused`.
+    [
+      '503 scan_unavailable',
+      err(503, 'scan_unavailable'),
+      { kind: 'unavailable', code: 'scan_unavailable' },
+    ],
     ['503 unknown detail', err(503, 'mystery'), { kind: 'generic' }],
     ['500', err(500, 'boom'), { kind: 'generic' }],
     ['no response (network)', { message: 'Network Error' }, { kind: 'generic' }],
@@ -175,6 +181,12 @@ describe('hasRefusedJobs', () => {
 
   it('still counts a job persisted by an older build with monthly_limit (#582, one release)', () => {
     expect(hasRefusedJobs([{ status: 'queued', error: 'monthly_limit' }])).toBe(true);
+  });
+
+  it('counts a photo waiting on the retry schedule (#604), so a full queue reads "limited"', () => {
+    const waiting = [{ status: 'queued', error: 'unavailable' }];
+    expect(hasRefusedJobs(waiting)).toBe(true);
+    expect(isScanningLimited(null, waiting)).toBe(true);
   });
 
   it('ignores other errors and jobs that are not queued', () => {

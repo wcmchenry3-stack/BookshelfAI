@@ -46,5 +46,7 @@
   "repeatAlreadyHaveMany": "이미 가지고 있는 책들입니다.",
   "repeatNotInLibrary": "전에 스캔했지만 라이브러리에 없습니다. 다시 추가할까요?",
   "repeatReAdd": "다시 추가",
-  "repeatNoMatch": "전에 이 사진에서 책을 찾지 못했습니다. 더 선명한 사진이나 다른 각도로 시도해 보세요."
+  "repeatNoMatch": "전에 이 사진에서 책을 찾지 못했습니다. 더 선명한 사진이나 다른 각도로 시도해 보세요.",
+  "scanFailedFinal": "이 스캔에 실패했습니다. 다시 시도하려면 '다시 시도'를 탭하세요.",
+  "scanFailedFinalRetry": "다시 시도"
 }

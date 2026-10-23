@@ -46,5 +46,7 @@
   "repeatAlreadyHaveMany": "Du hast diese Bücher schon.",
   "repeatNotInLibrary": "Das hast du schon gescannt, es ist aber nicht in deiner Bibliothek. Erneut hinzufügen?",
   "repeatReAdd": "Neu hinzufügen",
-  "repeatNoMatch": "Auf diesem Foto haben wir zuvor kein Buch gefunden. Versuche ein klareres Foto oder einen anderen Winkel."
+  "repeatNoMatch": "Auf diesem Foto haben wir zuvor kein Buch gefunden. Versuche ein klareres Foto oder einen anderen Winkel.",
+  "scanFailedFinal": "Scan fehlgeschlagen. Tippe auf „Wiederholen“, um es erneut zu versuchen.",
+  "scanFailedFinalRetry": "Wiederholen"
 }

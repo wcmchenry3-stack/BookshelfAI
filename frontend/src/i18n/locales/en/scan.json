@@ -68,5 +68,7 @@
   "repeatAlreadyHaveMany": "You already have these books.",
   "repeatNotInLibrary": "You scanned this before and it's not in your library. Re-add it?",
   "repeatReAdd": "Re-add",
-  "repeatNoMatch": "We couldn't find a book in this photo before. Try a clearer photo or a different angle."
+  "repeatNoMatch": "We couldn't find a book in this photo before. Try a clearer photo or a different angle.",
+  "scanFailedFinal": "This scan failed. Tap Retry to try again.",
+  "scanFailedFinalRetry": "Retry"
 }

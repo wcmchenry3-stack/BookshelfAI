@@ -11,6 +11,7 @@ import { useBanner } from '../../hooks/useBanner';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { isScanningLimited } from '../../lib/scanErrors';
+import { isAwaitingRetry } from '../../lib/scanJob';
 import { ScanStatusPanel } from '../../components/ScanStatusPanel';
 
 type InputMode = 'camera' | 'search';
@@ -258,7 +259,11 @@ export default function ScanScreen() {
       usage={usage}
       notice={scanNotice ?? null}
       onDismissNotice={dismissScanNotice ?? (() => {})}
-      onRetryNotice={pendingCount > 0 ? handleRetryNotice : undefined}
+      // No "Try again" while a photo waits on the retry schedule (#604): the
+      // queue waits for that photo's next attempt, so it would send nothing.
+      onRetryNotice={
+        pendingCount > 0 && !(jobs ?? []).some(isAwaitingRetry) ? handleRetryNotice : undefined
+      }
     />
   );
 

@@ -15,7 +15,12 @@
  *   429 enhanced_throttled     -> enhanced_refused (throttled; Retry-After: s
  *                                 until enough empty enhanced scans age out)
  *   503 scan_disabled | enhanced_scan_disabled | scan_capacity |
- *       ai_budget_reached | ai_unavailable | scan_unavailable -> paused
+ *       ai_budget_reached | ai_unavailable -> paused
+ *   503 scan_unavailable       -> unavailable (#604: the AI provider is out,
+ *                                 timed out, overloaded or sent a malformed
+ *                                 reply (#572); refunded server-side. The
+ *                                 only retryable outcome: the app retries the
+ *                                 photo on SCAN_RETRY_DELAYS_MS.)
  *   anything else              -> generic
  *
  * There is no monthly limit (#582): the server no longer sends 402
@@ -33,6 +38,8 @@ export type ScanUiState =
   | { kind: 'requests_daily_limit'; retryAfterSeconds?: number }
   | { kind: 'in_progress'; retryAfterSeconds: number }
   | { kind: 'paused'; enhancedOnly?: boolean }
+  /** Retryable (#604): the provider was unavailable; `code` is the server's detail. */
+  | { kind: 'unavailable'; code: string }
   | {
       kind: 'enhanced_refused';
       reason: EnhancedRefusalReason;
@@ -60,6 +67,8 @@ export const REFUSAL_ERRORS: readonly string[] = [
   'paused',
   'in_progress',
   'monthly_limit',
+  // #604: waiting on the retry schedule (503 scan_unavailable).
+  'unavailable',
 ];
 
 /**
@@ -102,8 +111,38 @@ export const PAUSED_CODES: readonly string[] = [
   // The service's daily AI budget is used up; Free scans pause until UTC
   // midnight (#531).
   'ai_budget_reached',
-  'scan_unavailable',
 ];
+
+/**
+ * Backend 503 `detail` codes for a provider that is unavailable right now
+ * (#604): an outage, timeout, 5xx or overload, and a malformed reply (#572),
+ * all sent as `scan_unavailable` after the server's own immediate retry. The
+ * only outcomes the app retries on its schedule. Kill switches, the AI budget
+ * and capacity stay `paused` (not retried).
+ */
+export const RETRYABLE_CODES: readonly string[] = ['scan_unavailable'];
+
+/**
+ * The retry schedule for a retryable outcome (#604), counted per photo: the
+ * wait before attempt 2, 3, 4 and 5. After attempt 5 fails the photo is
+ * failed. The one place these delays live.
+ */
+export const SCAN_RETRY_DELAYS_MS: readonly number[] = [
+  30 * 1000, // attempt 2 after 30 s
+  10 * 60 * 1000, // attempt 3 after 10 min
+  60 * 60 * 1000, // attempt 4 after 1 h
+  4 * 60 * 60 * 1000, // attempt 5 after 4 h
+];
+
+/**
+ * The longest wait on the schedule (4 h). No retry is ever scheduled further
+ * ahead: a saved next try time beyond it (clock moved back, corrupt data) is
+ * brought forward to it, and the retry timer never waits longer.
+ */
+export const MAX_SCAN_RETRY_DELAY_MS = Math.max(...SCAN_RETRY_DELAYS_MS);
+
+/** Attempts per photo before it is failed: the first try plus the schedule. */
+export const MAX_SCAN_ATTEMPTS = SCAN_RETRY_DELAYS_MS.length + 1;
 
 interface ErrorResponseLike {
   status?: number;
@@ -156,6 +195,9 @@ export function classifyScanError(err: unknown): ScanUiState {
     }
     return { kind: 'generic' };
   }
+  if (status === 503 && detail !== undefined && RETRYABLE_CODES.includes(detail)) {
+    return { kind: 'unavailable', code: detail };
+  }
   if (status === 503 && detail !== undefined && PAUSED_CODES.includes(detail)) {
     // Only enhanced scans are switched off; standard scans still work.
     return detail === 'enhanced_scan_disabled'
@@ -192,6 +234,9 @@ export function toScanNotice(
     case 'in_progress':
       return exhaustedRetries ? { kind: 'still_processing' } : null;
     case 'paused':
+    // #604: the short notice while the first retry is pending is the
+    // existing "paused" notice; later retries show nothing.
+    case 'unavailable':
       return { kind: 'paused' };
     default:
       return null;

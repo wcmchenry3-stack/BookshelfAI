@@ -46,5 +46,7 @@
   "repeatAlreadyHaveMany": "これらの本はすでにライブラリにあります。",
   "repeatNotInLibrary": "以前スキャンしましたが、ライブラリにありません。もう一度追加しますか？",
   "repeatReAdd": "再追加",
-  "repeatNoMatch": "この写真では以前、本が見つかりませんでした。より鮮明な写真や別の角度でお試しください。"
+  "repeatNoMatch": "この写真では以前、本が見つかりませんでした。より鮮明な写真や別の角度でお試しください。",
+  "scanFailedFinal": "このスキャンは失敗しました。「再試行」をタップしてもう一度お試しください。",
+  "scanFailedFinalRetry": "再試行"
 }
