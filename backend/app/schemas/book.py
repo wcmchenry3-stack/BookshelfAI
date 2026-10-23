@@ -67,6 +67,11 @@ class EnrichedBook(BaseModel):
     confidence: float  # 0–1, from image recognition
     already_in_library: bool = False
     editions: list[EditionPreview] = []
+    # Server signature over the catalog fields and the requesting user
+    # (#602, app/core/catalog_token.py). Opaque to the app, which posts it
+    # back unchanged with the book to POST /wishlist. Never stored in a
+    # scan record: every response signs afresh.
+    catalog_token: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

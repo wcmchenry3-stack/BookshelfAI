@@ -24,7 +24,11 @@ from app.schemas.user_book import (
     UserBookUpdate,
     WishlistRequest,
 )
-from app.services.wishlist import WishlistService
+from app.services.wishlist import CatalogTokenInvalidError, WishlistService
+
+# 422 detail when POST /wishlist would need a new catalog row but the book
+# carries no valid catalog token (#602).
+CATALOG_TOKEN_INVALID = "catalog_token_invalid"
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,13 @@ async def add_to_wishlist(
     db: AsyncSession = Depends(get_db),
 ) -> UserBook:
     service = WishlistService()
-    return await service.add(db, current_user.id, req)
+    try:
+        return await service.add(db, current_user.id, req)
+    except CatalogTokenInvalidError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=CATALOG_TOKEN_INVALID,
+        ) from None
 
 
 @router.get("/user-books", response_model=list[UserBookRead])

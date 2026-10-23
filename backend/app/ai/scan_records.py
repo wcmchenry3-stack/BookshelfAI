@@ -79,8 +79,13 @@ PURGE_MAX_BATCHES = 20
 _CANDIDATE_FIELDS = ("title", "author", "confidence", "isbn_13", "isbn_10")
 MAX_TEXT_LENGTH = 500
 # What a saved enriched book may hold: the EnrichedBook fields except the
-# per-user ones (book_id is always None on a scan; the library flag is live).
-_BOOK_FIELDS = frozenset(EnrichedBook.model_fields) - {"book_id", "already_in_library"}
+# per-user ones (book_id is always None on a scan; the library flag is live;
+# the catalog token, #602, is signed afresh on every response).
+_BOOK_FIELDS = frozenset(EnrichedBook.model_fields) - {
+    "book_id",
+    "already_in_library",
+    "catalog_token",
+}
 
 
 class ScanRecordError(ValueError):
