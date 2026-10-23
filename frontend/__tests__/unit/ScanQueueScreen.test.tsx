@@ -387,6 +387,45 @@ describe('Retry respects one photo at a time (#604)', () => {
     expect(mockPost).toHaveBeenCalledTimes(2);
   });
 
+  it('does not send a retried photo when a drained text search ends before the photo being sent', async () => {
+    let finishPhoto!: (v: unknown) => void;
+    let finishText!: (v: unknown) => void;
+    mockPost.mockReturnValueOnce(new Promise((r) => (finishPhoto = r)));
+    mockPost.mockResolvedValue(okBody);
+    mockGet.mockReturnValueOnce(new Promise((r) => (finishText = r)));
+    const hook = await setup([
+      job('text', { type: 'text', status: 'queued', query: 'Dune', imageUri: undefined }),
+      job('bad', { failedAt: NOW - 1000, attempts: 5, retryCount: 2 }),
+    ]);
+
+    await act(async () => {
+      void hook.result.current.startScan('image', 'file:///docs/scan-queue/first.jpg');
+      hook.result.current.resumeQueue();
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await hook.result.current.restartScanSchedule('bad');
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishText({ data: [] });
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+    // The photo is still being sent: the drain leaves the retry waiting.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishPhoto(okBody);
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+    expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+
   it('sends a retried photo now when nothing else is going on', async () => {
     mockPost.mockResolvedValue(okBody);
     const hook = await setup([job('bad', { failedAt: NOW - 1000 })]);

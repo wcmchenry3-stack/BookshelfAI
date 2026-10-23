@@ -143,6 +143,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       ),
     []
   );
+  // Whether a photo is being uploaded right now (past its connectivity
+  // check), which a drain must not send another photo alongside.
+  const imageUploading = useCallback(
+    () =>
+      [...inFlightRef.current].some((id) => {
+        const j = jobsRef.current.find((x) => x.id === id);
+        return j?.type === 'image' && j.status === 'searching';
+      }),
+    []
+  );
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
   // Set when the initial load fails, so the persist effect below doesn't
   // immediately overwrite storage with the empty `jobs` state it starts
@@ -251,7 +261,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       } finally {
         drainingRef.current = false;
       }
-    } while (drainAgainRef.current);
+      // Left for the photo being sent, whose completion starts the next drain.
+    } while (drainAgainRef.current && !imageUploading());
 
     // One pass over the queue; true when a photo was skipped for another
     // photo's retry wait and no photo is waiting any more.
@@ -302,6 +313,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           !isAwaitingRetry(current) &&
           waitingForRetry();
         if (heldByWait) skippedForWait = true;
+        // One photo at a time: a photo uploading outside this drain
+        // (startScan, retryScan) holds back the drain's photos until it
+        // finishes, which then drains again (#605).
+        if (current?.type === 'image' && !inFlightRef.current.has(current.id) && imageUploading()) {
+          drainAgainRef.current = true;
+          continue;
+        }
         if (
           !current ||
           (current.status !== 'queued' && current.status !== 'pending') ||
