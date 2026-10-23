@@ -150,6 +150,7 @@ SCAN_FREE_DAILY_CEILING_MICROS=10000000  # 0..1000000000 micro-dollars/UTC day, 
 ```bash
 ENVIRONMENT=development
 CORS_ORIGINS=http://localhost:8081,exp://localhost:8081
+UNVERIFIED_BOOKS_PER_USER_MAX=200      # 1..10000, private unverified entries per user (#616); restart to change
 ```
 In dev, `CORS_ORIGINS` must include the Expo dev-server origin. The wildcard `*` is blocked by a validator in `app/core/config.py`.
 
