@@ -31,7 +31,7 @@ Every endpoint is rate-limited via slowapi. The `limiter` instance lives in `app
 | `POST /auth/google`, `POST /auth/refresh` | 5/min | `rate_limit_auth` |
 | `POST /scan` | 10/min | `rate_limit_scan` |
 | `GET /books/search` | 30/min | `rate_limit_books_search` |
-| `POST /wishlist`, `POST /purchased`, `PATCH`, `DELETE /user-books/*` | 60/min | `rate_limit_writes` |
+| `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH`, `DELETE /user-books/*` | 60/min | `rate_limit_writes` |
 | `GET /user-books`, `GET /auth/me` | 120/min | `rate_limit_reads` |
 
 All limits are env-var overridable via `Settings` in `app/core/config.py`.

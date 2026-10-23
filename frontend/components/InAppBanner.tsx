@@ -21,9 +21,14 @@ export function InAppBanner() {
         useNativeDriver: true,
       }).start();
 
-      timerRef.current = setTimeout(() => {
-        dismiss();
-      }, banner.duration ?? DEFAULT_DISPLAY_DURATION);
+      // A banner that carries an action stays until the user acts or taps it
+      // away: a timed-out button is unreachable for a screen-reader user, who
+      // may not find it before it disappears.
+      if (!banner.actions || banner.actions.length === 0) {
+        timerRef.current = setTimeout(() => {
+          dismiss();
+        }, banner.duration ?? DEFAULT_DISPLAY_DURATION);
+      }
     } else {
       translateY.setValue(-120);
     }

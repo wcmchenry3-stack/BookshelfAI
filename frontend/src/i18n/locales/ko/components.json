@@ -10,10 +10,31 @@
     "noneOfTheseA11y": "해당하는 책이 없습니다",
     "ownedSameEdition": "이미 가지고 있는 책입니다",
     "ownedOtherEdition": "이 책의 다른 판을 이미 가지고 있습니다",
-    "ownedEditionUnknown": "이미 가지고 있는 책입니다"
+    "ownedEditionUnknown": "이미 가지고 있는 책입니다",
+    "notInCatalog": "카탈로그에 없음",
+    "addYourself": "직접 추가",
+    "addYourselfA11y": "{{title}} 직접 추가"
   },
   "themeToggle": {
     "toDark": "다크 모드로 전환",
     "toLight": "라이트 모드로 전환"
+  },
+  "addUnverified": {
+    "title": "직접 추가",
+    "intro": "이 책을 카탈로그에서 찾지 못했습니다. 정보를 확인하고 저장하세요. 나만 볼 수 있으며 미확인으로 표시됩니다.",
+    "titleLabel": "제목",
+    "authorLabel": "저자",
+    "isbnLabel": "ISBN(선택)",
+    "save": "저장",
+    "saveHint": "이 책을 미확인으로 위시리스트에 추가합니다",
+    "cancel": "취소",
+    "closeA11y": "양식 닫기",
+    "titleRequired": "제목을 입력하세요",
+    "authorRequired": "저자를 입력하세요",
+    "isbnInvalid": "유효하지 않은 ISBN입니다. 수정하거나 비워 두세요.",
+    "invalid": "정보를 확인하고 다시 시도하세요.",
+    "duplicate": "이미 직접 추가한 책입니다.",
+    "limitReached": "직접 추가할 수 있는 책 수의 한도에 도달했습니다.",
+    "failed": "책을 저장하지 못했습니다. 다시 시도하세요."
   }
 }

@@ -6,5 +6,7 @@
   "coverAlt": "כריכה של {{title}}",
   "offlineTitle": "אין חיבור",
   "requiresConnection": "פעולה זו דורשת חיבור לאינטרנט.",
-  "offlineEditNotice": "אין חיבור לאינטרנט. התחבר כדי לערוך את הספרייה שלך."
+  "offlineEditNotice": "אין חיבור לאינטרנט. התחבר כדי לערוך את הספרייה שלך.",
+  "unverified": "לא מאומת",
+  "unverifiedA11y": "לא מאומת: נוסף על ידך, לא נמצא בקטלוג"
 }

@@ -10,10 +10,31 @@
     "noneOfTheseA11y": "Keines dieser Bücher passt",
     "ownedSameEdition": "Dieses Buch hast du bereits",
     "ownedOtherEdition": "Du hast dieses Buch bereits in einer anderen Ausgabe",
-    "ownedEditionUnknown": "Dieses Buch hast du bereits"
+    "ownedEditionUnknown": "Dieses Buch hast du bereits",
+    "notInCatalog": "Nicht in unserem Katalog",
+    "addYourself": "Selbst hinzufügen",
+    "addYourselfA11y": "{{title}} selbst hinzufügen"
   },
   "themeToggle": {
     "toDark": "Zu dunklem Modus wechseln",
     "toLight": "Zu hellem Modus wechseln"
+  },
+  "addUnverified": {
+    "title": "Selbst hinzufügen",
+    "intro": "Wir haben dieses Buch nicht in unserem Katalog gefunden. Prüfe die Angaben und speichere es. Nur du siehst es, als Ungeprüft markiert.",
+    "titleLabel": "Titel",
+    "authorLabel": "Autor",
+    "isbnLabel": "ISBN (optional)",
+    "save": "Speichern",
+    "saveHint": "Fügt das Buch deiner Wunschliste hinzu, als Ungeprüft markiert",
+    "cancel": "Abbrechen",
+    "closeA11y": "Formular schließen",
+    "titleRequired": "Gib einen Titel ein",
+    "authorRequired": "Gib einen Autor ein",
+    "isbnInvalid": "Diese ISBN ist ungültig. Korrigiere sie oder lass das Feld leer.",
+    "invalid": "Prüfe die Angaben und versuche es erneut.",
+    "duplicate": "Du hast dieses Buch bereits selbst hinzugefügt.",
+    "limitReached": "Du hast die Höchstzahl selbst hinzugefügter Bücher erreicht.",
+    "failed": "Speichern fehlgeschlagen. Versuche es erneut."
   }
 }

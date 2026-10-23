@@ -11,6 +11,7 @@ from app.models.scan_record import ScanRecord
 from app.models.scan_usage import ScanUsageDaily
 from app.models.user import User
 from app.models.user_book import UserBook
+from app.models.user_custom_book import UserCustomBook
 
 __all__ = [
     "AIEnhancedZeroResult",
@@ -27,4 +28,5 @@ __all__ = [
     "ScanUsageDaily",
     "User",
     "UserBook",
+    "UserCustomBook",
 ]

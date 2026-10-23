@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "{{count}} boeken staan al in je bibliotheek.",
   "addedAndOwnedMessage": "{{added}} toegevoegd. {{owned}} stond al in je bibliotheek.",
   "addedSomeOwnedMessage": "{{added}} toegevoegd, {{owned}} al in je bibliotheek, {{failed}} niet opgeslagen. Tik op Toevoegen.",
-  "notInCatalogMessage": "We hebben dit boek niet in onze catalogus gevonden, dus het kan nog niet worden toegevoegd. Zoek het op titel.",
-  "notInCatalogManyMessage": "We hebben deze {{count}} boeken niet in onze catalogus gevonden, dus ze kunnen nog niet worden toegevoegd. Zoek op titel.",
+  "notInCatalogMessage": "We hebben dit boek niet in onze catalogus gevonden. Zoek op titel of voeg het zelf toe.",
+  "notInCatalogManyMessage": "We hebben deze {{count}} boeken niet in onze catalogus gevonden. Zoek op titel of voeg ze zelf toe.",
   "catalogTokenInvalidMessage": "Dit resultaat is verouderd. Scan het boek opnieuw of zoek het op.",
   "catalogTokenInvalidManyMessage": "Deze {{count}} resultaten zijn verouderd. Scan de boeken opnieuw of zoek ze op.",
   "notSavedSummaryMessage": "{{added}} toegevoegd, {{notSaved}} niet opgeslagen.",
@@ -86,5 +86,7 @@
   "retryOthersHint": "Tik op Toevoegen om de rest opnieuw te proberen.",
   "notSavedOwnedOnlyMessage": "{{owned}} al in je bibliotheek, {{notSaved}} niet opgeslagen.",
   "notSavedOnlyMessage": "{{notSaved}} niet opgeslagen.",
-  "ownedNotSavedRetryMessage": "{{owned}} al in je bibliotheek, {{failed}} niet opgeslagen. Tik op Toevoegen."
+  "ownedNotSavedRetryMessage": "{{owned}} al in je bibliotheek, {{failed}} niet opgeslagen. Tik op Toevoegen.",
+  "addItYourself": "Zelf toevoegen",
+  "unverifiedSavedMessage": "{{title}} is als niet geverifieerd aan je verlanglijst toegevoegd."
 }

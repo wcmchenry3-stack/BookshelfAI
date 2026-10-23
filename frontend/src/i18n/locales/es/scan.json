@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "{{count}} libros ya están en tu biblioteca.",
   "addedAndOwnedMessage": "Añadidos: {{added}}. Ya en tu biblioteca: {{owned}}.",
   "addedSomeOwnedMessage": "Añadidos: {{added}}. Ya en tu biblioteca: {{owned}}. Sin guardar: {{failed}}. Toca Añadir para reintentar.",
-  "notInCatalogMessage": "No encontramos este libro en nuestro catálogo, así que aún no se puede añadir. Prueba a buscarlo por título.",
-  "notInCatalogManyMessage": "No encontramos estos {{count}} libros en nuestro catálogo, así que aún no se pueden añadir. Prueba a buscarlos por título.",
+  "notInCatalogMessage": "No encontramos este libro en nuestro catálogo. Búscalo por título o añádelo tú.",
+  "notInCatalogManyMessage": "No encontramos estos {{count}} libros en nuestro catálogo. Búscalos por título o añádelos tú.",
   "catalogTokenInvalidMessage": "Este resultado está desactualizado. Escanea o busca el libro de nuevo.",
   "catalogTokenInvalidManyMessage": "Estos {{count}} resultados están desactualizados. Escanea o busca los libros de nuevo.",
   "notSavedSummaryMessage": "{{added}} añadidos, {{notSaved}} sin guardar.",
@@ -86,5 +86,7 @@
   "retryOthersHint": "Toca Añadir para reintentar el resto.",
   "notSavedOwnedOnlyMessage": "{{owned}} ya en tu biblioteca, {{notSaved}} sin guardar.",
   "notSavedOnlyMessage": "{{notSaved}} sin guardar.",
-  "ownedNotSavedRetryMessage": "{{owned}} ya en tu biblioteca, {{failed}} sin guardar. Toca Añadir para reintentar."
+  "ownedNotSavedRetryMessage": "{{owned}} ya en tu biblioteca, {{failed}} sin guardar. Toca Añadir para reintentar.",
+  "addItYourself": "Añádelo tú",
+  "unverifiedSavedMessage": "{{title}} se añadió a tu lista de deseos sin verificar."
 }

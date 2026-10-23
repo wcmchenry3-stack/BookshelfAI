@@ -6,5 +6,7 @@
   "coverAlt": "Cover of {{title}}",
   "offlineTitle": "You're offline",
   "requiresConnection": "This action requires an internet connection.",
-  "offlineEditNotice": "You're offline. Go online to edit your library."
+  "offlineEditNotice": "You're offline. Go online to edit your library.",
+  "unverified": "Unverified",
+  "unverifiedA11y": "Unverified: added by you, not found in the catalog"
 }

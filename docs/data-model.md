@@ -14,6 +14,8 @@ erDiagram
   USERS |o--o{ AI_USAGE : "provider calls (set null on delete)"
   USERS ||--o{ AI_ENHANCED_ZERO_RESULTS : "recorded empty enhanced scans"
   USERS ||--o{ SCAN_RECORDS : "scan records"
+  USERS ||--o{ USER_CUSTOM_BOOKS : "own unverified entries (#616)"
+  USER_CUSTOM_BOOKS ||--o| USER_BOOKS : "held by (cascade)"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
@@ -56,7 +58,8 @@ erDiagram
   USER_BOOKS {
     uuid id PK
     uuid user_id FK "indexed, cascade delete"
-    uuid book_id FK "restrict delete"
+    uuid book_id FK "restrict delete; null for an unverified entry"
+    uuid custom_book_id FK,UK "nullable, cascade delete (#616)"
     uuid edition_id FK "optional"
     string status "indexed, check constraint"
     timestamptz wishlisted_at
@@ -236,7 +239,8 @@ The user's relationship to a Book — this is the "bookshelf" row.
 |---|---|---|
 | `id` | UUID PK | generated |
 | `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | |
-| `book_id` | UUID FK → `books.id`, restrict delete, not null | |
+| `book_id` | UUID FK → `books.id`, restrict delete, nullable | the catalog book; `NULL` only for an unverified entry (#616) |
+| `custom_book_id` | UUID FK → `user_custom_books.id`, cascade delete, nullable, unique (`uq_user_books_custom_book`) | the user's own unverified entry (#616); `ck_user_books_one_book` requires exactly one of `book_id` / `custom_book_id` |
 | `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet |
 | `status` | string, indexed, not null | check constraint: `wishlisted`, `purchased`, `reading`, `read` |
 | `wishlisted_at` | timestamptz, nullable | set when status first enters `wishlisted` |
@@ -247,7 +251,22 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `rating` | int, nullable | check constraint: 1..5 |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
-**Uniqueness:** `(user_id, book_id)` is a unique constraint (`uq_user_books_user_book`). A user can have at most one tracking row per work — this is what dedup is enforcing. Different editions of the same work still share one `UserBook`; changing edition updates `edition_id` in place.
+**Uniqueness:** `(user_id, book_id)` is a unique constraint (`uq_user_books_user_book`). A user can have at most one tracking row per work — this is what dedup is enforcing. Different editions of the same work still share one `UserBook`; changing edition updates `edition_id` in place. (Unverified rows have `book_id` NULL, which the constraint does not compare; their duplicates are refused by `UnverifiedBookService`.)
+
+### `user_custom_books` (`backend/app/models/user_custom_book.py`)
+
+Unverified entries (#616, migration 0016): books the user added themselves because neither Open Library nor Google Books found them. **Private to the creator and outside the shared catalog**: nothing that reads `books` / `editions` (catalog lookups, the library check, `WishlistService`) can see them, and only the creator's own `user_books` row references one.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | generated; shown as `book.id` in `UserBookRead` |
+| `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | the creator |
+| `title` | string, not null | check: 1–500 characters |
+| `author` | string, not null | check: 1–500 characters |
+| `isbn_13` | string, nullable | the ISBN the user typed, normalised to ISBN-13 (check: 13 characters). **Not unique and never matched against anyone else's data**: it never claims `editions.isbn_13` |
+| `created_at` / `updated_at` | timestamptz, server defaults | |
+
+No provider IDs, cover, description or edition. At most `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) rows per user; each row is at most ~1.1 KB (typically ~150 B), so ~220 KB per user worst case, and writes are rate limited (`rate_limit_writes`). Rows go with the account (cascade) and with their library row (`DELETE /user-books/{id}` deletes both). Account deletion and data export (not built yet) must include this table. Downgrading 0016 deletes every unverified entry.
 
 ### `refresh_tokens` (`backend/app/models/refresh_token.py`)
 

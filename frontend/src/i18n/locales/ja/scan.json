@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "{{count}}冊はすでにライブラリにあります。",
   "addedAndOwnedMessage": "{{added}}冊を追加しました。{{owned}}冊はすでにライブラリにあります。",
   "addedSomeOwnedMessage": "{{added}}冊を追加、{{owned}}冊はライブラリにあり、{{failed}}冊は保存できませんでした。追加で再試行。",
-  "notInCatalogMessage": "この本はカタログに見つからなかったため、まだ追加できません。タイトルで検索してみてください。",
-  "notInCatalogManyMessage": "この{{count}}冊はカタログに見つからなかったため、まだ追加できません。タイトルで検索してみてください。",
+  "notInCatalogMessage": "この本はカタログに見つかりませんでした。タイトルで検索するか、自分で追加してください。",
+  "notInCatalogManyMessage": "この{{count}}冊はカタログに見つかりませんでした。タイトルで検索するか、自分で追加してください。",
   "catalogTokenInvalidMessage": "この結果は古くなっています。もう一度スキャンまたは検索してください。",
   "catalogTokenInvalidManyMessage": "この{{count}}件の結果は古くなっています。もう一度スキャンまたは検索してください。",
   "notSavedSummaryMessage": "{{added}}冊を追加、{{notSaved}}冊は未保存です。",
@@ -86,5 +86,7 @@
   "retryOthersHint": "「追加」をタップして残りを再試行。",
   "notSavedOwnedOnlyMessage": "{{owned}}冊はライブラリにあり、{{notSaved}}冊は未保存です。",
   "notSavedOnlyMessage": "{{notSaved}}冊は未保存です。",
-  "ownedNotSavedRetryMessage": "{{owned}}冊はライブラリにあり、{{failed}}冊は保存できませんでした。追加で再試行。"
+  "ownedNotSavedRetryMessage": "{{owned}}冊はライブラリにあり、{{failed}}冊は保存できませんでした。追加で再試行。",
+  "addItYourself": "自分で追加",
+  "unverifiedSavedMessage": "{{title}}を「未確認」としてウィッシュリストに追加しました。"
 }

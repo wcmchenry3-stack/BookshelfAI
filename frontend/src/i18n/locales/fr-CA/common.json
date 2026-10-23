@@ -6,5 +6,7 @@
   "coverAlt": "Couverture de {{title}}",
   "offlineTitle": "Vous êtes hors ligne",
   "requiresConnection": "Cette action nécessite une connexion Internet.",
-  "offlineEditNotice": "Vous êtes hors ligne. Reconnectez-vous pour modifier votre bibliothèque."
+  "offlineEditNotice": "Vous êtes hors ligne. Reconnectez-vous pour modifier votre bibliothèque.",
+  "unverified": "Non vérifié",
+  "unverifiedA11y": "Non vérifié : ajouté par vous, absent du catalogue"
 }

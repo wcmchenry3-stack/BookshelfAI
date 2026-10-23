@@ -16,6 +16,7 @@
   },
   "filterBy": "تصفية حسب {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — غير موثّق",
   "bookCardHint": "اضغط لرؤية التفاصيل والخيارات",
   "markAs": "وضع كـ {{status}}",
   "markAsA11y": "وضع كـ {{status}}",

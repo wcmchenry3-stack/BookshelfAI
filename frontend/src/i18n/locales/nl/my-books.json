@@ -16,6 +16,7 @@
   },
   "filterBy": "Filter op {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Niet geverifieerd",
   "bookCardHint": "Tik voor details en opties",
   "markAs": "Markeer als {{status}}",
   "markAsA11y": "Markeer als {{status}}",

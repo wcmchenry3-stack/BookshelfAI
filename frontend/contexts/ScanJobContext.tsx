@@ -35,6 +35,10 @@ import {
   type ScanResponse,
 } from '../lib/scanJob';
 import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../lib/scanJobStorage';
+import { draftFromBook, type UnverifiedDraft } from '../lib/unverified';
+
+/** An "Add it yourself" form waiting to be shown, with its own id (#616). */
+export type PendingUnverifiedDraft = UnverifiedDraft & { id: string };
 
 const MAX_RETRIES = 3;
 const QUEUE_DRAIN_DELAY = 2000;
@@ -79,6 +83,22 @@ export interface ScanJobContextValue {
   requestEnhancedScan: (jobId: string) => void;
   /** Add the books ticked in the review checklist to the wishlist. */
   handleAddBooks: (books: EnrichedBook[]) => Promise<void>;
+  /**
+   * "Add it yourself" forms still to show (#616), one per book the catalog
+   * could not find, pre-filled from the scan; the first is shown.
+   */
+  unverifiedDrafts: PendingUnverifiedDraft[];
+  /** Open the "Add it yourself" form for these books (no catalog match). */
+  addYourself: (books: EnrichedBook[]) => void;
+  /**
+   * A form was saved: take its book out of the scan it came from, show the
+   * next form, if any, and confirm. `draftId` is the draft the save started
+   * from (default: the one shown), so a save that completes after its form
+   * was closed never touches another draft.
+   */
+  unverifiedSaved: (title: string, draftId?: string) => void;
+  /** Close the "Add it yourself" forms. */
+  dismissUnverified: () => void;
 }
 
 export const ScanJobContext = createContext<ScanJobContextValue>({
@@ -101,7 +121,16 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   purgeExpiredFailedJobs: () => {},
   requestEnhancedScan: () => {},
   handleAddBooks: async () => {},
+  unverifiedDrafts: [],
+  addYourself: () => {},
+  unverifiedSaved: () => {},
+  dismissUnverified: () => {},
 });
+
+/** Identifies a scan result within its job (title and author, as read). */
+function candidateKey(book: EnrichedBook): string {
+  return `${book.title}\u0000${book.author}`;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -114,6 +143,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [enhancedScansRemaining, setEnhancedScansRemaining] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const [usageRefreshKey, setUsageRefreshKey] = useState(0);
+  const [unverifiedDrafts, setUnverifiedDrafts] = useState<PendingUnverifiedDraft[]>([]);
+  const reviewingJobIdRef = useRef<string | null>(null);
+  // The job whose review to reopen after the "Add it yourself" forms close.
+  const reopenReviewJobIdRef = useRef<string | null>(null);
+  // Where each draft's book came from, by draft id. Kept after the forms
+  // close, so a save still in flight can take its own book out of its scan.
+  const draftSourcesRef = useRef(new Map<string, { jobId: string | null; key: string }>());
+  const nextDraftIdRef = useRef(0);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
   // The ref is the source of truth: every change goes through setJobsAndRef,
   // which updates the ref first and then hands React the same list. There is
@@ -645,6 +682,73 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     [setJobsAndRef]
   );
 
+  // Keep the review id readable from long-lived closures (the banner action).
+  useEffect(() => {
+    reviewingJobIdRef.current = reviewingJobId;
+  }, [reviewingJobId]);
+
+  // "Add it yourself" (#616). One sheet at a time: close the review picker
+  // WITHOUT dismissing its job (dismissReview would delete the whole job and
+  // photo). A book leaves the job only once its form is saved, so cancelling
+  // the form brings the review back with that book still in it.
+  const addYourself = useCallback((books: EnrichedBook[]) => {
+    if (books.length === 0) return;
+    const jobId = reviewingJobIdRef.current;
+    const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
+    setReviewingJobId(null);
+    reopenReviewJobIdRef.current = job ? job.id : null;
+    setUnverifiedDrafts(
+      books.map((b) => {
+        nextDraftIdRef.current += 1;
+        const id = `draft-${nextDraftIdRef.current}`;
+        draftSourcesRef.current.set(id, { jobId: job ? job.id : null, key: candidateKey(b) });
+        return { ...draftFromBook(b), id };
+      })
+    );
+  }, []);
+
+  // When the forms are done, show the review again if the job still has
+  // books; a job whose every book was saved this way is finished.
+  useEffect(() => {
+    if (unverifiedDrafts.length > 0) return;
+    const jobId = reopenReviewJobIdRef.current;
+    if (!jobId) return;
+    reopenReviewJobIdRef.current = null;
+    const job = jobsRef.current.find((j) => j.id === jobId);
+    if (!job) return;
+    if ((job.results?.length ?? 0) > 0) setReviewingJobId(jobId);
+    else if (job.status === 'complete') dismissJob(jobId);
+  }, [unverifiedDrafts, dismissJob]);
+
+  const dismissUnverified = useCallback(() => setUnverifiedDrafts([]), []);
+
+  const unverifiedDraftsRef = useRef(unverifiedDrafts);
+  useEffect(() => {
+    unverifiedDraftsRef.current = unverifiedDrafts;
+  }, [unverifiedDrafts]);
+
+  const unverifiedSaved = useCallback(
+    (title: string, draftId?: string) => {
+      const id = draftId ?? unverifiedDraftsRef.current[0]?.id;
+      const source = id ? draftSourcesRef.current.get(id) : undefined;
+      if (id) draftSourcesRef.current.delete(id);
+      const job = source?.jobId ? jobsRef.current.find((j) => j.id === source.jobId) : undefined;
+      if (job && source) {
+        updateJob(job.id, {
+          results: (job.results ?? []).filter((b) => candidateKey(b) !== source.key),
+        });
+      }
+      // Only that draft leaves the queue; a stale save leaves others alone.
+      setUnverifiedDrafts((prev) => prev.filter((d) => d.id !== id));
+      showBanner({
+        message: t('unverifiedSavedMessage', { title }),
+        type: 'success',
+        duration: 4000,
+      });
+    },
+    [showBanner, t, updateJob]
+  );
+
   const handleAddBooks = useCallback(
     async (books: EnrichedBook[]) => {
       if (books.length === 0) return;
@@ -731,14 +835,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           });
         }
       }
-      // Keep only the books a retry could save; owned and refused books are
-      // done with too.
+      // Keep only the books a retry could save; owned and stale books are
+      // done with. While the picker stays open (something is retryable) a
+      // book no catalog matched stays too, so its "Add it yourself" button
+      // remains reachable (#616).
+      const kept = books.filter((b) => retryable.includes(b) || notInCatalog.includes(b));
       if (jobId && retryable.length < books.length) {
         if (retryable.length === 0) {
           dismissJob(jobId);
           setReviewingJobId(null);
         } else {
-          updateJob(jobId, { results: retryable });
+          updateJob(jobId, { results: kept });
         }
       }
       // Count only the books actually added; say how many were already
@@ -805,9 +912,15 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         type: 'error',
         duration: Math.min(12000, Math.max(6000, message.length * 60)),
         numberOfLines: 0,
+        // Books no catalog matched can still be added as the user's own
+        // unverified entries (#616).
+        actions:
+          notInCatalog.length > 0
+            ? [{ label: t('addItYourself'), onPress: () => addYourself(notInCatalog) }]
+            : undefined,
       });
     },
-    [reviewingJobId, dismissJob, updateJob, showBanner, t]
+    [reviewingJobId, dismissJob, updateJob, showBanner, t, addYourself]
   );
 
   // Keep executeScan in a ref so useCallbacks always call the latest version
@@ -1317,6 +1430,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
+      unverifiedDrafts,
+      addYourself,
+      unverifiedSaved,
+      dismissUnverified,
     }),
     [
       jobs,
@@ -1338,6 +1455,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
+      unverifiedDrafts,
+      addYourself,
+      unverifiedSaved,
+      dismissUnverified,
     ]
   );
 

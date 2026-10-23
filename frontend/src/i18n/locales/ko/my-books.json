@@ -16,6 +16,7 @@
   },
   "filterBy": "{{label}}별 필터",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 미확인",
   "bookCardHint": "탭하여 세부정보 보기",
   "markAs": "{{status}}로 표시",
   "markAsA11y": "{{status}}로 표시",

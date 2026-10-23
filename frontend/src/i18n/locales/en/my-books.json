@@ -16,6 +16,7 @@
   },
   "filterBy": "Filter by {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Unverified",
   "bookCardHint": "Tap to see details and options",
   "markAs": "Mark as {{status}}",
   "markAsA11y": "Mark as {{status}}",

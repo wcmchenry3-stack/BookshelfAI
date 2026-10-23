@@ -10,10 +10,31 @@
     "noneOfTheseA11y": "אף אחד מהספרים לא מתאים",
     "ownedSameEdition": "הספר הזה כבר אצלך",
     "ownedOtherEdition": "הספר הזה כבר אצלך במהדורה אחרת",
-    "ownedEditionUnknown": "הספר הזה כבר אצלך"
+    "ownedEditionUnknown": "הספר הזה כבר אצלך",
+    "notInCatalog": "לא בקטלוג שלנו",
+    "addYourself": "הוסף בעצמך",
+    "addYourselfA11y": "הוסף את {{title}} בעצמך"
   },
   "themeToggle": {
     "toDark": "החלף למצב כהה",
     "toLight": "החלף למצב בהיר"
+  },
+  "addUnverified": {
+    "title": "הוסף בעצמך",
+    "intro": "לא מצאנו את הספר הזה בקטלוג שלנו. בדוק את הפרטים ושמור אותו. רק אתה תראה אותו, מסומן כלא מאומת.",
+    "titleLabel": "שם הספר",
+    "authorLabel": "מחבר",
+    "isbnLabel": "ISBN (לא חובה)",
+    "save": "שמירה",
+    "saveHint": "מוסיף את הספר לרשימת המשאלות, מסומן כלא מאומת",
+    "cancel": "ביטול",
+    "closeA11y": "סגירת הטופס",
+    "titleRequired": "הזן שם ספר",
+    "authorRequired": "הזן שם מחבר",
+    "isbnInvalid": "ה-ISBN הזה לא תקין. תקן אותו או השאר ריק.",
+    "invalid": "בדוק את הפרטים ונסה שוב.",
+    "duplicate": "כבר הוספת את הספר הזה בעצמך.",
+    "limitReached": "הגעת למגבלת הספרים שאפשר להוסיף בעצמך.",
+    "failed": "לא ניתן לשמור את הספר. נסה שוב."
   }
 }

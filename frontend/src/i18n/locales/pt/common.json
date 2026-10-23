@@ -6,5 +6,7 @@
   "coverAlt": "Capa de {{title}}",
   "offlineTitle": "Você está offline",
   "requiresConnection": "Esta ação requer uma conexão com a internet.",
-  "offlineEditNotice": "Você está offline. Conecte-se para editar sua biblioteca."
+  "offlineEditNotice": "Você está offline. Conecte-se para editar sua biblioteca.",
+  "unverified": "Não verificado",
+  "unverifiedA11y": "Não verificado: adicionado por você, fora do catálogo"
 }

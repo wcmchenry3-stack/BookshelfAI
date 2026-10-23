@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "{{count}}권은 이미 내 서재에 있습니다.",
   "addedAndOwnedMessage": "{{added}}권을 추가했습니다. {{owned}}권은 이미 내 서재에 있습니다.",
   "addedSomeOwnedMessage": "{{added}}권 추가, {{owned}}권은 이미 서재에 있음, {{failed}}권 저장 실패. 추가를 눌러 다시 시도하세요.",
-  "notInCatalogMessage": "이 책을 카탈로그에서 찾지 못해 아직 추가할 수 없습니다. 제목으로 검색해 보세요.",
-  "notInCatalogManyMessage": "이 책 {{count}}권을 카탈로그에서 찾지 못해 아직 추가할 수 없습니다. 제목으로 검색해 보세요.",
+  "notInCatalogMessage": "이 책을 카탈로그에서 찾지 못했습니다. 제목으로 검색하거나 직접 추가하세요.",
+  "notInCatalogManyMessage": "이 책 {{count}}권을 카탈로그에서 찾지 못했습니다. 제목으로 검색하거나 직접 추가하세요.",
   "catalogTokenInvalidMessage": "이 결과는 오래되었습니다. 책을 다시 스캔하거나 검색해 주세요.",
   "catalogTokenInvalidManyMessage": "이 결과 {{count}}건은 오래되었습니다. 책을 다시 스캔하거나 검색해 주세요.",
   "notSavedSummaryMessage": "{{added}}권 추가, {{notSaved}}권 저장 안 됨.",
@@ -86,5 +86,7 @@
   "retryOthersHint": "추가를 눌러 나머지를 다시 시도하세요.",
   "notSavedOwnedOnlyMessage": "{{owned}}권은 이미 서재에 있음, {{notSaved}}권 저장 안 됨.",
   "notSavedOnlyMessage": "{{notSaved}}권 저장 안 됨.",
-  "ownedNotSavedRetryMessage": "{{owned}}권은 이미 서재에 있음, {{failed}}권 저장 실패. 추가를 눌러 다시 시도하세요."
+  "ownedNotSavedRetryMessage": "{{owned}}권은 이미 서재에 있음, {{failed}}권 저장 실패. 추가를 눌러 다시 시도하세요.",
+  "addItYourself": "직접 추가",
+  "unverifiedSavedMessage": "{{title}}을(를) 미확인으로 위시리스트에 추가했습니다."
 }

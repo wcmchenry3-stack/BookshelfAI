@@ -42,6 +42,9 @@ def _make_user_book(**overrides):
     ub.notes = None
     ub.rating = None
     ub.book = book
+    # A catalog entry. A MagicMock would otherwise answer with a (truthy)
+    # mock here, which UserBookRead reads as "this is an unverified entry".
+    ub.custom_book_id = None
     ub.edition = None
     ub.created_at = NOW
     ub.updated_at = NOW

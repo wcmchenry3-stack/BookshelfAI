@@ -23,7 +23,10 @@
     "noCreditsLeft": "No enhanced scans left",
     "ownedSameEdition": "You already have this book",
     "ownedOtherEdition": "You already have this book in another edition",
-    "ownedEditionUnknown": "You already have this book"
+    "ownedEditionUnknown": "You already have this book",
+    "notInCatalog": "Not in our catalog",
+    "addYourself": "Add it yourself",
+    "addYourselfA11y": "Add {{title}} yourself"
   },
   "themeToggle": {
     "toDark": "Switch to dark mode",
@@ -31,5 +34,23 @@
   },
   "inAppBanner": {
     "dismiss": "Dismiss"
+  },
+  "addUnverified": {
+    "title": "Add it yourself",
+    "intro": "We couldn't find this book in our catalog. Check the details and save it. Only you will see it, marked Unverified.",
+    "titleLabel": "Title",
+    "authorLabel": "Author",
+    "isbnLabel": "ISBN (optional)",
+    "save": "Save",
+    "saveHint": "Adds this book to your wishlist, marked Unverified",
+    "cancel": "Cancel",
+    "closeA11y": "Close form",
+    "titleRequired": "Enter a title",
+    "authorRequired": "Enter an author",
+    "isbnInvalid": "This ISBN isn't valid. Fix it or leave it blank.",
+    "invalid": "Check the details and try again.",
+    "duplicate": "You've already added this book yourself.",
+    "limitReached": "You've reached the limit of books you can add yourself.",
+    "failed": "Couldn't save this book. Try again."
   }
 }

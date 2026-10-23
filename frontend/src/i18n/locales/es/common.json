@@ -6,5 +6,7 @@
   "coverAlt": "Portada de {{title}}",
   "offlineTitle": "Sin conexión",
   "requiresConnection": "Esta acción requiere conexión a internet.",
-  "offlineEditNotice": "Estás sin conexión. Conéctate para editar tu biblioteca."
+  "offlineEditNotice": "Estás sin conexión. Conéctate para editar tu biblioteca.",
+  "unverified": "Sin verificar",
+  "unverifiedA11y": "Sin verificar: lo añadiste tú, no está en el catálogo"
 }

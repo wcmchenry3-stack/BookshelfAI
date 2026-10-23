@@ -6,5 +6,7 @@
   "coverAlt": "Omslag van {{title}}",
   "offlineTitle": "Je bent offline",
   "requiresConnection": "Voor deze actie is een internetverbinding nodig.",
-  "offlineEditNotice": "Je bent offline. Ga online om je bibliotheek te bewerken."
+  "offlineEditNotice": "Je bent offline. Ga online om je bibliotheek te bewerken.",
+  "unverified": "Niet geverifieerd",
+  "unverifiedA11y": "Niet geverifieerd: door jou toegevoegd, niet in de catalogus"
 }

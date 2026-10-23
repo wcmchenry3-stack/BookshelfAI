@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "{{count}} किताबें पहले से आपकी लाइब्रेरी में हैं।",
   "addedAndOwnedMessage": "{{added}} जोड़ी गईं। {{owned}} पहले से आपकी लाइब्रेरी में हैं।",
   "addedSomeOwnedMessage": "{{added}} जोड़ी गईं, {{owned}} पहले से लाइब्रेरी में, {{failed}} सहेजी नहीं गईं। जोड़ें दबाएं।",
-  "notInCatalogMessage": "यह किताब हमारे कैटलॉग में नहीं मिली, इसलिए इसे अभी जोड़ा नहीं जा सकता। शीर्षक से खोजकर देखें।",
-  "notInCatalogManyMessage": "ये {{count}} किताबें हमारे कैटलॉग में नहीं मिलीं, इसलिए इन्हें अभी जोड़ा नहीं जा सकता। शीर्षक से खोजकर देखें।",
+  "notInCatalogMessage": "यह किताब हमारे कैटलॉग में नहीं मिली। शीर्षक से खोजें या इसे खुद जोड़ें।",
+  "notInCatalogManyMessage": "ये {{count}} किताबें हमारे कैटलॉग में नहीं मिलीं। शीर्षक से खोजें या इन्हें खुद जोड़ें।",
   "catalogTokenInvalidMessage": "यह नतीजा पुराना हो चुका है। किताब को फिर से स्कैन या खोजें।",
   "catalogTokenInvalidManyMessage": "ये {{count}} नतीजे पुराने हो चुके हैं। किताबों को फिर से स्कैन या खोजें।",
   "notSavedSummaryMessage": "{{added}} जोड़ी गईं, {{notSaved}} सहेजी नहीं गईं।",
@@ -86,5 +86,7 @@
   "retryOthersHint": "बाकी को फिर आज़माने के लिए जोड़ें दबाएँ।",
   "notSavedOwnedOnlyMessage": "{{owned}} पहले से आपकी लाइब्रेरी में, {{notSaved}} सहेजी नहीं गईं।",
   "notSavedOnlyMessage": "{{notSaved}} सहेजी नहीं गईं।",
-  "ownedNotSavedRetryMessage": "{{owned}} पहले से लाइब्रेरी में, {{failed}} सहेजी नहीं गईं। जोड़ें दबाएं।"
+  "ownedNotSavedRetryMessage": "{{owned}} पहले से लाइब्रेरी में, {{failed}} सहेजी नहीं गईं। जोड़ें दबाएं।",
+  "addItYourself": "खुद जोड़ें",
+  "unverifiedSavedMessage": "{{title}} को आपकी विशलिस्ट में असत्यापित के रूप में जोड़ा गया।"
 }
