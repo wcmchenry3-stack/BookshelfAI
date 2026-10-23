@@ -20,9 +20,15 @@ from app.models.user import User
 from app.models.user_book import UserBook
 from app.schemas.user_book import (
     PurchasedCreate,
+    UnverifiedBookCreate,
     UserBookRead,
     UserBookUpdate,
     WishlistRequest,
+)
+from app.services.unverified_books import (
+    UnverifiedBookService,
+    UnverifiedDuplicateError,
+    UnverifiedLimitError,
 )
 from app.services.wishlist import (
     AlreadyOwnedError,
@@ -37,6 +43,11 @@ CATALOG_TOKEN_INVALID = "catalog_token_invalid"
 # 422 detail when the book has no provider ID (no Open Library work ID and no
 # Google Books ID): it is not in the catalog and can never be added (#602).
 BOOK_NOT_IN_CATALOG = "book_not_in_catalog"
+# 409 details from POST /wishlist/unverified (#616): the user already has an
+# unverified entry with this title and author or ISBN, or holds the maximum
+# number of unverified entries (settings.unverified_books_per_user_max).
+UNVERIFIED_DUPLICATE = "unverified_duplicate"
+UNVERIFIED_LIMIT_REACHED = "unverified_limit_reached"
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +63,9 @@ def _user_book_query(user_id: uuid.UUID):
         .options(
             selectinload(UserBook.book).selectinload(Book.editions),
             selectinload(UserBook.edition),
+            # The user's own unverified entry (#616); only ever loaded
+            # through this user's library row.
+            selectinload(UserBook.custom_book),
         )
         .order_by(UserBook.created_at.desc())
     )
@@ -86,6 +100,32 @@ async def add_to_wishlist(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=CATALOG_TOKEN_INVALID,
+        ) from None
+
+
+@router.post(
+    "/wishlist/unverified",
+    response_model=UserBookRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit(settings.rate_limit_writes)
+async def add_unverified_to_wishlist(
+    request: Request,
+    req: UnverifiedBookCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserBook:
+    """Add a book the catalog cannot find as the user's own, private,
+    unverified entry (#616). Never touches ``books`` / ``editions``."""
+    try:
+        return await UnverifiedBookService().add(db, current_user.id, req)
+    except UnverifiedDuplicateError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=UNVERIFIED_DUPLICATE
+        ) from None
+    except UnverifiedLimitError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=UNVERIFIED_LIMIT_REACHED
         ) from None
 
 
@@ -219,14 +259,22 @@ async def delete_user_book(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     result = await db.execute(
-        select(UserBook).where(
+        select(UserBook)
+        .where(
             UserBook.id == user_book_id,
             UserBook.user_id == current_user.id,
         )
+        .options(selectinload(UserBook.custom_book))
     )
     user_book = result.scalar_one_or_none()
     if not user_book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
+    custom_book = user_book.custom_book
     await db.delete(user_book)
+    if custom_book is not None:
+        # An unverified entry (#616) exists only for this library row:
+        # removing the book removes it too, so it no longer counts towards
+        # the user's cap.
+        await db.delete(custom_book)
     await db.commit()

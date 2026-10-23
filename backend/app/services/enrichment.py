@@ -103,6 +103,12 @@ def _normalise(value: object) -> str:
     return " ".join(_NON_WORD.sub(" ", value).split())
 
 
+def normalise_text(value: object) -> str:
+    """Public form of :func:`_normalise`: casefolded, punctuation stripped,
+    whitespace collapsed."""
+    return _normalise(value)
+
+
 def normalise_title(value: object) -> str:
     """A title for comparison: :func:`_normalise`, minus a leading article."""
     return _LEADING_ARTICLE.sub("", _normalise(value), count=1)

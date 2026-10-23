@@ -196,6 +196,16 @@ class Settings(BaseSettings):
     rate_limit_writes: str = "60/minute"
     rate_limit_reads: str = "120/minute"
     rate_limit_health: str = "60/minute"
+    # Unverified library entries (#616, user_custom_books) a user may hold at
+    # once. Each row is at most ~1.1 KB (title and author up to 500 chars, an
+    # ISBN, ids and timestamps; typically ~150 B), so the cap bounds one
+    # user's share at ~220 KB worst case. 200 is far above the handful of
+    # self-published or rare books a library is expected to hold that the
+    # catalogs cannot find, while stopping a script from filling the table
+    # (writes are also rate limited). Env-overridable
+    # (UNVERIFIED_BOOKS_PER_USER_MAX); at the cap, POST /wishlist/unverified
+    # answers 409 unverified_limit_reached.
+    unverified_books_per_user_max: int = Field(default=200, ge=1, le=10_000)
     # Allowlist of Host header values accepted when settings.is_hardened is True
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]
