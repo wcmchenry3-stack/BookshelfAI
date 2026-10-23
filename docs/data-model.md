@@ -441,22 +441,26 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 ## Dedup strategy — why work_id, not ISBN
 
-The dedup check lives in `backend/app/services/deduplication.py` and runs inside the `POST /scan` and `GET /books/search` response pipelines. Since #587 it is edition-aware: one batched query first finds which results' ISBNs (`editions[0]`, ISBN-10 converted to ISBN-13) are editions in the user's library (`owned_same_edition`); for the rest, the work match below decides between `owned_other_edition` (the owned entry's edition has another ISBN), `owned_edition_unknown` (one side has no ISBN) and `not_owned`. For each candidate returned by the vision identifier + enrichment:
+The dedup check lives in `backend/app/services/deduplication.py` and runs inside the `POST /scan` and `GET /books/search` response pipelines. Since #587 it is edition-aware, and it makes one query per response (`held_entries`), shared with `POST /wishlist`'s 409:
 
 ```python
-# Pseudocode of DeduplicationService._work_entry (the work-level match)
-if candidate.open_library_work_id:
-    exists = db.exec(
-        select(UserBook)
-        .join(Book, Book.id == UserBook.book_id)
-        .where(Book.open_library_work_id == candidate.open_library_work_id,
-               UserBook.user_id == user_id)
-    )
-    if exists: return True  # already in library
-
-if candidate.google_books_id:
-    # same join on Book.google_books_id
-    ...
+# Pseudocode of deduplication.held_entries + ownership_of
+rows = db.exec(
+    select(UserBook.book_id, UserBook.edition_id,
+           Book.open_library_work_id, Book.google_books_id,
+           Edition.isbn_13, Edition.isbn_10)
+    .join(Book, Book.id == UserBook.book_id)
+    .outerjoin(Edition, Edition.id == UserBook.edition_id)
+    .where(UserBook.user_id == user_id,
+           or_(Book.open_library_work_id.in_(work_ids),
+               Book.google_books_id.in_(volume_ids),
+               Edition.isbn_13.in_(isbn_13s), Edition.isbn_10.in_(isbn_10s)))
+    .order_by(UserBook.edition_id.is_(None))  # entries with an edition first
+)
+# per candidate: the rows of its work ID, volume ID or ISBN (editions[0],
+# ISBN-10 converted to 13). Any row with that ISBN -> owned_same_edition;
+# else any row with an ISBN -> owned_other_edition; else any row ->
+# owned_edition_unknown; no row -> not_owned.
 ```
 
 **Why not ISBN:**

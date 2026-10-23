@@ -13,17 +13,24 @@ user's library:
   ``owned_edition_unknown``;
 - otherwise ``not_owned``.
 
-Only the requesting user's ``user_books`` count. Queries: one for all the
-results' ISBNs together (skipped when none has one), then at most two per
-result (work ID, then Google Books ID), as before #587.
+Every library entry of the work counts (Open Library work ID *or* Google
+Books ID): any entry holding the same edition makes it the same edition;
+otherwise any entry holding an edition with an ISBN makes it another edition.
+
+Only the requesting user's ``user_books`` count. One query per response,
+whatever the number of results: the user's entries (``user_books.user_id``
+index) of any of the results' works, volumes or ISBNs, with each entry's
+edition ISBNs joined in. ``WishlistService`` uses the same query and rules
+for its 409 (#587).
 """
 
 import logging
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import contains_eager, selectinload
 
 from app.models.book import Book
 from app.models.edition import Edition
@@ -65,17 +72,20 @@ def candidate_key(book: _BookLike) -> str | None:
     return edition_key(editions[0]) if editions else None
 
 
-def classify(
-    candidate_isbn: str | None, owned_edition: _EditionLike | None
-) -> Ownership:
-    """Ownership of a result whose work matched a library entry holding
-    ``owned_edition`` (None when the entry has no edition)."""
-    owned_isbn = edition_key(owned_edition)
-    if candidate_isbn and owned_isbn:
-        if candidate_isbn == owned_isbn:
-            return OWNED_SAME_EDITION
-        return OWNED_OTHER_EDITION
-    return OWNED_EDITION_UNKNOWN
+# Library entries looked at per query at most; entries with an edition come
+# first, so a cut never hides an edition behind an entry without one.
+MAX_HELD = 200
+
+
+@dataclass(frozen=True)
+class Held:
+    """One of the user's library entries, with its edition's ISBN key."""
+
+    book_id: object
+    edition_id: object
+    open_library_work_id: str | None
+    google_books_id: str | None
+    isbn: str | None  # normalised ISBN-13 of the entry's edition
 
 
 def isbn_lookup_values(isbn_13s: set[str]) -> tuple[set[str], set[str]]:
@@ -85,91 +95,126 @@ def isbn_lookup_values(isbn_13s: set[str]) -> tuple[set[str], set[str]]:
     return set(isbn_13s), isbn_10s
 
 
+async def held_entries(
+    db: AsyncSession,
+    user_id,
+    *,
+    book_ids: Iterable = (),
+    work_ids: Iterable[str] = (),
+    volume_ids: Iterable[str] = (),
+    isbns: Iterable[str] = (),
+) -> list[Held]:
+    """The user's library entries for any of these books, Open Library
+    works, Google Books volumes or edition ISBNs (normalised ISBN-13), in
+    one join-shaped query driven by the user's entries. No query when there
+    is nothing to look for."""
+    book_ids, work_ids = set(book_ids), set(work_ids)
+    volume_ids, isbns = set(volume_ids), set(isbns)
+    conditions = []
+    if book_ids:
+        conditions.append(UserBook.book_id.in_(book_ids))
+    if work_ids:
+        conditions.append(Book.open_library_work_id.in_(work_ids))
+    if volume_ids:
+        conditions.append(Book.google_books_id.in_(volume_ids))
+    if isbns:
+        isbn_13s, isbn_10s = isbn_lookup_values(isbns)
+        conditions.append(Edition.isbn_13.in_(isbn_13s))
+        if isbn_10s:
+            conditions.append(Edition.isbn_10.in_(isbn_10s))
+    if not conditions:
+        return []
+    result = await db.execute(
+        select(
+            UserBook.book_id,
+            UserBook.edition_id,
+            Book.open_library_work_id,
+            Book.google_books_id,
+            Edition.isbn_13,
+            Edition.isbn_10,
+        )
+        .join(Book, Book.id == UserBook.book_id)
+        .outerjoin(Edition, Edition.id == UserBook.edition_id)
+        .where(UserBook.user_id == user_id, or_(*conditions))
+        # Entries with an edition first, then a stable order.
+        .order_by(UserBook.edition_id.is_(None), UserBook.created_at, UserBook.id)
+        .limit(MAX_HELD)
+    )
+    return [
+        Held(
+            book_id=row.book_id,
+            edition_id=row.edition_id,
+            open_library_work_id=row.open_library_work_id,
+            google_books_id=row.google_books_id,
+            isbn=normalise_isbn_13(row.isbn_13, row.isbn_10),
+        )
+        for row in result.all()
+    ]
+
+
+def matching(
+    held: list[Held],
+    *,
+    work_id: str | None = None,
+    volume_id: str | None = None,
+    isbn: str | None = None,
+    book_id=None,
+) -> list[Held]:
+    """The entries that are this book: the same catalog row, Open Library
+    work, Google Books volume or edition ISBN."""
+    return [
+        h
+        for h in held
+        if (book_id is not None and h.book_id == book_id)
+        or (work_id and h.open_library_work_id == work_id)
+        or (volume_id and h.google_books_id == volume_id)
+        or (isbn and h.isbn == isbn)
+    ]
+
+
+def ownership_of(
+    isbn: str | None, matches: list[Held], *, edition_id=None
+) -> Ownership:
+    """Ownership of a book (edition key ``isbn``, catalog ``edition_id``)
+    from all the library entries that are this book: the same edition if
+    any entry holds it; else another edition if any entry's edition has an
+    ISBN to compare; else unknown."""
+    if not matches:
+        return NOT_OWNED
+    if any(
+        (isbn and h.isbn == isbn)
+        or (edition_id is not None and h.edition_id == edition_id)
+        for h in matches
+    ):
+        return OWNED_SAME_EDITION
+    if isbn and any(h.isbn for h in matches):
+        return OWNED_OTHER_EDITION
+    return OWNED_EDITION_UNKNOWN
+
+
 class DeduplicationService:
     async def check(
         self, db: AsyncSession, user_id: str, candidates: list[EnrichedBook]
     ) -> list[EnrichedBook]:
         """Set ``ownership`` (and ``already_in_library``) on every candidate
-        from the user's own library."""
-        owned_isbns = await self._owned_isbns(db, user_id, candidates)
-        for candidate in candidates:
-            ownership = await self._ownership(db, user_id, candidate, owned_isbns)
-            candidate.ownership = ownership
-            candidate.already_in_library = ownership != NOT_OWNED
-        return candidates
-
-    async def _owned_isbns(
-        self, db: AsyncSession, user_id: str, candidates: list[EnrichedBook]
-    ) -> set[str]:
-        """The candidates' ISBNs that are editions in the user's library,
-        in one query."""
-        wanted = {k for k in (candidate_key(c) for c in candidates) if k}
-        if not wanted:
-            return set()
-        isbn_13s, isbn_10s = isbn_lookup_values(wanted)
-        result = await db.execute(
-            select(UserBook)
-            .join(Edition, Edition.id == UserBook.edition_id)
-            .where(
-                UserBook.user_id == user_id,
-                or_(Edition.isbn_13.in_(isbn_13s), Edition.isbn_10.in_(isbn_10s)),
-            )
-            .options(contains_eager(UserBook.edition))
+        from the user's own library, in one query."""
+        keys = [candidate_key(c) for c in candidates]
+        held = await held_entries(
+            db,
+            user_id,
+            work_ids={
+                c.open_library_work_id for c in candidates if c.open_library_work_id
+            },
+            volume_ids={c.google_books_id for c in candidates if c.google_books_id},
+            isbns={k for k in keys if k},
         )
-        owned = {edition_key(ub.edition) for ub in result.scalars().all()}
-        return {k for k in owned if k} & wanted
-
-    async def _ownership(
-        self,
-        db: AsyncSession,
-        user_id: str,
-        candidate: EnrichedBook,
-        owned_isbns: set[str],
-    ) -> Ownership:
-        isbn = candidate_key(candidate)
-        if isbn and isbn in owned_isbns:
-            return OWNED_SAME_EDITION
-        entry = await self._work_entry(db, user_id, candidate)
-        if entry is None:
-            return NOT_OWNED
-        return classify(isbn, entry.edition)
-
-    async def _work_entry(
-        self, db: AsyncSession, user_id: str, candidate: EnrichedBook
-    ) -> UserBook | None:
-        """A library entry of the candidate's work, with its edition."""
-        if candidate.open_library_work_id:
-            result = await db.execute(
-                select(UserBook)
-                .join(Book, Book.id == UserBook.book_id)
-                .where(
-                    Book.open_library_work_id == candidate.open_library_work_id,
-                    UserBook.user_id == user_id,
-                )
-                .options(selectinload(UserBook.edition))
-                # Existence only: one row is enough.
-                .limit(1)
+        for candidate, isbn in zip(candidates, keys, strict=True):
+            matches = matching(
+                held,
+                work_id=candidate.open_library_work_id,
+                volume_id=candidate.google_books_id,
+                isbn=isbn,
             )
-            entry = result.scalar_one_or_none()
-            if entry:
-                return entry
-
-        if candidate.google_books_id:
-            result = await db.execute(
-                select(UserBook)
-                .join(Book, Book.id == UserBook.book_id)
-                .where(
-                    Book.google_books_id == candidate.google_books_id,
-                    UserBook.user_id == user_id,
-                )
-                .options(selectinload(UserBook.edition))
-                # google_books_id is not unique (#613): with duplicate Book
-                # rows the user may hold several, which must not raise
-                # MultipleResultsFound.
-                .limit(1)
-            )
-            entry = result.scalar_one_or_none()
-            if entry:
-                return entry
-
-        return None
+            candidate.ownership = ownership_of(isbn, matches)
+            candidate.already_in_library = candidate.ownership != NOT_OWNED
+        return candidates

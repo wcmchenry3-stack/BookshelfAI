@@ -160,14 +160,23 @@ class TestFindOrCreateEdition:
 
 
 class TestFindOrCreateUserBook:
-    async def test_existing_user_book_is_refused(self, service, existing_user_book):
+    async def test_existing_user_book_is_refused(self, service):
         # #587: re-adding a book the user has is a 409, no longer the
         # existing row returned idempotently.
         book_id = uuid.uuid4()
-        existing_user_book.edition_id = None
-        existing_user_book.edition = None
+        # The library query's row: the user's entry for this book, no edition.
+        entry = MagicMock(
+            book_id=book_id,
+            edition_id=None,
+            open_library_work_id=None,
+            google_books_id=None,
+            isbn_13=None,
+            isbn_10=None,
+        )
+        result = MagicMock()
+        result.all.return_value = [entry]
         db = _mock_db()
-        db.execute = AsyncMock(return_value=_execute_returning(existing_user_book))
+        db.execute = AsyncMock(return_value=result)
         with pytest.raises(AlreadyOwnedError) as exc:
             await service._find_or_create_user_book(db, USER_ID, book_id, None)
         assert exc.value.ownership == "owned_edition_unknown"

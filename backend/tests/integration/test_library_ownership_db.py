@@ -209,12 +209,16 @@ async def _counts(factory) -> tuple[int, int, int]:
         )
 
 
-async def _own(factory, user_id, ids, *, isbn_13=None, isbn_10=None, work=None):
+async def _own(
+    factory, user_id, ids, *, isbn_13=None, isbn_10=None, work=None, volume=None
+):
     """Put the work in the user's library, with an edition holding these
-    ISBNs (none: an entry without an edition)."""
+    ISBNs (none: an entry without an edition). With ``volume`` the Book is
+    Google-Books-only (no work ID)."""
     async with factory() as db:
         book = Book(
-            open_library_work_id=work or ids["work"],
+            open_library_work_id=None if volume else (work or ids["work"]),
+            google_books_id=volume,
             title="Dune",
             author="Frank Herbert",
         )
@@ -371,3 +375,59 @@ class TestScanRepeat:
             ).scalar_one()
         (item,) = record.enrichment
         assert "ownership" not in item
+
+
+class TestWorkMatchedByEitherId:
+    async def test_google_books_only_entry_refuses_the_work_row(self, env):
+        """The user has a Google-Books-only Book (no work ID, the same
+        volume); another Book holds the work ID. The result names both IDs:
+        the scan says owned, and the add (which resolves the work's Book)
+        is refused the same way, never a second entry (review finding 4)."""
+        factory, make_user, ids, _ = env
+        alice = await make_user()
+        await _own(factory, alice, ids, isbn_13=ids["other_13"], volume=ids["volume"])
+        async with factory() as db:
+            db.add(Book(open_library_work_id=ids["work"], title="Dune", author="F"))
+            await db.commit()
+        (found,) = await _search(factory, alice)
+        assert (found.open_library_work_id, found.google_books_id) == (
+            ids["work"],
+            ids["volume"],
+        )
+        assert found.ownership == "owned_other_edition"
+        assert await _refused(factory, alice, found) == "owned_other_edition"
+
+
+class TestConcurrentAdds:
+    async def test_the_add_that_loses_the_race_is_a_409(self, env):
+        """Two adds of the same book at once both pass the library check;
+        the loser's insert hits ``uq_user_books_user_book``. Reproduced by
+        hiding the user's entry from the first library query, as if the
+        other request committed just after it (review finding 3)."""
+        factory, make_user, _ids, _ = env
+        alice = await make_user()
+        (found,) = await _search(factory, alice)
+        await _wishlist(factory, alice, found)  # the request that won
+        before = await _counts(factory)
+        req = WishlistRequest.model_validate(found.model_dump(mode="json"))
+        async with factory() as db:
+            user = await db.get(User, alice)
+            real, hidden = db.execute, {"left": 1}
+
+            async def execute(stmt, *args, **kwargs):
+                entity = stmt.column_descriptions[0].get("entity")
+                if entity is UserBook and hidden["left"]:
+                    hidden["left"] -= 1
+                    result = MagicMock()
+                    result.all.return_value = []
+                    return result
+                return await real(stmt, *args, **kwargs)
+
+            db.execute = execute
+            with pytest.raises(HTTPException) as exc:
+                await user_books_api.add_to_wishlist.__wrapped__(
+                    request=MagicMock(), req=req, current_user=user, db=db
+                )
+        assert hidden["left"] == 0
+        assert (exc.value.status_code, exc.value.detail) == (409, "owned_same_edition")
+        assert await _counts(factory) == before

@@ -11,6 +11,7 @@ same flows run on real Postgres in
 Run on its own with:  pytest -m security tests/security/test_library_ownership.py
 """
 
+import contextlib
 import io
 import uuid
 from datetime import UTC, datetime
@@ -45,8 +46,16 @@ OTHER_13 = "9780593099322"
 
 
 def _entry(isbn_13=None, isbn_10=None, *, no_edition=False):
-    edition = None if no_edition else SimpleNamespace(isbn_13=isbn_13, isbn_10=isbn_10)
-    return SimpleNamespace(edition=edition, edition_id=uuid.uuid4())
+    """A row of the library query: an entry of ``WORK`` and its edition's
+    ISBNs."""
+    return SimpleNamespace(
+        book_id=uuid.uuid4(),
+        edition_id=None if no_edition else uuid.uuid4(),
+        open_library_work_id=WORK,
+        google_books_id=None,
+        isbn_13=isbn_13,
+        isbn_10=isbn_10,
+    )
 
 
 class FakeLibrarySession:
@@ -74,9 +83,13 @@ class FakeLibrarySession:
             result.scalar_one_or_none.return_value = self.book
             return result
         rows = self.library if self._scoped_to_owner(stmt) else []
-        result.scalars.return_value.all.return_value = rows
-        result.scalar_one_or_none.return_value = rows[0] if rows else None
+        result.all.return_value = rows
+        result.scalar_one_or_none.return_value = None
         return result
+
+    @contextlib.asynccontextmanager
+    async def begin_nested(self):
+        yield self
 
     def add(self, obj):
         self.added.append(obj)

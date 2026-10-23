@@ -253,7 +253,7 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 | `ownership` | Meaning |
 |---|---|
 | `owned_same_edition` | an edition in the user's library has the same ISBN |
-| `owned_other_edition` | the work is in the library (same `open_library_work_id`, else `google_books_id`) but its edition has a different ISBN |
+| `owned_other_edition` | the work is in the library (same `open_library_work_id` or `google_books_id`) and no entry of it holds this ISBN, but one holds an edition with another ISBN |
 | `owned_edition_unknown` | the work is in the library but one side has no ISBN to compare (the result has no edition ISBN, or the library entry has no edition) |
 | `not_owned` | not in the user's library |
 
@@ -347,7 +347,7 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 
 Finds the `Book` by `open_library_work_id`, then `google_books_id`, and the `Edition` by the first edition's `isbn_13`; then inserts a `UserBook` with `status=wishlisted` and `wishlisted_at=now()`.
 
-**A book the user already has is refused with `409` (#587).** A library holds one entry per title (`uq_user_books_user_book`), so this endpoint no longer returns the existing entry: when the user already has an entry for the `Book`, or an entry whose edition has the same ISBN as the posted first edition (ISBN-10 converted to ISBN-13, whichever `Book` it belongs to), nothing is written (not even a new catalog row) and `detail` says how they have it, with the same values and rules as `ownership` on scan results: `owned_same_edition` (same ISBN, or the same `edition_id`), `owned_other_edition` or `owned_edition_unknown`. Only the requesting user's library counts.
+**A book the user already has is refused with `409` (#587).** A library holds one entry per title (`uq_user_books_user_book`), so this endpoint no longer returns the existing entry: when the user already has an entry for the `Book`, for the same `open_library_work_id` or `google_books_id` (so the 409 agrees with what the scan showed), or an entry whose edition has the same ISBN as the posted first edition (ISBN-10 converted to ISBN-13, whichever `Book` it belongs to), nothing is written (not even a new catalog row) and `detail` says how they have it, with the same values and rules as `ownership` on scan results: `owned_same_edition` (same ISBN, or the same `edition_id`), `owned_other_edition` or `owned_edition_unknown`. Only the requesting user's library counts. Of two adds of the same book at once, the one that loses on `uq_user_books_user_book` gets the same 409.
 
 **Shared-catalog rule (#602).** `books` and `editions` are shared by every user, so they are written only from server-produced data. A missing `Book` / `Edition` is created only when `catalog_token` verifies: signed by this server for **this user**, not expired, current version (`v1`), and every catalog field in the body exactly as signed. Without a valid token (missing, malformed, expired, another user's, or any field changed) the request may only link the user to a `Book` that already exists (and to an existing `Edition` of that book); if no such `Book` exists it is refused with `422 catalog_token_invalid` and nothing is written. A book with neither `open_library_work_id` nor `google_books_id` is never added, token or not: `422 book_not_in_catalog`. A user book is never linked to an edition of a different book (it is then saved without an edition). Existing catalog rows are never changed by this endpoint, signed or not.
 
