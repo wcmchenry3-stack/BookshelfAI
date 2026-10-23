@@ -62,6 +62,25 @@ export const REFUSAL_ERRORS: readonly string[] = [
   'monthly_limit',
 ];
 
+/**
+ * True while scanning is limited or paused (#586): a full queue then means the
+ * saved photos go out once scanning is available again, not "wait for uploads".
+ */
+export function isScanningLimited(
+  notice: ScanNotice | null | undefined,
+  jobs: readonly { status: string; error?: string }[]
+): boolean {
+  if (
+    notice &&
+    (notice.kind === 'daily_limit' ||
+      notice.kind === 'requests_daily_limit' ||
+      notice.kind === 'paused')
+  ) {
+    return true;
+  }
+  return hasRefusedJobs(jobs);
+}
+
 /** True when any queued job is waiting because the server refused it. */
 export function hasRefusedJobs(jobs: readonly { status: string; error?: string }[]): boolean {
   return jobs.some((j) => j.status === 'queued' && !!j.error && REFUSAL_ERRORS.includes(j.error));
