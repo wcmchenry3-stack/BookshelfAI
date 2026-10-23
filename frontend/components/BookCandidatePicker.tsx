@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
 import { isOwned, type Ownership } from '../lib/ownership';
+import { hasNoCatalogMatch } from '../lib/unverified';
 
 export interface EnrichedBook {
   book_id?: string;
@@ -59,6 +60,11 @@ interface Props {
   onEnhance?: () => void;
   /** Enhanced scans left today (the daily allowance left, #582); null when not known. */
   enhancedScansRemaining?: number | null;
+  /**
+   * When set, a result no catalog matched (no Open Library or Google Books ID)
+   * offers "Add it yourself" (#616), which calls this with the book.
+   */
+  onAddYourself?: (book: EnrichedBook) => void;
 }
 
 function initialSelection(candidates: EnrichedBook[], preselect: boolean): Set<number> {
@@ -95,6 +101,7 @@ export function BookCandidatePicker({
   preselect = false,
   onEnhance,
   enhancedScansRemaining = null,
+  onAddYourself,
 }: Props) {
   const { theme } = useTheme();
   const { t } = useTranslation('components');
@@ -252,6 +259,30 @@ export function BookCandidatePicker({
                       </Text>
                     </View>
                   )}
+                  {onAddYourself && hasNoCatalogMatch(book) && (
+                    <>
+                      <Text
+                        style={{
+                          color: theme.colors.textSecondary,
+                          fontSize: theme.typography.fontSizeSM,
+                        }}
+                      >
+                        {t('bookCandidatePicker.notInCatalog')}
+                      </Text>
+                      <Pressable
+                        onPress={() => onAddYourself(book)}
+                        style={[styles.addYourself, { borderColor: theme.colors.primary }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('bookCandidatePicker.addYourselfA11y', {
+                          title: book.title,
+                        })}
+                      >
+                        <Text style={[styles.addYourselfText, { color: theme.colors.primary }]}>
+                          {t('bookCandidatePicker.addYourself')}
+                        </Text>
+                      </Pressable>
+                    </>
+                  )}
                 </View>
 
                 <View style={[styles.checkbox, owned && styles.checkboxDisabled]}>
@@ -367,6 +398,17 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   badgeText: { fontSize: 11, fontWeight: '600' },
+  addYourself: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  addYourselfText: { fontWeight: '600' },
   enhanceButton: {
     alignItems: 'center',
     paddingVertical: 12,

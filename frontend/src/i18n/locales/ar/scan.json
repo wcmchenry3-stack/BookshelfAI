@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "موجودة بالفعل في مكتبتك: {{count}}",
   "addedAndOwnedMessage": "تمت إضافة {{added}}. موجودة بالفعل في مكتبتك: {{owned}}",
   "addedSomeOwnedMessage": "تمت إضافة {{added}}، وموجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا.",
-  "notInCatalogMessage": "لم نعثر على هذا الكتاب في فهرسنا، لذا لا يمكن إضافته الآن. جرّب البحث بالعنوان.",
-  "notInCatalogManyMessage": "لم نعثر على هذه الكتب ({{count}}) في فهرسنا، لذا لا يمكن إضافتها الآن. جرّب البحث بالعنوان.",
+  "notInCatalogMessage": "لم نعثر على هذا الكتاب في فهرسنا. ابحث بالعنوان أو أضِفه بنفسك.",
+  "notInCatalogManyMessage": "لم نعثر على هذه الكتب ({{count}}) في فهرسنا. ابحث بالعنوان أو أضِفها بنفسك.",
   "catalogTokenInvalidMessage": "هذه النتيجة قديمة. امسح الكتاب ضوئيًا أو ابحث عنه مجددًا.",
   "catalogTokenInvalidManyMessage": "هذه النتائج ({{count}}) قديمة. امسح الكتب ضوئيًا أو ابحث عنها مجددًا.",
   "notSavedSummaryMessage": "تمت إضافة {{added}}، وتعذّر حفظ {{notSaved}}.",
@@ -86,5 +86,7 @@
   "retryOthersHint": "اضغط إضافة لإعادة محاولة البقية.",
   "notSavedOwnedOnlyMessage": "موجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{notSaved}}.",
   "notSavedOnlyMessage": "لم يُحفظ: {{notSaved}}.",
-  "ownedNotSavedRetryMessage": "موجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا."
+  "ownedNotSavedRetryMessage": "موجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا.",
+  "addItYourself": "أضِفه بنفسك",
+  "unverifiedSavedMessage": "تمت إضافة {{title}} إلى قائمة رغباتك بعلامة «غير موثّق»."
 }

@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "Уже в вашей библиотеке: {{count}}.",
   "addedAndOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}.",
   "addedSomeOwnedMessage": "Добавлено: {{added}}. Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить».",
-  "notInCatalogMessage": "Мы не нашли эту книгу в каталоге, поэтому пока её нельзя добавить. Попробуйте найти по названию.",
-  "notInCatalogManyMessage": "Мы не нашли эти книги ({{count}}) в каталоге, поэтому пока их нельзя добавить. Попробуйте найти по названию.",
+  "notInCatalogMessage": "Мы не нашли эту книгу в каталоге. Найдите её по названию или добавьте сами.",
+  "notInCatalogManyMessage": "Мы не нашли эти книги ({{count}}) в каталоге. Найдите их по названию или добавьте сами.",
   "catalogTokenInvalidMessage": "Этот результат устарел. Отсканируйте или найдите книгу снова.",
   "catalogTokenInvalidManyMessage": "Эти результаты ({{count}}) устарели. Отсканируйте или найдите книги снова.",
   "notSavedSummaryMessage": "Добавлено: {{added}}, не сохранено: {{notSaved}}.",
@@ -86,5 +86,7 @@
   "retryOthersHint": "Нажмите «Добавить», чтобы повторить для остальных.",
   "notSavedOwnedOnlyMessage": "Уже в библиотеке: {{owned}}. Не сохранено: {{notSaved}}.",
   "notSavedOnlyMessage": "Не сохранено: {{notSaved}}.",
-  "ownedNotSavedRetryMessage": "Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить»."
+  "ownedNotSavedRetryMessage": "Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить».",
+  "addItYourself": "Добавить самому",
+  "unverifiedSavedMessage": "«{{title}}» добавлена в список желаний без проверки."
 }

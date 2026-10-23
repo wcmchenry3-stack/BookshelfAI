@@ -24,6 +24,7 @@ import {
   Inter_700Bold,
 } from '@expo-google-fonts/inter';
 
+import { AddUnverifiedBookSheet } from '../components/AddUnverifiedBookSheet';
 import { BookCandidatePicker } from '../components/BookCandidatePicker';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { InAppBanner } from '../components/InAppBanner';
@@ -95,6 +96,7 @@ function GlobalBookPicker() {
     handleAddBooks,
     requestEnhancedScan,
     enhancedScansRemaining,
+    addYourself,
   } = useScanJobs();
   const isPhotoScan = reviewingJob?.type === 'image';
   // Offer the stronger model only on a photo that hasn't already had it, and
@@ -117,6 +119,28 @@ function GlobalBookPicker() {
       preselect={isPhotoScan}
       onEnhance={canEnhance ? () => requestEnhancedScan(reviewingJob.id) : undefined}
       enhancedScansRemaining={enhancedScansRemaining}
+      onAddYourself={(book) => {
+        // Close the picker first: one sheet at a time (#616).
+        dismissReview();
+        addYourself([book]);
+      }}
+    />
+  );
+}
+
+/** "Add it yourself" (#616): the form for the next book no catalog matched. */
+function GlobalUnverifiedSheet() {
+  const { unverifiedDrafts, unverifiedSaved, dismissUnverified } = useScanJobs();
+  const draft = unverifiedDrafts?.[0];
+  if (!draft) return null;
+  return (
+    <AddUnverifiedBookSheet
+      // Remount per draft so the fields reset to the next book's reading.
+      key={`${unverifiedDrafts.length}-${draft.title}-${draft.isbn}`}
+      visible
+      draft={draft}
+      onSaved={(entry) => unverifiedSaved(entry.book.title)}
+      onDismiss={dismissUnverified}
     />
   );
 }
@@ -145,6 +169,7 @@ function RootLayout() {
               <InAppBanner />
               <InnerStack />
               <GlobalBookPicker />
+              <GlobalUnverifiedSheet />
               <FeedbackButton />
             </ScanJobProvider>
           </AuthProvider>

@@ -105,8 +105,7 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
     );
     expect(hook.result.current.banner.banner).toEqual(
       expect.objectContaining({
-        message:
-          "We couldn't find this book in our catalog, so it can't be added yet. Try searching by title.",
+        message: "We couldn't find this book in our catalog. Search by title, or add it yourself.",
         type: 'error',
       })
     );
@@ -120,7 +119,7 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
       Promise.reject(httpError(422, 'book_not_in_catalog'))
     );
     expect(hook.result.current.banner.banner?.message).toBe(
-      "We couldn't find these 2 books in our catalog, so they can't be added yet. Try searching by title."
+      "We couldn't find these 2 books in our catalog. Search by title, or add them yourself."
     );
     expect(hook.result.current.scan.reviewingJob).toBeNull();
   });

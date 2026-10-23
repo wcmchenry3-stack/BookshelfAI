@@ -39,5 +39,15 @@
     "description": "Persistent notice on the wishlist and my-books screens while offline, explaining that the library can't be edited until back online",
     "tone": "neutral",
     "characterLimit": 80
+  },
+  "unverified": {
+    "description": "Badge on a book the user added themselves because the catalog could not find it (#616). Very short.",
+    "tone": "neutral",
+    "characterLimit": 18
+  },
+  "unverifiedA11y": {
+    "description": "Accessibility label for the Unverified badge: the user added this book themselves; it was not found in the catalog.",
+    "tone": "neutral",
+    "characterLimit": 80
   }
 }

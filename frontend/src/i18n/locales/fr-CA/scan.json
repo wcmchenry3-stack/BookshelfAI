@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "{{count}} livres sont déjà dans votre bibliothèque.",
   "addedAndOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}.",
   "addedSomeOwnedMessage": "Ajoutés : {{added}}. Déjà dans votre bibliothèque : {{owned}}. Non enregistrés : {{failed}}. Touchez Ajouter.",
-  "notInCatalogMessage": "Nous n'avons pas trouvé ce livre dans notre catalogue, il ne peut donc pas être ajouté. Essayez de le chercher par titre.",
-  "notInCatalogManyMessage": "Nous n'avons pas trouvé ces {{count}} livres dans notre catalogue, ils ne peuvent donc pas être ajoutés. Essayez de les chercher par titre.",
+  "notInCatalogMessage": "Ce livre est absent de notre catalogue. Cherchez-le par titre ou ajoutez-le vous-même.",
+  "notInCatalogManyMessage": "Ces {{count}} livres sont absents de notre catalogue. Cherchez-les par titre ou ajoutez-les vous-même.",
   "catalogTokenInvalidMessage": "Ce résultat est périmé. Numérisez ou cherchez à nouveau le livre.",
   "catalogTokenInvalidManyMessage": "Ces {{count}} résultats sont périmés. Numérisez ou cherchez à nouveau les livres.",
   "notSavedSummaryMessage": "{{added}} ajouté(s), {{notSaved}} non enregistré(s).",
@@ -86,5 +86,7 @@
   "retryOthersHint": "Touchez Ajouter pour réessayer les autres.",
   "notSavedOwnedOnlyMessage": "{{owned}} déjà dans votre bibliothèque, {{notSaved}} non enregistré(s).",
   "notSavedOnlyMessage": "{{notSaved}} non enregistré(s).",
-  "ownedNotSavedRetryMessage": "{{owned}} déjà dans votre bibliothèque, {{failed}} non enregistré(s). Touchez Ajouter."
+  "ownedNotSavedRetryMessage": "{{owned}} déjà dans votre bibliothèque, {{failed}} non enregistré(s). Touchez Ajouter.",
+  "addItYourself": "L'ajouter vous-même",
+  "unverifiedSavedMessage": "{{title}} a été ajouté à votre liste de souhaits, non vérifié."
 }

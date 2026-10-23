@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { useOnlineOnly } from '../../hooks/useOnlineOnly';
+import { UnverifiedBadge } from '../../components/UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
 
@@ -29,6 +30,8 @@ interface UserBook {
     author: string;
     cover_url: string | null;
   };
+  /** A book the user added themselves; the catalog could not find it (#616). */
+  unverified?: boolean;
   edition: {
     publish_year: number | null;
   } | null;
@@ -266,6 +269,7 @@ export default function WishlistScreen() {
                 >
                   {item.book.author}
                 </Text>
+                {item.unverified ? <UnverifiedBadge /> : null}
 
                 {item.edition?.publish_year ? (
                   <Text

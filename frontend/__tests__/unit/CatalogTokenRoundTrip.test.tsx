@@ -140,7 +140,7 @@ describe('catalog_token round trip (#602)', () => {
     ['catalog_token_invalid', 'This result is out of date. Scan or search for the book again.'],
     [
       'book_not_in_catalog',
-      "We couldn't find this book in our catalog, so it can't be added yet. Try searching by title.",
+      "We couldn't find this book in our catalog. Search by title, or add it yourself.",
     ],
   ])('shows the specific message on 422 %s (#612)', async (detail, message) => {
     const hook = await render();

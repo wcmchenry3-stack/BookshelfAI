@@ -63,5 +63,101 @@
     "description": "Note on a scan or search result the user already has when the edition can't be compared (no ISBN); same text as ownedSameEdition",
     "tone": "neutral",
     "characterLimit": 60
+  },
+  "bookCandidatePicker.notInCatalog": {
+    "description": "Note on a scan result that no catalog (Open Library / Google Books) matched.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "bookCandidatePicker.addYourself": {
+    "description": "Button on a scan result with no catalog match: opens a form to add the book yourself as an unverified entry.",
+    "tone": "friendly",
+    "characterLimit": 25
+  },
+  "bookCandidatePicker.addYourselfA11y": {
+    "description": "Accessibility label for the Add it yourself button. {{title}} is the book title.",
+    "tone": "neutral",
+    "characterLimit": 60,
+    "placeholders": ["{{title}}"]
+  },
+  "addUnverified.title": {
+    "description": "Header of the form for adding a book the catalog could not find.",
+    "tone": "friendly",
+    "characterLimit": 30
+  },
+  "addUnverified.intro": {
+    "description": "Explains the form: the book was not found; check the details; only the user sees it, marked Unverified.",
+    "tone": "friendly",
+    "characterLimit": 160
+  },
+  "addUnverified.titleLabel": {
+    "description": "Label of the book title field.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "addUnverified.authorLabel": {
+    "description": "Label of the author field.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "addUnverified.isbnLabel": {
+    "description": "Label of the optional ISBN field.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "addUnverified.save": {
+    "description": "Button that saves the book.",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "addUnverified.saveHint": {
+    "description": "Accessibility hint of the Save button.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "addUnverified.cancel": {
+    "description": "Button that closes the form without saving.",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "addUnverified.closeA11y": {
+    "description": "Accessibility label of the Cancel button.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "addUnverified.titleRequired": {
+    "description": "Error shown when the title field is empty.",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "addUnverified.authorRequired": {
+    "description": "Error shown when the author field is empty.",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "addUnverified.isbnInvalid": {
+    "description": "Error when the server rejects the ISBN.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "addUnverified.invalid": {
+    "description": "Error when the server rejects the details for another reason.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "addUnverified.duplicate": {
+    "description": "Error (409 unverified_duplicate): the user already added this book themselves.",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "addUnverified.limitReached": {
+    "description": "Error (409 unverified_limit_reached): the user holds the maximum number of books added themselves.",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "addUnverified.failed": {
+    "description": "Error when saving failed for an unknown reason (network, server).",
+    "tone": "neutral",
+    "characterLimit": 60
   }
 }

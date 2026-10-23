@@ -399,7 +399,7 @@
     "placeholders": ["{{added}}", "{{owned}}", "{{failed}}"]
   },
   "notInCatalogMessage": {
-    "description": "Banner when the server refuses to add one book because it has no catalog match (422 book_not_in_catalog). Suggests searching by title.",
+    "description": "Banner when the server refuses to add one book because it has no catalog match (422 book_not_in_catalog). Suggests searching by title or adding it yourself (the banner's Add it yourself action, #616).",
     "tone": "friendly",
     "characterLimit": 130
   },
@@ -466,5 +466,16 @@
     "tone": "friendly",
     "characterLimit": 110,
     "placeholders": ["{{owned}}", "{{failed}}"]
+  },
+  "addItYourself": {
+    "description": "Action button on the banner shown when a book is not in the catalog: opens the Add it yourself form.",
+    "tone": "friendly",
+    "characterLimit": 25
+  },
+  "unverifiedSavedMessage": {
+    "description": "Banner after the user saved a book themselves. {{title}} is the book title.",
+    "tone": "friendly",
+    "characterLimit": 100,
+    "placeholders": ["{{title}}"]
   }
 }

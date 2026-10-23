@@ -10,10 +10,31 @@
     "noneOfTheseA11y": "Ninguno de estos libros coincide",
     "ownedSameEdition": "Ya tienes este libro",
     "ownedOtherEdition": "Ya tienes este libro en otra edición",
-    "ownedEditionUnknown": "Ya tienes este libro"
+    "ownedEditionUnknown": "Ya tienes este libro",
+    "notInCatalog": "No está en el catálogo",
+    "addYourself": "Añádelo tú",
+    "addYourselfA11y": "Añadir {{title}} tú mismo"
   },
   "themeToggle": {
     "toDark": "Cambiar a modo oscuro",
     "toLight": "Cambiar a modo claro"
+  },
+  "addUnverified": {
+    "title": "Añádelo tú",
+    "intro": "No encontramos este libro en el catálogo. Revisa los datos y guárdalo. Solo tú lo verás, marcado como Sin verificar.",
+    "titleLabel": "Título",
+    "authorLabel": "Autor",
+    "isbnLabel": "ISBN (opcional)",
+    "save": "Guardar",
+    "saveHint": "Añade el libro a tu lista de deseos, marcado como Sin verificar",
+    "cancel": "Cancelar",
+    "closeA11y": "Cerrar formulario",
+    "titleRequired": "Escribe un título",
+    "authorRequired": "Escribe un autor",
+    "isbnInvalid": "Este ISBN no es válido. Corrígelo o déjalo en blanco.",
+    "invalid": "Revisa los datos e inténtalo de nuevo.",
+    "duplicate": "Ya añadiste este libro tú mismo.",
+    "limitReached": "Has llegado al límite de libros que puedes añadir tú mismo.",
+    "failed": "No se pudo guardar el libro. Inténtalo de nuevo."
   }
 }

@@ -75,8 +75,8 @@
   "alreadyInLibraryManyMessage": "{{count}} Bücher sind bereits in deiner Bibliothek.",
   "addedAndOwnedMessage": "{{added}} hinzugefügt. {{owned}} bereits in deiner Bibliothek.",
   "addedSomeOwnedMessage": "{{added}} hinzugefügt, {{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen.",
-  "notInCatalogMessage": "Dieses Buch ist nicht in unserem Katalog und kann noch nicht hinzugefügt werden. Suche es nach Titel.",
-  "notInCatalogManyMessage": "Diese {{count}} Bücher sind nicht in unserem Katalog und können noch nicht hinzugefügt werden. Suche nach Titel.",
+  "notInCatalogMessage": "Dieses Buch ist nicht in unserem Katalog. Suche nach Titel oder füge es selbst hinzu.",
+  "notInCatalogManyMessage": "Diese {{count}} Bücher sind nicht in unserem Katalog. Suche nach Titel oder füge sie selbst hinzu.",
   "catalogTokenInvalidMessage": "Dieses Ergebnis ist veraltet. Scanne das Buch erneut oder suche danach.",
   "catalogTokenInvalidManyMessage": "Diese {{count}} Ergebnisse sind veraltet. Scanne die Bücher erneut oder suche danach.",
   "notSavedSummaryMessage": "{{added}} hinzugefügt, {{notSaved}} nicht gespeichert.",
@@ -86,5 +86,7 @@
   "retryOthersHint": "Zum Wiederholen der übrigen auf Hinzufügen tippen.",
   "notSavedOwnedOnlyMessage": "{{owned}} schon in der Bibliothek, {{notSaved}} nicht gespeichert.",
   "notSavedOnlyMessage": "{{notSaved}} nicht gespeichert.",
-  "ownedNotSavedRetryMessage": "{{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen."
+  "ownedNotSavedRetryMessage": "{{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen.",
+  "addItYourself": "Selbst hinzufügen",
+  "unverifiedSavedMessage": "{{title}} wurde als ungeprüft zu deiner Wunschliste hinzugefügt."
 }

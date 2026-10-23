@@ -35,6 +35,7 @@ import {
   type ScanResponse,
 } from '../lib/scanJob';
 import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../lib/scanJobStorage';
+import { draftFromBook, type UnverifiedDraft } from '../lib/unverified';
 
 const MAX_RETRIES = 3;
 const QUEUE_DRAIN_DELAY = 2000;
@@ -79,6 +80,17 @@ export interface ScanJobContextValue {
   requestEnhancedScan: (jobId: string) => void;
   /** Add the books ticked in the review checklist to the wishlist. */
   handleAddBooks: (books: EnrichedBook[]) => Promise<void>;
+  /**
+   * "Add it yourself" forms still to show (#616), one per book the catalog
+   * could not find, pre-filled from the scan; the first is shown.
+   */
+  unverifiedDrafts: UnverifiedDraft[];
+  /** Open the "Add it yourself" form for these books (no catalog match). */
+  addYourself: (books: EnrichedBook[]) => void;
+  /** The first form was saved: show the next one, if any, and confirm. */
+  unverifiedSaved: (title: string) => void;
+  /** Close the "Add it yourself" forms. */
+  dismissUnverified: () => void;
 }
 
 export const ScanJobContext = createContext<ScanJobContextValue>({
@@ -101,6 +113,10 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   purgeExpiredFailedJobs: () => {},
   requestEnhancedScan: () => {},
   handleAddBooks: async () => {},
+  unverifiedDrafts: [],
+  addYourself: () => {},
+  unverifiedSaved: () => {},
+  dismissUnverified: () => {},
 });
 
 function sleep(ms: number): Promise<void> {
@@ -114,6 +130,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [enhancedScansRemaining, setEnhancedScansRemaining] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
   const [usageRefreshKey, setUsageRefreshKey] = useState(0);
+  const [unverifiedDrafts, setUnverifiedDrafts] = useState<UnverifiedDraft[]>([]);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
   // The ref is the source of truth: every change goes through setJobsAndRef,
   // which updates the ref first and then hands React the same list. There is
@@ -645,6 +662,24 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     [setJobsAndRef]
   );
 
+  const addYourself = useCallback((books: EnrichedBook[]) => {
+    setUnverifiedDrafts(books.map(draftFromBook));
+  }, []);
+
+  const dismissUnverified = useCallback(() => setUnverifiedDrafts([]), []);
+
+  const unverifiedSaved = useCallback(
+    (title: string) => {
+      setUnverifiedDrafts((prev) => prev.slice(1));
+      showBanner({
+        message: t('unverifiedSavedMessage', { title }),
+        type: 'success',
+        duration: 4000,
+      });
+    },
+    [showBanner, t]
+  );
+
   const handleAddBooks = useCallback(
     async (books: EnrichedBook[]) => {
       if (books.length === 0) return;
@@ -805,9 +840,15 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         type: 'error',
         duration: Math.min(12000, Math.max(6000, message.length * 60)),
         numberOfLines: 0,
+        // Books no catalog matched can still be added as the user's own
+        // unverified entries (#616).
+        actions:
+          notInCatalog.length > 0
+            ? [{ label: t('addItYourself'), onPress: () => addYourself(notInCatalog) }]
+            : undefined,
       });
     },
-    [reviewingJobId, dismissJob, updateJob, showBanner, t]
+    [reviewingJobId, dismissJob, updateJob, showBanner, t, addYourself]
   );
 
   // Keep executeScan in a ref so useCallbacks always call the latest version
@@ -1317,6 +1358,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
+      unverifiedDrafts,
+      addYourself,
+      unverifiedSaved,
+      dismissUnverified,
     }),
     [
       jobs,
@@ -1338,6 +1383,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       purgeExpiredFailedJobs,
       requestEnhancedScan,
       handleAddBooks,
+      unverifiedDrafts,
+      addYourself,
+      unverifiedSaved,
+      dismissUnverified,
     ]
   );
 
