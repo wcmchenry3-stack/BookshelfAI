@@ -112,15 +112,26 @@ class TestWindows:
 
 class TestAllowances:
     def test_free_defaults_are_od1(self):
-        assert quota.allowance_for(AISettings({}), Tier.FREE) == quota.Allowance(5)
+        # #577: 5 found and 5 no-match a day.
+        assert quota.allowance_for(AISettings({}), Tier.FREE) == quota.Allowance(5, 5)
 
     def test_premium_defaults(self):
-        assert quota.allowance_for(AISettings({}), Tier.PREMIUM) == quota.Allowance(30)
+        # #577 / decision #583: Premium 5 found and 5 no-match a day.
+        assert quota.allowance_for(AISettings({}), Tier.PREMIUM) == quota.Allowance(
+            5, 5
+        )
 
     def test_tier_selects_its_own_keys(self):
-        ai = AISettings({"quota.free.daily": 1, "quota.premium.daily": 3})
-        assert quota.allowance_for(ai, Tier.FREE) == quota.Allowance(1)
-        assert quota.allowance_for(ai, Tier.PREMIUM) == quota.Allowance(3)
+        ai = AISettings(
+            {
+                "quota.free.found_daily": 1,
+                "quota.premium.found_daily": 3,
+                "quota.free.no_match_daily": 2,
+                "quota.premium.no_match_daily": 4,
+            }
+        )
+        assert quota.allowance_for(ai, Tier.FREE) == quota.Allowance(1, 2)
+        assert quota.allowance_for(ai, Tier.PREMIUM) == quota.Allowance(3, 4)
 
     def test_seeds_come_from_env_settings(self):
         with (
@@ -131,7 +142,7 @@ class TestAllowances:
             assert quota.allowance_for(AISettings({}), Tier.PREMIUM).daily == 90
 
     async def test_free_user_gets_free_limits(self, store):
-        ai = AISettings({"quota.free.daily": 1, "quota.premium.daily": 30})
+        ai = AISettings({"quota.free.found_daily": 1, "quota.premium.found_daily": 30})
         r = await _reserve(ai)
         assert r.tier is Tier.FREE and r.allowance.daily == 1
         await quota.release(AsyncMock(), r)
@@ -142,7 +153,7 @@ class TestAllowances:
         monkeypatch.setattr(
             entitlements, "tier_for", AsyncMock(return_value=Tier.PREMIUM)
         )
-        ai = AISettings({"quota.free.daily": 1, "quota.premium.daily": 3})
+        ai = AISettings({"quota.free.found_daily": 1, "quota.premium.found_daily": 3})
         for _ in range(3):
             r = await _reserve(ai)
             assert r.tier is Tier.PREMIUM
@@ -182,7 +193,7 @@ class TestReserveFlow:
 
     async def test_daily_refusal_releases_lease(self, store):
         with pytest.raises(quota.DailyLimitReached) as exc:
-            await _reserve(AISettings({"quota.free.daily": 0}))
+            await _reserve(AISettings({"quota.free.found_daily": 0}))
         assert exc.value.retry_after == 12 * 3600
         assert store.leases == {}
         assert store.rows == {}
@@ -274,7 +285,7 @@ class TestReserveFlow:
             patch.object(quota, "give_back_unit", give_back),
             pytest.raises(quota.DailyLimitReached),
         ):
-            await _reserve(AISettings({"quota.free.daily": 5}))
+            await _reserve(AISettings({"quota.free.found_daily": 5}))
         assert calls == []
         assert store.rows == {(USER.id, FEATURE, "day", TODAY): 5}
         assert store.leases == {}

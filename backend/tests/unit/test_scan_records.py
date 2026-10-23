@@ -602,7 +602,7 @@ class TestFinishedRepeat:
 
     def test_served_with_no_allowance_left(self, client, store, records, provider):
         _post(client)
-        ai_settings.reset_cache({"quota.free.daily": 0, "quota.free.monthly": 0})
+        ai_settings.reset_cache({"quota.free.found_daily": 0, "quota.free.monthly": 0})
         resp = _post(client)
         assert resp.status_code == 200 and resp.json()["repeat"] is True
         # A new photo is refused as before.

@@ -427,11 +427,16 @@ async def _release_scan_lease(
     ledger_row: Executable | None = None,
     settlement: breaker.Settlement | None = None,
     zero_result: quota.ZeroResult | None = None,
-) -> None:
+    no_match: quota.NoMatch | None = None,
+) -> quota.NoMatchMoved | None:
     """Release the in-flight lease (settle) and commit the call's usage-ledger
     row, cost settle and (an enhanced scan with no books, #533) the charge
-    decision in the same transaction; never raises, shielded."""
-    await quota.release(db, reservation, ledger_row, settlement, zero_result)
+    decision or (a standard scan with no books, #577) the no-match move in
+    the same transaction; never raises, shielded. Returns the no-match
+    decision, if one was committed."""
+    return await quota.release(
+        db, reservation, ledger_row, settlement, zero_result, no_match
+    )
 
 
 async def _enrich(candidates: list) -> tuple[list[EnrichedBook], bool]:
@@ -470,6 +475,17 @@ async def _enhanced_remaining(
         except Exception:
             logger.exception("scan: rollback after the allowance read failed")
         return None
+
+
+def _no_match_field(moved: object) -> str | None:
+    """``ScanResponse.no_match`` from the settle's no-match decision (#577);
+    None when there was none. Never raises."""
+    if isinstance(moved, quota.NoMatchMoved) and moved.outcome in (
+        quota.NO_MATCH_FREE,
+        quota.NO_MATCH_COUNTED,
+    ):
+        return moved.outcome
+    return None
 
 
 def _settlement(
@@ -732,6 +748,14 @@ async def scan(
     # a scan record (#585) returned above: it made no provider call and
     # records none.
     #
+    # Found / no-match (#577): a standard scan whose provider answered
+    # properly (outcome ok) with no candidates passes a NoMatch to the
+    # settle, which moves the found unit to the no-match counter when it
+    # has room (in the settle transaction, under the same gate, at most
+    # once). The response says what happened (``no_match``: ``free`` or
+    # ``counted``). Enhanced scans, refusals and truncated replies never
+    # move; malformed replies were already refunded above.
+    #
     # Usage ledger (#530): every outcome of the provider call writes one
     # ai_usage row, committed with the lease release. call_id is generated
     # once per call, so a retried settle cannot write it twice. A kill switch
@@ -750,6 +774,8 @@ async def scan(
     settlement: breaker.Settlement | None = None
     ledger_decided = False
     zero_result: quota.ZeroResult | None = None
+    no_match: quota.NoMatch | None = None
+    moved: quota.NoMatchMoved | None = None
     try:
         try:
             result = await run_feature(
@@ -805,6 +831,9 @@ async def scan(
             zero_result = quota.ZeroResult(
                 ledger_id=call_id if ledger_row is not None else None
             )
+        if not enhanced and result.outcome == STATUS_OK and not result.candidates:
+            # A genuine no-match (#577): the settle decides the move.
+            no_match = quota.NoMatch()
     finally:
         if not ledger_decided:
             # The call did not complete: the request was cancelled (or a
@@ -812,7 +841,9 @@ async def scan(
             # as an error with 0 tokens; the shielded settle writes it.
             ledger_row = row(status=STATUS_ERROR)
             settlement = spend(status=STATUS_ERROR)
-        await _release_scan_lease(db, reservation, ledger_row, settlement, zero_result)
+        moved = await _release_scan_lease(
+            db, reservation, ledger_row, settlement, zero_result, no_match
+        )
 
     # Scan record (#585), step by step after the settle and outside the
     # lease: the AI step first, then the enrichment step once every lookup
@@ -849,6 +880,7 @@ async def scan(
         books=books,
         enhanced=enhanced,
         enhanced_scans_remaining=await _enhanced_remaining(db, reservation),
+        no_match=_no_match_field(moved),
     )
 
 
@@ -859,10 +891,12 @@ async def scan_usage(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ScanUsageResponse:
-    """The current user's scan usage and daily allowance (read only).
-    Standard and enhanced scans count against the same daily allowance.
-    There is no monthly allowance (#582): the monthly fields are always
-    null (kept for one release so older app builds still parse the body)."""
+    """The current user's scan usage and daily allowances (read only): the
+    found and no-match counters (#577). Standard and enhanced scans count
+    against the same found allowance; ``used_today`` / ``daily_limit`` are
+    the found counter, kept for one release for older app builds. There is
+    no monthly allowance (#582): the monthly fields are always null (kept
+    for one release so older app builds still parse the body)."""
     try:
         ai = await get_ai_settings(db)
     except AISettingsUnavailableError:
@@ -873,4 +907,11 @@ async def scan_usage(
     usage = await quota.usage_for(
         db, user=current_user, feature=quota.SCAN_QUOTA_FEATURE, ai=ai
     )
-    return ScanUsageResponse(used_today=usage.used_today, daily_limit=usage.daily_limit)
+    return ScanUsageResponse(
+        used_today=usage.used_today,
+        daily_limit=usage.daily_limit,
+        found_used_today=usage.used_today,
+        found_daily_limit=usage.daily_limit,
+        no_match_used_today=usage.no_match_used_today,
+        no_match_daily_limit=usage.no_match_daily_limit,
+    )

@@ -290,7 +290,7 @@ class TestFinishedRepeat:
         factory, make_user = sessions
         user_id = await make_user()
         provider = _Provider()
-        ai_settings.reset_cache({"quota.free.daily": 1})
+        ai_settings.reset_cache({"quota.free.found_daily": 1})
         with provider.patch():
             await _scan(factory, user_id)
             resp = await _scan(factory, user_id)
@@ -355,7 +355,7 @@ class TestFinishedRepeat:
         factory, make_user = sessions
         user_id = await make_user()
         provider = _Provider()
-        ai_settings.reset_cache({"quota.premium.daily": 30})
+        ai_settings.reset_cache({"quota.premium.found_daily": 30})
         with provider.patch():
             first = await _scan(factory, user_id, enhanced=True)
             before = await _state(factory, user_id)
@@ -508,7 +508,11 @@ class TestNoMatchSaved:
         assert first.books == [] and first.repeat is False
         assert provider.calls == 1
         assert resp.repeat is True and resp.books == []
-        assert (await _usage(factory, user_id)).used_today == used == 1
+        # #577: the no-match moved to the no-match counter; the repeat
+        # takes nothing.
+        usage = await _usage(factory, user_id)
+        assert usage.used_today == used == 0
+        assert usage.no_match_used_today == 1
         (row,) = await _rows(factory, user_id)
         assert row.ai_done and row.enrich_done
         assert row.candidates == [] and row.enrichment == []

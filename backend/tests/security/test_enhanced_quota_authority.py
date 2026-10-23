@@ -118,7 +118,7 @@ def premium(monkeypatch):
 def _settings(**rows):
     ai_settings.reset_cache(
         {
-            "quota.premium.daily": 30,
+            "quota.premium.found_daily": 30,
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -174,7 +174,7 @@ class TestAllowanceAuthority:
     ):
         """#582: an enhanced scan is limited by the shared daily allowance
         (no enhanced monthly allowance); forged values cannot lift it."""
-        _settings(**{"quota.premium.daily": 0})
+        _settings(**{"quota.premium.found_daily": 0})
         resp = _post(client)
         assert resp.status_code == 429
         assert resp.json() == {"detail": "daily_scan_limit"}
@@ -183,7 +183,7 @@ class TestAllowanceAuthority:
         assert store.rows == {}
 
     def test_forged_remaining_is_ignored(self, client, store, provider, premium):
-        _settings(**{"quota.premium.daily": 5})
+        _settings(**{"quota.premium.found_daily": 5})
         provider.return_value.identify = AsyncMock(
             return_value=ProviderResult(
                 [BookCandidate(title="Dune", author="F", confidence=0.9)]

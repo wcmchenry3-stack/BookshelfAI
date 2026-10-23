@@ -119,6 +119,9 @@ class TestScanEndpoint:
             "enhanced_scans_remaining": None,
             # #585: a new photo, not a repeat served from a scan record.
             "repeat": False,
+            # #577: the settle runs on a fake session here, so no no-match
+            # decision is committed.
+            "no_match": None,
         }
 
     def test_returns_enriched_candidates(self, client):

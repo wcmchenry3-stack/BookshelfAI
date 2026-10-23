@@ -253,7 +253,7 @@ class TestReserve:
         _premium(monkeypatch)
         store.spend[TODAY] = [0, CEILING, 0]
         with pytest.raises(quota.DailyLimitReached):
-            await _reserve(_ai(**{"quota.premium.daily": 0}))
+            await _reserve(_ai(**{"quota.premium.found_daily": 0}))
         assert store.spend[TODAY] == [0, CEILING, 0]  # estimate given back
 
     async def test_count_cap_is_checked_before_the_cost_ceiling(self, store):
@@ -291,7 +291,7 @@ class TestReserveGivesTheEstimateBack:
 
     async def test_daily_refusal(self, store):
         with pytest.raises(quota.DailyLimitReached):
-            await _reserve(_ai(**{"quota.free.daily": 0}))
+            await _reserve(_ai(**{"quota.free.found_daily": 0}))
         assert store.spend[TODAY][0] == 0
 
     async def test_lease_lost(self, store):

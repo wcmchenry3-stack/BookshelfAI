@@ -104,12 +104,21 @@ class Settings(BaseSettings):
     # (same bounds): scans per UTC day across all users, checked before any
     # per-user reservation (503 scan_capacity). Approximate under concurrency.
     scan_global_daily_limit: int = Field(default=2000, ge=1, le=1_000_000)
-    # Per-user scan allowances by tier (#528). INITIAL DEFAULTS ONLY: they seed
-    # the ai_settings rows quota.<tier>.daily (same bounds), which are the
-    # source of truth after first boot. Windows are UTC days. 0 refuses every
-    # scan for that tier. There is no monthly allowance (#582).
+    # Per-user scan allowances by tier (#528, #577). INITIAL DEFAULTS ONLY:
+    # they seed the ai_settings rows (same bounds), which are the source of
+    # truth after first boot. Windows are UTC days. There is no monthly
+    # allowance (#582).
+    # SCAN_<TIER>_DAILY_LIMIT seeds quota.<tier>.found_daily (scans that found
+    # books; the retired quota.<tier>.daily became it, #577). 0 refuses every
+    # scan for that tier. Premium's default went from 30 to 5 with #577
+    # (decision #583).
     scan_free_daily_limit: int = Field(default=5, ge=0, le=1000)
-    scan_premium_daily_limit: int = Field(default=30, ge=0, le=1000)
+    scan_premium_daily_limit: int = Field(default=5, ge=0, le=1000)
+    # SCAN_<TIER>_NO_MATCH_DAILY_LIMIT seeds quota.<tier>.no_match_daily:
+    # standard scans where the model answered but found no book, which do
+    # not use a found unit while this allowance lasts (#577).
+    scan_free_no_match_daily_limit: int = Field(default=5, ge=0, le=1000)
+    scan_premium_no_match_daily_limit: int = Field(default=5, ge=0, le=1000)
     # LEGACY (#582): SCAN_FREE_MONTHLY_LIMIT, SCAN_PREMIUM_MONTHLY_LIMIT and
     # SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT seeded the retired monthly keys.
     # Nothing reads them; they are accepted (any integer, or unset) only so

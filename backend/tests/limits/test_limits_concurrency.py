@@ -41,9 +41,9 @@ async def _scan_until_decided(db, user_id, *, enhanced) -> str:
 @pytest.mark.parametrize(
     "tier, enhanced, limit_key, refusal",
     [
-        (Tier.FREE, False, "quota.free.daily", "daily_scan_limit"),
-        (Tier.PREMIUM, False, "quota.premium.daily", "daily_scan_limit"),
-        (Tier.PREMIUM, True, "quota.premium.daily", "daily_scan_limit"),
+        (Tier.FREE, False, "quota.free.found_daily", "daily_scan_limit"),
+        (Tier.PREMIUM, False, "quota.premium.found_daily", "daily_scan_limit"),
+        (Tier.PREMIUM, True, "quota.premium.found_daily", "daily_scan_limit"),
     ],
     ids=["free-daily", "premium-daily", "premium-enhanced-daily"],
 )
@@ -54,8 +54,8 @@ async def test_parallel_scans_never_charge_more_than_the_limit(
     day, user_id = db.make_day(), await db.make_user()
     rows = {
         **BASE,
-        "quota.free.daily": 1_000,
-        "quota.premium.daily": 1_000,
+        "quota.free.found_daily": 1_000,
+        "quota.premium.found_daily": 1_000,
         limit_key: L,
     }
     h.use_settings(rows)
@@ -199,7 +199,7 @@ async def test_lost_ack_on_a_refusal_release_gives_back_the_estimate_once(
     The estimate is given back once: another request's reservation stays."""
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
-    rows = {**BASE, "quota.free.daily": 1}
+    rows = {**BASE, "quota.free.found_daily": 1}
     await db.seed_units(user_id, feature=h.SCAN, kind="day", start=day, units=1)
     other_est = 7_000  # another request's estimate, in flight
     async with db.factory() as session:
