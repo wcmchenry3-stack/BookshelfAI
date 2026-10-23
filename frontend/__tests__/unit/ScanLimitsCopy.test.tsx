@@ -43,12 +43,16 @@ jest.mock('../../hooks/useNetworkStatus', () => ({
   useNetworkStatus: () => ({ isConnected: true }),
 }));
 
+// GET /scan/usage as the server sends it since #582: the monthly fields are
+// kept for one release, always null.
 const USAGE = {
   used_today: 1,
   daily_limit: 9,
-  used_month: 2,
-  monthly_limit: 41,
-  period_end: '2026-11-01',
+  used_month: null,
+  monthly_limit: null,
+  period_end: null,
+  enhanced_used_month: null,
+  enhanced_monthly_limit: null,
 };
 
 function refusal(status: number, detail: string, extra = {}, headers = {}) {
@@ -72,21 +76,6 @@ async function noticeFor(err: unknown) {
 
 describe('every scan refusal shows its translated message', () => {
   const NOTICES: [string, unknown, string | RegExp][] = [
-    [
-      '402 scan_limit_reached',
-      refusal(402, 'scan_limit_reached', { limit: 7, used: 7, period_end: '2026-11-01' }),
-      "You've used your 7 scans for this month. Your scans reset on November 1, 2026.",
-    ],
-    [
-      '402 scan_limit_reached, limit 1',
-      refusal(402, 'scan_limit_reached', { limit: 1, used: 1, period_end: '2027-01-01' }),
-      "You've used your 1 scan for this month. Your scans reset on January 1, 2027.",
-    ],
-    [
-      '402 scan_limit_reached without numbers',
-      refusal(402, 'scan_limit_reached'),
-      "You've used all your scans for this month.",
-    ],
     [
       '429 daily_scan_limit',
       refusal(429, 'daily_scan_limit', {}, { 'retry-after': '43200' }),
@@ -118,6 +107,18 @@ describe('every scan refusal shows its translated message', () => {
     expect(await view.findByText(text)).toBeTruthy();
   });
 
+  // #582: there is no monthly limit. A 402 an older server still sends is a
+  // generic failure (the job's own error banner), never a monthly notice.
+  it.each([
+    ['402 scan_limit_reached', refusal(402, 'scan_limit_reached', { limit: 7, used: 7 })],
+    ['402 enhanced_limit_reached', refusal(402, 'enhanced_limit_reached', { limit: 20 })],
+  ])('%s from an older server shows no limit notice', async (_name, err) => {
+    const { state, view } = await noticeFor(err);
+    expect(state).toEqual({ kind: 'generic' });
+    expect(view.queryByTestId('scan-notice')).toBeNull();
+    expect(view.queryByText(/month/i)).toBeNull();
+  });
+
   // Enhanced refusals are a banner, worded by enhancedRefusalMessage (the
   // ScanJobContext banner path is covered in ScanQuotaFlow.test.tsx).
   const ENHANCED: [string, unknown, string][] = [
@@ -125,11 +126,6 @@ describe('every scan refusal shows its translated message', () => {
       '403 enhanced_requires_premium',
       refusal(403, 'enhanced_requires_premium'),
       'Enhanced scans are part of Premium.',
-    ],
-    [
-      '402 enhanced_limit_reached',
-      refusal(402, 'enhanced_limit_reached', { limit: 20, used: 20, period_end: '2026-11-01' }),
-      "You've used all your enhanced scans for this month.",
     ],
     [
       '429 enhanced_throttled without Retry-After',
@@ -185,19 +181,22 @@ describe('every active locale has the refusal and usage copy', () => {
   // key -> placeholders the translation must keep (the server's numbers and
   // dates reach the user only through these).
   const SCAN_KEYS: Record<string, string[]> = {
-    monthlyLimit: ['count'],
-    monthlyLimitAny: [],
-    monthlyResets: ['date'],
     dailyLimit: ['time'],
     stillProcessing: [],
     scanPaused: [],
     enhancedRequiresPremium: [],
-    enhancedLimitReached: [],
     enhancedThrottled: ['time'],
     enhancedThrottledLater: [],
-    usageMonth: ['used', 'limit'],
     usageToday: ['count'],
   };
+  // #582: the monthly copy is gone from every locale (and its _meta).
+  const RETIRED_SCAN_KEYS = [
+    'monthlyLimit',
+    'monthlyLimitAny',
+    'monthlyResets',
+    'enhancedLimitReached',
+    'usageMonth',
+  ];
 
   function variants(data: Record<string, string>, key: string): [string, string][] {
     return Object.entries(data).filter(([k]) => k === key || k.startsWith(`${key}_`));
@@ -214,61 +213,58 @@ describe('every active locale has the refusal and usage copy', () => {
         for (const p of params) expect([k, value.includes(`{{${p}}}`)]).toEqual([k, true]);
       }
     }
+    for (const key of RETIRED_SCAN_KEYS) expect([key, variants(scan, key)]).toEqual([key, []]);
     const settings = require(`../../src/i18n/locales/${code}/settings.json`);
-    expect(settings.scanUsageMonth).toContain('{{used}}');
-    expect(settings.scanUsageMonth).toContain('{{limit}}');
+    expect(typeof settings.scanUsageLabel).toBe('string');
+    expect(settings.scanUsageMonth).toBeUndefined();
+  });
+
+  it('_meta has no entry for the retired monthly copy', () => {
+    const scanMeta = require('../../src/i18n/locales/_meta/scan.meta.json');
+    const settingsMeta = require('../../src/i18n/locales/_meta/settings.meta.json');
+    for (const key of RETIRED_SCAN_KEYS) expect([key, key in scanMeta]).toEqual([key, false]);
+    expect('scanUsageMonth' in settingsMeta).toBe(false);
   });
 });
 
 describe('the usage counters show the limits the server sends', () => {
-  const CASES: [string, typeof USAGE, string, string, string][] = [
-    [
-      'Free defaults',
-      { ...USAGE, used_today: 1, daily_limit: 5, used_month: 1, monthly_limit: 5 },
-      'Scans used this month: 1 of 5',
-      'Scans left today: 4',
-      '1 of 5 scans used this month',
-    ],
-    [
-      'Premium',
-      { ...USAGE, used_today: 3, daily_limit: 30, used_month: 120, monthly_limit: 300 },
-      'Scans used this month: 120 of 300',
-      'Scans left today: 27',
-      '120 of 300 scans used this month',
-    ],
+  // #582: only the daily counter; no month counter anywhere.
+  const CASES: [string, typeof USAGE, string][] = [
+    ['Free defaults', { ...USAGE, used_today: 1, daily_limit: 5 }, 'Scans left today: 4'],
+    ['Premium', { ...USAGE, used_today: 3, daily_limit: 30 }, 'Scans left today: 27'],
     [
       'limits changed in ai_settings (no release)',
-      { ...USAGE, used_today: 2, daily_limit: 9, used_month: 17, monthly_limit: 41 },
-      'Scans used this month: 17 of 41',
+      { ...USAGE, used_today: 2, daily_limit: 9 },
       'Scans left today: 7',
-      '17 of 41 scans used this month',
     ],
     [
       'a limit lowered below today’s usage never shows a negative count',
-      { ...USAGE, used_today: 4, daily_limit: 1, used_month: 4, monthly_limit: 2 },
-      'Scans used this month: 4 of 2',
+      { ...USAGE, used_today: 4, daily_limit: 1 },
       'Scans left today: 0',
-      '4 of 2 scans used this month',
-    ],
-    [
-      'the monthly allowance is the tighter one',
-      { ...USAGE, used_today: 0, daily_limit: 30, used_month: 298, monthly_limit: 300 },
-      'Scans used this month: 298 of 300',
-      'Scans left today: 2',
-      '298 of 300 scans used this month',
     ],
   ];
 
-  it.each(CASES)('scan screen: %s', async (_name, usage, month, today) => {
+  it.each(CASES)('scan screen: %s', async (_name, usage, today) => {
     mockGet.mockResolvedValue({ data: usage });
-    const { findByText, getByText } = await render(<ScanScreen />);
-    expect(await findByText(month)).toBeTruthy();
-    expect(getByText(today)).toBeTruthy();
+    const { findByText, queryByText } = await render(<ScanScreen />);
+    expect(await findByText(today)).toBeTruthy();
+    expect(queryByText(/month/i)).toBeNull();
   });
 
-  it.each(CASES)('settings: %s', async (_name, usage, _month, _today, settingsRow) => {
+  it.each(CASES)('settings: %s', async (_name, usage, today) => {
     mockGet.mockResolvedValue({ data: usage });
-    const { findByText } = await render(<SettingsScreen />);
-    expect(await findByText(settingsRow)).toBeTruthy();
+    const { findByText, queryByText } = await render(<SettingsScreen />);
+    expect(await findByText(today)).toBeTruthy();
+    expect(queryByText(/month/i)).toBeNull();
+  });
+
+  it('a heavy month of use changes nothing: the counter is the day only', async () => {
+    // An older server still sending monthly numbers: they are ignored.
+    mockGet.mockResolvedValue({
+      data: { ...USAGE, used_today: 2, daily_limit: 5, used_month: 140, monthly_limit: 5 },
+    });
+    const { findByText, queryByText } = await render(<ScanScreen />);
+    expect(await findByText('Scans left today: 3')).toBeTruthy();
+    expect(queryByText(/140/)).toBeNull();
   });
 });

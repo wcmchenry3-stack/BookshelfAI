@@ -13,8 +13,9 @@ export type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'q
 export interface ScanResponse {
   books: EnrichedBook[];
   enhanced: boolean;
-  /** Premium enhanced scans left this month after this scan; null when the
-   * user is not Premium (enhanced scans are Premium-only, #533). */
+  /** Premium enhanced scans left today after this scan (the shared daily
+   * allowance left, #582); null when the user is not Premium (enhanced scans
+   * are Premium-only, #533). */
   enhanced_scans_remaining: number | null;
   /** True when the answer came from the user's saved scan record for this
    * exact photo: no AI call and nothing charged (#585). The app copy is #588. */

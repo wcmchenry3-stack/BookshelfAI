@@ -37,13 +37,11 @@ export interface ScanJobContextValue {
   isQueueFull: boolean;
   reviewingJob: ScanJob | null;
   /**
-   * Premium enhanced scans left this month, as last reported by the server
-   * (a scan response or the usage counters); null when unknown or the user is
-   * not Premium. The enhanced re-scan is offered only when this is > 0.
+   * Premium enhanced scans left today (the shared daily allowance left, #582),
+   * as last reported by a scan response; null when unknown or the user is not
+   * Premium. The enhanced re-scan is offered only when this is > 0.
    */
   enhancedScansRemaining: number | null;
-  /** Record the enhanced scans left according to GET /scan/usage. */
-  syncEnhancedScansRemaining: (remaining: number | null) => void;
   /** Why the last scan was refused (limit reached, paused, ...); null when there is nothing to show. */
   scanNotice: ScanNotice | null;
   dismissScanNotice: () => void;
@@ -69,7 +67,6 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   isQueueFull: false,
   reviewingJob: null,
   enhancedScansRemaining: null,
-  syncEnhancedScansRemaining: () => {},
   scanNotice: null,
   dismissScanNotice: () => {},
   resumeQueue: () => {},
@@ -116,10 +113,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const { t, i18n } = useTranslation('scan');
 
   const dismissScanNotice = useCallback(() => setScanNotice(null), []);
-  const syncEnhancedScansRemaining = useCallback(
-    (remaining: number | null) => setEnhancedScansRemaining(remaining),
-    []
-  );
   const bumpUsage = useCallback(() => setUsageRefreshKey((k) => k + 1), []);
 
   // Persist jobs whenever they change (after initial load).
@@ -494,8 +487,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       updateJob(job.id, { status: 'queued', error: state.kind, retryCount: 0 });
     }
 
-    // An enhanced scan the server refused (#533: not Premium, enhanced
-    // allowance used, or throttled after repeated empty enhanced scans). Only
+    // An enhanced scan the server refused (#533: not Premium, or throttled
+    // after repeated empty enhanced scans). Only
     // enhanced photos are affected: the drain stops sending enhanced photos
     // (standard ones still go), the offer is hidden until the server reports
     // enhanced scans left again, and the standard scan's books come back.
@@ -695,7 +688,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (
-          uiState.kind === 'monthly_limit' ||
           uiState.kind === 'daily_limit' ||
           uiState.kind === 'in_progress' ||
           uiState.kind === 'paused'
@@ -755,7 +747,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       isQueueFull,
       reviewingJob,
       enhancedScansRemaining,
-      syncEnhancedScansRemaining,
       scanNotice,
       dismissScanNotice,
       resumeQueue,
@@ -775,7 +766,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       isQueueFull,
       reviewingJob,
       enhancedScansRemaining,
-      syncEnhancedScansRemaining,
       scanNotice,
       dismissScanNotice,
       resumeQueue,

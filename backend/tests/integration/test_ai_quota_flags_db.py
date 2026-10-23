@@ -81,7 +81,8 @@ async def _flags(factory, user_id) -> set[str] | None:
         row = await db.get(AIInflight, user_id)
         if row is None:
             return None
-        return {flag for flag in quota.UNIT_FLAGS if getattr(row, flag)}
+        flags = quota.UNIT_FLAGS + quota.RETIRED_FLAGS
+        return {flag for flag in flags if getattr(row, flag)}
 
 
 async def _expire_lease(factory, user_id) -> None:
@@ -224,6 +225,27 @@ class TestGiveBackUnit:
         async with factory() as db:
             assert (await db.get(AIInflight, user_id)).lease_id == fresh
 
+    async def test_a_takeover_clears_the_retired_flags(self, sessions):
+        """#582: monthly_taken / enhanced_taken are never set any more, but a
+        lease row the previous release left with them set must not carry
+        them over to a new lease."""
+        factory, make_user = sessions
+        user_id = await make_user()
+        async with factory() as db:
+            stale = await quota.acquire_lease(db, user_id, 60)
+            await db.execute(
+                update(AIInflight)
+                .where(AIInflight.user_id == user_id)
+                .values({flag: True for flag in quota.RETIRED_FLAGS})
+            )
+            await db.commit()
+        assert await _flags(factory, user_id) == set(quota.RETIRED_FLAGS)
+        await _expire_lease(factory, user_id)
+        async with factory() as db:
+            fresh = await quota.acquire_lease(db, user_id, 60)
+        assert fresh is not None and fresh != stale
+        assert await _flags(factory, user_id) == set()
+
 
 # ---------------------------------------------------------------------------
 # Migration 0012
@@ -249,17 +271,21 @@ def _migration_cycle(connection) -> None:
     def diffs() -> list:
         return [d for d in compare_metadata(context, Base.metadata) if table in repr(d)]
 
+    # The three columns 0012 adds; #582 stopped setting two of them
+    # (RETIRED_FLAGS) but they stay in the schema.
+    flags = quota.UNIT_FLAGS + quota.RETIRED_FLAGS
+
     with Operations.context(context):
-        if set(quota.UNIT_FLAGS) <= set(columns()):
+        if set(flags) <= set(columns()):
             migration.downgrade()
-        assert not set(quota.UNIT_FLAGS) & set(columns())
+        assert not set(flags) & set(columns())
         migration.upgrade()
         assert diffs() == []
-        for flag in quota.UNIT_FLAGS:
+        for flag in flags:
             assert columns()[flag]["nullable"] is False
             assert "false" in str(columns()[flag]["default"]).lower()
         migration.downgrade()
-        assert not set(quota.UNIT_FLAGS) & set(columns())
+        assert not set(flags) & set(columns())
         assert {"user_id", "lease_id", "lease_expires_at"} <= set(columns())
         migration.upgrade()
         assert diffs() == []

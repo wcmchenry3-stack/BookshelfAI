@@ -5,8 +5,6 @@
  *
  * Backend contract: backend/app/api/scan.py, docs/api.md.
  *
- *   402 scan_limit_reached     -> monthly_limit   (body: limit, used, period_end)
- *   402 enhanced_limit_reached -> enhanced_refused (limit_reached; enhanced only)
  *   403 enhanced_requires_premium -> enhanced_refused (premium_required)
  *   429 daily_scan_limit       -> daily_limit     (Retry-After: s to UTC midnight)
  *   429 scan_in_progress       -> in_progress     (Retry-After: 2)
@@ -16,6 +14,10 @@
  *       ai_budget_reached | ai_unavailable | scan_unavailable -> paused
  *   anything else              -> generic
  *
+ * There is no monthly limit (#582): the server no longer sends 402
+ * scan_limit_reached or 402 enhanced_limit_reached. An older server that
+ * still does gets the generic failure (any 402 is `generic`).
+ *
  * The `enhanced_refused` refusals (#533) only ever answer an enhanced scan:
  * like `enhanced_scan_disabled` they stop only enhanced photos in the queue
  * drain, and an enhanced re-scan falls back to the standard scan's books.
@@ -23,7 +25,6 @@
  */
 
 export type ScanUiState =
-  | { kind: 'monthly_limit'; limit?: number; periodEnd?: string }
   | { kind: 'daily_limit'; retryAfterSeconds?: number }
   | { kind: 'in_progress'; retryAfterSeconds: number }
   | { kind: 'paused'; enhancedOnly?: boolean }
@@ -36,21 +37,20 @@ export type ScanUiState =
   | { kind: 'generic' };
 
 /** Why the server refused an enhanced scan (#533). */
-export type EnhancedRefusalReason = 'premium_required' | 'limit_reached' | 'throttled';
+export type EnhancedRefusalReason = 'premium_required' | 'throttled';
 
 /** What the scan screen shows. `in_progress` becomes `still_processing` once retries run out. */
 export type ScanNotice =
-  | { kind: 'monthly_limit'; limit?: number; periodEnd?: string }
-  | { kind: 'daily_limit'; resetsAt: number }
-  | { kind: 'still_processing' }
-  | { kind: 'paused' };
+  { kind: 'daily_limit'; resetsAt: number } | { kind: 'still_processing' } | { kind: 'paused' };
 
 /** `error` values a refused (re-queued) job carries. */
+// 'monthly_limit' stays for one release (#582): a job persisted by an older build
+// may still carry it, and it still counts as a refusal (#594 removes it).
 export const REFUSAL_ERRORS: readonly string[] = [
-  'monthly_limit',
   'daily_limit',
   'paused',
   'in_progress',
+  'monthly_limit',
 ];
 
 /** True when any queued job is waiting because the server refused it. */
@@ -79,7 +79,7 @@ export const PAUSED_CODES: readonly string[] = [
 
 interface ErrorResponseLike {
   status?: number;
-  data?: { detail?: unknown; limit?: unknown; period_end?: unknown } | null;
+  data?: { detail?: unknown } | null;
   headers?: unknown;
 }
 
@@ -107,20 +107,6 @@ export function classifyScanError(err: unknown): ScanUiState {
   const { status } = response;
   const detail = typeof response.data?.detail === 'string' ? response.data.detail : undefined;
 
-  if (status === 402) {
-    if (detail === 'scan_limit_reached') {
-      const { limit, period_end: periodEnd } = response.data ?? {};
-      return {
-        kind: 'monthly_limit',
-        limit: typeof limit === 'number' ? limit : undefined,
-        periodEnd: typeof periodEnd === 'string' ? periodEnd : undefined,
-      };
-    }
-    if (detail === 'enhanced_limit_reached') {
-      return { kind: 'enhanced_refused', reason: 'limit_reached' };
-    }
-    return { kind: 'generic' };
-  }
   if (status === 403 && detail === 'enhanced_requires_premium') {
     return { kind: 'enhanced_refused', reason: 'premium_required' };
   }
@@ -162,8 +148,6 @@ export function toScanNotice(
   exhaustedRetries = false
 ): ScanNotice | null {
   switch (state.kind) {
-    case 'monthly_limit':
-      return { kind: 'monthly_limit', limit: state.limit, periodEnd: state.periodEnd };
     case 'daily_limit':
       return {
         kind: 'daily_limit',
@@ -178,18 +162,6 @@ export function toScanNotice(
       return { kind: 'paused' };
     default:
       return null;
-  }
-}
-
-/** `YYYY-MM-DD` (a UTC calendar date) formatted for the user's locale; null if unparseable. */
-export function formatPeriodEnd(periodEnd: string | undefined, locale: string): string | null {
-  if (!periodEnd || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) return null;
-  const d = new Date(`${periodEnd}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) return null;
-  try {
-    return d.toLocaleDateString(locale, { timeZone: 'UTC', dateStyle: 'long' });
-  } catch {
-    return periodEnd;
   }
 }
 
@@ -218,8 +190,6 @@ export function enhancedRefusalMessage(
   switch (state.reason) {
     case 'premium_required':
       return t('enhancedRequiresPremium');
-    case 'limit_reached':
-      return t('enhancedLimitReached');
     case 'throttled':
       return state.retryAfterSeconds != null && state.retryAfterSeconds > 0
         ? t('enhancedThrottled', {
@@ -232,12 +202,6 @@ export function enhancedRefusalMessage(
 /** Localised message for a notice. `t` must be bound to the `scan` namespace. */
 export function scanNoticeMessage(notice: ScanNotice, t: TFn, locale: string): string {
   switch (notice.kind) {
-    case 'monthly_limit': {
-      const head =
-        notice.limit != null ? t('monthlyLimit', { count: notice.limit }) : t('monthlyLimitAny');
-      const date = formatPeriodEnd(notice.periodEnd, locale);
-      return date ? `${head} ${t('monthlyResets', { date })}` : head;
-    }
     case 'daily_limit':
       return t('dailyLimit', { time: formatLocalTime(notice.resetsAt, locale) });
     case 'still_processing':

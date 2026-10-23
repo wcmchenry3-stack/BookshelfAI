@@ -1,5 +1,5 @@
-"""Enhanced scans: Premium-only, own monthly allowance, charge-only-when-books-
-found, zero-result tracking (#533). Provider mocked at the gateway boundary;
+"""Enhanced scans: Premium-only, the shared daily allowance (no enhanced
+monthly allowance since #582), zero-result tracking (#533). Provider mocked at the gateway boundary;
 ai_quota / ai_inflight / ai_enhanced_zero_results faked in memory
 (tests/unit/_quota_fake.py). The Postgres behaviour is in
 tests/integration/test_enhanced_quota_db.py."""
@@ -113,7 +113,7 @@ def premium(monkeypatch):
 def _settings(**rows):
     ai_settings.reset_cache(
         {
-            "quota.premium.enhanced_monthly": 20,
+            "quota.premium.daily": 30,
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -126,8 +126,9 @@ def _enhanced(client):
     return client.post("/scan", files=_file(), data={"enhanced": "true"})
 
 
-def _enhanced_used(store) -> int:
-    return store.count(feature=quota.ENHANCED_QUOTA_FEATURE, kind="month")
+def _month_rows(store) -> int:
+    """Month-window rows written (#582: there must be none)."""
+    return sum(1 for (_, _, kind, _) in store.rows if kind == "month")
 
 
 # ---------------------------------------------------------------------------
@@ -179,11 +180,16 @@ class TestRetryAfter:
 
 
 class TestSettings:
-    def test_enhanced_allowance_is_premium_only(self):
-        ai = ai_settings.AISettings({"quota.premium.enhanced_monthly": 9})
-        assert ai.enhanced_monthly_allowance("premium") == 9
-        assert ai.enhanced_monthly_allowance("free") == 0
-        assert ai.enhanced_monthly_allowance("anything") == 0
+    def test_enhanced_monthly_key_is_retired(self):
+        """#582: no enhanced monthly allowance; a stored row is dropped
+        without a warning and nothing exposes it."""
+        assert "quota.premium.enhanced_monthly" not in ai_settings.DEFINITIONS
+        assert "quota.premium.enhanced_monthly" in ai_settings.RETIRED_KEYS
+        assert not hasattr(ai_settings.AISettings, "enhanced_monthly_allowance")
+        with patch.object(ai_settings.sentry_sdk, "capture_message") as capture:
+            ai_settings.reset_cache({"quota.premium.enhanced_monthly": 9})
+        assert "quota.premium.enhanced_monthly" not in ai_settings._cache.rows
+        capture.assert_not_called()
 
     def test_defaults(self):
         ai = ai_settings.AISettings({})
@@ -197,7 +203,6 @@ class TestSettings:
             ("scan.enhanced.zero_result_threshold", 21),
             ("scan.enhanced.zero_result_window_hours", 0),
             ("scan.enhanced.zero_result_action", "block"),
-            ("quota.premium.enhanced_monthly", 10_001),
         ],
     )
     def test_invalid_stored_value_is_ignored_with_warning(self, key, bad):
@@ -219,16 +224,18 @@ class TestSettings:
         assert ai_settings.main(["set", key, value]) == 2
         assert "error:" in capsys.readouterr().err
 
-    @pytest.mark.parametrize("bad", ["-1", "10001", "abc"])
-    def test_env_seed_is_validated_at_boot(self, bad, monkeypatch):
-        monkeypatch.setenv("SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT", bad)
-        with pytest.raises(ValidationError):
-            Settings(database_url="postgresql://u:p@localhost/db")
-
-    def test_env_seed_default(self, monkeypatch):
-        monkeypatch.delenv("SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT", raising=False)
+    def test_retired_env_seed_still_loads_and_seeds_nothing(self, monkeypatch):
+        """#582: SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT seeds nothing any more,
+        but an environment that still sets it must boot."""
+        monkeypatch.setenv("SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT", "20")
         s = Settings(database_url="postgresql://u:p@localhost/db", _env_file=None)
-        assert s.scan_premium_enhanced_monthly_limit == 20
+        assert s.scan_premium_enhanced_monthly_limit == 20  # accepted, unused
+        assert "quota.premium.enhanced_monthly" not in ai_settings.seed_values()
+
+    def test_env_seed_that_is_not_a_number_still_fails_boot(self, monkeypatch):
+        monkeypatch.setenv("SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT", "abc")
+        with pytest.raises(ValidationError):
+            Settings(database_url="postgresql://u:p@localhost/db", _env_file=None)
 
 
 # ---------------------------------------------------------------------------
@@ -266,26 +273,30 @@ class TestPremiumOnly:
         provider.return_value.identify.assert_awaited_once()
 
 
-class TestEnhancedAllowance:
-    def test_reserves_and_keeps_a_unit_when_books_found(
+class TestEnhancedUsesTheDailyUnit:
+    """#582: an enhanced scan takes the shared daily unit and nothing else;
+    ``enhanced_scans_remaining`` is the daily allowance left (Premium)."""
+
+    def test_reserves_and_keeps_the_daily_unit_when_books_found(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.enhanced_monthly": 5})
+        _settings(**{"quota.premium.daily": 5})
         _finds_books(provider)
         resp = _enhanced(client)
         assert resp.json()["enhanced_scans_remaining"] == 4
-        assert _enhanced_used(store) == 1
-        # And the shared units, as for any scan (OD-1).
-        assert store.count() == 1 and store.count(kind="month") == 1
+        assert store.count() == 1
+        assert _month_rows(store) == 0
 
-    def test_standard_scan_does_not_use_the_enhanced_allowance(
+    def test_standard_and_enhanced_share_the_daily_allowance(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.enhanced_monthly": 5})
+        _settings(**{"quota.premium.daily": 5})
         _finds_books(provider)
         resp = client.post("/scan", files=_file())
-        assert resp.json()["enhanced_scans_remaining"] == 5
-        assert _enhanced_used(store) == 0
+        assert resp.json()["enhanced_scans_remaining"] == 4
+        assert _enhanced(client).json()["enhanced_scans_remaining"] == 3
+        assert store.count() == 2
+        assert _month_rows(store) == 0
 
     def test_free_response_has_no_remaining(self, client, store, provider):
         _settings()
@@ -294,28 +305,40 @@ class TestEnhancedAllowance:
             is None
         )
 
-    def test_exhausted_is_402_and_gives_everything_back(
+    def test_daily_exhausted_is_429_and_gives_everything_back(
         self, client, store, provider, premium
     ):
-        _settings(**{"quota.premium.enhanced_monthly": 1})
+        _settings(**{"quota.premium.daily": 1})
         _finds_books(provider)
-        assert _enhanced(client).status_code == 200
+        first = _enhanced(client)
+        assert first.status_code == 200
+        assert first.json()["enhanced_scans_remaining"] == 0
         resp = _enhanced(client)
-        assert resp.status_code == 402
-        assert resp.json()["detail"] == "enhanced_limit_reached"
-        assert (resp.json()["limit"], resp.json()["used"]) == (1, 1)
+        assert resp.status_code == 429
+        assert resp.json() == {"detail": "daily_scan_limit"}
         assert provider.return_value.identify.await_count == 1
-        # The second request's shared units, lease and cost were given back.
-        assert store.count() == 1 and store.count(kind="month") == 1
+        # The second request's lease and cost were given back.
+        assert store.count() == 1 and _month_rows(store) == 0
         assert store.leases == {}
         assert store.spend_today()[0] == 0
 
-    def test_zero_allowance_refuses_before_the_provider(
+    def test_retired_enhanced_monthly_key_never_refuses(
         self, client, store, provider, premium
     ):
+        """A stored ``quota.premium.enhanced_monthly`` of 0 (the old way to
+        refuse every enhanced scan) is ignored: no 402."""
         _settings(**{"quota.premium.enhanced_monthly": 0})
+        _finds_books(provider)
         resp = _enhanced(client)
-        assert resp.json()["detail"] == "enhanced_limit_reached"
+        assert resp.status_code == 200
+        provider.return_value.identify.assert_awaited_once()
+
+    def test_zero_daily_allowance_refuses_before_the_provider(
+        self, client, store, provider, premium
+    ):
+        _settings(**{"quota.premium.daily": 0})
+        resp = _enhanced(client)
+        assert resp.json()["detail"] == "daily_scan_limit"
         provider.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -331,7 +354,7 @@ class TestEnhancedAllowance:
             error = httpx.ConnectError("refused")
         provider.return_value.identify = AsyncMock(side_effect=error)
         assert _enhanced(client).json() == {"detail": "scan_unavailable"}
-        assert _enhanced_used(store) == 0
+        assert _month_rows(store) == 0
         assert store.count() == 0
         assert store.zero_results == {}
 
@@ -342,8 +365,9 @@ class TestEnhancedAllowance:
         provider.return_value.identify = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(RuntimeError):
             _enhanced(client)
-        # Kept like the shared units (the provider may have been paid).
-        assert _enhanced_used(store) == 1
+        # Kept (the provider may have been paid).
+        assert store.count() == 1
+        assert _month_rows(store) == 0
         assert store.zero_results == {}
 
 
@@ -352,23 +376,24 @@ class TestEnhancedAllowance:
 # ---------------------------------------------------------------------------
 
 
-class TestChargeDecision:
-    def test_zero_results_up_to_threshold_are_free_then_charged(
+class TestZeroResultRecord:
+    def test_zero_results_are_recorded_up_to_the_threshold(
         self, client, store, provider, premium
     ):
+        """#582: every zero-result enhanced scan uses the daily unit (there
+        is no enhanced unit to give back); below the threshold a row is
+        recorded (the abuse signal), at it nothing more is written."""
         _settings(**{"scan.enhanced.zero_result_threshold": 3})
         for n in range(1, 4):
             assert _enhanced(client).status_code == 200
-            assert _enhanced_used(store) == 0, n  # not charged
+            assert store.count() == n
             assert len(store.zero_results[USER.id]) == n
-        # The fourth zero-result is charged and writes no row.
         resp = _enhanced(client)
         assert resp.status_code == 200
-        assert _enhanced_used(store) == 1
         assert len(store.zero_results[USER.id]) == 3
-        assert resp.json()["enhanced_scans_remaining"] == 19
-        # The shared units are counted for every scan, empty or not.
+        assert resp.json()["enhanced_scans_remaining"] == 26
         assert store.count() == 4
+        assert _month_rows(store) == 0
 
     def test_books_found_after_threshold_are_charged_as_usual(
         self, client, store, provider, premium
@@ -377,15 +402,16 @@ class TestChargeDecision:
         _enhanced(client)
         _finds_books(provider)
         _enhanced(client)
-        assert _enhanced_used(store) == 1
+        assert store.count() == 2
+        assert len(store.zero_results[USER.id]) == 1
 
-    def test_threshold_zero_charge_charges_every_zero_result(
+    def test_threshold_zero_charge_records_nothing(
         self, client, store, provider, premium
     ):
         _settings(**{"scan.enhanced.zero_result_threshold": 0})
         _enhanced(client)
         _enhanced(client)
-        assert _enhanced_used(store) == 2
+        assert store.count() == 2
         assert store.zero_results.get(USER.id, []) == []
 
     def test_row_carries_the_ledger_call_id(self, client, store, provider, premium):
@@ -399,7 +425,7 @@ class TestChargeDecision:
         other = uuid.uuid4()
         store.zero_results[other] = [None] * 5
         _enhanced(client)
-        assert _enhanced_used(store) == 0  # USER's first zero-result is free
+        assert len(store.zero_results[USER.id]) == 1  # USER's own count
 
 
 class TestThrottle:
@@ -415,7 +441,7 @@ class TestThrottle:
         )
         assert _enhanced(client).status_code == 200
         assert _enhanced(client).status_code == 200
-        assert _enhanced_used(store) == 0
+        assert store.count() == 2
         calls = provider.return_value.identify.await_count
         before = dict(store.rows)
         resp = _enhanced(client)
@@ -474,11 +500,9 @@ def _reservation(**kw) -> quota.Reservation:
         "feature": quota.SCAN_QUOTA_FEATURE,
         "lease_id": uuid.uuid4(),
         "day": today,
-        "month": quota.month_start(today),
         "tier": Tier.PREMIUM,
-        "allowance": quota.Allowance(30, 300),
+        "allowance": quota.Allowance(30),
         "enhanced": True,
-        "enhanced_allowance": 20,
         "zero_result_threshold": 3,
         "zero_result_window_hours": 24,
         "zero_result_action": "charge",
@@ -712,52 +736,36 @@ class TestWarningContent:
 
 
 class TestUsage:
-    async def test_premium_sees_enhanced_usage_and_limit(self, premium):
+    async def test_usage_is_the_day_count_and_daily_limit_only(self, premium):
+        """#582: no monthly or enhanced monthly count; one read of today's
+        day row."""
         db = AsyncMock()
-        db.execute.return_value = MagicMock(
-            all=lambda: [(quota.ENHANCED_QUOTA_FEATURE, "month", 1)]
-        )
+        db.execute.return_value = MagicMock(scalar_one_or_none=lambda: 4)
         usage = await quota.usage_for(
             db,
             user=USER,
             feature=quota.SCAN_QUOTA_FEATURE,
-            ai=ai_settings.AISettings({"quota.premium.enhanced_monthly": 7}),
+            ai=ai_settings.AISettings({"quota.premium.daily": 7}),
         )
-        assert (usage.enhanced_used_month, usage.enhanced_monthly_limit) == (1, 7)
-        assert usage.used_month == 0  # the enhanced key is not the shared one
+        assert usage == quota.Usage(used_today=4, daily_limit=7)
+        sql = str(db.execute.await_args.args[0].compile(dialect=postgresql.dialect()))
+        assert "ai_quota.window_kind" in sql
+        assert db.execute.await_args.args[0].compile().params["window_kind_1"] == "day"
 
-    def test_endpoint_returns_the_enhanced_fields(self, client, premium):
+    def test_endpoint_returns_null_monthly_fields(self, client, premium):
         with patch.object(
-            quota,
-            "usage_for",
-            AsyncMock(
-                return_value=quota.Usage(
-                    1,
-                    30,
-                    2,
-                    300,
-                    quota.utc_today(),
-                    enhanced_used_month=2,
-                    enhanced_monthly_limit=20,
-                )
-            ),
+            quota, "usage_for", AsyncMock(return_value=quota.Usage(1, 30))
         ):
             body = client.get("/scan/usage").json()
-        assert (body["enhanced_used_month"], body["enhanced_monthly_limit"]) == (
-            2,
-            20,
-        )
-
-    async def test_free_limit_is_zero(self):
-        db = AsyncMock()
-        db.execute.return_value = MagicMock(all=list)
-        usage = await quota.usage_for(
-            db,
-            user=USER,
-            feature=quota.SCAN_QUOTA_FEATURE,
-            ai=ai_settings.AISettings({}),
-        )
-        assert usage.enhanced_monthly_limit == 0
+        assert body == {
+            "used_today": 1,
+            "daily_limit": 30,
+            "used_month": None,
+            "monthly_limit": None,
+            "period_end": None,
+            "enhanced_used_month": None,
+            "enhanced_monthly_limit": None,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -833,26 +841,21 @@ class TestReserveEnhancedGiveBack:
             user=USER,
             feature=quota.SCAN_QUOTA_FEATURE,
             timeout_s=1,
-            ai=ai_settings.AISettings(
-                {"quota.premium.enhanced_monthly": 5, "quota.premium.daily": 5}
-            ),
+            ai=ai_settings.AISettings({"quota.premium.daily": 5}),
             est_cost_micros=10,
             enhanced=True,
         )
 
-    async def test_lost_lease_after_the_enhanced_unit_gives_it_back(
-        self, store, premium
-    ):
+    async def test_lost_lease_after_the_daily_unit_gives_it_back(self, store, premium):
         with (
             patch.object(quota, "renew_lease", AsyncMock(return_value=False)),
             pytest.raises(quota.ScanInProgress),
         ):
             await self._reserve()
-        assert _enhanced_used(store) == 0
-        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.count() == 0 and _month_rows(store) == 0
         assert store.leases == {}
 
-    async def test_cancellation_after_the_enhanced_unit_gives_it_back(
+    async def test_cancellation_after_the_daily_unit_gives_it_back(
         self, store, premium
     ):
         with (
@@ -862,20 +865,20 @@ class TestReserveEnhancedGiveBack:
             pytest.raises(asyncio.CancelledError),
         ):
             await self._reserve()
-        assert _enhanced_used(store) == 0
-        assert store.count() == 0 and store.count(kind="month") == 0
+        assert store.count() == 0 and _month_rows(store) == 0
         assert store.leases == {}
 
     @pytest.mark.parametrize("path", ["refund", "reserve"])
     async def test_enhanced_refund_retried_after_a_lost_ack_gives_back_once(
         self, store, premium, path
     ):
-        """A refund that commits and then loses its acknowledgement is retried
-        (#590: the give-back is gated on the lease row's flag, so a retry is
-        safe), and the retry gives nothing back: exactly one unit returns."""
-        month = quota.month_start(quota.utc_today())
-        key = (USER.id, quota.ENHANCED_QUOTA_FEATURE, "month", month)
-        store.rows[key] = 1  # an earlier enhanced scan this month
+        """A refund of an enhanced reservation's unit (since #582 the daily
+        unit, the only one it takes) that commits and then loses its
+        acknowledgement is retried (#590: the give-back is gated on the lease
+        row's flag, so a retry is safe), and the retry gives nothing back:
+        exactly one unit returns."""
+        key = (USER.id, quota.SCAN_QUOTA_FEATURE, "day", quota.utc_today())
+        store.rows[key] = 1  # an earlier scan today
         real = store.give_back_unit
         enhanced_calls = []
 
@@ -883,10 +886,9 @@ class TestReserveEnhancedGiveBack:
             outcome = await real(
                 db, user_id, lease_id, flag, feature, kind, start
             )  # "committed"
-            if feature == quota.ENHANCED_QUOTA_FEATURE:
-                enhanced_calls.append(outcome)
-                if len(enhanced_calls) == 1:
-                    raise ConnectionError("acknowledgement lost")
+            enhanced_calls.append(outcome)
+            if len(enhanced_calls) == 1:
+                raise ConnectionError("acknowledgement lost")
             return outcome
 
         with patch.object(quota, "give_back_unit", ack_lost):
@@ -905,8 +907,7 @@ class TestReserveEnhancedGiveBack:
         assert store.rows[key] == 1  # exactly one unit given back
 
     async def test_shared_refunds_are_retried_after_a_failure(self, store, premium):
-        """The shared daily/monthly refunds are gated on the lease row's flags
-        (#590), so a failed attempt is retried (#567 had made them one-shot
+        """The daily refund is gated on the lease row's flag (#590), so a failed attempt is retried (#567 had made them one-shot
         while nothing gated them) and the unit comes back."""
         reservation = await self._reserve()
         assert store.count() == 1
@@ -1019,7 +1020,7 @@ class TestLeaseSerialisation:
         """A slow request whose lease expired and was taken over: its settle
         keeps the unit, writes no row and sends no warning."""
         reservation = _reservation(zero_result_threshold=1)
-        key = (USER.id, quota.ENHANCED_QUOTA_FEATURE, "month", reservation.month)
+        key = (USER.id, quota.SCAN_QUOTA_FEATURE, "day", reservation.day)
         store.rows[key] = 1
         store.leases[USER.id] = uuid.uuid4()  # another request holds it now
         db = AsyncMock()

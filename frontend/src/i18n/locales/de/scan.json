@@ -27,12 +27,7 @@
   "couldNotSaveMessage": "Buch konnte nicht zur Wunschliste hinzugefügt werden. Bitte erneut versuchen.",
   "queueFull": "Warteschlange voll. Warte, bis ausstehende Scans hochgeladen sind, bevor du weitere hinzufügst.",
   "pendingUploads": "Ausstehende Uploads: {{count}}",
-  "usageMonth": "In diesem Monat genutzte Scans: {{used}} von {{limit}}",
   "usageToday": "Heute verbleibende Scans: {{count}}",
-  "monthlyLimit_one": "Du hast deinen {{count}} Scan für diesen Monat verbraucht.",
-  "monthlyLimit_other": "Du hast deine {{count}} Scans für diesen Monat verbraucht.",
-  "monthlyLimitAny": "Du hast alle deine Scans für diesen Monat verbraucht.",
-  "monthlyResets": "Deine Scans werden am {{date}} zurückgesetzt.",
   "dailyLimit": "Tageslimit erreicht. Das Scannen wird um Mitternacht UTC zurückgesetzt ({{time}} Ortszeit).",
   "stillProcessing": "Wird noch verarbeitet. Bitte versuche es gleich noch einmal.",
   "scanPaused": "Das Scannen ist pausiert. Bitte versuche es später erneut.",
@@ -41,7 +36,6 @@
   "queueFullLimited": "Du hast dein Scan-Limit erreicht. Deine gespeicherten Fotos werden gesendet, sobald Scannen wieder möglich ist.",
   "sendPendingNow": "Jetzt senden",
   "enhancedRequiresPremium": "Erweiterte Scans sind Teil von Premium.",
-  "enhancedLimitReached": "Du hast alle erweiterten Scans für diesen Monat aufgebraucht.",
   "enhancedThrottled": "Mehrere erweiterte Scans haben zuletzt keine Bücher gefunden. Versuche es nach {{time}} erneut.",
   "enhancedThrottledLater": "Mehrere erweiterte Scans haben zuletzt keine Bücher gefunden. Bitte versuche es später erneut."
 }

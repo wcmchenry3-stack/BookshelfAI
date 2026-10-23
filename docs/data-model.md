@@ -12,7 +12,7 @@ erDiagram
   USERS ||--o{ AI_QUOTA : "AI calls per window"
   USERS ||--o| AI_INFLIGHT : "call in flight"
   USERS |o--o{ AI_USAGE : "provider calls (set null on delete)"
-  USERS ||--o{ AI_ENHANCED_ZERO_RESULTS : "uncharged empty enhanced scans"
+  USERS ||--o{ AI_ENHANCED_ZERO_RESULTS : "recorded empty enhanced scans"
   USERS ||--o{ SCAN_RECORDS : "scan records"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
@@ -84,8 +84,8 @@ erDiagram
   AI_QUOTA {
     uuid user_id PK,FK "cascade delete"
     varchar feature PK "quota key: scan"
-    varchar window_kind PK "day | month"
-    date window_start PK "UTC day / 1st of UTC month"
+    varchar window_kind PK "day (month: legacy, #582)"
+    date window_start PK "UTC day"
     int units_used ">= 0"
   }
   AI_INFLIGHT {
@@ -279,21 +279,21 @@ Counts scans that reached the vision provider, per user per UTC day. Backed the 
 
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 
-Per-user count of AI calls reserved, per quota key and window (#528). Backs the daily and monthly scan allowances and the global daily ceiling ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
+Per-user count of AI calls reserved, per quota key and window (#528). Backs the daily scan allowance and the global daily ceiling. There is no monthly allowance since #582: month rows are legacy, no longer read or written ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
 
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
-| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`), `scan.enhanced` for the Premium enhanced monthly allowance (#533; month rows only, `quota.ENHANCED_QUOTA_FEATURE`) |
-| `window_kind` | varchar(8), PK part, CHECK `IN ('day', 'month')` | |
-| `window_start` | date, PK part | the UTC day, or the 1st of the UTC calendar month |
+| `feature` | varchar(64), PK part | the quota key: `scan` for every scan, standard or enhanced (one shared allowance, OD-1; `quota.SCAN_QUOTA_FEATURE`). Legacy: `scan.enhanced` month rows, from the Premium enhanced monthly allowance #582 removed |
+| `window_kind` | varchar(8), PK part, CHECK `IN ('day', 'month')` | `day`; `month` rows are legacy (written before #582, never since) |
+| `window_start` | date, PK part | the UTC day (legacy month rows: the 1st of the UTC calendar month) |
 | `units_used` | int, not null, server default 0, CHECK `>= 0` | incremented by the reservation upsert, decremented (never below 0) on a refund |
 
 **Keys and indexes:** the composite primary key `(user_id, feature, window_kind, window_start)` is the unique key the reservation upsert targets (`INSERT … ON CONFLICT … DO UPDATE SET units_used = units_used + 1 WHERE units_used < limit`). `ix_ai_quota_window (window_kind, window_start)` serves the global daily sum and the retention purge.
 
 **Writes:** only `app/ai/quota.py` (reserve, refund, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
 
-**Volume and retention:** about 70 bytes per row. Per active user, one day row for each day they scan plus one month row per month: roughly 70 bytes per active user per day, plus 70 bytes per active user per month. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month, in batches of 5,000 and at most 20 batches per window kind per run.
+**Volume and retention:** about 70 bytes per row. Per active user, one day row for each day they scan: roughly 70 bytes per active user per day. No month rows are written since #582. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month (so the legacy month rows are gone 13 months after the last one was written; until then they are kept so a rollback to the previous release finds its counters), in batches of 5,000 and at most 20 batches per window kind per run. This table is not used for reporting: monthly spend and call counts come from `ai_usage` / `ai_usage_daily`.
 
 ### `ai_inflight` (`backend/app/models/ai_quota.py`)
 
@@ -305,10 +305,10 @@ The per-user lease that allows one paid AI call in flight at a time (#528).
 | `lease_id` | UUID, not null | random per acquisition; the release deletes the row only while it still holds this id, so a slow request whose lease expired and was taken over cannot release the new holder's lease |
 | `lease_expires_at` | timestamptz, not null | `clock_timestamp()` + the feature's `timeout_s` + 30 s; an expired lease can be taken over |
 | `daily_taken` | boolean, not null, server default false | the holder took its daily `ai_quota` unit (#590, migration 0012); set in the same commit as the increment, cleared in the same commit as the give-back |
-| `monthly_taken` | boolean, not null, server default false | the same for the monthly unit |
-| `enhanced_taken` | boolean, not null, server default false | the same for the Premium enhanced month unit (`scan.enhanced`) |
+| `monthly_taken` | boolean, not null, server default false | legacy: the same for the monthly unit; never set since #582 (a takeover still clears it), dropped by a later contract migration |
+| `enhanced_taken` | boolean, not null, server default false | legacy: the same for the Premium enhanced month unit; never set since #582, as above |
 
-**Writes:** acquired with `INSERT … ON CONFLICT (user_id) DO UPDATE … WHERE ai_inflight.lease_expires_at < clock_timestamp()` (a takeover also resets the three flags), deleted when the call settles or is refunded (always, in a `finally`). Each unit flag is set with `UPDATE … WHERE user_id = ? AND lease_id = ?` in the transaction that takes the unit, and cleared with `UPDATE … WHERE user_id = ? AND lease_id = ? AND <flag> RETURNING` in the transaction that gives it back, which decrements only when a row came back, so a retried give-back never gives a unit back twice ([architecture.md](architecture.md)).
+**Writes:** acquired with `INSERT … ON CONFLICT (user_id) DO UPDATE … WHERE ai_inflight.lease_expires_at < clock_timestamp()` (a takeover also resets the three flags, the two legacy ones included), deleted when the call settles or is refunded (always, in a `finally`). Each unit flag is set with `UPDATE … WHERE user_id = ? AND lease_id = ?` in the transaction that takes the unit, and cleared with `UPDATE … WHERE user_id = ? AND lease_id = ? AND <flag> RETURNING` in the transaction that gives it back, which decrements only when a row came back, so a retried give-back never gives a unit back twice ([architecture.md](architecture.md)).
 
 **Volume and retention:** at most one row per user with a call in flight (~65 bytes; the flags add 3 bytes and no rows). Rows are deleted on release; a row left by a crashed request stays until that user's next scan takes it over (it is harmless once expired), or the user is deleted.
 
@@ -360,7 +360,7 @@ Daily totals of `ai_usage` per UTC day, feature, model and status (#530). No use
 
 ### `ai_enhanced_zero_results` (`backend/app/models/ai_enhanced_zero_result.py`)
 
-One row per uncharged enhanced scan that returned no books (#533). Used to stop the "an empty enhanced scan is free" rule from being farmed: the per-user count inside `scan.enhanced.zero_result_window_hours` is compared with `scan.enhanced.zero_result_threshold` (see [architecture.md](architecture.md#book-identification--dedup-pipeline)).
+One row per recorded enhanced scan that returned no books (#533). Before #582 such a scan was not charged an enhanced monthly unit and the rows stopped that from being farmed; with no enhanced monthly unit any more (the daily unit is always charged) they remain the abuse signal behind the warning and the throttle: the per-user count inside `scan.enhanced.zero_result_window_hours` is compared with `scan.enhanced.zero_result_threshold` (see [architecture.md](architecture.md#book-identification--dedup-pipeline)).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -372,7 +372,7 @@ One row per uncharged enhanced scan that returned no books (#533). Used to stop 
 
 **Index:** `ix_ai_enhanced_zero_results_user_created (user_id, created_at)` serves the window count (`WHERE user_id = ? AND created_at > clock_timestamp() - window`) and the throttle's Retry-After lookup.
 
-**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row, the refund of the `scan.enhanced` month unit and the lease delete commit together. It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over is charged and writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the scan is not charged (the user was below the threshold); a charged empty scan, a scan with books and any provider error or timeout write nothing. A repeat served from a scan record (#585) makes no provider call and writes none. No client-supplied value is stored: no image, hash or content.
+**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row and the lease delete commit together (before #582 also the refund of the `scan.enhanced` month unit; there is no such unit any more). It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the user was below the threshold; an empty scan at or above it, a scan with books and any provider error, timeout or malformed reply write nothing. The scan's daily unit stays charged either way (#582). A repeat served from a scan record (#585) makes no provider call and writes none. No client-supplied value is stored: no image, hash or content.
 
 **Volume and retention:** about 40 bytes per row (more with the index), bounded by the threshold per user per window (at most 20 per window at the maximum setting). Rows older than 30 days are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_zero_results`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
 
@@ -433,7 +433,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 **Writes:** only the startup seed (insert-if-missing) and the CLI `python -m app.ai.settings set`. No endpoint reads or writes it from a request.
 
-**Volume and retention:** 21 rows today (7 from #526, plus `scan.global_daily_limit` and the four `quota.*` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531, plus `quota.premium.enhanced_monthly` and the three `scan.enhanced.zero_result_*` keys from #533, plus `scan_records.enabled`, `scan_records.retention_days` and `scan_records.max_per_user` from #585), each under 300 bytes. It does not grow with usage, so no retention job.
+**Volume and retention:** 17 known keys today (7 from #526, plus `scan.global_daily_limit` and the two `quota.<tier>.daily` allowances from #528, plus `breaker.free_daily_ceiling_micros` from #531, plus the three `scan.enhanced.zero_result_*` keys from #533, plus `scan_records.enabled`, `scan_records.retention_days` and `scan_records.max_per_user` from #585), each under 300 bytes. The three monthly keys (`quota.free.monthly`, `quota.premium.monthly`, `quota.premium.enhanced_monthly`) are retired by #582: no longer seeded, refused by the CLI and ignored on read; rows seeded before stay until a later contract migration deletes them. It does not grow with usage, so no retention job.
 
 ## Dedup strategy — why work_id, not ISBN
 
@@ -479,13 +479,13 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0004_restrict_catalog_deletes.py` — `user_books.book_id` and `editions.book_id` FKs become `ON DELETE RESTRICT`
 - `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps)
 - `0006_ai_settings.py` — adds `ai_settings` table (DB-backed AI dials and kill switches; rows are seeded at app startup, not by the migration)
-- `0007_ai_quota.py` — adds `ai_quota` (per-user daily/monthly AI allowance counters) and `ai_inflight` (one call in flight per user) tables; additive, the downgrade drops both
+- `0007_ai_quota.py` — adds `ai_quota` (per-user daily/monthly AI allowance counters; month rows are legacy since #582) and `ai_inflight` (one call in flight per user) tables; additive, the downgrade drops both
 - `0008_ai_usage.py` — adds `ai_usage` (one row per paid AI provider call) and `ai_usage_daily` (daily rollup) tables; additive, the downgrade drops both
 - `0009_ai_spend_daily.py` — adds `ai_spend_daily` (service-wide daily AI spend for the cost circuit breaker); additive, the downgrade drops it
 - `0010_ai_enhanced_zero_results.py` — adds `ai_enhanced_zero_results` (uncharged empty enhanced scans, #533; `warned` boolean, default false, marks the row that sent the threshold warning) with the `(user_id, created_at)` index; additive, the downgrade drops it
 - `0011_scan_records.py` — adds `scan_records` (one record per user and photo fingerprint, #585) with the `(user_id, fingerprint)` unique constraint and the `(user_id, created_at)` and `(created_at)` indexes; additive, the downgrade drops it. The `ai_usage` status check already allowed `cache_hit` (0008), so it is unchanged
 - `0013_ai_usage_malformed_status.py` — widens the status CHECK of `ai_usage` and `ai_usage_daily` (`ck_ai_usage_status`, `ck_ai_usage_daily_status`) to allow `malformed` (#572); additive. Each widened CHECK is added `NOT VALID` under a 5 s `lock_timeout`, the swap is committed, then each is validated in its own transaction (`VALIDATE CONSTRAINT`, which does not block reads or writes), so no ACCESS EXCLUSIVE lock is held while rows are scanned. The downgrade is deliberately a no-op: both widened CHECKs stay, because any narrower CHECK (even `NOT VALID`) would break the old code on the kept `malformed` rows (the rollup into `ai_usage_daily`, and deleting their user, which sets `user_id` to NULL). The old code never writes `malformed`.
-- `0012_ai_inflight_units_taken.py` — adds `daily_taken`, `monthly_taken` and `enhanced_taken` (boolean, not null, server default false) to `ai_inflight`, so a unit whose reservation commit lost its acknowledgement can be given back at most once (#590); expand-only, the downgrade drops the three columns
+- `0012_ai_inflight_units_taken.py` — adds `daily_taken`, `monthly_taken` and `enhanced_taken` (boolean, not null, server default false) to `ai_inflight`, so a unit whose reservation commit lost its acknowledgement can be given back at most once (#590); expand-only, the downgrade drops the three columns. Since #582 only `daily_taken` is set
 
 ### Writing a new migration
 

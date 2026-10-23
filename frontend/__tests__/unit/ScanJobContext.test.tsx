@@ -726,14 +726,15 @@ describe('ScanJobContext — enhanced scan', () => {
     expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
   });
 
-  it('reopens the earlier results when the enhanced allowance is used up', async () => {
+  it('reopens the earlier results when an older server sends 402 enhanced_limit_reached', async () => {
+    // #582: no enhanced monthly allowance any more; an older server's 402 is
+    // a generic failure, which still restores the standard scan's books.
     const { result } = await renderScanJobs();
     mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'A' }]));
     await act(async () => {
       await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
     });
 
-    // #533: 402 enhanced_limit_reached replaces the old (bare) 402.
     mockPost.mockRejectedValueOnce({
       response: { status: 402, data: { detail: 'enhanced_limit_reached' } },
     });
@@ -741,7 +742,7 @@ describe('ScanJobContext — enhanced scan', () => {
       await result.current.requestEnhancedScan(result.current.jobs[0].id);
     });
 
-    expect(result.current.enhancedScansRemaining).toBe(0);
+    expect(result.current.scanNotice).toBeNull();
     expect(result.current.reviewingJob?.status).toBe('complete');
     expect(result.current.reviewingJob?.results?.map((b) => b.title)).toEqual(['Dune']);
   });
@@ -754,8 +755,10 @@ describe('ScanJobContext — enhanced scan', () => {
     });
     expect(result.current.jobs[0].status).toBe('failed');
 
+    // #582: the refusal that says none are left is now 403 / 429 (enhanced
+    // is limited by the daily allowance and the zero-result throttle).
     mockPost.mockRejectedValueOnce({
-      response: { status: 402, data: { detail: 'enhanced_limit_reached' } },
+      response: { status: 429, data: { detail: 'enhanced_throttled' }, headers: {} },
     });
     await act(async () => {
       await result.current.requestEnhancedScan(result.current.jobs[0].id);

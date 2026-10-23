@@ -240,9 +240,8 @@ def _reservation(lease_id=None):
         feature=quota.SCAN_QUOTA_FEATURE,
         lease_id=lease_id or uuid.uuid4(),
         day=quota.utc_today(),
-        month=quota.month_start(quota.utc_today()),
         tier=MagicMock(),
-        allowance=quota.Allowance(5, 50),
+        allowance=quota.Allowance(5),
     )
 
 

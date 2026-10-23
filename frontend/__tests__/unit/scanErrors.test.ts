@@ -1,7 +1,7 @@
 import {
   classifyScanError,
+  hasRefusedJobs,
   enhancedRefusalMessage,
-  formatPeriodEnd,
   nextUtcMidnight,
   scanNoticeMessage,
   toScanNotice,
@@ -14,18 +14,20 @@ function err(status: number, detail?: string, extra: Record<string, unknown> = {
 
 describe('classifyScanError: every backend code maps to exactly one UI state', () => {
   const cases: [string, unknown, ScanUiState][] = [
+    // #582: no monthly limit. A 402 from an older server (monthly or
+    // enhanced monthly allowance) is a generic failure, never a limit notice.
     [
-      '402 scan_limit_reached',
+      '402 scan_limit_reached (older server)',
       err(402, 'scan_limit_reached', { limit: 5, used: 5, period_end: '2026-11-01' }),
-      { kind: 'monthly_limit', limit: 5, periodEnd: '2026-11-01' },
+      { kind: 'generic' },
+    ],
+    [
+      '402 enhanced_limit_reached (older server)',
+      err(402, 'enhanced_limit_reached', { limit: 20, used: 20, period_end: '2026-11-01' }),
+      { kind: 'generic' },
     ],
     // #533: enhanced refusals replace 402 no_enhanced_credits (gone, as is
     // the bare-402 meaning "out of credits").
-    [
-      '402 enhanced_limit_reached',
-      err(402, 'enhanced_limit_reached', { limit: 20, used: 20, period_end: '2026-11-01' }),
-      { kind: 'enhanced_refused', reason: 'limit_reached' },
-    ],
     [
       '403 enhanced_requires_premium',
       err(403, 'enhanced_requires_premium'),
@@ -130,28 +132,17 @@ describe('copy', () => {
   // Minimal t() so this stays a pure unit test of which key + params are used.
   const t = (key: string, o?: Record<string, unknown>) => `${key}:${JSON.stringify(o ?? {})}`;
 
-  it('formats the reset date as a UTC calendar date', () => {
-    expect(formatPeriodEnd('2026-11-01', 'en')).toBe('November 1, 2026');
-    expect(formatPeriodEnd('garbage', 'en')).toBeNull();
-    expect(formatPeriodEnd(undefined, 'en')).toBeNull();
-  });
-
-  it('monthly limit uses the limit and the reset date', () => {
-    const msg = scanNoticeMessage(
-      { kind: 'monthly_limit', limit: 5, periodEnd: '2026-11-01' },
-      t,
-      'en'
+  it('every notice has its own line, none monthly (#582)', () => {
+    expect(scanNoticeMessage({ kind: 'daily_limit', resetsAt: 0 }, t, 'en')).toMatch(
+      /^dailyLimit:/
     );
-    expect(msg).toContain('monthlyLimit:{"count":5}');
-    expect(msg).toContain('monthlyResets:{"date":"November 1, 2026"}');
+    expect(scanNoticeMessage({ kind: 'still_processing' }, t, 'en')).toBe('stillProcessing:{}');
+    expect(scanNoticeMessage({ kind: 'paused' }, t, 'en')).toBe('scanPaused:{}');
   });
 
   it('enhanced refusals each have their own line', () => {
     expect(enhancedRefusalMessage({ reason: 'premium_required' }, t, 'en')).toBe(
       'enhancedRequiresPremium:{}'
-    );
-    expect(enhancedRefusalMessage({ reason: 'limit_reached' }, t, 'en')).toBe(
-      'enhancedLimitReached:{}'
     );
     expect(enhancedRefusalMessage({ reason: 'throttled' }, t, 'en')).toBe(
       'enhancedThrottledLater:{}'
@@ -172,8 +163,22 @@ describe('copy', () => {
     });
     expect(msg).toBe(`enhancedThrottled:${JSON.stringify({ time: expected })}`);
   });
+});
 
-  it('monthly limit without numbers falls back to the generic line', () => {
-    expect(scanNoticeMessage({ kind: 'monthly_limit' }, t, 'en')).toBe('monthlyLimitAny:{}');
+describe('hasRefusedJobs', () => {
+  it('counts a queued job refused for a daily limit, pause or scan in progress', () => {
+    for (const error of ['daily_limit', 'paused', 'in_progress']) {
+      expect(hasRefusedJobs([{ status: 'queued', error }])).toBe(true);
+    }
+  });
+
+  it('still counts a job persisted by an older build with monthly_limit (#582, one release)', () => {
+    expect(hasRefusedJobs([{ status: 'queued', error: 'monthly_limit' }])).toBe(true);
+  });
+
+  it('ignores other errors and jobs that are not queued', () => {
+    expect(hasRefusedJobs([{ status: 'queued', error: 'network' }])).toBe(false);
+    expect(hasRefusedJobs([{ status: 'failed', error: 'daily_limit' }])).toBe(false);
+    expect(hasRefusedJobs([{ status: 'queued' }])).toBe(false);
   });
 });

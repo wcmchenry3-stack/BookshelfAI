@@ -60,7 +60,11 @@ from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 SCAN = quota.SCAN_QUOTA_FEATURE
-ENHANCED = quota.ENHANCED_QUOTA_FEATURE
+# The ai_quota key of the Premium enhanced monthly allowance #582 removed.
+# Month rows under it (and under SCAN) are what the previous release wrote;
+# the tests seed them to prove they are ignored, and read them to prove no
+# scan writes one.
+ENHANCED = "scan.enhanced"
 DUNE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 # The billed usage every answering fake reports; priced per model by cost().
 USAGE = {"input_tokens": 1_000, "output_tokens": 500, "cache_read_tokens": 2_000}
@@ -300,8 +304,6 @@ async def call_scan(
                 cf_turnstile_response=None,
                 enhanced=enhanced,
             )
-        except scan_api.ScanLimitReachedError as exc:
-            return ScanOutcome(exc.status_code, exc.detail, exc.headers, exc.body())
         except HTTPException as exc:
             return ScanOutcome(exc.status_code, exc.detail, exc.headers)
         except Exception as exc:  # noqa: BLE001 - what the app turns into a 500
@@ -316,6 +318,9 @@ async def call_scan(
 
 @dataclass(frozen=True)
 class Counters:
+    """``monthly`` and ``enhanced`` are the legacy month rows (#582: no scan
+    may move them)."""
+
     daily: int
     monthly: int
     enhanced: int
@@ -455,7 +460,7 @@ class LimitsDb:
             ).scalar_one_or_none()
 
     async def counters(self, user_id, day: date) -> Counters:
-        month = quota.month_start(day)
+        month = day.replace(day=1)
         async with self.factory() as db:
             daily = await quota.units_used(db, user_id, SCAN, WINDOW_DAY, day)
             monthly = await quota.units_used(db, user_id, SCAN, WINDOW_MONTH, month)
@@ -471,6 +476,17 @@ class LimitsDb:
                 )
             ).scalar_one()
         return Counters(daily, monthly, enhanced, global_, int(zero))
+
+    async def month_rows(self, user_id) -> int:
+        """The user's month-window rows (#582: no scan writes one)."""
+        async with self.factory() as db:
+            return (
+                await db.execute(
+                    select(func.count())
+                    .select_from(AIQuota)
+                    .where(AIQuota.user_id == user_id, AIQuota.window_kind == "month")
+                )
+            ).scalar_one()
 
     async def spend(self, day: date) -> tuple[int, int]:
         """``(reserved, settled)`` micro-dollars for ``day``."""
@@ -490,7 +506,8 @@ class LimitsDb:
             row = await db.get(AIInflight, user_id)
             if row is None:
                 return None
-            return {flag for flag in quota.UNIT_FLAGS if getattr(row, flag)}
+            flags = quota.UNIT_FLAGS + quota.RETIRED_FLAGS
+            return {flag for flag in flags if getattr(row, flag)}
 
     async def usage(self, user_id) -> list[tuple[str, int]]:
         """The user's usage-ledger rows, oldest first: ``(status, cost)``."""

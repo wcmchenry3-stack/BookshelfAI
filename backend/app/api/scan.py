@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from functools import partial
 
 import anyio
@@ -124,46 +124,14 @@ def _dedupe_enriched(books: list[EnrichedBook]) -> list[EnrichedBook]:
     return unique
 
 
-class ScanLimitReachedError(HTTPException):
-    """402 ``scan_limit_reached``: the monthly allowance is used (or, with
-    ``code="enhanced_limit_reached"``, the Premium enhanced monthly allowance,
-    #533).
-
-    Rendered by the handler in ``app.main`` as
-    ``{"detail": "scan_limit_reached", "limit": N, "used": N,
-    "period_end": "YYYY-MM-DD"}``, so ``detail`` stays the same string code
-    every other scan error uses.
-    """
-
-    def __init__(
-        self,
-        limit: int,
-        used: int,
-        period_end: date,
-        code: str = "scan_limit_reached",
-    ) -> None:
-        super().__init__(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=code)
-        self.limit = limit
-        self.used = used
-        self.period_end = period_end
-
-    def body(self) -> dict:
-        return {
-            "detail": self.detail,
-            "limit": self.limit,
-            "used": self.used,
-            "period_end": self.period_end.isoformat(),
-        }
-
-
 async def _reserve_scan_quota(
     db: AsyncSession, user: User, feature: str, ai: AISettings, enhanced: bool
 ) -> quota.Reservation:
     """Global count cap, then the daily cost ceiling, then the in-flight
-    lease, then the daily and monthly reservations (``app/ai/quota.py``),
-    mapped to HTTP refusals. For ``enhanced`` (#533), first the Premium-only
-    refusal (before anything is taken), then after the lease the zero-result
-    throttle, and after the shared units the enhanced monthly unit.
+    lease, then the daily reservation (``app/ai/quota.py``), mapped to HTTP
+    refusals. For ``enhanced`` (#533), first the Premium-only refusal (before
+    anything is taken), then after the lease the zero-result throttle. There
+    is no monthly reservation and no 402 (#582).
 
     ``feature`` (the gateway feature) sets the lease length from its timeout
     and the cost estimate from its ``est_cost_ceiling_micros``; the units are reserved under ``quota.SCAN_QUOTA_FEATURE``, the
@@ -192,10 +160,6 @@ async def _reserve_scan_quota(
             detail="enhanced_throttled",
             headers={"Retry-After": str(exc.retry_after)},
         ) from None
-    except quota.EnhancedLimitReached as exc:
-        raise ScanLimitReachedError(
-            exc.limit, exc.used, exc.period_end, code="enhanced_limit_reached"
-        ) from None
     except quota.CostCeilingReached:
         # Free tier paused for the rest of the UTC day (#531, #544).
         logger.warning("scan: daily AI cost ceiling reached; free tier paused")
@@ -221,8 +185,6 @@ async def _reserve_scan_quota(
             detail="daily_scan_limit",
             headers={"Retry-After": str(exc.retry_after)},
         ) from None
-    except quota.MonthlyLimitReached as exc:
-        raise ScanLimitReachedError(exc.limit, exc.used, exc.period_end) from None
 
 
 def _enhanced_requires_premium() -> HTTPException:
@@ -455,7 +417,7 @@ async def _serve_repeat(
 
 
 async def _refund_scan_quota(db: AsyncSession, reservation: quota.Reservation) -> None:
-    """Give back the daily and monthly units; never raises."""
+    """Give back the daily unit; never raises."""
     await quota.refund(db, reservation)
 
 
@@ -698,14 +660,14 @@ async def scan(
 
     # --- Enhanced entitlement (#533), tier allowance, global count cap,
     # daily cost ceiling (#531), in-flight lease, zero-result throttle,
-    # daily, monthly, enhanced monthly ---
+    # daily ---
     # Enhanced scans are Premium-only: a non-Premium user gets 403
     # enhanced_requires_premium inside quota.reserve before anything is
     # reserved (the tier is resolved server-side there, never from the
-    # request). Standard and enhanced scans share one daily and monthly
-    # allowance (quota.SCAN_QUOTA_FEATURE); an enhanced scan also takes one
-    # unit of the Premium enhanced monthly allowance. At the cost ceiling
-    # Free gets 503 ai_budget_reached; Premium continues. Every refusal here
+    # request). Standard and enhanced scans share one daily allowance
+    # (quota.SCAN_QUOTA_FEATURE); there is no monthly or enhanced monthly
+    # allowance (#582), so nothing is refused for a monthly reason. At the
+    # cost ceiling Free gets 503 ai_budget_reached; Premium continues. Every refusal here
     # happens before the provider and gives back what it took.
     # Read before anything can roll the session back: a failed give-back
     # (refund or lease release) rolls back, which expires current_user.
@@ -751,17 +713,18 @@ async def scan(
     # reply was missing, not JSON, of the wrong shape or ended on an
     # unexpected stop reason, or it was cut off by the token limit before a
     # single complete book) is treated like unavailability for the user:
-    # 503 scan_unavailable and every unit refunded (daily, monthly and the
-    # enhanced unit), never a zero-result and never saved as a scan record.
+    # 503 scan_unavailable and the daily unit refunded (the only unit, #582),
+    # never a zero-result and never saved as a scan record.
     # Its real token usage is still recorded (ledger status ``malformed``)
     # and its priced cost settled, because the provider billed it.
     #
-    # Enhanced charge decision (#533): the enhanced unit follows the shared
-    # units on refund and is kept on errors. When the provider answered but
-    # returned no books (no candidates), the settle decides in its own
-    # transaction (quota.release with a ZeroResult): below the user's
-    # zero-result threshold the unit is given back and one
-    # ai_enhanced_zero_results row written; at or above it the unit is kept.
+    # Enhanced zero-result record (#533): an enhanced scan takes only the
+    # shared daily unit (#582). When the provider answered but returned no
+    # books (no candidates), the settle records it in its own transaction
+    # (quota.release with a ZeroResult): below the user's zero-result
+    # threshold one ai_enhanced_zero_results row is written (the abuse
+    # signal, with its warning and the throttle); the daily unit stays
+    # charged either way.
     # The decision is on the provider's candidates, so enrichment stays after
     # the settle (the lease covers only the provider call); enrichment returns
     # a book for every candidate it does not crash on. A provider error,
@@ -896,10 +859,10 @@ async def scan_usage(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ScanUsageResponse:
-    """The current user's scan usage and allowance (read only). Standard and
-    enhanced scans count against the same allowance; enhanced scans also
-    count against the Premium enhanced monthly allowance (0 for other
-    tiers)."""
+    """The current user's scan usage and daily allowance (read only).
+    Standard and enhanced scans count against the same daily allowance.
+    There is no monthly allowance (#582): the monthly fields are always
+    null (kept for one release so older app builds still parse the body)."""
     try:
         ai = await get_ai_settings(db)
     except AISettingsUnavailableError:
@@ -910,12 +873,4 @@ async def scan_usage(
     usage = await quota.usage_for(
         db, user=current_user, feature=quota.SCAN_QUOTA_FEATURE, ai=ai
     )
-    return ScanUsageResponse(
-        used_today=usage.used_today,
-        daily_limit=usage.daily_limit,
-        used_month=usage.used_month,
-        monthly_limit=usage.monthly_limit,
-        period_end=usage.period_end,
-        enhanced_used_month=usage.enhanced_used_month,
-        enhanced_monthly_limit=usage.enhanced_monthly_limit,
-    )
+    return ScanUsageResponse(used_today=usage.used_today, daily_limit=usage.daily_limit)

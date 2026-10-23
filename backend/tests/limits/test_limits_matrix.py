@@ -6,9 +6,9 @@ provider does, and then what must happen:
 
 - the HTTP status and ``detail`` code the client gets (200 = allowed);
 - whether the provider was reached;
-- how each counter moves: the shared daily and monthly units, the Premium
-  enhanced monthly unit, the service-wide day count (``global``) and the
-  user's uncharged zero-result rows;
+- how each counter moves: the shared daily unit, the service-wide day count
+  (``global``) and the user's zero-result rows; and that the legacy month
+  rows (the monthly and enhanced monthly units #582 removed) never move;
 - what the day's AI spend settles: nothing, the estimate, or the priced cost.
 
 Every row runs the real code path on real Postgres: ``/scan`` (below the rate
@@ -33,19 +33,23 @@ Done:
   status ``malformed``), a reply cut off before any complete book treated
   the same way (``truncated_no_books``), and a genuine no-match saved, so
   its re-upload is a free repeat (``REPEATS``)
+- #582 no monthly limits: the monthly and enhanced monthly rows are gone;
+  ``legacy_month_*`` rows prove that month rows left by the previous release
+  and the retired monthly keys never refuse a scan, every row asserts that
+  no month row moves, and ``test_limits_time.py`` scans at the daily limit
+  for 40 days across month ends without a monthly refusal
 
 Rules that do not exist yet get their rows from their own stories:
 
 - #586 the per-user 100/day /scan request limit (decision #573 point 3)
 - #577 found / no-match counters
-- #582 removing the monthly window (the monthly rows here change then)
 - #583 Premium escalation
 - #574 retries
 - #581 adds a drift test of the limits overview against the settings registry
 
 Write a row as ``Case(...)`` with a readable ``id``
 (``<tier>-<scan>-<what happens>``). Starting counters may be ``LIMIT`` (at
-the tier's limit for that window). If a new rule needs a new input or
+the tier's daily limit, or the global cap for ``global_others``). If a new rule needs a new input or
 expectation, add a field to ``Start`` / ``Case`` with a default that keeps
 the existing rows unchanged.
 """
@@ -57,7 +61,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.ai import quota, scan_records
+from app.ai import scan_records
 from app.ai.entitlements import Tier
 from tests.limits import _harness as h
 
@@ -79,10 +83,7 @@ BASE: dict[str, Any] = {
     "scan.enhanced.enabled": True,
     "scan.global_daily_limit": 2_000,
     "quota.free.daily": 5,
-    "quota.free.monthly": 5,
     "quota.premium.daily": 30,
-    "quota.premium.monthly": 300,
-    "quota.premium.enhanced_monthly": 20,
     "breaker.free_daily_ceiling_micros": 10_000_000,
     "scan.enhanced.zero_result_threshold": 3,
     "scan.enhanced.zero_result_window_hours": 24,
@@ -100,8 +101,10 @@ NO_SPEND, ESTIMATE, COST = "none", "estimate", "cost"
 @dataclass(frozen=True)
 class Start:
     daily: int | str = 0
-    monthly: int | str = 0
-    enhanced: int | str = 0
+    # Month rows left by the previous release (#582): the shared monthly and
+    # the Premium enhanced monthly counters. Seeded to prove they are ignored.
+    legacy_month: int = 0
+    legacy_enhanced_month: int = 0
     # Day units of OTHER users today (the service-wide count), or LIMIT.
     global_others: int | str = 0
     # Settled spend today in micro-dollars, or LIMIT (the Free ceiling minus
@@ -115,14 +118,21 @@ class Start:
 @dataclass(frozen=True)
 class Delta:
     daily: int = 0
-    monthly: int = 0
-    enhanced: int = 0
     zero_results: int = 0
 
 
-CHARGED = Delta(daily=1, monthly=1)
-CHARGED_ENHANCED = Delta(daily=1, monthly=1, enhanced=1)
+CHARGED = Delta(daily=1)
+# An enhanced scan takes the same shared daily unit and nothing else (#582).
+CHARGED_ENHANCED = CHARGED
 NOTHING = Delta()
+# Far over any monthly limit the previous release had (Free 5, Premium 300,
+# enhanced 20).
+FAR_OVER_OLD_MONTHLY = 10_000
+RETIRED_MONTHLY_KEYS_AT_ZERO = {
+    "quota.free.monthly": 0,
+    "quota.premium.monthly": 0,
+    "quota.premium.enhanced_monthly": 0,
+}
 
 
 @dataclass(frozen=True)
@@ -155,7 +165,15 @@ CASES: list[Case] = [
     Case("free-standard-truncated-charged", FREE, False, "truncated",
          ALLOWED, None, CHARGED, COST),
     Case("free-standard-last_daily_unit-charged", FREE, False, "books",
-         ALLOWED, None, CHARGED, COST, Start(daily=4, monthly=4)),
+         ALLOWED, None, CHARGED, COST, Start(daily=4)),
+    # ---- No monthly limit (#582) ------------------------------------------
+    Case("free-standard-legacy_month_row_far_over_old_limit-allowed", FREE,
+         False, "books", ALLOWED, None, CHARGED, COST,
+         Start(legacy_month=FAR_OVER_OLD_MONTHLY), RETIRED_MONTHLY_KEYS_AT_ZERO),
+    Case("free-standard-legacy_month_row_and_daily_limit-daily_refusal", FREE,
+         False, None, 429, "daily_scan_limit", NOTHING, NO_SPEND,
+         Start(daily=LIMIT, legacy_month=FAR_OVER_OLD_MONTHLY),
+         RETIRED_MONTHLY_KEYS_AT_ZERO),
     # ---- Free, standard: provider down -> units refunded -----------------
     Case("free-standard-unavailable-refunded", FREE, False, "unavailable",
          503, "scan_unavailable", NOTHING, NO_SPEND),
@@ -186,11 +204,6 @@ CASES: list[Case] = [
     Case("free-standard-zero_daily_allowance-refused", FREE, False, None,
          429, "daily_scan_limit", NOTHING, NO_SPEND,
          settings={"quota.free.daily": 0}),
-    Case("free-standard-monthly_limit-refused", FREE, False, None,
-         402, "scan_limit_reached", NOTHING, NO_SPEND, Start(monthly=LIMIT)),
-    Case("free-standard-daily_and_monthly_limit-daily_wins", FREE, False, None,
-         429, "daily_scan_limit", NOTHING, NO_SPEND,
-         Start(daily=LIMIT, monthly=LIMIT)),
     Case("free-standard-global_cap-refused", FREE, False, None,
          503, "scan_capacity", NOTHING, NO_SPEND, Start(global_others=LIMIT),
          {"scan.global_daily_limit": 3}),
@@ -235,8 +248,11 @@ CASES: list[Case] = [
          500, "RuntimeError", CHARGED, ESTIMATE),
     Case("premium-standard-daily_limit-refused", PREMIUM, False, None,
          429, "daily_scan_limit", NOTHING, NO_SPEND, Start(daily=LIMIT)),
-    Case("premium-standard-monthly_limit-refused", PREMIUM, False, None,
-         402, "scan_limit_reached", NOTHING, NO_SPEND, Start(monthly=LIMIT)),
+    Case("premium-standard-legacy_month_row_far_over_old_limit-allowed",
+         PREMIUM, False, "books", ALLOWED, None, CHARGED, COST,
+         Start(legacy_month=FAR_OVER_OLD_MONTHLY), RETIRED_MONTHLY_KEYS_AT_ZERO),
+    Case("premium-standard-last_daily_unit-charged", PREMIUM, False, "books",
+         ALLOWED, None, CHARGED, COST, Start(daily=29)),
     Case("premium-standard-global_cap-refused", PREMIUM, False, None,
          503, "scan_capacity", NOTHING, NO_SPEND, Start(global_others=LIMIT),
          {"scan.global_daily_limit": 3}),
@@ -248,30 +264,31 @@ CASES: list[Case] = [
          settings={"breaker.free_daily_ceiling_micros": 0}),
     Case("premium-standard-scan_in_progress-refused", PREMIUM, False, None,
          429, "scan_in_progress", NOTHING, NO_SPEND, Start(lease_held=True)),
-    # ---- Premium, enhanced: shared units + one enhanced unit -------------
+    # ---- Premium, enhanced: the shared daily unit only (#582) -------------
     Case("premium-enhanced-books_found-charged", PREMIUM, True, "books",
          ALLOWED, None, CHARGED_ENHANCED, COST),
     Case("premium-enhanced-truncated_with_books-charged", PREMIUM, True,
          "truncated", ALLOWED, None, CHARGED_ENHANCED, COST),
-    # Zero books below the threshold: the enhanced unit is given back and
-    # one zero-result row written; the shared units stay charged.
-    Case("premium-enhanced-zero_books_below_threshold-enhanced_given_back",
+    # Zero books below the threshold: one zero-result row written (the abuse
+    # signal); the daily unit stays charged (#582: no enhanced unit to give
+    # back).
+    Case("premium-enhanced-zero_books_below_threshold-recorded",
          PREMIUM, True, "no_books", ALLOWED, None,
-         Delta(daily=1, monthly=1, zero_results=1), COST, Start(zero_results=2)),
+         Delta(daily=1, zero_results=1), COST, Start(zero_results=2)),
     # A refusal by the model is a zero-book answer: refusals are out of scope
     # for #572 (see the comment on #572 about this row).
-    Case("premium-enhanced-provider_refused_below_threshold-enhanced_given_back",
+    Case("premium-enhanced-provider_refused_below_threshold-recorded",
          PREMIUM, True, "refused", ALLOWED, None,
-         Delta(daily=1, monthly=1, zero_results=1), COST),
-    Case("premium-enhanced-zero_books_at_threshold_charge-charged", PREMIUM,
-         True, "no_books", ALLOWED, None, CHARGED_ENHANCED, COST,
+         Delta(daily=1, zero_results=1), COST),
+    Case("premium-enhanced-zero_books_at_threshold_charge-not_recorded",
+         PREMIUM, True, "no_books", ALLOWED, None, CHARGED_ENHANCED, COST,
          Start(zero_results=3)),
-    Case("premium-enhanced-zero_books_threshold_0_charge-charged", PREMIUM,
-         True, "no_books", ALLOWED, None, CHARGED_ENHANCED, COST,
+    Case("premium-enhanced-zero_books_threshold_0_charge-not_recorded",
+         PREMIUM, True, "no_books", ALLOWED, None, CHARGED_ENHANCED, COST,
          settings={"scan.enhanced.zero_result_threshold": 0}),
-    Case("premium-enhanced-zero_books_below_threshold_throttle-given_back",
+    Case("premium-enhanced-zero_books_below_threshold_throttle-recorded",
          PREMIUM, True, "no_books", ALLOWED, None,
-         Delta(daily=1, monthly=1, zero_results=1), COST,
+         Delta(daily=1, zero_results=1), COST,
          settings={"scan.enhanced.zero_result_action": "throttle"}),
     Case("premium-enhanced-at_threshold_throttle-refused", PREMIUM, True, None,
          429, "enhanced_throttled", NOTHING, NO_SPEND, Start(zero_results=3),
@@ -282,14 +299,14 @@ CASES: list[Case] = [
          "connect_error", 503, "scan_unavailable", NOTHING, NO_SPEND),
     Case("premium-enhanced-timeout-all_refunded_estimate_spent", PREMIUM, True,
          "timeout", 503, "scan_unavailable", NOTHING, ESTIMATE),
-    # A malformed reply (#572) refunds every unit, the enhanced one too, and
-    # is never a zero-result (no row, even at the threshold).
+    # A malformed reply (#572) refunds the daily unit and is never a
+    # zero-result (no row, even at the threshold).
     Case("premium-enhanced-malformed-all_refunded_cost_spent", PREMIUM, True,
          "malformed", 503, "scan_unavailable", NOTHING, COST, ledger="malformed"),
     Case("premium-enhanced-malformed_at_zero_result_threshold-all_refunded",
          PREMIUM, True, "malformed", 503, "scan_unavailable", NOTHING, COST,
          Start(zero_results=3), ledger="malformed"),
-    # Cut off before a complete book (#572): every unit refunded, never a
+    # Cut off before a complete book (#572): the unit refunded, never a
     # zero-result. Cut off with books stays charged
     # (premium-enhanced-truncated_with_books-charged).
     Case("premium-enhanced-truncated_no_books-all_refunded_cost_spent", PREMIUM,
@@ -297,16 +314,22 @@ CASES: list[Case] = [
          ledger="malformed"),
     Case("premium-enhanced-other_error-kept", PREMIUM, True, "error",
          500, "RuntimeError", CHARGED_ENHANCED, ESTIMATE),
-    Case("premium-enhanced-enhanced_limit-refused", PREMIUM, True, None,
-         402, "enhanced_limit_reached", NOTHING, NO_SPEND, Start(enhanced=LIMIT)),
-    Case("premium-enhanced-zero_enhanced_allowance-refused", PREMIUM, True, None,
-         402, "enhanced_limit_reached", NOTHING, NO_SPEND,
-         settings={"quota.premium.enhanced_monthly": 0}),
-    # Standard and enhanced share one daily and monthly allowance (OD-1).
+    # No enhanced monthly allowance (#582): month rows far over the old
+    # allowances and the retired keys at 0 never refuse an enhanced scan.
+    Case("premium-enhanced-legacy_month_rows_far_over_old_limits-allowed",
+         PREMIUM, True, "books", ALLOWED, None, CHARGED_ENHANCED, COST,
+         Start(legacy_month=FAR_OVER_OLD_MONTHLY,
+               legacy_enhanced_month=FAR_OVER_OLD_MONTHLY),
+         RETIRED_MONTHLY_KEYS_AT_ZERO),
+    # Standard and enhanced share one daily allowance (OD-1); it is what
+    # limits enhanced scans until #583 adds a daily Sonnet counter.
+    Case("premium-enhanced-last_daily_unit-charged", PREMIUM, True, "books",
+         ALLOWED, None, CHARGED_ENHANCED, COST, Start(daily=29)),
     Case("premium-enhanced-shared_daily_limit-refused", PREMIUM, True, None,
          429, "daily_scan_limit", NOTHING, NO_SPEND, Start(daily=LIMIT)),
-    Case("premium-enhanced-shared_monthly_limit-refused", PREMIUM, True, None,
-         402, "scan_limit_reached", NOTHING, NO_SPEND, Start(monthly=LIMIT)),
+    Case("premium-enhanced-zero_daily_allowance-refused", PREMIUM, True, None,
+         429, "daily_scan_limit", NOTHING, NO_SPEND,
+         settings={"quota.premium.daily": 0}),
     Case("premium-enhanced-global_cap-refused", PREMIUM, True, None,
          503, "scan_capacity", NOTHING, NO_SPEND, Start(global_others=LIMIT),
          {"scan.global_daily_limit": 3}),
@@ -332,14 +355,12 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     rows = {**BASE, **case.settings}
     tier = case.tier.value
     daily_limit = rows[f"quota.{tier}.daily"]
-    monthly_limit = rows[f"quota.{tier}.monthly"]
     global_limit = rows["scan.global_daily_limit"]
-    enhanced_limit = rows.get(f"quota.{tier}.enhanced_monthly", 0)
     ceiling = rows["breaker.free_daily_ceiling_micros"]
     est = h.estimate(case.enhanced)
 
     day = db.make_day()
-    month = quota.month_start(day)
+    month = day.replace(day=1)
     user_id = await db.make_user()
     other = await db.make_user()
 
@@ -347,8 +368,8 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     s = case.start
     for uid, feature, kind, start, units in (
         (user_id, h.SCAN, "day", day, _resolve(s.daily, daily_limit)),
-        (user_id, h.SCAN, "month", month, _resolve(s.monthly, monthly_limit)),
-        (user_id, h.ENHANCED, "month", month, _resolve(s.enhanced, enhanced_limit)),
+        (user_id, h.SCAN, "month", month, s.legacy_month),
+        (user_id, h.ENHANCED, "month", month, s.legacy_enhanced_month),
         (other, h.SCAN, "day", day, _resolve(s.global_others, global_limit)),
     ):
         await db.seed_units(uid, feature=feature, kind=kind, start=start, units=units)
@@ -378,19 +399,15 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
         assert got.headers == {"Retry-After": "43200"}
     if case.code in ("scan_in_progress", "enhanced_throttled"):
         assert int(got.headers["Retry-After"]) > 0
-    if case.code in ("scan_limit_reached", "enhanced_limit_reached"):
-        limit = monthly_limit if case.code == "scan_limit_reached" else enhanced_limit
-        assert got.body == {
-            "detail": case.code,
-            "limit": limit,
-            "used": limit,
-            "period_end": quota.next_month_start(day).isoformat(),
-        }
-    if case.status == ALLOWED and case.enhanced:
-        after_enhanced = before.enhanced + case.delta.enhanced
-        assert got.response.enhanced_scans_remaining == max(
-            0, enhanced_limit - after_enhanced
-        )
+    if case.status == ALLOWED:
+        # Premium: the daily allowance left after the scan (#582: what limits
+        # enhanced scans); None for every other tier.
+        remaining = got.response.enhanced_scans_remaining
+        if case.tier is PREMIUM:
+            after_daily = before.daily + case.delta.daily
+            assert remaining == max(0, daily_limit - after_daily)
+        else:
+            assert remaining is None
 
     # -- the provider -------------------------------------------------------
     reached = case.provider is not None
@@ -401,8 +418,9 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
     after = await db.counters(user_id, day)
     expected = {
         "daily": case.delta.daily,
-        "monthly": case.delta.monthly,
-        "enhanced": case.delta.enhanced,
+        # No scan takes, checks or gives back a month unit (#582).
+        "monthly": 0,
+        "enhanced": 0,
         # The service-wide count moves with this user's day unit only.
         "global": case.delta.daily,
         "zero_results": case.delta.zero_results,
@@ -427,14 +445,16 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
 
 
 def test_matrix_ids_are_unique_and_cover_every_refusal_code():
-    """Every refusal /scan can give today has at least one row."""
+    """Every refusal /scan can give today has at least one row, and none is
+    a monthly one (#582: no 402 ``scan_limit_reached`` /
+    ``enhanced_limit_reached``)."""
     ids = [c.id for c in CASES]
     assert len(ids) == len(set(ids))
     codes = {c.code for c in CASES}
+    assert not codes & {"scan_limit_reached", "enhanced_limit_reached"}
+    assert 402 not in {c.status for c in CASES}
     assert {
         "daily_scan_limit",
-        "scan_limit_reached",
-        "enhanced_limit_reached",
         "enhanced_requires_premium",
         "enhanced_throttled",
         "scan_in_progress",
@@ -479,8 +499,8 @@ def test_expected_standard_scan_cost_is_anchored_to_a_literal():
 # Order in /scan (backend/app/api/scan.py): kill switches -> image checks ->
 # normalise -> fingerprint and record lookup -> (a record answers) enhanced
 # entitlement and the repeat -> otherwise ``quota.reserve`` (global count
-# cap, the Free cost ceiling, the lease, zero-result throttle, daily,
-# monthly, enhanced monthly). So a record answers before any allowance,
+# cap, the Free cost ceiling, the lease, zero-result throttle, daily; no
+# monthly step since #582). So a record answers before any allowance,
 # breaker or global-cap check, and before the in-flight lease; only the kill
 # switches and the Premium-only gate still apply to a repeat.
 #
@@ -538,10 +558,6 @@ REPEATS: list[Repeat] = [
            False, None, ALLOWED, None, **FREE_REPEAT,
            settings_after={"quota.free.daily": 1},
            new_photo=(429, "daily_scan_limit")),
-    Repeat("free-standard-repeat_at_monthly_limit-free", FREE, (False, "books"),
-           False, None, ALLOWED, None, **FREE_REPEAT,
-           settings_after={"quota.free.monthly": 1},
-           new_photo=(402, "scan_limit_reached")),
     # Global cap and spend ceiling: checked inside quota.reserve, after the
     # lookup, so a repeat is still served (it costs nothing).
     Repeat("free-standard-repeat_at_global_cap-free", FREE, (False, "books"),
@@ -609,10 +625,12 @@ REPEATS: list[Repeat] = [
            (True, "no_books"), True, None, ALLOWED, None, **FREE_REPEAT),
     Repeat("premium-standard-repeat_enhanced_record-free", PREMIUM,
            (True, "books"), False, None, ALLOWED, None, **FREE_REPEAT),
-    Repeat("premium-enhanced-repeat_at_enhanced_limit-free", PREMIUM,
+    # #582: the daily allowance is what limits enhanced scans; a repeat is
+    # still served at it.
+    Repeat("premium-enhanced-repeat_at_daily_limit-free", PREMIUM,
            (True, "books"), True, None, ALLOWED, None, **FREE_REPEAT,
-           settings_after={"quota.premium.enhanced_monthly": 1},
-           new_photo=(402, "enhanced_limit_reached")),
+           settings_after={"quota.premium.daily": 1},
+           new_photo=(429, "daily_scan_limit")),
     # The Premium-only gate still applies to an enhanced repeat (a user who
     # has left Premium).
     Repeat("free-enhanced-repeat_after_leaving_premium-refused", PREMIUM,
@@ -667,9 +685,10 @@ async def test_limits_matrix_repeats(case: Repeat, limits_db: h.LimitsDb, downst
     if case.status == ALLOWED:
         assert got.response.repeat is case.repeat
         if case.enhanced:
-            limit = rows["quota.premium.enhanced_monthly"]
+            # #582: the Premium daily allowance left.
+            limit = rows["quota.premium.daily"]
             assert got.response.enhanced_scans_remaining == max(
-                0, limit - (before.enhanced + case.delta.enhanced)
+                0, limit - (before.daily + case.delta.daily)
             )
 
     # -- the provider -------------------------------------------------------
@@ -681,8 +700,8 @@ async def test_limits_matrix_repeats(case: Repeat, limits_db: h.LimitsDb, downst
     after = await db.counters(user_id, day)
     assert after.delta(before) == {
         "daily": case.delta.daily,
-        "monthly": case.delta.monthly,
-        "enhanced": case.delta.enhanced,
+        "monthly": 0,
+        "enhanced": 0,
         "global": case.delta.daily,
         "zero_results": case.delta.zero_results,
     }

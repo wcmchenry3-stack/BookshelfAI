@@ -3,40 +3,19 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useNetworkStatus } from './useNetworkStatus';
 
-/** Body of GET /scan/usage. Limits come from the server; never hardcode them. */
+/**
+ * Body of GET /scan/usage. Limits come from the server; never hardcode them.
+ * There is no monthly limit (#582): the server still sends the old monthly
+ * fields as null for one release; the app ignores them.
+ */
 export interface ScanUsage {
   used_today: number;
   daily_limit: number;
-  used_month: number;
-  monthly_limit: number;
-  /** First day of next month (UTC), YYYY-MM-DD. */
-  period_end: string;
-  /** Enhanced scans this month and the Premium enhanced allowance (0 when not Premium). */
-  enhanced_used_month?: number;
-  enhanced_monthly_limit?: number;
-}
-
-/** Enhanced scans left this month per the usage counters, or null if unknown. */
-export function enhancedScansLeft(usage: ScanUsage | null): number | null {
-  if (
-    !usage ||
-    typeof usage.enhanced_monthly_limit !== 'number' ||
-    typeof usage.enhanced_used_month !== 'number'
-  ) {
-    return null;
-  }
-  return Math.max(0, usage.enhanced_monthly_limit - usage.enhanced_used_month);
 }
 
 function isScanUsage(v: unknown): v is ScanUsage {
   const u = v as Partial<ScanUsage> | null;
-  return (
-    !!u &&
-    typeof u.used_today === 'number' &&
-    typeof u.daily_limit === 'number' &&
-    typeof u.used_month === 'number' &&
-    typeof u.monthly_limit === 'number'
-  );
+  return !!u && typeof u.used_today === 'number' && typeof u.daily_limit === 'number';
 }
 
 /**

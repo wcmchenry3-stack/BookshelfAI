@@ -27,13 +27,7 @@
   "couldNotSaveMessage": "Impossible d'ajouter le livre. Réessayez.",
   "queueFull": "File d'attente pleine. Attendez que les numérisations en attente soient téléversées avant d'en ajouter d'autres.",
   "pendingUploads": "Téléversements en attente : {{count}}",
-  "usageMonth": "Numérisations utilisées ce mois-ci : {{used}} sur {{limit}}",
   "usageToday": "Numérisations restantes aujourd’hui : {{count}}",
-  "monthlyLimit_one": "Vous avez utilisé votre {{count}} numérisation pour ce mois-ci.",
-  "monthlyLimit_many": "Vous avez utilisé vos {{count}} numérisations pour ce mois-ci.",
-  "monthlyLimit_other": "Vous avez utilisé vos {{count}} numérisations pour ce mois-ci.",
-  "monthlyLimitAny": "Vous avez utilisé toutes vos numérisations pour ce mois-ci.",
-  "monthlyResets": "Vos numérisations seront réinitialisées le {{date}}.",
   "dailyLimit": "Limite quotidienne atteinte. La numérisation reprend à minuit UTC ({{time}}, heure locale).",
   "stillProcessing": "Traitement en cours. Veuillez réessayer dans un instant.",
   "scanPaused": "La numérisation est en pause. Veuillez réessayer plus tard.",
@@ -42,7 +36,6 @@
   "queueFullLimited": "Vous avez atteint votre limite de numérisations. Vos photos enregistrées seront envoyées lorsque la numérisation sera de nouveau disponible.",
   "sendPendingNow": "Envoyer maintenant",
   "enhancedRequiresPremium": "Les numérisations améliorées font partie de Premium.",
-  "enhancedLimitReached": "Vous avez utilisé toutes vos numérisations améliorées de ce mois-ci.",
   "enhancedThrottled": "Plusieurs numérisations améliorées récentes n'ont trouvé aucun livre. Réessayez après {{time}}.",
   "enhancedThrottledLater": "Plusieurs numérisations améliorées récentes n'ont trouvé aucun livre. Réessayez plus tard."
 }

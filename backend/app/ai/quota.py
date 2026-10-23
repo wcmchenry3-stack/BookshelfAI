@@ -4,9 +4,8 @@ Every paid scan goes through :func:`reserve` before the provider is called.
 In order (#528):
 
 1. **Entitlement.** The tier comes from ``entitlements.tier_for(db, user)``
-   (server-side only); the allowances come from ``ai_settings``
-   (``quota.<tier>.daily`` / ``quota.<tier>.monthly``). Nothing in the request
-   can change either.
+   (server-side only); the allowance comes from ``ai_settings``
+   (``quota.<tier>.daily``). Nothing in the request can change either.
 2. **Global ceiling** (``scan.global_daily_limit``, approximate). Today's day
    rows are summed across users and features and compared before anything is
    reserved, so no per-user row or lease is taken when the service-wide
@@ -29,76 +28,80 @@ In order (#528):
    ``timeout_s + 30`` seconds, so a crashed request frees it. Each lease has a
    random ``lease_id``; :func:`release` deletes the row only while it still
    holds that id, so a slow request whose lease expired and was taken over
-   cannot delete the new holder's lease. After the reservations below the
+   cannot delete the new holder's lease. After the reservation below the
    lease is renewed (:func:`renew_lease`), so the provider call gets the full
    lease; if a stall let another request take it over, the reservation is
    given back and :class:`ScanInProgress` raised.
-5. **Daily, then monthly reservation** (table ``ai_quota``). The
-   same exact conditional upsert as #509: ``units_used = units_used + 1 WHERE
-   units_used < limit``. Postgres serialises upserts on the same key, so no
-   more than ``limit`` reservations can succeed (:class:`DailyLimitReached`,
-   :class:`MonthlyLimitReached`). A limit of 0 refuses without writing.
-   Standard and enhanced scans share one allowance (OD-1): both reserve under
-   :data:`SCAN_QUOTA_FEATURE`. The ``feature`` column stays so later AI
-   features can have their own allowance.
+5. **Daily reservation** (table ``ai_quota``). The same exact conditional
+   upsert as #509: ``units_used = units_used + 1 WHERE units_used < limit``.
+   Postgres serialises upserts on the same key, so no more than ``limit``
+   reservations can succeed (:class:`DailyLimitReached`). A limit of 0 refuses
+   without writing. Standard and enhanced scans share one allowance (OD-1):
+   both reserve under :data:`SCAN_QUOTA_FEATURE`. The ``feature`` column stays
+   so later AI features can have their own allowance.
 
-**Unit flags (#590).** Each unit is taken by :func:`take_unit`: the
+**No monthly limit (#582).** There is no monthly allowance for any tier, and
+no Premium enhanced monthly allowance: nothing here takes, checks or gives
+back a month-window unit, and no scan is refused for a monthly reason. What
+bounds a month is the daily allowance of each user (at most 31 x the daily
+limit), the service-wide ``scan.global_daily_limit``, the daily spend ceiling
+(``breaker.free_daily_ceiling_micros``) and, outside the code, the monthly
+spend limit in the provider console (#542). Spend and call counts per month
+stay derivable from the usage ledger (``ai_usage`` / ``ai_usage_daily``,
+``app/ai/ledger.py``): tracking, not a limit. Month rows (``window_kind =
+'month'``) written before #582 are no longer read or written; the retention
+purge below removes them as they age past 13 months (kept so a rollback to
+the previous release finds its counters intact).
+
+**Unit flag (#590).** The daily unit is taken by :func:`take_unit`: the
 ``ai_quota`` increment and a flag on the request's own lease row
-(``ai_inflight.daily_taken`` / ``monthly_taken`` / ``enhanced_taken``, matched
-on ``lease_id``) commit together; if the lease is no longer ours nothing is
-taken (:class:`ScanInProgress`). So after a commit whose acknowledgement was
-lost, the flag shows whether the unit landed. Every give-back of a unit
-(:func:`refund`, and the ``except`` in :func:`reserve`, which covers a lost
-acknowledgement on a take) goes through :func:`give_back_unit`: it clears the
-flag and takes the unit off in one commit, only if the flag was set, so a
-retry gives nothing back twice; the give-backs are therefore retried like
-the others (#567 had made them one-shot when nothing gated them). The settle
-in :func:`release` needs no flag: it deletes the lease row, flags and all, in
-the same commit as its own give-back (the zero-result decision). If another
-request took over the expired lease, the takeover resets the flags (they
-belong to the new lease): a unit this request knows it took (its take was
-acknowledged) is then given back once without the gate, on the first attempt
-only; a unit whose take was never acknowledged stays charged (fails toward
-charging).
+(``ai_inflight.daily_taken``, matched on ``lease_id``) commit together; if the
+lease is no longer ours nothing is taken (:class:`ScanInProgress`). So after a
+commit whose acknowledgement was lost, the flag shows whether the unit
+landed. Every give-back of the unit (:func:`refund`, and the ``except`` in
+:func:`reserve`, which covers a lost acknowledgement on a take) goes through
+:func:`give_back_unit`: it clears the flag and takes the unit off in one
+commit, only if the flag was set, so a retry gives nothing back twice; the
+give-backs are therefore retried like the others (#567 had made them
+one-shot when nothing gated them). The settle in :func:`release` needs no
+flag: it deletes the lease row, flag and all. If another request took over
+the expired lease, the takeover resets the flags (they belong to the new
+lease): a unit this request knows it took (its take was acknowledged) is then
+given back once without the gate, on the first attempt only; a unit whose
+take was never acknowledged stays charged (fails toward charging). The
+``monthly_taken`` and ``enhanced_taken`` columns are no longer set (#582);
+a takeover still clears them.
 
-**Enhanced scans (#533).** ``reserve(..., enhanced=True)`` adds three steps:
+**Enhanced scans (#533).** ``reserve(..., enhanced=True)`` adds two steps:
 
 - right after the tier is resolved, a non-Premium tier is refused
   (:class:`EnhancedRequiresPremium`, 403 ``enhanced_requires_premium``) before
   anything is taken (no cost estimate, lease or unit);
 - after the lease, with ``scan.enhanced.zero_result_action`` = ``throttle``,
-  the user's uncharged zero-result enhanced scans inside the sliding window
+  the user's zero-result enhanced scans recorded inside the sliding window
   (``ai_enhanced_zero_results``) are counted; at or above
   ``scan.enhanced.zero_result_threshold`` the scan is refused
   (:class:`EnhancedThrottled`, 429 ``enhanced_throttled``) with a Retry-After
   of the seconds until enough rows leave the window. Counting under the lease
-  serialises it with the user's own settle;
-- after the shared daily and monthly units, one unit of the Premium enhanced
-  monthly allowance (``quota.premium.enhanced_monthly``) under
-  :data:`ENHANCED_QUOTA_FEATURE` (:class:`EnhancedLimitReached`, 402
-  ``enhanced_limit_reached``).
+  serialises it with the user's own settle.
 
-Each refusal gives back everything taken before it, like the others. The
-enhanced unit follows the shared units on refund (:func:`refund`) and is kept
-otherwise, except for the charge decision: when the provider answered but
-returned no books (no candidates), the caller passes a :class:`ZeroResult` to
-:func:`release`, and in the settle transaction (gated exactly like the cost
-settle, so a retried settle cannot apply it twice) the user's in-window count
-is read: below the threshold the enhanced unit is given back and one
-``ai_enhanced_zero_results`` row is written (not charged); at or above it the
-unit is kept (charged) and no row is written. The write runs in a SAVEPOINT,
-so a failure there keeps the unit (charged) and never drops the usage row.
+An enhanced scan takes the shared daily unit and nothing else (#582: the
+Premium enhanced monthly allowance is gone; a per-model daily Sonnet counter
+comes with #583). The zero-result rule stays as the abuse signal: when the
+provider answered but returned no books (no candidates), the caller passes a
+:class:`ZeroResult` to :func:`release`, and in the settle transaction (gated
+exactly like the cost settle, so a retried settle cannot apply it twice) the
+user's in-window count is read: below the threshold one
+``ai_enhanced_zero_results`` row is written; at or above it nothing is
+written. The daily unit stays charged either way (the provider answered).
+The write runs in a SAVEPOINT, so a failure there never drops the usage row.
 When a row brings the count to the threshold and no row of the user with
 ``warned = true`` is inside the window, that row is written with ``warned =
 true`` (the claim commits with it) and one Sentry warning is sent after the
 commit (:func:`send_zero_result_warning`): at most one per user per window.
-Every other give-back of the enhanced unit (:func:`refund`, a refusal in
-:func:`reserve`) goes through the same gate as the shared units (see
-**Unit flags** below). Threshold 0: with
-``charge`` every zero-result enhanced scan is charged (no rows, no warning);
-with ``throttle`` every enhanced scan is refused. A repeat served from a
-scan record (#585) makes no provider call and must not pass a
-:class:`ZeroResult`.
+Threshold 0: with ``charge`` no rows and no warning; with ``throttle`` every
+enhanced scan is refused. A repeat served from a scan record (#585) makes no
+provider call and must not pass a :class:`ZeroResult`.
 
 Every step commits straight away, on the request's own session: the
 reservation is visible to concurrent requests and the connection goes back to
@@ -113,18 +116,16 @@ the usage-ledger row for the call (#530) and the call's
 are committed together with the lease delete. Without a settlement the cost
 estimate is given back. On
 ``ScanUnavailableError`` / ``httpx.ConnectError`` it first calls
-:func:`refund`, which gives back the daily and monthly units (and the
-enhanced unit) at most once each, never below zero. Any other outcome
-(success, an empty result, another error, a cancelled request) keeps the reservation: the provider may have been paid.
+:func:`refund`, which gives back the daily unit at most once, never below
+zero. Any other outcome (success, an empty result, another error, a cancelled
+request) keeps the reservation: the provider may have been paid.
 
-Windows are UTC: the day window starts at UTC midnight, the month window on
-the 1st of the UTC calendar month (OD-10). ``period_end`` is the first day of
-the next month, the date the monthly count resets.
+Windows are UTC: the day window starts at UTC midnight.
 
 Retention: :func:`purge_old_quota` deletes day rows older than 90 days and
-month rows older than 13 months, and :func:`purge_old_zero_results` deletes
-``ai_enhanced_zero_results`` rows older than 30 days, in bounded batches, from
-the daily cleanup task.
+(legacy, see above) month rows older than 13 months, and
+:func:`purge_old_zero_results` deletes ``ai_enhanced_zero_results`` rows older
+than 30 days, in bounded batches, from the daily cleanup task.
 
 This module never calls a provider and must not import ``app.ai.providers``.
 """
@@ -142,7 +143,6 @@ from sqlalchemy import (
     and_,
     delete,
     func,
-    or_,
     select,
     tuple_,
     update,
@@ -161,11 +161,8 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 # The ai_quota counter key for every scan, standard or enhanced: one shared
-# daily and monthly allowance per user (OD-1). Not a gateway feature name.
+# daily allowance per user (OD-1). Not a gateway feature name.
 SCAN_QUOTA_FEATURE = "scan"
-# The ai_quota counter key for the Premium enhanced monthly allowance (#533),
-# reserved on top of the shared SCAN_QUOTA_FEATURE units.
-ENHANCED_QUOTA_FEATURE = "scan.enhanced"
 # The Sentry tag for the zero-result warning (the gateway feature name).
 ENHANCED_FEATURE_TAG = "scan.enhanced"
 
@@ -184,11 +181,13 @@ PURGE_BATCH_SIZE = 5_000
 PURGE_MAX_BATCHES = 20
 ZERO_RESULT_RETENTION_DAYS = 30
 
-# The ai_inflight flags (#590): which units the lease holder took.
+# The ai_inflight flag (#590): whether the lease holder took its daily unit.
 FLAG_DAILY = "daily_taken"
-FLAG_MONTHLY = "monthly_taken"
-FLAG_ENHANCED = "enhanced_taken"
-UNIT_FLAGS = (FLAG_DAILY, FLAG_MONTHLY, FLAG_ENHANCED)
+UNIT_FLAGS = (FLAG_DAILY,)
+# Flags of the units #582 removed (the monthly and the enhanced monthly unit).
+# Never set any more; a lease takeover still clears them, so a row left by
+# the previous release does not carry them over to a new lease.
+RETIRED_FLAGS = ("monthly_taken", "enhanced_taken")
 # What give_back_unit reports.
 UNIT_GIVEN_BACK = "given_back"
 UNIT_NOT_TAKEN = "not_taken"
@@ -206,22 +205,6 @@ def utc_now() -> datetime:
 
 def utc_today(now: datetime | None = None) -> date:
     return (now or utc_now()).astimezone(UTC).date()
-
-
-def month_start(day: date) -> date:
-    return day.replace(day=1)
-
-
-def next_month_start(day: date) -> date:
-    """First day of the month after ``day``'s month (Dec -> Jan next year)."""
-    if day.month == 12:
-        return date(day.year + 1, 1, 1)
-    return date(day.year, day.month + 1, 1)
-
-
-def period_end(day: date) -> date:
-    """The date the monthly allowance resets: the 1st of the next UTC month."""
-    return next_month_start(day)
 
 
 def months_before(day: date, months: int) -> date:
@@ -248,14 +231,15 @@ def lease_seconds(timeout_s: float) -> int:
 
 @dataclass(frozen=True)
 class Allowance:
+    """The tier's per-user allowance. Daily only: there is no monthly
+    allowance (#582)."""
+
     daily: int
-    monthly: int
 
 
 def allowance_for(ai: AISettings, tier: Tier) -> Allowance:
     """The tier's allowance from ``ai_settings`` (validated, bounded)."""
-    daily, monthly = ai.allowance(tier.value)
-    return Allowance(daily=daily, monthly=monthly)
+    return Allowance(daily=ai.daily_allowance(tier.value))
 
 
 # ---------------------------------------------------------------------------
@@ -289,16 +273,6 @@ class DailyLimitReached(QuotaRefusal):
         self.retry_after = retry_after
 
 
-class MonthlyLimitReached(QuotaRefusal):
-    """The user's monthly allowance is used (402 ``scan_limit_reached``)."""
-
-    def __init__(self, limit: int, used: int, period_end: date) -> None:
-        super().__init__("scan_limit_reached")
-        self.limit = limit
-        self.used = used
-        self.period_end = period_end
-
-
 class EnhancedRequiresPremium(QuotaRefusal):
     """Enhanced scans are Premium-only (403 ``enhanced_requires_premium``)."""
 
@@ -310,17 +284,6 @@ class EnhancedThrottled(QuotaRefusal):
     def __init__(self, retry_after: int) -> None:
         super().__init__("enhanced_throttled")
         self.retry_after = retry_after
-
-
-class EnhancedLimitReached(QuotaRefusal):
-    """The Premium enhanced monthly allowance is used (402
-    ``enhanced_limit_reached``)."""
-
-    def __init__(self, limit: int, used: int, period_end: date) -> None:
-        super().__init__("enhanced_limit_reached")
-        self.limit = limit
-        self.used = used
-        self.period_end = period_end
 
 
 @dataclass(frozen=True)
@@ -340,18 +303,15 @@ class Reservation:
     feature: str
     lease_id: uuid.UUID
     day: date
-    month: date
     tier: Tier
     allowance: Allowance
     # The cost estimate added to ai_spend_daily for ``day`` (#531), and the
     # Free ceiling read for this request (for the alert percentages).
     est_cost_micros: int = 0
     ceiling_micros: int = 0
-    # Enhanced scans (#533): whether a ENHANCED_QUOTA_FEATURE month unit was
-    # taken, the allowance read for this request, and the zero-result
+    # Enhanced scans (#533): whether this is one, and the zero-result
     # settings read for this request (one view of ai_settings per request).
     enhanced: bool = False
-    enhanced_allowance: int = 0
     zero_result_threshold: int = 0
     zero_result_window_hours: int = 24
     zero_result_action: str = "charge"
@@ -386,7 +346,7 @@ async def acquire_lease(
             "lease_expires_at": stmt.excluded.lease_expires_at,
             # The old holder's unit flags (#590) do not carry over to the
             # new lease: the new holder has taken nothing yet.
-            **{flag: False for flag in UNIT_FLAGS},
+            **{flag: False for flag in UNIT_FLAGS + RETIRED_FLAGS},
         },
         where=AIInflight.lease_expires_at < _clock_timestamp(),
     ).returning(AIInflight.lease_id)
@@ -705,9 +665,11 @@ async def zero_result_throttle(
 
 
 def zero_result_charged(count: int, threshold: int) -> bool:
-    """The charge decision for a zero-result enhanced scan, given the user's
-    in-window count before it: charged at or above the threshold (threshold 0
-    charges every one)."""
+    """Whether a zero-result enhanced scan is past the threshold, given the
+    user's in-window count before it: at or above the threshold nothing is
+    recorded (threshold 0: never recorded). Named for the #533 rule, when
+    below the threshold also gave back the enhanced monthly unit (#582
+    removed that unit)."""
     return count >= threshold
 
 
@@ -749,10 +711,11 @@ async def hold_lease_lock(
 async def record_zero_result(
     db: AsyncSession, reservation: "Reservation", ledger_id: uuid.UUID | None
 ) -> ZeroResultRecorded | None:
-    """The charge decision, inside the caller's settle transaction (no
-    commit). Returns the user's new in-window count when the scan is not
-    charged (the enhanced month unit is given back and one row written), or
-    ``None`` when it is charged (nothing written).
+    """The zero-result record, inside the caller's settle transaction (no
+    commit). Returns the user's new in-window count when the scan is below
+    the threshold (one row written), or ``None`` when it is at or above it
+    (nothing written). The daily unit stays charged either way: there is no
+    enhanced allowance to give back since #582.
 
     The warning claim: when the new row brings the count to the threshold
     and no row of the user with ``warned = true`` is inside the window, the
@@ -767,19 +730,18 @@ async def record_zero_result(
     (``SELECT ... FROM ai_inflight WHERE user_id AND lease_id FOR UPDATE``).
     The settle deletes that row later in the same transaction, so the lock
     is held until the commit, and a second settle of the same user (a request
-    whose lease expired and was taken over) cannot find it: it is charged and
-    writes no row and sends no warning. Without its lease, a settle is always
-    charged. That includes the lease-only paths (``settle_after_lease``: a
+    whose lease expired and was taken over) cannot find it: it writes no row
+    and sends no warning. Without its lease, nothing is ever
+    recorded. That includes the lease-only paths (``settle_after_lease``: a
     retry without a ledger row, and the fallback after a rejected ledger
-    row), which delete the lease first, so they fail toward charging.
+    row), which delete the lease first, so they record nothing.
 
-    Runs in a SAVEPOINT: if it fails, only it is rolled back (the unit stays
-    charged, no row) and the settle still commits the usage row, the cost and
-    the lease delete.
+    Runs in a SAVEPOINT: if it fails, only it is rolled back (no row) and
+    the settle still commits the usage row, the cost and the lease delete.
 
     A threshold lowered below a user's current in-window count means no row
     reaches it exactly, so no warning is sent for that user in that window
-    (they are still charged or throttled).
+    (they are still throttled with ``throttle``).
     """
     try:
         async with db.begin_nested():
@@ -790,17 +752,6 @@ async def record_zero_result(
             )
             if zero_result_charged(count, reservation.zero_result_threshold):
                 return None
-            await db.execute(
-                update(AIQuota)
-                .where(
-                    AIQuota.user_id == reservation.user_id,
-                    AIQuota.feature == ENHANCED_QUOTA_FEATURE,
-                    AIQuota.window_kind == WINDOW_MONTH,
-                    AIQuota.window_start == reservation.month,
-                    AIQuota.units_used > 0,
-                )
-                .values(units_used=AIQuota.units_used - 1)
-            )
             new_count = count + 1
             warn = (
                 new_count == reservation.zero_result_threshold
@@ -819,9 +770,7 @@ async def record_zero_result(
             )
             return ZeroResultRecorded(new_count, warn)
     except Exception:
-        logger.exception(
-            "ai_quota: zero-result record failed; the enhanced scan stays charged"
-        )
+        logger.exception("ai_quota: zero-result record failed; no row written")
         return None
 
 
@@ -926,7 +875,7 @@ async def release(
     """Release the lease held by ``reservation`` (settle). Never raises.
 
     ``zero_result`` (#533, enhanced reservations only): the scan found no
-    books, so the charge decision (:func:`record_zero_result`) runs in the
+    books, so the zero-result record (:func:`record_zero_result`) runs in the
     same transaction as the cost settle and under the same gate, and a
     warning is sent after the commit when the count reaches the threshold.
 
@@ -1082,30 +1031,14 @@ class _Unit:
     what: str
 
 
-def _units(reservation: Reservation) -> tuple[_Unit, _Unit, _Unit]:
-    """The daily, monthly and enhanced month units of ``reservation``."""
-    return (
-        _Unit(
-            FLAG_DAILY,
-            reservation.feature,
-            WINDOW_DAY,
-            reservation.day,
-            "daily",
-        ),
-        _Unit(
-            FLAG_MONTHLY,
-            reservation.feature,
-            WINDOW_MONTH,
-            reservation.month,
-            "monthly",
-        ),
-        _Unit(
-            FLAG_ENHANCED,
-            ENHANCED_QUOTA_FEATURE,
-            WINDOW_MONTH,
-            reservation.month,
-            "enhanced month",
-        ),
+def _daily_unit(reservation: Reservation) -> _Unit:
+    """The daily unit of ``reservation``: the only unit a scan takes (#582)."""
+    return _Unit(
+        FLAG_DAILY,
+        reservation.feature,
+        WINDOW_DAY,
+        reservation.day,
+        "daily",
     )
 
 
@@ -1175,8 +1108,6 @@ UNIT_KEPT_FALLBACK_FAILED = "fallback_failed"
 UNIT_KEPT_GIVE_BACK_FAILED = "give_back_failed"
 _UNIT_TAGS = {
     FLAG_DAILY: "daily",
-    FLAG_MONTHLY: "monthly",
-    FLAG_ENHANCED: "enhanced",
 }
 
 
@@ -1199,15 +1130,10 @@ def send_unit_kept_warning(unit: _Unit, reason: str) -> None:
 
 
 async def refund(db: AsyncSession, reservation: Reservation) -> None:
-    """Give back the daily and monthly units, and the enhanced month unit of
-    an enhanced reservation (provider unavailable or never reached), each at
+    """Give back the daily unit (provider unavailable or never reached), at
     most once (:func:`_return_unit`). Never raises; does not release the
     lease (call :func:`release`)."""
-    daily, monthly, enhanced = _units(reservation)
-    await _return_unit(db, reservation, daily, taken=True)
-    await _return_unit(db, reservation, monthly, taken=True)
-    if reservation.enhanced:
-        await _return_unit(db, reservation, enhanced, taken=True)
+    await _return_unit(db, reservation, _daily_unit(reservation), taken=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1240,8 +1166,9 @@ async def reserve(
     now: datetime | None = None,
     enhanced: bool = False,
 ) -> Reservation:
-    """Check the allowances and take the cost estimate, the lease, a daily
-    and a monthly unit, and for ``enhanced`` an enhanced month unit (#533).
+    """Check the allowances and take the cost estimate, the lease and a
+    daily unit. An enhanced scan (#533) takes the same daily unit; there is
+    no monthly or enhanced monthly unit (#582).
 
     ``est_cost_micros`` is the gateway feature's
     ``FeatureSpec.est_cost_ceiling_micros`` (server-side registry value).
@@ -1255,7 +1182,6 @@ async def reserve(
     tier = await require_enhanced_entitlement(db, user, enhanced)
     allowance = allowance_for(ai, tier)
     today = utc_today(now)
-    month = month_start(today)
 
     if await global_units_today(db, today) >= ai.global_daily_limit:
         raise GlobalCapacityReached("scan_capacity")
@@ -1294,19 +1220,17 @@ async def reserve(
         feature=feature,
         lease_id=lease_id,
         day=today,
-        month=month,
         tier=tier,
         allowance=allowance,
         est_cost_micros=est_cost_micros,
         ceiling_micros=ceiling,
         enhanced=enhanced,
-        enhanced_allowance=ai.enhanced_monthly_allowance(tier.value),
         zero_result_threshold=ai.zero_result_threshold,
         zero_result_window_hours=ai.zero_result_window_hours,
         zero_result_action=ai.zero_result_action,
     )
 
-    daily, monthly, enhanced_unit = _units(reservation)
+    daily = _daily_unit(reservation)
     # Units whose take was attempted, and whether it was acknowledged. After
     # a lost acknowledgement the local state says "attempted, not taken"; the
     # flag on the lease row is the truth (#590).
@@ -1344,23 +1268,6 @@ async def reserve(
                 raise EnhancedThrottled(retry_after)
         if await take(daily, allowance.daily) is None:
             raise DailyLimitReached(retry_after=seconds_until_utc_midnight(now))
-        if await take(monthly, allowance.monthly) is None:
-            used = await units_used(db, user.id, feature, WINDOW_MONTH, month)
-            raise MonthlyLimitReached(
-                limit=allowance.monthly, used=used, period_end=period_end(today)
-            )
-        if (
-            enhanced
-            and await take(enhanced_unit, reservation.enhanced_allowance) is None
-        ):
-            used = await units_used(
-                db, user.id, ENHANCED_QUOTA_FEATURE, WINDOW_MONTH, month
-            )
-            raise EnhancedLimitReached(
-                limit=reservation.enhanced_allowance,
-                used=used,
-                period_end=period_end(today),
-            )
         # The upserts above are unbounded, and the lease aged while they ran.
         # Restart its clock so the whole timeout_s + 30 s covers the provider
         # call, and stop if a stall let it expire and another request take it.
@@ -1368,8 +1275,8 @@ async def reserve(
             raise ScanInProgress("scan_in_progress")
     except BaseException:
         # Includes CancelledError and a take whose commit acknowledgement was
-        # lost: give back every unit whose take was attempted, newest first,
-        # gated on the lease row's flags (a refused or never-landed take
+        # lost: give back the unit if its take was attempted, gated on the
+        # lease row's flag (a refused or never-landed take
         # gives nothing back), then propagate.
         for unit in reversed(attempted):
             await _return_unit(db, reservation, unit, taken=unit.flag in taken)
@@ -1386,15 +1293,11 @@ async def reserve(
 
 @dataclass(frozen=True)
 class Usage:
+    """Scans reserved today (UTC) and the tier's daily allowance. There is
+    no monthly count or limit (#582)."""
+
     used_today: int
     daily_limit: int
-    used_month: int
-    monthly_limit: int
-    period_end: date
-    # Enhanced scans this UTC month and the enhanced allowance (0 for every
-    # tier but Premium, #533).
-    enhanced_used_month: int = 0
-    enhanced_monthly_limit: int = 0
 
 
 async def usage_for(
@@ -1407,54 +1310,29 @@ async def usage_for(
 ) -> Usage:
     tier = await entitlements.tier_for(db, user)
     allowance = allowance_for(ai, tier)
-    today = utc_today(now)
-    month = month_start(today)
-    result = await db.execute(
-        select(AIQuota.feature, AIQuota.window_kind, AIQuota.units_used).where(
-            AIQuota.user_id == user.id,
-            or_(
-                and_(
-                    AIQuota.feature == feature,
-                    AIQuota.window_kind == WINDOW_DAY,
-                    AIQuota.window_start == today,
-                ),
-                and_(
-                    AIQuota.feature.in_((feature, ENHANCED_QUOTA_FEATURE)),
-                    AIQuota.window_kind == WINDOW_MONTH,
-                    AIQuota.window_start == month,
-                ),
-            ),
-        )
-    )
-    used = {(feat, kind): int(n) for feat, kind, n in result.all()}
-    return Usage(
-        used_today=used.get((feature, WINDOW_DAY), 0),
-        daily_limit=allowance.daily,
-        used_month=used.get((feature, WINDOW_MONTH), 0),
-        monthly_limit=allowance.monthly,
-        period_end=period_end(today),
-        enhanced_used_month=used.get((ENHANCED_QUOTA_FEATURE, WINDOW_MONTH), 0),
-        enhanced_monthly_limit=ai.enhanced_monthly_allowance(tier.value),
-    )
+    used = await units_used(db, user.id, feature, WINDOW_DAY, utc_today(now))
+    return Usage(used_today=used, daily_limit=allowance.daily)
 
 
 async def enhanced_remaining(db: AsyncSession, reservation: Reservation) -> int | None:
-    """The user's remaining enhanced allowance this month after the scan
-    (#533): ``None`` for every tier but Premium. Ends its read
-    transaction."""
+    """Enhanced scans the user can still make today after the scan: the
+    shared daily allowance left, since an enhanced scan takes the shared
+    daily unit and nothing else (#582; #583 adds a daily Sonnet counter).
+    ``None`` for every tier but Premium (enhanced is Premium-only, #533).
+    Ends its read transaction."""
     if reservation.tier is not Tier.PREMIUM:
         return None
     try:
         used = await units_used(
             db,
             reservation.user_id,
-            ENHANCED_QUOTA_FEATURE,
-            WINDOW_MONTH,
-            reservation.month,
+            reservation.feature,
+            WINDOW_DAY,
+            reservation.day,
         )
     finally:
         await db.commit()
-    return max(0, reservation.enhanced_allowance - used)
+    return max(0, reservation.allowance.daily - used)
 
 
 async def enhanced_remaining_for(
@@ -1465,20 +1343,19 @@ async def enhanced_remaining_for(
     ai: AISettings,
     now: datetime | None = None,
 ) -> int | None:
-    """The user's remaining enhanced allowance this month with no
-    reservation (a repeat served from a scan record, #585, which takes
-    nothing): ``None`` for every tier but Premium, as
-    :func:`enhanced_remaining`. Ends its read transaction."""
+    """As :func:`enhanced_remaining`, with no reservation (a repeat served
+    from a scan record, #585, which takes nothing): ``None`` for every tier
+    but Premium, else today's shared daily allowance left. Ends its read
+    transaction."""
     if tier is not Tier.PREMIUM:
         return None
-    month = month_start(utc_today(now))
     try:
         used = await units_used(
-            db, user_id, ENHANCED_QUOTA_FEATURE, WINDOW_MONTH, month
+            db, user_id, SCAN_QUOTA_FEATURE, WINDOW_DAY, utc_today(now)
         )
     finally:
         await db.commit()
-    return max(0, ai.enhanced_monthly_allowance(tier.value) - used)
+    return max(0, allowance_for(ai, tier).daily - used)
 
 
 # ---------------------------------------------------------------------------
@@ -1519,8 +1396,9 @@ async def _purge_kind(db: AsyncSession, window_kind: str, cutoff: date) -> int:
 
 def purge_cutoffs(today: date) -> tuple[date, date]:
     """``(day_cutoff, month_cutoff)``: rows with ``window_start`` before these
-    are purged. Day rows are kept for 90 days; month rows for the current
-    month and the 13 before it."""
+    are purged. Day rows are kept for 90 days; month rows (no longer written
+    since #582) for the current month and the 13 before it, so they age out
+    and a rollback to the previous release finds its counters intact."""
     return (
         today - timedelta(days=DAILY_RETENTION_DAYS),
         months_before(today, MONTHLY_RETENTION_MONTHS),

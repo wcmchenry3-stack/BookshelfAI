@@ -96,7 +96,7 @@ def _post(client, **kwargs):
 
 def _fill(store, kind: str, n: int, feature: str = quota.SCAN_QUOTA_FEATURE) -> None:
     today = quota.utc_today()
-    start = today if kind == "day" else quota.month_start(today)
+    start = today if kind == "day" else today.replace(day=1)
     store.rows[(USER.id, feature, kind, start)] = n
 
 
@@ -105,9 +105,12 @@ class TestRefusedBeforeProvider:
         _fill(store, "day", 5)
         assert _post(client).json() == {"detail": "daily_scan_limit"}
 
-    def test_monthly(self, client, store):
-        _fill(store, "month", 5)
-        assert _post(client).json()["detail"] == "scan_limit_reached"
+    def test_month_rows_never_refuse_for_a_monthly_reason(self, client, store):
+        """#582: a full month row (left by the previous release) is never
+        read; the only refusal is the daily one."""
+        _fill(store, "month", 10**6)
+        _fill(store, "day", 5)
+        assert _post(client).json() == {"detail": "daily_scan_limit"}
 
     def test_in_progress(self, client, store):
         store.leases[USER.id] = uuid.uuid4()
@@ -118,8 +121,8 @@ class TestRefusedBeforeProvider:
         assert _post(client).json() == {"detail": "scan_capacity"}
 
     def test_zero_allowance(self, client, store):
-        with patch.object(settings, "scan_free_monthly_limit", 0):
-            assert _post(client).json()["detail"] == "scan_limit_reached"
+        with patch.object(settings, "scan_free_daily_limit", 0):
+            assert _post(client).json() == {"detail": "daily_scan_limit"}
 
 
 class TestClientCannotChangeTheOutcome:
@@ -136,12 +139,6 @@ class TestClientCannotChangeTheOutcome:
         assert resp.status_code == 429
         assert resp.json() == {"detail": "daily_scan_limit"}
         assert store.count() == 5
-
-    def test_forged_values_do_not_change_the_402_body(self, client, store):
-        _fill(store, "month", 5)
-        resp = _post(client, data=_FORGED, params=_FORGED)
-        body = resp.json()
-        assert (body["limit"], body["used"]) == (5, 5)
 
     def test_forged_tier_does_not_select_premium_allowance(self, client, store):
         seen = []
@@ -180,7 +177,7 @@ class TestUsageEndpointSecurity:
         app.dependency_overrides[get_db] = _fake_db
         limit = int(settings.rate_limit_reads.split("/")[0])
         client = TestClient(app, raise_server_exceptions=False)
-        usage = quota.Usage(0, 5, 0, 5, quota.next_month_start(quota.utc_today()))
+        usage = quota.Usage(0, 5)
         try:
             with patch("app.api.scan.quota.usage_for", AsyncMock(return_value=usage)):
                 from app.auth.dependencies import get_current_user
@@ -201,7 +198,7 @@ class TestUsageEndpointSecurity:
         from app.core.database import get_db
 
         db = AsyncMock()
-        db.execute.return_value = MagicMock(all=list)
+        db.execute.return_value = MagicMock(scalar_one_or_none=lambda: None)
 
         async def _db():
             yield db
@@ -210,4 +207,5 @@ class TestUsageEndpointSecurity:
         resp = client.get("/scan/usage", params=_FORGED, headers={"X-Tier": "premium"})
         assert resp.status_code == 200
         body = resp.json()
-        assert (body["daily_limit"], body["monthly_limit"]) == (5, 5)
+        assert (body["used_today"], body["daily_limit"]) == (0, 5)
+        assert body["monthly_limit"] is None  # #582: no monthly limit

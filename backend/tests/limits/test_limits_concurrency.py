@@ -1,9 +1,11 @@
 """Parallel requests against a limit, and lost commit acknowledgements (#584),
 on real Postgres.
 
-- N parallel attempts against a limit L never charge more than L, for each
-  window (daily, monthly, the Premium enhanced monthly) and for the Free
-  spend ceiling: separate sessions (connections), ``asyncio.gather``.
+- N parallel attempts against a limit L never charge more than L, for the
+  daily limit (Free, Premium, and a Premium enhanced scan, which uses the
+  same daily unit) and for the Free spend ceiling: separate sessions
+  (connections), ``asyncio.gather``. There is no monthly window (#582); no
+  month row is ever written.
 - A commit whose acknowledgement is lost (the commit lands, then the call
   raises, so the give-back retries) never charges or gives back twice. The
   pattern is ``test_retried_release_without_a_ledger_row_gives_back_once``
@@ -37,40 +39,23 @@ async def _scan_until_decided(db, user_id, *, enhanced) -> str:
 
 
 @pytest.mark.parametrize(
-    "tier, enhanced, limit_key, refusal, window",
+    "tier, enhanced, limit_key, refusal",
     [
-        (Tier.FREE, False, "quota.free.daily", "daily_scan_limit", "day"),
-        (Tier.FREE, False, "quota.free.monthly", "scan_limit_reached", "month"),
-        (Tier.PREMIUM, False, "quota.premium.daily", "daily_scan_limit", "day"),
-        (Tier.PREMIUM, True, "quota.premium.monthly", "scan_limit_reached", "month"),
-        (
-            Tier.PREMIUM,
-            True,
-            "quota.premium.enhanced_monthly",
-            "enhanced_limit_reached",
-            "enhanced",
-        ),
+        (Tier.FREE, False, "quota.free.daily", "daily_scan_limit"),
+        (Tier.PREMIUM, False, "quota.premium.daily", "daily_scan_limit"),
+        (Tier.PREMIUM, True, "quota.premium.daily", "daily_scan_limit"),
     ],
-    ids=[
-        "free-daily",
-        "free-monthly",
-        "premium-daily",
-        "premium-enhanced-shared-monthly",
-        "premium-enhanced-monthly",
-    ],
+    ids=["free-daily", "premium-daily", "premium-enhanced-daily"],
 )
 async def test_parallel_scans_never_charge_more_than_the_limit(
-    limits_db, downstream, tier, enhanced, limit_key, refusal, window
+    limits_db, downstream, tier, enhanced, limit_key, refusal
 ):
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
     rows = {
         **BASE,
         "quota.free.daily": 1_000,
-        "quota.free.monthly": 1_000,
         "quota.premium.daily": 1_000,
-        "quota.premium.monthly": 1_000,
-        "quota.premium.enhanced_monthly": 1_000,
         limit_key: L,
     }
     h.use_settings(rows)
@@ -84,8 +69,7 @@ async def test_parallel_scans_never_charge_more_than_the_limit(
     assert provider.calls == L
     assert provider.max_in_flight == 1
     after = await db.counters(user_id, day)
-    assert (after.daily, after.monthly) == (L, L)
-    assert after.enhanced == (L if enhanced else 0)
+    assert (after.daily, after.monthly, after.enhanced) == (L, 0, 0)
     assert await db.lease(user_id) is None
 
 
@@ -93,18 +77,17 @@ async def test_parallel_reservations_on_separate_connections_never_pass_the_limi
     limits_db,
 ):
     """The reservation itself, without the lease that serialises one user:
-    N concurrent upserts on N connections for one window, limit L."""
+    N concurrent upserts on N connections for the day window, limit L."""
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
 
-    async def one(kind, start):
+    async def one():
         async with db.factory() as session:
-            return await quota.reserve_unit(session, user_id, h.SCAN, kind, start, L)
+            return await quota.reserve_unit(session, user_id, h.SCAN, "day", day, L)
 
-    for kind, start in (("day", day), ("month", quota.month_start(day))):
-        results = await asyncio.gather(*(one(kind, start) for _ in range(N)))
-        assert sorted(r for r in results if r is not None) == list(range(1, L + 1))
-        assert await db.units(user_id, feature=h.SCAN, kind=kind, start=start) == L
+    results = await asyncio.gather(*(one() for _ in range(N)))
+    assert sorted(r for r in results if r is not None) == list(range(1, L + 1))
+    assert await db.units(user_id, feature=h.SCAN, kind="day", start=day) == L
 
 
 async def test_parallel_free_users_never_pass_the_spend_ceiling(limits_db, downstream):
@@ -172,17 +155,17 @@ def _ack_lost_once(real, calls: list):
     return committed_then_raised
 
 
-async def test_lost_ack_on_the_settle_gives_back_the_enhanced_unit_once(
+async def test_lost_ack_on_the_settle_records_the_zero_result_once(
     limits_db, downstream, monkeypatch
 ):
     """A zero-book enhanced scan below the threshold: the settle (ledger row,
-    spend, charge decision, lease delete) commits, the ack is lost and the
-    settle is retried. The enhanced unit is given back once, not twice; the
-    spend is settled once; one zero-result row."""
+    spend, zero-result record, lease delete) commits, the ack is lost and the
+    settle is retried. The spend is settled once; one zero-result row; the
+    daily unit stays charged (#582: there is no enhanced unit to give back)
+    and the legacy month rows are untouched."""
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
-    month = quota.month_start(day)
-    await db.seed_units(user_id, feature=h.ENHANCED, kind="month", start=month, units=2)
+    await _seed_two_of_each(db, user_id, day)
     h.use_settings(BASE)
     calls: list = []
     monkeypatch.setattr(
@@ -199,7 +182,7 @@ async def test_lost_ack_on_the_settle_gives_back_the_enhanced_unit_once(
     assert len(calls) == 2  # retried
     assert (await db.counters(user_id, day)).delta(before) == {
         "daily": 1,
-        "monthly": 1,
+        "monthly": 0,
         "enhanced": 0,
         "global": 1,
         "zero_results": 1,
@@ -241,16 +224,10 @@ async def test_lost_ack_on_a_refusal_release_gives_back_the_estimate_once(
     assert await db.units(user_id, feature=h.SCAN, kind="day", start=day) == 1
 
 
-UNIT_FLAGS = [
-    pytest.param(quota.FLAG_DAILY, id="daily"),
-    pytest.param(quota.FLAG_MONTHLY, id="monthly"),
-    pytest.param(quota.FLAG_ENHANCED, id="enhanced"),
-]
-
-
 async def _seed_two_of_each(db, user_id, day) -> None:
-    """2 units in every window, so a unit given back twice shows as -1."""
-    month = quota.month_start(day)
+    """2 units in the day window, so a unit given back twice shows as -1, and
+    2 in each legacy month row (#582), which no scan may move."""
+    month = day.replace(day=1)
     for feature, kind, start in (
         (h.SCAN, "day", day),
         (h.SCAN, "month", month),
@@ -261,30 +238,23 @@ async def _seed_two_of_each(db, user_id, day) -> None:
 
 @pytest.mark.parametrize("give_back_ack_lost", [False, True], ids=["", "gb-lost"])
 @pytest.mark.parametrize(
-    "tier, enhanced, lost_flag",
+    "tier, enhanced",
     [
-        pytest.param(Tier.FREE, False, quota.FLAG_DAILY, id="free-standard-daily"),
-        pytest.param(Tier.FREE, False, quota.FLAG_MONTHLY, id="free-standard-monthly"),
-        pytest.param(Tier.PREMIUM, True, quota.FLAG_DAILY, id="premium-enhanced-daily"),
-        pytest.param(
-            Tier.PREMIUM, True, quota.FLAG_MONTHLY, id="premium-enhanced-monthly"
-        ),
-        pytest.param(
-            Tier.PREMIUM, True, quota.FLAG_ENHANCED, id="premium-enhanced-enhanced"
-        ),
+        pytest.param(Tier.FREE, False, id="free-standard-daily"),
+        pytest.param(Tier.PREMIUM, True, id="premium-enhanced-daily"),
     ],
 )
 async def test_lost_ack_on_a_reservation_gives_the_unit_back_once(
-    limits_db, downstream, monkeypatch, tier, enhanced, lost_flag, give_back_ack_lost
+    limits_db, downstream, monkeypatch, tier, enhanced, give_back_ack_lost
 ):
-    """One unit's reservation (daily, monthly or, for a Premium enhanced scan,
-    the enhanced month) commits and its ack is lost (#590), for a Free
-    standard scan and a Premium enhanced one: the request fails (500) without reaching the
-    provider, and every counter ends where it started. The unit whose ack was
-    lost is given back (its flag on the lease row shows it landed), the units
-    before it are given back, the ones after it are never taken, and nothing
+    """The daily unit's reservation (since #582 the only unit, for a standard
+    and for an enhanced scan) commits and its ack is lost (#590), for a Free
+    standard scan and a Premium enhanced one: the request fails (500) without
+    reaching the provider, and every counter ends where it started. The unit
+    is given back (its flag on the lease row shows it landed), and nothing
     is given back twice, even when the give-back's own ack is lost too and it
     is retried. The lease and the estimate are given back."""
+    lost_flag = quota.FLAG_DAILY
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
     await _seed_two_of_each(db, user_id, day)
@@ -321,8 +291,7 @@ async def test_lost_ack_on_a_reservation_gives_the_unit_back_once(
         got = await h.call_scan(db.factory, user_id, enhanced=enhanced)
     assert got.status == 500
     assert fake.calls == 0
-    order = [quota.FLAG_DAILY, quota.FLAG_MONTHLY, quota.FLAG_ENHANCED]
-    assert takes == order[: order.index(lost_flag) + 1]  # never taken twice
+    assert takes == [quota.FLAG_DAILY]  # never taken twice; nothing else taken
     if give_back_ack_lost:
         # Retried; the gate gives nothing back the second time.
         assert give_backs == [quota.UNIT_GIVEN_BACK, quota.UNIT_NOT_TAKEN]
@@ -342,13 +311,13 @@ async def test_lost_ack_on_a_reservation_gives_the_unit_back_once(
 async def test_lost_ack_on_a_reservation_after_a_lease_takeover_stays_charged(
     limits_db, downstream, monkeypatch
 ):
-    """The monthly reservation commits, its ack is lost, and meanwhile the
+    """The daily reservation commits, its ack is lost, and meanwhile the
     stalled request's lease expired and another request took it over (#590).
     The flags now belong to the new lease (the takeover reset them), so the
-    old request's gated give-back finds nothing: its monthly unit, which it
-    never saw land, stays charged (fails toward charging). Its daily unit,
-    whose take was acknowledged, is given back once. The new holder's lease
-    and flags are untouched."""
+    old request's gated give-back finds nothing: its daily unit, which it
+    never saw land, stays charged (fails toward charging). The new holder's
+    lease and flags are untouched. (Before #582 this was the monthly unit;
+    the daily one is now the only unit.)"""
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
     await _seed_two_of_each(db, user_id, day)
@@ -358,7 +327,7 @@ async def test_lost_ack_on_a_reservation_after_a_lease_takeover_stays_charged(
 
     async def take_then_taken_over(session, uid, lease_id, flag, *rest):
         used = await real_take(session, uid, lease_id, flag, *rest)  # committed
-        if flag == quota.FLAG_MONTHLY:
+        if flag == quota.FLAG_DAILY:
             await db.expire_lease(uid)
             new_holder.append(await db.hold_lease(uid))
             raise OSError("commit acknowledgement lost")
@@ -375,40 +344,28 @@ async def test_lost_ack_on_a_reservation_after_a_lease_takeover_stays_charged(
     assert got.status == 500
     assert fake.calls == 0
     assert (await db.counters(user_id, day)).delta(before) == {
-        "daily": 0,
-        "monthly": 1,
+        "daily": 1,
+        "monthly": 0,
         "enhanced": 0,
-        "global": 0,
+        "global": 1,
         "zero_results": 0,
     }
     assert await db.lease(user_id) == new_holder[0]
     assert await db.lease_flags(user_id) == set()
 
 
-@pytest.mark.parametrize(
-    "lost_feature, lost_kind",
-    [
-        pytest.param(h.SCAN, "day", id="daily"),
-        pytest.param(h.SCAN, "month", id="monthly"),
-        pytest.param(h.ENHANCED, "month", id="enhanced"),
-    ],
-)
+@pytest.mark.parametrize("enhanced", [False, True], ids=["standard", "enhanced"])
 async def test_lost_ack_on_a_refund_gives_back_once(
-    limits_db, downstream, monkeypatch, lost_feature, lost_kind
+    limits_db, downstream, monkeypatch, enhanced
 ):
-    """An enhanced scan finds the provider unavailable, so its units are
-    refunded. One refund commits and its ack is lost, so the give-back may
-    retry. Every unit must come back exactly once: the user had 2 of each
+    """A scan finds the provider unavailable, so its daily unit (#582: the
+    only unit) is refunded. The refund commits and its ack is lost, so the
+    give-back retries. The unit must come back exactly once: the user had 2
     before the scan, so they have 2 after it, not 1."""
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
-    month = quota.month_start(day)
-    for feature, kind, start in (
-        (h.SCAN, "day", day),
-        (h.SCAN, "month", month),
-        (h.ENHANCED, "month", month),
-    ):
-        await db.seed_units(user_id, feature=feature, kind=kind, start=start, units=2)
+    await _seed_two_of_each(db, user_id, day)
+    lost_feature, lost_kind = h.SCAN, "day"
     h.use_settings(BASE)
     real = quota.give_back_unit
     lost: list = []
@@ -427,7 +384,7 @@ async def test_lost_ack_on_a_refund_gives_back_once(
         h.as_tier(Tier.PREMIUM),
         h.FakeProvider("unavailable").patch(),
     ):
-        got = await h.call_scan(db.factory, user_id, enhanced=True)
+        got = await h.call_scan(db.factory, user_id, enhanced=enhanced)
     assert got.code == "scan_unavailable"
     assert lost == [1]
     assert (await db.counters(user_id, day)).delta(before) == {
@@ -445,39 +402,32 @@ async def test_lost_ack_on_a_refund_gives_back_once(
 
 
 async def _taken_reservation(db, user_id, day) -> quota.Reservation:
-    """A standard scan's reservation with its daily and monthly units taken
-    (acknowledged) on top of 2 already used in each window, so a unit given
-    back twice shows as -1 and one never given back as +1."""
-    month = quota.month_start(day)
+    """A standard scan's reservation with its daily unit taken
+    (acknowledged) on top of 2 already used, so a unit given back twice
+    shows as -1 and one never given back as +1."""
     await _seed_two_of_each(db, user_id, day)
     async with db.factory() as session:
         lease_id = await quota.acquire_lease(session, user_id, 600)
         assert lease_id is not None
-        for flag, kind, start in (
-            (quota.FLAG_DAILY, "day", day),
-            (quota.FLAG_MONTHLY, "month", month),
-        ):
-            await quota.take_unit(
-                session, user_id, lease_id, flag, h.SCAN, kind, start, 10
-            )
+        await quota.take_unit(
+            session, user_id, lease_id, quota.FLAG_DAILY, h.SCAN, "day", day, 10
+        )
     return quota.Reservation(
         user_id=user_id,
         feature=h.SCAN,
         lease_id=lease_id,
         day=day,
-        month=month,
         tier=Tier.FREE,
-        allowance=quota.Allowance(10, 10),
+        allowance=quota.Allowance(10),
     )
 
 
 async def _used(db, user_id, day) -> tuple[int, int]:
-    """The standard scan's (daily, monthly) units used."""
+    """The standard scan's daily units used, and the legacy month row (#582:
+    seeded at 2 and never moved)."""
     return (
         await db.units(user_id, feature=h.SCAN, kind="day", start=day),
-        await db.units(
-            user_id, feature=h.SCAN, kind="month", start=quota.month_start(day)
-        ),
+        await db.units(user_id, feature=h.SCAN, kind="month", start=day.replace(day=1)),
     )
 
 
@@ -487,13 +437,11 @@ async def test_a_give_back_whose_ack_is_lost_before_a_takeover_is_not_repeated(
     """The gated give-back of the daily unit commits (flag cleared, unit
     returned) but its ack is lost, and the lease is then taken over before
     the retry. The retry sees ``lease_lost`` and must not run the ungated
-    ``refund_unit``: the count ends where it started (2), not one lower. The
-    monthly unit, whose give-back finds the lease already taken over on its
-    first attempt, is given back once by the fallback."""
+    ``refund_unit``: the count ends where it started (2), not one lower."""
     db = limits_db
     day, user_id = db.make_day(), await db.make_user()
     reservation = await _taken_reservation(db, user_id, day)
-    assert await _used(db, user_id, day) == (3, 3)
+    assert await _used(db, user_id, day) == (3, 2)
     real = quota.give_back_unit
     seen: list = []
 
@@ -538,7 +486,7 @@ async def test_an_ungated_refund_whose_ack_is_lost_is_not_repeated(
     monkeypatch.setattr(quota, "refund_unit", committed_then_raised)
     async with db.factory() as session:
         await quota.refund(session, reservation)
-    assert calls == ["day", "month"]  # the daily one is not run again
+    assert calls == ["day"]  # not run again
     assert await _used(db, user_id, day) == (2, 2)
 
 
@@ -564,7 +512,7 @@ async def test_a_refund_after_a_takeover_gives_each_known_taken_unit_back_once(
     monkeypatch.setattr(quota, "refund_unit", counting)
     async with db.factory() as session:
         await quota.refund(session, reservation)
-    assert calls == ["day", "month"]
+    assert calls == ["day"]
     assert await _used(db, user_id, day) == (2, 2)
     assert await db.lease(user_id) == new_holder
     assert await db.lease_flags(user_id) == set()

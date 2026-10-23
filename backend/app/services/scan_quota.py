@@ -2,7 +2,7 @@
 and retention.
 
 Since #528 ``/scan`` no longer calls this module: allowances, the in-flight
-lease and the daily/monthly windows live in ``app/ai/quota.py`` (table
+lease and the daily window live in ``app/ai/quota.py`` (table
 ``ai_quota``). It is kept, with its ``scan_usage_daily`` table and purge, until
 #540 deletes it.
 

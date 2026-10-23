@@ -8,10 +8,5 @@
     "description": "Settings row label for the scan usage figure",
     "tone": "neutral",
     "characterLimit": 25
-  },
-  "scanUsageMonth": {
-    "description": "Settings row value: scans used this month out of the monthly limit; {{used}} and {{limit}} are numbers",
-    "tone": "neutral",
-    "characterLimit": 50
   }
 }
