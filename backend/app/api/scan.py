@@ -265,7 +265,8 @@ async def _record_lookup(
     user_id: uuid.UUID,
     fingerprint: str | None,
     ai: AISettings,
-    attempt: int = SCAN_ATTEMPT_MIN,
+    *,
+    attempt: int,
 ) -> scan_records.Record | None:
     """This user's record for the photo, or None (no record, switched off,
     or any failure: logged without content, then the normal path runs)."""
@@ -309,7 +310,7 @@ async def _save_ai_step(
     reservation: quota.Reservation,
     result: AIResult,
     ai: AISettings,
-    attempt: int = SCAN_ATTEMPT_MIN,
+    attempt: int,
 ) -> datetime | None:
     """Save the provider's answer as the record's AI step; the step's time,
     or None when not saved. Only outcome ``ok`` is saved, with books or
@@ -390,7 +391,7 @@ async def _serve_repeat(
     fingerprint: str,
     record: scan_records.Record,
     ai: AISettings,
-    attempt: int = SCAN_ATTEMPT_MIN,
+    attempt: int,
 ) -> ScanResponse:
     """A repeat of a photo with a saved answer: no provider call and nothing
     taken (no reservation, lease, global count-cap unit, cost settle or
@@ -566,7 +567,7 @@ def _usage_row(
     ai: AISettings,
     status: str | None = None,
     result: AIResult | None = None,
-    attempt: int = SCAN_ATTEMPT_MIN,
+    attempt: int,
 ) -> Executable | None:
     """The ledger insert for this scan's provider call (#530), or None.
 

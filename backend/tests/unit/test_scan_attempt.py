@@ -308,14 +308,15 @@ class TestLedgerRows:
             attempt=5,
         )
         assert _params(no_answer)["attempt"] == 5
-        default = scan_module._usage_row(
-            call_id=call_id,
-            user_id=USER.id,
-            feature="scan.standard",
-            ai=ai,
-            status="refunded",
-        )
-        assert _params(default)["attempt"] == 1
+        # Required, so a new call site can't silently record attempt 1.
+        with pytest.raises(TypeError):
+            scan_module._usage_row(  # type: ignore[call-arg]
+                call_id=call_id,
+                user_id=USER.id,
+                feature="scan.standard",
+                ai=ai,
+                status="refunded",
+            )
 
 
 # ---------------------------------------------------------------------------

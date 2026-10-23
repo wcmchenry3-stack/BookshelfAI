@@ -13,7 +13,9 @@ Locking: adding a nullable column with no default only updates the catalog
 long transaction.
 
 The downgrade drops the column (the per-request detail is lost; nothing
-else reads it).
+else reads it). Roll the app code back first: the #603 ledger insert always
+names ``attempt``, so running code against a downgraded table would fail
+every ledger write.
 
 Revision ID: 0014
 Revises: 0013
