@@ -691,13 +691,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           (err as { response?: unknown } | null)?.response != null &&
           uiState.kind !== 'paused' &&
           uiState.kind !== 'in_progress' &&
-          uiState.kind !== 'enhanced_refused'
+          uiState.kind !== 'enhanced_refused' &&
+          // #586: refused before anything was taken; the counters are unchanged.
+          uiState.kind !== 'requests_daily_limit'
         ) {
           bumpUsage();
         }
 
         if (
           uiState.kind === 'daily_limit' ||
+          uiState.kind === 'requests_daily_limit' ||
           uiState.kind === 'in_progress' ||
           uiState.kind === 'paused'
         ) {

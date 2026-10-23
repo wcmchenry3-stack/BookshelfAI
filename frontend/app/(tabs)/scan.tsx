@@ -40,7 +40,10 @@ export default function ScanScreen() {
   // the saved photos go out once scanning is available again.
   function queueFullMessage(): string {
     const limited =
-      (scanNotice && (scanNotice.kind === 'daily_limit' || scanNotice.kind === 'paused')) ||
+      (scanNotice &&
+        (scanNotice.kind === 'daily_limit' ||
+          scanNotice.kind === 'requests_daily_limit' ||
+          scanNotice.kind === 'paused')) ||
       hasRefusedJobs(jobs ?? []);
     return t(limited ? 'queueFullLimited' : 'queueFull');
   }

@@ -32,6 +32,7 @@
   "noBooksFoundFree": "未找到图书。此次未消耗扫描次数。",
   "noBooksFoundCounted": "未找到图书。此次消耗了今日一次扫描。",
   "dailyLimit": "已达每日上限。扫描将在 UTC 午夜重置（您的当地时间 {{time}}）。",
+  "requestsDailyLimit": "已达今日扫描上限。请在 {{time}} 后重试。",
   "stillProcessing": "仍在处理中，请稍后再试。",
   "scanPaused": "扫描已暂停，请稍后再试。",
   "dismissNotice": "关闭",

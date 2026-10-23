@@ -32,6 +32,7 @@
   "noBooksFoundFree": "Nenhum livro encontrado. Não usou um escaneamento.",
   "noBooksFoundCounted": "Nenhum livro encontrado. Usou um escaneamento de hoje.",
   "dailyLimit": "Limite diário atingido. O escaneamento é renovado à meia-noite UTC ({{time}} no seu horário).",
+  "requestsDailyLimit": "Você atingiu o limite de escaneamentos de hoje. Tente novamente após {{time}}.",
   "stillProcessing": "Ainda processando. Tente novamente em instantes.",
   "scanPaused": "O escaneamento está pausado. Tente novamente mais tarde.",
   "dismissNotice": "Fechar",

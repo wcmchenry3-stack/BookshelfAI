@@ -32,6 +32,7 @@
   "noBooksFoundFree": "Aucun livre trouvé. Aucune numérisation utilisée.",
   "noBooksFoundCounted": "Aucun livre trouvé. Une numérisation a été utilisée.",
   "dailyLimit": "Limite quotidienne atteinte. La numérisation reprend à minuit UTC ({{time}}, heure locale).",
+  "requestsDailyLimit": "Limite de numérisations du jour atteinte. Réessayez après {{time}}.",
   "stillProcessing": "Traitement en cours. Veuillez réessayer dans un instant.",
   "scanPaused": "La numérisation est en pause. Veuillez réessayer plus tard.",
   "dismissNotice": "Fermer",

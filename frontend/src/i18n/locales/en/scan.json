@@ -54,6 +54,7 @@
   "noBooksFoundFree": "No books found. This one didn't use a scan.",
   "noBooksFoundCounted": "No books found. This used one of today's scans.",
   "dailyLimit": "Daily limit reached. Scanning resets at midnight UTC ({{time}} your time).",
+  "requestsDailyLimit": "You've reached today's scan limit. Try again after {{time}}.",
   "stillProcessing": "Still processing. Please try again in a moment.",
   "scanPaused": "Scanning is paused. Please try again later.",
   "dismissNotice": "Dismiss",
