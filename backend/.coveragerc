@@ -1,0 +1,21 @@
+# Coverage config for the backend. pytest-cov reads this by default
+# (--cov-config defaults to .coveragerc), including CI's test-python job, which
+# runs `pytest --cov=. --cov-fail-under=<coverage-threshold>` from backend/.
+# An INI file rather than [tool.coverage] in pyproject.toml so it works on any
+# Python version without the coverage[toml] extra.
+
+[run]
+# `--cov=.` sets the source root; `omit` still applies on top of it, so only
+# application code under app/ is measured, not the tests or migrations.
+omit =
+    tests/*
+    alembic/*
+
+[report]
+# Coverage's default precision is 0, and pytest-cov rounds the total to this
+# precision before comparing it with --cov-fail-under. With precision 0 a total
+# of 79.72% rounds to 80 and passes an 80% gate: pytest exits 0 even though the
+# summary line (which compares the unrounded total) prints
+# "FAIL Required test coverage of 80% not reached". Two decimal places make the
+# gate compare against the real figure (#621).
+precision = 2
