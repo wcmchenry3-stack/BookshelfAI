@@ -146,6 +146,41 @@ async def test_retried_settle_with_nothing_to_spend_moves_once(limits_db, monkey
     assert await _counts(db, user_id, day) == (1, 1)
 
 
+async def test_move_on_the_same_held_lease_is_a_no_op_the_second_time(limits_db):
+    """The move clears ``daily_taken`` in the same transaction, and only a
+    lease that still carries it may move. A second move on the same still-held
+    lease therefore decides nothing, and the found unit is not given back
+    twice: found goes down once, no-match up once."""
+    db = limits_db
+    day, user_id = db.make_day(), await db.make_user()
+    h.use_settings(BASE)
+    ai = ai_settings.AISettings(dict(BASE))
+    with h.Clock(h.at(day)).patch(), h.as_tier(Tier.FREE):
+        async with db.factory() as session:
+            user = await session.get(User, user_id)
+            reservation = await quota.reserve(
+                session,
+                user=user,
+                feature=quota.SCAN_QUOTA_FEATURE,
+                timeout_s=10,
+                ai=ai,
+                est_cost_micros=0,
+            )
+            await session.commit()
+        assert await db.lease(user_id) == reservation.lease_id
+        assert await _counts(db, user_id, day) == (1, 0)
+        results = []
+        for _ in range(2):
+            async with db.factory() as session:
+                results.append(await quota.move_to_no_match(session, reservation))
+                await session.commit()
+    assert results[0] is not None
+    assert results[1] is None
+    assert await db.lease(user_id) == reservation.lease_id  # still held
+    assert await _counts(db, user_id, day) == (0, 1)
+    assert await db.negative_counters() == 0
+
+
 # ---------------------------------------------------------------------------
 # Concurrency
 # ---------------------------------------------------------------------------
