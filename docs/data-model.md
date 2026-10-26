@@ -2,6 +2,8 @@
 
 PostgreSQL schema, entity reference, and the dedup strategy that makes the collection work at the work-level instead of per-edition. For the architectural rationale behind dedup see [`architecture.md`](architecture.md#adr-work-level-book-deduplication-open-library-work_id); for migration mechanics see the [Migration workflow](#migration-workflow) section below.
 
+> How long every table is kept, what grows and the expected size at 100, 1,000 and 10,000 users: [`storage-and-retention.md`](storage-and-retention.md).
+
 ## ER diagram
 
 ```mermaid
@@ -298,6 +300,8 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 | `revoked_at` | timestamptz, nullable | set on `/auth/refresh` (old jti) or `/auth/logout` |
 
 **Lifecycle:** `/auth/refresh` validates the presented refresh JWT → checks `jti` exists and `revoked_at IS NULL` → issues a new access+refresh pair, inserts a new row, and sets `revoked_at = now()` on the old row. The effect is that **refresh tokens are single-use** — a stolen copy is invalidated by the legitimate client's next refresh.
+
+**Volume and retention:** about 150 bytes per row, one row per refresh; an active user refreshes about once a day (the access token lives 24 hours), so about 7 live rows per user. A row is deleted by the daily cleanup task (`app/services/token_cleanup.py`) once `expires_at` has passed; revoked rows stay until they expire (at most 7 days). That purge is a single `DELETE`, not batched. Rows go with the user (cascade). **Phase 2 account deletion and data export must include this table.**
 
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 
