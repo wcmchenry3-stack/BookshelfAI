@@ -325,12 +325,7 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
   "found_used_today": 2,
   "found_daily_limit": 5,
   "no_match_used_today": 1,
-  "no_match_daily_limit": 5,
-  "used_month": null,
-  "monthly_limit": null,
-  "period_end": null,
-  "enhanced_used_month": null,
-  "enhanced_monthly_limit": null
+  "no_match_daily_limit": 5
 }
 ```
 
@@ -338,7 +333,7 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 
 `used_today` and `daily_limit` carry the found counter again: kept for one release for older app builds, then removed.
 
-**Deprecated, always `null` (#582):** `used_month`, `monthly_limit`, `period_end`, `enhanced_used_month` and `enhanced_monthly_limit`. There is no monthly limit any more. They stay in the body for one release so an older app build still gets the keys it reads, and are removed after it. (An older build that requires them to be numbers hides its usage counter instead of crashing.) The app offers an enhanced re-scan from `enhanced_scans_remaining` on scan responses.
+**Removed (#582, #594):** `used_month`, `monthly_limit`, `period_end`, `enhanced_used_month` and `enhanced_monthly_limit`. There is no monthly limit any more, and the body no longer carries these keys. (An older app build that still reads them treats the missing keys like the `null` it got before, so its usage counter shows the daily numbers.) The app offers an enhanced re-scan from `enhanced_scans_remaining` on scan responses.
 
 **Errors:** `401` (no or invalid token), `429` (rate limit), `503 ai_unavailable` (AI settings cannot be read and none are cached).
 

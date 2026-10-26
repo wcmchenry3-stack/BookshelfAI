@@ -179,8 +179,11 @@ describe('hasRefusedJobs', () => {
     }
   });
 
-  it('still counts a job persisted by an older build with monthly_limit (#582, one release)', () => {
-    expect(hasRefusedJobs([{ status: 'queued', error: 'monthly_limit' }])).toBe(true);
+  it('treats a job persisted by an older build with monthly_limit (#582) as an unknown code: no crash, not a refusal (#594)', () => {
+    const legacy = [{ status: 'queued', error: 'monthly_limit' }];
+    expect(() => hasRefusedJobs(legacy)).not.toThrow();
+    expect(hasRefusedJobs(legacy)).toBe(false);
+    expect(isScanningLimited(null, legacy)).toBe(false);
   });
 
   it('counts a photo waiting on the retry schedule (#604), so a full queue reads "limited"', () => {

@@ -794,11 +794,6 @@ class TestUsage:
             "found_daily_limit": 30,
             "no_match_used_today": 0,
             "no_match_daily_limit": 0,
-            "used_month": None,
-            "monthly_limit": None,
-            "period_end": None,
-            "enhanced_used_month": None,
-            "enhanced_monthly_limit": None,
         }
 
 

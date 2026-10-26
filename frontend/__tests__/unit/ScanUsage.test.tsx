@@ -72,11 +72,6 @@ describe('scan screen usage counter', () => {
       data: {
         used_today: 0,
         daily_limit: 5,
-        used_month: null,
-        monthly_limit: null,
-        period_end: null,
-        enhanced_used_month: null,
-        enhanced_monthly_limit: null,
       },
     });
     const { findByText } = await render(<ScanScreen />);
