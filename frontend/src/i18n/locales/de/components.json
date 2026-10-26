@@ -1,16 +1,53 @@
 {
   "bookCandidatePicker": {
-    "title": "Welches Buch ist das?",
+    "title_one": "{{count}} Buch gefunden",
+    "title_other": "{{count}} Bücher gefunden",
     "cancel": "Abbrechen",
     "closePicker": "Auswahl schließen",
     "selectBook": "{{title}} von {{author}} wählen",
+    "selectAll": "Alle wählen",
+    "selectAllA11y": "Alle Bücher auswählen",
+    "clearAll": "Alle abwählen",
+    "clearAllA11y": "Alle Auswahlen aufheben",
+    "addSelected_one": "{{count}} Buch zur Wunschliste hinzufügen",
+    "addSelected_other": "{{count}} Bücher zur Wunschliste hinzufügen",
+    "addNone": "Bücher zum Hinzufügen wählen",
     "addToWishlistHint": "Fügt dieses Buch zur Wunschliste hinzu",
     "alreadyOwned": "Bereits vorhanden",
-    "noneOfThese": "Keines davon",
-    "noneOfTheseA11y": "Keines dieser Bücher passt"
+    "enhance": "Bücher fehlen? Erweiterter Scan",
+    "enhanceA11y": "Erweiterten Scan testen",
+    "enhanceHint": "Scannt dieses Foto mit einem leistungsstärkeren KI-Modell erneut. Verbraucht nur dann einen deiner erweiterten Scans, wenn Bücher gefunden werden.",
+    "enhanceCostsCredit": "Verbraucht 1 erweiterten Scan, wenn Bücher gefunden werden",
+    "creditsLeft_one": "{{count}} erweiterter Scan übrig",
+    "creditsLeft_other": "{{count}} erweiterte Scans übrig",
+    "noCreditsLeft": "Keine erweiterten Scans übrig",
+    "ownedSameEdition": "Dieses Buch hast du bereits",
+    "ownedOtherEdition": "Du hast dieses Buch bereits in einer anderen Ausgabe",
+    "ownedEditionUnknown": "Dieses Buch hast du bereits",
+    "notInCatalog": "Nicht in unserem Katalog",
+    "addYourself": "Selbst hinzufügen",
+    "addYourselfA11y": "{{title}} selbst hinzufügen"
   },
   "themeToggle": {
     "toDark": "Zu dunklem Modus wechseln",
     "toLight": "Zu hellem Modus wechseln"
+  },
+  "addUnverified": {
+    "title": "Selbst hinzufügen",
+    "intro": "Wir haben dieses Buch nicht in unserem Katalog gefunden. Prüfe die Angaben und speichere es. Nur du siehst es, als Ungeprüft markiert.",
+    "titleLabel": "Titel",
+    "authorLabel": "Autor",
+    "isbnLabel": "ISBN (optional)",
+    "save": "Speichern",
+    "saveHint": "Fügt das Buch deiner Wunschliste hinzu, als Ungeprüft markiert",
+    "cancel": "Abbrechen",
+    "closeA11y": "Formular schließen",
+    "titleRequired": "Gib einen Titel ein",
+    "authorRequired": "Gib einen Autor ein",
+    "isbnInvalid": "Diese ISBN ist ungültig. Korrigiere sie oder lass das Feld leer.",
+    "invalid": "Prüfe die Angaben und versuche es erneut.",
+    "duplicate": "Du hast dieses Buch bereits selbst hinzugefügt.",
+    "limitReached": "Du hast die Höchstzahl selbst hinzugefügter Bücher erreicht.",
+    "failed": "Speichern fehlgeschlagen. Versuche es erneut."
   }
 }

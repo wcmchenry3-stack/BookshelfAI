@@ -5,6 +5,7 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -27,8 +28,8 @@ jobs:
       working-directory: backend
       # Keep in sync with backend/requirements-dev.txt — unpinned installs let
       # upstream rule changes silently break lint on unrelated PRs.
-      black-version: '26.5.1'
-      ruff-version: '0.16.2'
+      black-version: '26.10.1'
+      ruff-version: '0.17.1'
     secrets: inherit
 
   lint-frontend:
@@ -41,6 +42,12 @@ jobs:
   # === Tier 1: Substantive fast checks (need lint + secret-scan) ===========
 
   backend-health:
+    # Skip when called from the Deploy workflow (github.workflow is the
+    # caller's name inside a workflow_call): this job probes the live
+    # bookshelf-api Render origin, which becomes PROD after cutover, so a
+    # prod outage would fail this job and block the very deploy meant to fix
+    # it. On pull_request/push to dev/main it still runs as a normal CI gate.
+    if: github.workflow != 'Deploy'
     needs: [lint-python, lint-frontend, secret-scan]
     uses: wcmchenry3-stack/.github/.github/workflows/called-backend-health.yml@main
     with:
@@ -80,6 +87,18 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-openai-policy.yml@main
     secrets: inherit
 
+  # In-repo (not a called-* org workflow): the check lives in
+  # scripts/policy/check_claude_policy.py and mirrors .claude/policies/claude.md.
+  claude-policy:
+    needs: [lint-python, lint-frontend, secret-scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/policy/check_claude_policy.py
+
   provenance-coverage:
     needs: [lint-python, lint-frontend, secret-scan]
     uses: wcmchenry3-stack/.github/.github/workflows/called-provenance-coverage.yml@main
@@ -95,7 +114,9 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-test-python.yml@main
     with:
       working-directory: backend
-      coverage-threshold: 80
+      # App code only (backend/.coveragerc omits tests/ and alembic/). Raised
+      # from 80 to 90 in #621 once the gate actually failed below threshold.
+      coverage-threshold: 90
     secrets: inherit
 
   test-frontend:
@@ -196,6 +217,14 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
         run: alembic downgrade -1
+      - name: Integration tests (real Postgres)
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+        run: |
+          pip install -r requirements-dev.txt
+          alembic upgrade head
+          # tests/limits: the scan limits matrix (#584), every row on every PR.
+          pytest -m integration tests/integration tests/limits -q
 
   # --- Podfile.lock staleness check -------------------------------------------
   # If Podfile was modified but Podfile.lock was not, the developer forgot to
@@ -220,6 +249,24 @@ jobs:
             fi
           fi
           echo "Podfile.lock check passed"
+
+  typecheck-frontend:
+    needs: [lint-python, lint-frontend, secret-scan]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check (tsc --noEmit)
+        run: npm run typecheck
 
   # --- Phase 5: JS bundle validation (Linux, fast) ---------------------------
   # Catches silent bundling failures BEFORE they reach Xcode Cloud.

@@ -21,9 +21,14 @@ export function InAppBanner() {
         useNativeDriver: true,
       }).start();
 
-      timerRef.current = setTimeout(() => {
-        dismiss();
-      }, banner.duration ?? DEFAULT_DISPLAY_DURATION);
+      // A banner that carries an action stays until the user acts or taps it
+      // away: a timed-out button is unreachable for a screen-reader user, who
+      // may not find it before it disappears.
+      if (!banner.actions || banner.actions.length === 0) {
+        timerRef.current = setTimeout(() => {
+          dismiss();
+        }, banner.duration ?? DEFAULT_DISPLAY_DURATION);
+      }
     } else {
       translateY.setValue(-120);
     }
@@ -66,7 +71,10 @@ export function InAppBanner() {
       accessibilityLiveRegion="assertive"
     >
       <Pressable onPress={dismiss} style={styles.content}>
-        <Text style={[styles.message, { color: textColor }]} numberOfLines={2}>
+        <Text
+          style={[styles.message, { color: textColor }]}
+          numberOfLines={banner.numberOfLines ?? 2}
+        >
           {banner.message}
         </Text>
         {banner.actions && banner.actions.length > 0 && (
@@ -78,7 +86,7 @@ export function InAppBanner() {
                   action.onPress();
                   dismiss();
                 }}
-                style={styles.actionButton}
+                style={[styles.actionButton, { borderColor: textColor }]}
                 accessibilityRole="button"
                 accessibilityLabel={action.label}
               >
@@ -122,7 +130,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderWidth: 1,
     minWidth: 44,
     minHeight: 44,
     alignItems: 'center',

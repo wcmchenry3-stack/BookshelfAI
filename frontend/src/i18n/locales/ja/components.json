@@ -1,16 +1,50 @@
 {
   "bookCandidatePicker": {
-    "title": "どの本ですか？",
+    "title_other": "{{count}}冊の本が見つかりました",
     "cancel": "キャンセル",
     "closePicker": "ピッカーを閉じる",
     "selectBook": "{{author}}の{{title}}を選択",
+    "selectAll": "すべて選択",
+    "selectAllA11y": "すべての本を選択",
+    "clearAll": "すべて解除",
+    "clearAllA11y": "すべての選択を解除",
+    "addSelected_other": "{{count}}冊をウィッシュリストに追加",
+    "addNone": "追加する本を選択",
     "addToWishlistHint": "この本をウィッシュリストに追加",
     "alreadyOwned": "所有済み",
-    "noneOfThese": "どれでもない",
-    "noneOfTheseA11y": "どの本も一致しません"
+    "enhance": "足りない本は？強化スキャンを試す",
+    "enhanceA11y": "強化スキャンを試す",
+    "enhanceHint": "より高性能なAIモデルでこの写真を再スキャンします。本が見つかった場合のみ、強化スキャンを1回消費します。",
+    "enhanceCostsCredit": "本が見つかった場合、強化スキャンを1回消費",
+    "creditsLeft_other": "強化スキャン残り{{count}}回",
+    "noCreditsLeft": "強化スキャンの残りがありません",
+    "ownedSameEdition": "この本はすでに持っています",
+    "ownedOtherEdition": "この本は別の版ですでに持っています",
+    "ownedEditionUnknown": "この本はすでに持っています",
+    "notInCatalog": "カタログにありません",
+    "addYourself": "自分で追加",
+    "addYourselfA11y": "{{title}}を自分で追加"
   },
   "themeToggle": {
     "toDark": "ダークモードに切替",
     "toLight": "ライトモードに切替"
+  },
+  "addUnverified": {
+    "title": "自分で追加",
+    "intro": "この本はカタログに見つかりませんでした。内容を確認して保存してください。あなただけに「未確認」として表示されます。",
+    "titleLabel": "タイトル",
+    "authorLabel": "著者",
+    "isbnLabel": "ISBN（任意）",
+    "save": "保存",
+    "saveHint": "この本を「未確認」としてウィッシュリストに追加します",
+    "cancel": "キャンセル",
+    "closeA11y": "フォームを閉じる",
+    "titleRequired": "タイトルを入力してください",
+    "authorRequired": "著者を入力してください",
+    "isbnInvalid": "このISBNは無効です。修正するか空欄にしてください。",
+    "invalid": "内容を確認して、もう一度お試しください。",
+    "duplicate": "この本はすでに自分で追加済みです。",
+    "limitReached": "自分で追加できる本の上限に達しました。",
+    "failed": "この本を保存できませんでした。もう一度お試しください。"
   }
 }

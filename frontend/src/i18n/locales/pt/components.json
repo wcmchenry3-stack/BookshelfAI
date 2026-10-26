@@ -1,16 +1,53 @@
 {
   "bookCandidatePicker": {
-    "title": "Qual é este livro?",
+    "title_one": "{{count}} livro encontrado",
+    "title_other": "{{count}} livros encontrados",
     "cancel": "Cancelar",
     "closePicker": "Fechar seleção",
     "selectBook": "Selecionar {{title}} por {{author}}",
+    "selectAll": "Selecionar tudo",
+    "selectAllA11y": "Selecionar todos os livros",
+    "clearAll": "Limpar tudo",
+    "clearAllA11y": "Limpar todas as seleções",
+    "addSelected_one": "Adicionar {{count}} livro à lista",
+    "addSelected_other": "Adicionar {{count}} livros à lista",
+    "addNone": "Selecione livros para adicionar",
     "addToWishlistHint": "Adiciona este livro à sua lista de desejos",
     "alreadyOwned": "Já possui",
-    "noneOfThese": "Nenhum destes",
-    "noneOfTheseA11y": "Nenhum destes livros corresponde"
+    "enhance": "Faltam livros? Tente o avançado",
+    "enhanceA11y": "Tentar escaneamento avançado",
+    "enhanceHint": "Escaneia esta foto de novo com um modelo de IA mais potente. Só usa um dos seus escaneamentos avançados se encontrar livros.",
+    "enhanceCostsCredit": "Usa 1 escaneamento avançado se encontrar livros",
+    "creditsLeft_one": "{{count}} escaneamento avançado restante",
+    "creditsLeft_other": "{{count}} escaneamentos avançados restantes",
+    "noCreditsLeft": "Nenhum escaneamento avançado restante",
+    "ownedSameEdition": "Você já tem este livro",
+    "ownedOtherEdition": "Você já tem este livro em outra edição",
+    "ownedEditionUnknown": "Você já tem este livro",
+    "notInCatalog": "Fora do nosso catálogo",
+    "addYourself": "Adicionar você mesmo",
+    "addYourselfA11y": "Adicionar {{title}} você mesmo"
   },
   "themeToggle": {
     "toDark": "Mudar para modo escuro",
     "toLight": "Mudar para modo claro"
+  },
+  "addUnverified": {
+    "title": "Adicionar você mesmo",
+    "intro": "Não encontramos este livro no catálogo. Confira os dados e salve. Só você vai vê-lo, marcado como Não verificado.",
+    "titleLabel": "Título",
+    "authorLabel": "Autor",
+    "isbnLabel": "ISBN (opcional)",
+    "save": "Salvar",
+    "saveHint": "Adiciona o livro à sua lista de desejos como Não verificado",
+    "cancel": "Cancelar",
+    "closeA11y": "Fechar formulário",
+    "titleRequired": "Digite um título",
+    "authorRequired": "Digite um autor",
+    "isbnInvalid": "Este ISBN não é válido. Corrija ou deixe em branco.",
+    "invalid": "Confira os dados e tente de novo.",
+    "duplicate": "Você já adicionou este livro.",
+    "limitReached": "Você atingiu o limite de livros que pode adicionar.",
+    "failed": "Não foi possível salvar o livro. Tente de novo."
   }
 }

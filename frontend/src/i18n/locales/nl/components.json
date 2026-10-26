@@ -1,16 +1,53 @@
 {
   "bookCandidatePicker": {
-    "title": "Welk boek is dit?",
+    "title_one": "{{count}} boek gevonden",
+    "title_other": "{{count}} boeken gevonden",
     "cancel": "Annuleren",
     "closePicker": "Sluit selectie",
     "selectBook": "Selecteer {{title}} van {{author}}",
+    "selectAll": "Alles selecteren",
+    "selectAllA11y": "Alle boeken selecteren",
+    "clearAll": "Alles wissen",
+    "clearAllA11y": "Alle selecties wissen",
+    "addSelected_one": "{{count}} boek toevoegen aan wishlist",
+    "addSelected_other": "{{count}} boeken toevoegen aan wishlist",
+    "addNone": "Selecteer boeken om toe te voegen",
     "addToWishlistHint": "Voegt dit boek toe aan je wensenlijst",
     "alreadyOwned": "Al in bezit",
-    "noneOfThese": "Geen van deze",
-    "noneOfTheseA11y": "Geen van deze boeken komt overeen"
+    "enhance": "Ontbreken er boeken? Probeer uitgebreide scan",
+    "enhanceA11y": "Probeer uitgebreide scan",
+    "enhanceHint": "Scant deze foto opnieuw met een krachtiger AI-model. Gebruikt alleen een van je uitgebreide scans als er boeken worden gevonden.",
+    "enhanceCostsCredit": "Gebruikt 1 uitgebreide scan als er boeken worden gevonden",
+    "creditsLeft_one": "{{count}} uitgebreide scan over",
+    "creditsLeft_other": "{{count}} uitgebreide scans over",
+    "noCreditsLeft": "Geen uitgebreide scans meer over",
+    "ownedSameEdition": "Je hebt dit boek al",
+    "ownedOtherEdition": "Je hebt dit boek al in een andere editie",
+    "ownedEditionUnknown": "Je hebt dit boek al",
+    "notInCatalog": "Niet in onze catalogus",
+    "addYourself": "Zelf toevoegen",
+    "addYourselfA11y": "{{title}} zelf toevoegen"
   },
   "themeToggle": {
     "toDark": "Schakel naar donkere modus",
     "toLight": "Schakel naar lichte modus"
+  },
+  "addUnverified": {
+    "title": "Zelf toevoegen",
+    "intro": "We hebben dit boek niet in onze catalogus gevonden. Controleer de gegevens en sla het op. Alleen jij ziet het, gemarkeerd als Niet geverifieerd.",
+    "titleLabel": "Titel",
+    "authorLabel": "Auteur",
+    "isbnLabel": "ISBN (optioneel)",
+    "save": "Opslaan",
+    "saveHint": "Voegt dit boek toe aan je verlanglijst, als Niet geverifieerd",
+    "cancel": "Annuleren",
+    "closeA11y": "Formulier sluiten",
+    "titleRequired": "Vul een titel in",
+    "authorRequired": "Vul een auteur in",
+    "isbnInvalid": "Dit ISBN is ongeldig. Pas het aan of laat het leeg.",
+    "invalid": "Controleer de gegevens en probeer het opnieuw.",
+    "duplicate": "Je hebt dit boek al zelf toegevoegd.",
+    "limitReached": "Je hebt het maximum aantal zelf toegevoegde boeken bereikt.",
+    "failed": "Kan dit boek niet opslaan. Probeer het opnieuw."
   }
 }

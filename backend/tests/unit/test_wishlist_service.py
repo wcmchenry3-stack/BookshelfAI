@@ -10,7 +10,7 @@ from app.models.edition import Edition
 from app.models.user_book import UserBook
 from app.schemas.book import EditionPreview
 from app.schemas.user_book import WishlistRequest
-from app.services.wishlist import WishlistService
+from app.services.wishlist import AlreadyOwnedError, WishlistService
 
 USER_ID = uuid.uuid4()
 
@@ -30,6 +30,8 @@ def _mock_db():
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    # A SAVEPOINT around each catalog insert (#602 race handling).
+    db.begin_nested = MagicMock(return_value=MagicMock())
     return db
 
 
@@ -105,7 +107,7 @@ class TestFindOrCreateBook:
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(None))
 
-        await service._find_or_create_book(db, BASE_REQUEST)
+        await service._find_or_create_book(db, BASE_REQUEST, create=True)
 
         db.add.assert_called_once()
         db.flush.assert_called_once()
@@ -119,10 +121,12 @@ class TestFindOrCreateEdition:
     async def test_finds_existing_edition_by_isbn(
         self, service, existing_book, existing_edition
     ):
+        # An edition of this book (#602: never another book's edition).
+        existing_edition.book_id = existing_book.id
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(existing_edition))
         result = await service._find_or_create_edition(
-            db, existing_book.id, BASE_REQUEST
+            db, existing_book.id, BASE_REQUEST, create=True
         )
         assert result is existing_edition
         db.add.assert_not_called()
@@ -131,7 +135,7 @@ class TestFindOrCreateEdition:
         db = _mock_db()
         db.execute = AsyncMock(return_value=_execute_returning(None))
         result = await service._find_or_create_edition(
-            db, existing_book.id, BASE_REQUEST
+            db, existing_book.id, BASE_REQUEST, create=True
         )
         db.add.assert_called_once()
         assert result is not None
@@ -156,12 +160,26 @@ class TestFindOrCreateEdition:
 
 
 class TestFindOrCreateUserBook:
-    async def test_returns_existing_user_book(self, service, existing_user_book):
+    async def test_existing_user_book_is_refused(self, service):
+        # #587: re-adding a book the user has is a 409, no longer the
+        # existing row returned idempotently.
         book_id = uuid.uuid4()
+        # The library query's row: the user's entry for this book, no edition.
+        entry = MagicMock(
+            book_id=book_id,
+            edition_id=None,
+            open_library_work_id=None,
+            google_books_id=None,
+            isbn_13=None,
+            isbn_10=None,
+        )
+        result = MagicMock()
+        result.all.return_value = [entry]
         db = _mock_db()
-        db.execute = AsyncMock(return_value=_execute_returning(existing_user_book))
-        result = await service._find_or_create_user_book(db, USER_ID, book_id, None)
-        assert result is existing_user_book
+        db.execute = AsyncMock(return_value=result)
+        with pytest.raises(AlreadyOwnedError) as exc:
+            await service._find_or_create_user_book(db, USER_ID, book_id, None)
+        assert exc.value.ownership == "owned_edition_unknown"
         db.add.assert_not_called()
 
     async def test_creates_user_book_when_not_found(self, service):

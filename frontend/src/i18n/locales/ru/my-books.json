@@ -16,6 +16,7 @@
   },
   "filterBy": "Фильтр по {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Не проверено",
   "bookCardHint": "Нажмите для деталей и опций",
   "markAs": "Отметить как {{status}}",
   "markAsA11y": "Отметить как {{status}}",
@@ -26,10 +27,10 @@
   "errorLoadBooks": "Не удалось загрузить книги.",
   "errorUpdateStatus": "Не удалось обновить статус.",
   "errorRemoveBook": "Не удалось удалить книгу.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "Поиск по библиотеке...",
+  "searchA11y": "Поиск по библиотеке",
+  "sectionTitle": "Моя библиотека",
+  "bookCount": "Книг в коллекции: {{count}}.",
   "heroSubtitle": "Вся ваша читательская жизнь здесь",
   "archiveSummary": "книг отслеживается"
 }

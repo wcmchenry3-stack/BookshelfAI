@@ -31,6 +31,7 @@ jobs:
               { pattern: /^backend\/app\/api\//,             docs: ['docs/api.md', 'docs/features.md'] },
               { pattern: /^backend\/app\/models\//,          docs: ['docs/data-model.md'] },
               { pattern: /^backend\/app\/services\//,        docs: ['docs/integrations.md', 'docs/architecture.md'] },
+              { pattern: /^backend\/app\/ai\//,              docs: ['docs/integrations.md', 'docs/architecture.md'] },
               { pattern: /^backend\/app\/core\/config\.py$/, docs: ['docs/getting-started.md', 'docs/deployment.md'] },
               { pattern: /^backend\/app\/main\.py$/,         docs: ['docs/architecture.md'] },
               { pattern: /^frontend\/app\/\(tabs\)\//,       docs: ['docs/features.md'] },

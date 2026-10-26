@@ -55,6 +55,30 @@ def _reset_rate_limits():
     yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _block_real_ai_providers():
+    """Cost guard (#584): any request to a real Anthropic or OpenAI API host
+    is blocked for the whole run (``tests/_network_guard.py``)."""
+    from tests import _network_guard
+
+    with _network_guard.install():
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ai_provider_calls():
+    """Fail the test if it tried to reach a real AI provider, even if the
+    blocking exception was swallowed somewhere."""
+    from tests import _network_guard
+
+    _network_guard.attempts.clear()
+    yield
+    tried = list(_network_guard.attempts)
+    _network_guard.attempts.clear()
+    if tried:
+        pytest.fail(f"real AI provider call attempted: {tried}", pytrace=False)
+
+
 @pytest.fixture
 async def db_session():
     """Provide an async DB session with rollback-based isolation.
@@ -77,3 +101,19 @@ async def db_session():
         await session.rollback()
 
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_ai_settings_cache():
+    """Give every test a fresh ai_settings cache holding no rows (#526).
+
+    With no rows every key falls back to its env/registry default, read at
+    call time, so tests that patch ``settings.scan_enabled`` and friends keep
+    working and tests with a fake DB never read the table. Tests that exercise
+    the read path call ``ai_settings.reset_cache()`` themselves.
+    """
+    from app.ai import settings as ai_settings
+
+    ai_settings.reset_cache({})
+    yield
+    ai_settings.reset_cache()

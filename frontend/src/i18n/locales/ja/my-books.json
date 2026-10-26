@@ -16,6 +16,7 @@
   },
   "filterBy": "{{label}}で絞り込む",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 未確認",
   "bookCardHint": "タップして詳細とオプションを見る",
   "markAs": "{{status}}にする",
   "markAsA11y": "{{status}}にする",
@@ -26,10 +27,10 @@
   "errorLoadBooks": "本を読み込めませんでした。",
   "errorUpdateStatus": "ステータスを更新できませんでした。",
   "errorRemoveBook": "本を削除できませんでした。",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "ライブラリを検索...",
+  "searchA11y": "ライブラリを検索",
+  "sectionTitle": "マイライブラリ",
+  "bookCount": "コレクション内の本：{{count}}冊",
   "heroSubtitle": "あなたの読書生活を一箇所で",
   "archiveSummary": "冊を記録中"
 }

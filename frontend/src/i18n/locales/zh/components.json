@@ -1,16 +1,50 @@
 {
   "bookCandidatePicker": {
-    "title": "这是哪本书？",
+    "title_other": "找到 {{count}} 本书",
     "cancel": "取消",
     "closePicker": "关闭选择器",
     "selectBook": "选择 {{title}} 作者 {{author}}",
+    "selectAll": "全选",
+    "selectAllA11y": "选择所有书籍",
+    "clearAll": "全部取消",
+    "clearAllA11y": "取消所有选择",
+    "addSelected_other": "将 {{count}} 本书添加到愿望单",
+    "addNone": "请选择要添加的书",
     "addToWishlistHint": "将此书加入愿望清单",
     "alreadyOwned": "已拥有",
-    "noneOfThese": "都不是",
-    "noneOfTheseA11y": "没有匹配的书"
+    "enhance": "缺少书籍？试试增强扫描",
+    "enhanceA11y": "试试增强扫描",
+    "enhanceHint": "使用更强大的 AI 模型重新扫描这张照片。仅在找到书籍时才会消耗一次增强扫描。",
+    "enhanceCostsCredit": "找到书籍时消耗 1 次增强扫描",
+    "creditsLeft_other": "剩余 {{count}} 次增强扫描",
+    "noCreditsLeft": "没有剩余的增强扫描",
+    "ownedSameEdition": "你已拥有这本书",
+    "ownedOtherEdition": "你已拥有这本书的其他版本",
+    "ownedEditionUnknown": "你已拥有这本书",
+    "notInCatalog": "不在目录中",
+    "addYourself": "自己添加",
+    "addYourselfA11y": "自己添加《{{title}}》"
   },
   "themeToggle": {
     "toDark": "切换到深色模式",
     "toLight": "切换到浅色模式"
+  },
+  "addUnverified": {
+    "title": "自己添加",
+    "intro": "我们在目录中没有找到这本书。请核对信息后保存。只有你能看到它，并标记为未验证。",
+    "titleLabel": "书名",
+    "authorLabel": "作者",
+    "isbnLabel": "ISBN（可选）",
+    "save": "保存",
+    "saveHint": "将这本书以未验证状态加入心愿单",
+    "cancel": "取消",
+    "closeA11y": "关闭表单",
+    "titleRequired": "请输入书名",
+    "authorRequired": "请输入作者",
+    "isbnInvalid": "此 ISBN 无效。请修改或留空。",
+    "invalid": "请核对信息后重试。",
+    "duplicate": "你已经自己添加过这本书。",
+    "limitReached": "你自己添加的书已达到上限。",
+    "failed": "无法保存这本书。请重试。"
   }
 }

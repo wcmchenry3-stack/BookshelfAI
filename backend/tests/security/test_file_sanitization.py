@@ -11,9 +11,22 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
+from app.ai.providers.base import ProviderResult
+
 # ---------------------------------------------------------------------------
 # Helpers — build minimal valid image bytes in memory
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_scan_request_count():
+    """#586: /scan counts each request with a DB upsert before any other
+    work, which this file's fake DB cannot run. Stubbed here; the count is
+    covered by tests/unit/test_scan_request_limit.py and tests/limits/."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.api.scan._count_scan_request", new=AsyncMock()):
+        yield
 
 
 def _make_jpeg(width: int = 10, height: int = 10) -> bytes:
@@ -102,23 +115,20 @@ class TestImageSanitization:
         exif = img.getexif()
         assert len(exif) == 0, f"Expected no EXIF after sanitization, got: {dict(exif)}"
 
-    def test_unrecognised_format_falls_back_to_original(self) -> None:
-        """If Pillow cannot decode the bytes (e.g. HEIC without pillow-heif),
-        the original bytes must be returned unchanged — not an exception."""
-        from PIL import UnidentifiedImageError
+    def test_undecodable_image_is_rejected_not_passed_through(self) -> None:
+        """AC1 (#529): bytes Pillow cannot decode raise 415 image_undecodable.
 
+        Replaces the old raw-bytes fallback test: the original bytes must
+        never be returned."""
         from app.core.file_security import sanitize_image
 
-        garbage = (
-            b"\x00\x00\x00\x18ftypheic" + b"\x00" * 100
-        )  # minimal HEIC-like header
+        garbage = b"\x00\x00\x00\x18ftypheic" + b"\x00" * 100
 
-        with patch(
-            "PIL.Image.open", side_effect=UnidentifiedImageError("cannot identify")
-        ):
-            result = sanitize_image(garbage)
+        with pytest.raises(HTTPException) as exc_info:
+            sanitize_image(garbage)
 
-        assert result == garbage  # falls back to original
+        assert exc_info.value.status_code == 415
+        assert exc_info.value.detail == "image_undecodable"
 
     def test_sanitized_image_is_openable_by_pillow(self) -> None:
         """The sanitized output must be a valid image Pillow can fully round-trip."""
@@ -137,6 +147,121 @@ class TestImageSanitization:
         result = sanitize_image(original)
         # Allow up to 2× growth (re-encoding complex images can be slightly larger)
         assert len(result) <= len(original) * 2
+
+
+# ---------------------------------------------------------------------------
+# A04 — Upload pipeline through POST /scan (#529)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def scan_client():
+    from unittest.mock import AsyncMock
+
+    from fastapi.testclient import TestClient
+
+    from app.auth.dependencies import get_current_user
+    from app.core.database import get_db
+    from app.main import app
+    from app.models.user import User
+
+    async def _fake_db():
+        yield AsyncMock()
+
+    user = User(id="00000000-0000-0000-0000-000000000529", email="u@example.com")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = _fake_db
+    with (
+        patch("app.api.scan._reserve_scan_quota", new=AsyncMock()) as reserve,
+        patch("app.api.scan._refund_scan_quota", new=AsyncMock()),
+        patch("app.api.scan._release_scan_lease", new=AsyncMock()),
+        patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+        patch("app.api.scan.EnrichmentService"),
+        patch("app.api.scan.DeduplicationService"),
+    ):
+        provider_cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
+        yield TestClient(app), provider_cls, reserve
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.security
+class TestUploadPipeline:
+    def test_undecodable_file_never_reaches_provider(self, scan_client) -> None:
+        """AC1: valid JPEG magic bytes but no decodable image -> 415, and the
+        provider mock is never called (the raw-bytes fallback is gone)."""
+        client, provider_cls, reserve = scan_client
+        fake = b"\xff\xd8\xff\xe0" + b"not really a jpeg" * 10
+        resp = client.post(
+            "/scan", files={"file": ("x.jpg", io.BytesIO(fake), "image/jpeg")}
+        )
+        assert resp.status_code == 415
+        assert resp.json() == {"detail": "image_undecodable"}
+        provider_cls.assert_not_called()
+        provider_cls.return_value.identify.assert_not_called()
+        reserve.assert_not_awaited()
+
+    def test_oversize_upload_reads_at_most_cap_plus_one_bytes(
+        self, scan_client
+    ) -> None:
+        """AC6: the handler stops reading as soon as the upload passes the cap."""
+        from starlette.datastructures import UploadFile as StarletteUploadFile
+
+        from app.api.scan import MAX_IMAGE_BYTES
+
+        client, provider_cls, reserve = scan_client
+        original_read = StarletteUploadFile.read
+        requested: list[int] = []
+        returned: list[int] = []
+
+        async def spy_read(self, size: int = -1) -> bytes:
+            requested.append(size)
+            data = await original_read(self, size)
+            returned.append(len(data))
+            return data
+
+        # Over the 5MB cap but under the scan route's request-size cap
+        # (MAX_SCAN_REQUEST_BYTES, #557), so the handler (not the middleware)
+        # is what stops the read.
+        body = _make_jpeg() + b"x" * (MAX_IMAGE_BYTES + 512 * 1024)
+        with patch.object(StarletteUploadFile, "read", spy_read):
+            resp = client.post(
+                "/scan", files={"file": ("big.jpg", io.BytesIO(body), "image/jpeg")}
+            )
+
+        assert resp.status_code == 413
+        assert resp.json() == {"detail": "Image must be 5MB or smaller"}
+        # Never an unbounded read, and the total consumed stops at cap + 1.
+        assert all(size > 0 for size in requested)
+        assert sum(returned) == MAX_IMAGE_BYTES + 1
+        assert len(body) > sum(returned)
+        provider_cls.assert_not_called()
+        reserve.assert_not_awaited()
+
+    def test_polyglot_payload_is_removed_by_reencode(self, scan_client) -> None:
+        """A JPEG carrying a script in a comment segment and a zip after EOI is
+        re-encoded; neither payload reaches the provider."""
+        client, provider_cls, _ = scan_client
+        script = b"<script>alert(1)</script>"
+        zip_payload = b"PK\x03\x04" + b"evil-archive-entry" * 4
+        buf = io.BytesIO()
+        Image.new("RGB", (40, 30), (10, 120, 200)).save(
+            buf, format="JPEG", comment=script
+        )
+        polyglot = buf.getvalue() + script + zip_payload
+        assert script in polyglot and b"PK\x03\x04" in polyglot
+
+        resp = client.post(
+            "/scan", files={"file": ("p.jpg", io.BytesIO(polyglot), "image/jpeg")}
+        )
+
+        assert resp.status_code == 200
+        sent = provider_cls.return_value.identify.await_args.args[0]
+        assert sent[:3] == b"\xff\xd8\xff"
+        assert sent != polyglot
+        assert script not in sent
+        assert b"PK\x03\x04" not in sent
+        assert b"evil-archive-entry" not in sent
+        assert sent.rstrip(b"\x00").endswith(b"\xff\xd9")
 
 
 # ---------------------------------------------------------------------------
@@ -165,9 +290,16 @@ class TestClamAVScan:
         mock_cd = MagicMock()
         mock_cd.instream.return_value = {"stream": ("OK", None)}
 
-        with patch("app.core.file_security.settings") as mock_settings, patch.dict(
-            "sys.modules",
-            {"clamd": MagicMock(ClamdNetworkSocket=MagicMock(return_value=mock_cd))},
+        with (
+            patch("app.core.file_security.settings") as mock_settings,
+            patch.dict(
+                "sys.modules",
+                {
+                    "clamd": MagicMock(
+                        ClamdNetworkSocket=MagicMock(return_value=mock_cd)
+                    )
+                },
+            ),
         ):
             mock_settings.clamav_enabled = True
             mock_settings.clamav_host = "localhost"
@@ -181,9 +313,16 @@ class TestClamAVScan:
         mock_cd = MagicMock()
         mock_cd.instream.return_value = {"stream": ("FOUND", "Eicar-Test-Signature")}
 
-        with patch("app.core.file_security.settings") as mock_settings, patch.dict(
-            "sys.modules",
-            {"clamd": MagicMock(ClamdNetworkSocket=MagicMock(return_value=mock_cd))},
+        with (
+            patch("app.core.file_security.settings") as mock_settings,
+            patch.dict(
+                "sys.modules",
+                {
+                    "clamd": MagicMock(
+                        ClamdNetworkSocket=MagicMock(return_value=mock_cd)
+                    )
+                },
+            ),
         ):
             mock_settings.clamav_enabled = True
             mock_settings.clamav_host = "localhost"
@@ -205,8 +344,9 @@ class TestClamAVScan:
             "daemon down"
         )
 
-        with patch("app.core.file_security.settings") as mock_settings, patch.dict(
-            "sys.modules", {"clamd": mock_clamd}
+        with (
+            patch("app.core.file_security.settings") as mock_settings,
+            patch.dict("sys.modules", {"clamd": mock_clamd}),
         ):
             mock_settings.clamav_enabled = True
             mock_settings.clamav_host = "localhost"

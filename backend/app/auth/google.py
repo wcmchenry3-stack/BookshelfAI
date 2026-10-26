@@ -19,7 +19,7 @@ async def verify_google_id_token(id_token: str) -> dict:
     logger.info("JWKS fetched — %d keys", len(jwks.get("keys", [])))
 
     allowed_auds = settings.google_client_ids
-    logger.info("Decoding token — allowed aud values: %s", allowed_auds)
+    logger.info("Decoding token")
     claims = authlib_jwt.decode(
         id_token,
         jwks,
@@ -36,5 +36,5 @@ async def verify_google_id_token(id_token: str) -> dict:
     )
     logger.info("Token decoded — validating claims")
     claims.validate()
-    logger.info("Claims valid — iss=%s aud=%s", claims.get("iss"), claims.get("aud"))
+    logger.info("Claims valid")
     return dict(claims)

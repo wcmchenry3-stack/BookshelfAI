@@ -11,10 +11,7 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../hooks/useTheme';
-import { useFeedbackSubmit, FeedbackType } from './useFeedbackSubmit';
-
-const TITLE_MAX = 120;
-const DESCRIPTION_MAX = 2000;
+import { useFeedbackSubmit, FeedbackType, TITLE_MAX, DESCRIPTION_MAX } from './useFeedbackSubmit';
 
 interface Props {
   visible: boolean;
@@ -26,7 +23,7 @@ export function FeedbackWidget({ visible, onClose }: Props) {
   const { t } = useTranslation('feedback');
   const { theme } = useTheme();
   const { colors } = theme;
-  const { status, result, error, submit, reset } = useFeedbackSubmit();
+  const { status, error, submit, reset } = useFeedbackSubmit();
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -102,11 +99,6 @@ export function FeedbackWidget({ visible, onClose }: Props) {
               /* ── Success state ── */
               <View style={styles.successContainer} accessibilityLiveRegion="polite">
                 <Text style={styles.successTitle}>{t('submit_success')}</Text>
-                {result && (
-                  <Text style={styles.successSub}>
-                    {t('submit_success_issue', { number: result.issueNumber })}
-                  </Text>
-                )}
                 <Pressable
                   style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
                   onPress={handleClose}
@@ -132,11 +124,7 @@ export function FeedbackWidget({ visible, onClose }: Props) {
                         ? t('submit_error_rate_limit', {
                             seconds: error.retryAfterSeconds ?? 60,
                           })
-                        : error.kind === 'rejected'
-                          ? t('submit_error_rejected')
-                          : error.kind === 'network'
-                            ? t('submit_error_network')
-                            : t('submit_error')}
+                        : t('submit_error')}
                     </Text>
                   </View>
                 )}
@@ -321,6 +309,5 @@ function makeBookStyles() {
     primaryBtnText: { fontWeight: '600' },
     successContainer: { alignItems: 'center', paddingVertical: 24, gap: 12 },
     successTitle: { fontWeight: '600', textAlign: 'center' },
-    successSub: { textAlign: 'center' },
   });
 }

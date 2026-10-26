@@ -62,6 +62,29 @@ target 'BookShelfAI' do
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
 
+    # @generated begin bookshelf-pod-deployment-target (plugins/withPodDeploymentTargetFix.js - DO NOT MODIFY)
+    # Raise CocoaPods resource-bundle targets to the app's deployment target
+    # (`platform :ios`). Never lowers a higher target; skips unset or non-version
+    # values such as "$(inherited)".
+    min_target = installer.aggregate_targets
+      .map { |t| t.platform.deployment_target&.to_s }
+      .compact
+      .max_by { |v| Gem::Version.new(v) }
+    if min_target
+      installer.target_installation_results.pod_target_installation_results.each_value do |result|
+        result.resource_bundle_targets.each do |bundle_target|
+          bundle_target.build_configurations.each do |bc|
+            current = bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+            next if current.nil? || !Gem::Version.correct?(current)
+            if Gem::Version.new(current) < Gem::Version.new(min_target)
+              bc.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = min_target
+            end
+          end
+        end
+      end
+    end
+    # @generated end bookshelf-pod-deployment-target
+
     # Fix fmt consteval compilation error with Xcode 26 Apple Clang.
     # Apple Clang advertises __cpp_consteval but cannot evaluate consteval
     # expressions in format-inl.h. Patch the header to force consteval off.

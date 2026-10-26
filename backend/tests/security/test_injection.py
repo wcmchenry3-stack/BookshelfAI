@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.ai.providers.base import ProviderResult
 from app.core.url_validator import validate_safe_url
 from app.main import app
 from app.schemas.user_book import UserBookUpdate, WishlistRequest
@@ -40,6 +41,17 @@ XSS_PAYLOADS = [
 # ---------------------------------------------------------------------------
 # A03 — Injection: Pydantic schema validation
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_scan_request_count():
+    """#586: /scan counts each request with a DB upsert before any other
+    work, which this file's fake DB cannot run. Stubbed here; the count is
+    covered by tests/unit/test_scan_request_limit.py and tests/limits/."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.api.scan._count_scan_request", new=AsyncMock()):
+        yield
 
 
 @pytest.mark.security
@@ -167,14 +179,22 @@ class TestScanUploadValidation:
         from unittest.mock import AsyncMock, patch
 
         client = _authed_client()
-        # Minimal JPEG: SOI marker + valid magic prefix
-        jpeg_magic = b"\xff\xd8\xff\xe0" + b"\x00" * 100
-        data = io.BytesIO(jpeg_magic)
+        # A real, decodable JPEG: since #529 bytes that only carry the magic
+        # prefix are rejected with 415 image_undecodable.
+        from PIL import Image
 
-        with patch(
-            "app.api.scan.ChatGPTVisionIdentifier.identify",
-            new_callable=AsyncMock,
-            return_value=[],
+        buf = io.BytesIO()
+        Image.new("RGB", (16, 16), (0, 0, 0)).save(buf, format="JPEG")
+        data = io.BytesIO(buf.getvalue())
+
+        with (
+            patch(
+                "app.ai.providers.openai_vision.OpenAIVisionProvider.identify",
+                new_callable=AsyncMock,
+                return_value=ProviderResult([]),
+            ),
+            # No database here: stub the daily-cap reservation.
+            patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
         ):
             response = client.post(
                 "/scan",
@@ -322,6 +342,28 @@ class TestRateLimitEnforcement:
             "/scan", files={"file": ("test.jpg", data, "image/jpeg")}
         )
         app.dependency_overrides.clear()
+        assert response.status_code == 429
+
+    def test_health_db_endpoint_returns_429_after_limit(self) -> None:
+        """GET /health/db is limited to rate_limit_health (60/minute by default);
+        the (limit + 1)th request must be 429."""
+        from unittest.mock import AsyncMock, patch
+
+        from app.core.config import settings
+
+        limit = int(settings.rate_limit_health.split("/")[0])
+        client = TestClient(app, raise_server_exceptions=False)
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock()
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.main.AsyncSessionLocal", return_value=mock_cm):
+            for _ in range(limit):
+                client.get("/health/db")
+            response = client.get("/health/db")
         assert response.status_code == 429
 
 

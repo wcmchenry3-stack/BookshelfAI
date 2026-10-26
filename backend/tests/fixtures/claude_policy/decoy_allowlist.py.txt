@@ -1,0 +1,6 @@
+DECOY = {"anthropic": "claude-opus-9-9"}
+
+ALLOWED_MODELS = {
+    "openai": frozenset({"gpt-4o"}),
+    "anthropic": frozenset({"claude-haiku-5-5"}),
+}

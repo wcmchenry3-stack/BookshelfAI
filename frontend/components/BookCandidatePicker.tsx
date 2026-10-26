@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
+import { isOwned, type Ownership } from '../lib/ownership';
+import { hasNoCatalogMatch } from '../lib/unverified';
 
 export interface EnrichedBook {
   book_id?: string;
@@ -14,6 +18,14 @@ export interface EnrichedBook {
   subjects: string[];
   confidence: number;
   already_in_library: boolean;
+  /** Same value as already_in_library (#585): true whenever `ownership` is
+   * not `not_owned`. Optional: results saved by older app versions may not
+   * carry it. */
+  in_library?: boolean;
+  /** Whether the user already has this book, by edition (#587): the
+   * result's edition (`editions[0]`) or another one. Optional: results saved
+   * before the server sent it fall back to `in_library`. */
+  ownership?: Ownership;
   editions: {
     isbn_13?: string;
     isbn_10?: string;
@@ -21,19 +33,115 @@ export interface EnrichedBook {
     publish_year?: number;
     page_count?: number;
     format?: string;
+    open_library_edition_id?: string;
   }[];
+  /** Server signature over this result for this user (#602). Opaque: keep
+   * it unchanged and post it back with the book to POST /wishlist, which
+   * refuses to create a catalog entry without it (422
+   * `catalog_token_invalid`). Null for a book no provider matched, which can
+   * never be added (422 `book_not_in_catalog`). Never edit the book's fields
+   * before posting. */
+  catalog_token?: string;
+  /** Which of the scan's candidates this result came from (#631); set by
+   * POST /scan. Opaque to the app: sent back with `scan_record_id` when an
+   * "Add it yourself" form pre-filled from this book is saved. */
+  candidate_index?: number | null;
+  /** The scan record this result came from (#631): the response's
+   * `scan_record_id`, copied onto each result by the app so it stays with
+   * the book (and its job) until the form is saved. */
+  scan_record_id?: string;
 }
 
 interface Props {
   visible: boolean;
   candidates: EnrichedBook[];
-  onSelect: (book: EnrichedBook) => void;
+  /** Called with every ticked book when the user confirms. */
+  onConfirm: (books: EnrichedBook[]) => void;
   onDismiss: () => void;
+  /**
+   * Start with every book not already in the library ticked. Right for a photo
+   * scan (each result is a different physical book); wrong for a text search,
+   * where results are alternative matches for one book.
+   */
+  preselect?: boolean;
+  /** When set, offers a re-scan with the stronger model. */
+  onEnhance?: () => void;
+  /** Enhanced scans left today (the daily allowance left, #582); null when not known. */
+  enhancedScansRemaining?: number | null;
+  /**
+   * When set, a result no catalog matched (no Open Library or Google Books ID)
+   * offers "Add it yourself" (#616), which calls this with the book.
+   */
+  onAddYourself?: (book: EnrichedBook) => void;
+  /** The sheet has finished dismissing (iOS only): the Modal's onDismiss. */
+  onHidden?: () => void;
 }
 
-export function BookCandidatePicker({ visible, candidates, onSelect, onDismiss }: Props) {
+function initialSelection(candidates: EnrichedBook[], preselect: boolean): Set<number> {
+  if (!preselect) return new Set();
+  return new Set(candidates.flatMap((book, i) => (isOwned(book) ? [] : [i])));
+}
+
+/** The i18n key of the "you already have it" note for a book, or null. */
+function ownedNoteKey(book: EnrichedBook): string | null {
+  switch (book.ownership) {
+    case 'owned_same_edition':
+      return 'bookCandidatePicker.ownedSameEdition';
+    case 'owned_other_edition':
+      return 'bookCandidatePicker.ownedOtherEdition';
+    case 'owned_edition_unknown':
+      return 'bookCandidatePicker.ownedEditionUnknown';
+    case 'not_owned':
+      return null;
+    default:
+      // Saved before the server sent `ownership`: the work-level flag.
+      return isOwned(book) ? 'bookCandidatePicker.alreadyOwned' : null;
+  }
+}
+
+/**
+ * Checklist of every book found by a scan or search. Remount (via `key`) to
+ * reset the selection when the candidates change.
+ */
+export function BookCandidatePicker({
+  visible,
+  candidates,
+  onConfirm,
+  onDismiss,
+  preselect = false,
+  onEnhance,
+  enhancedScansRemaining = null,
+  onAddYourself,
+  onHidden,
+}: Props) {
   const { theme } = useTheme();
   const { t } = useTranslation('components');
+  const [selected, setSelected] = useState<Set<number>>(() =>
+    initialSelection(candidates, preselect)
+  );
+
+  // A book the user already has can't be added again (POST /wishlist 409s).
+  const selectable = candidates.flatMap((book, i) => (isOwned(book) ? [] : [i]));
+  const allSelected = selectable.length > 0 && selected.size === selectable.length;
+  const outOfCredits = enhancedScansRemaining === 0;
+
+  function toggle(index: number) {
+    if (isOwned(candidates[index])) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(selectable));
+  }
+
+  function confirm() {
+    onConfirm(candidates.filter((_, i) => selected.has(i)));
+  }
 
   return (
     <Modal
@@ -41,6 +149,7 @@ export function BookCandidatePicker({ visible, candidates, onSelect, onDismiss }
       animationType="slide"
       presentationStyle="pageSheet"
       onRequestClose={onDismiss}
+      onDismiss={onHidden}
       accessibilityViewIsModal
     >
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -52,7 +161,7 @@ export function BookCandidatePicker({ visible, candidates, onSelect, onDismiss }
             ]}
             accessibilityRole="header"
           >
-            {t('bookCandidatePicker.title')}
+            {t('bookCandidatePicker.title', { count: candidates.length })}
           </Text>
           <Pressable
             onPress={onDismiss}
@@ -67,93 +176,203 @@ export function BookCandidatePicker({ visible, candidates, onSelect, onDismiss }
           </Pressable>
         </View>
 
-        <ScrollView contentContainerStyle={styles.list}>
-          {candidates.map((book, i) => (
-            <Pressable
-              key={`${book.open_library_work_id ?? book.title}-${i}`}
-              style={[
-                styles.card,
-                {
-                  backgroundColor: theme.colors.surface,
-                  borderColor: theme.colors.border,
-                },
-              ]}
-              onPress={() => onSelect(book)}
-              accessibilityLabel={t('bookCandidatePicker.selectBook', {
-                title: book.title,
-                author: book.author,
-              })}
-              accessibilityRole="button"
-              accessibilityHint={t('bookCandidatePicker.addToWishlistHint')}
-            >
-              {book.cover_url ? (
-                <Image
-                  source={{ uri: book.cover_url }}
-                  style={styles.cover}
-                  accessibilityLabel={t('coverAlt', { ns: 'common', title: book.title })}
-                />
-              ) : (
-                <View
-                  style={[
-                    styles.cover,
-                    styles.coverPlaceholder,
-                    { backgroundColor: theme.colors.border },
-                  ]}
-                  accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
-                />
-              )}
+        {candidates.length > 1 && selectable.length > 0 && (
+          <Pressable
+            onPress={toggleAll}
+            style={styles.selectAll}
+            accessibilityRole="button"
+            accessibilityLabel={
+              allSelected
+                ? t('bookCandidatePicker.clearAllA11y')
+                : t('bookCandidatePicker.selectAllA11y')
+            }
+          >
+            <Text style={{ color: theme.colors.primary, fontSize: theme.typography.fontSizeSM }}>
+              {allSelected ? t('bookCandidatePicker.clearAll') : t('bookCandidatePicker.selectAll')}
+            </Text>
+          </Pressable>
+        )}
 
-              <View style={styles.info}>
-                <Text
-                  style={[
-                    styles.bookTitle,
-                    { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
-                  ]}
-                  numberOfLines={2}
+        <ScrollView contentContainerStyle={styles.list}>
+          {candidates.map((book, i) => {
+            const checked = selected.has(i);
+            const owned = isOwned(book);
+            const ownedNote = ownedNoteKey(book);
+            return (
+              <View
+                key={`${book.open_library_work_id ?? book.title}-${i}`}
+                style={[
+                  styles.card,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderColor: checked ? theme.colors.primary : theme.colors.border,
+                  },
+                ]}
+              >
+                <Pressable
+                  style={styles.cardMain}
+                  onPress={() => toggle(i)}
+                  disabled={owned}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked, disabled: owned }}
+                  accessibilityLabel={t('bookCandidatePicker.selectBook', {
+                    title: book.title,
+                    author: book.author,
+                  })}
                 >
-                  {book.title}
-                </Text>
-                <Text
-                  style={[
-                    { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {book.author}
-                </Text>
-                {book.editions[0]?.publish_year && (
-                  <Text
-                    style={[
-                      { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                    ]}
-                  >
-                    {book.editions[0].publish_year}
-                  </Text>
-                )}
-                {book.already_in_library && (
-                  <View style={[styles.badge, { backgroundColor: theme.colors.success }]}>
-                    <Text style={[styles.badgeText, { color: theme.colors.onSuccess }]}>
-                      {t('bookCandidatePicker.alreadyOwned')}
+                  {book.cover_url ? (
+                    <Image
+                      source={{ uri: book.cover_url }}
+                      style={styles.cover}
+                      accessibilityLabel={t('coverAlt', { ns: 'common', title: book.title })}
+                    />
+                  ) : (
+                    <View
+                      style={[
+                        styles.cover,
+                        styles.coverPlaceholder,
+                        { backgroundColor: theme.colors.border },
+                      ]}
+                      accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
+                    />
+                  )}
+
+                  <View style={styles.info}>
+                    <Text
+                      style={[
+                        styles.bookTitle,
+                        { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {book.title}
                     </Text>
+                    <Text
+                      style={[
+                        {
+                          color: theme.colors.textSecondary,
+                          fontSize: theme.typography.fontSizeSM,
+                        },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {book.author}
+                    </Text>
+                    {book.editions[0]?.publish_year && (
+                      <Text
+                        style={[
+                          {
+                            color: theme.colors.textSecondary,
+                            fontSize: theme.typography.fontSizeSM,
+                          },
+                        ]}
+                      >
+                        {book.editions[0].publish_year}
+                      </Text>
+                    )}
+                    {ownedNote && (
+                      <View style={[styles.badge, { backgroundColor: theme.colors.success }]}>
+                        <Text style={[styles.badgeText, { color: theme.colors.onSuccess }]}>
+                          {t(ownedNote)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={[styles.checkbox, owned && styles.checkboxDisabled]}>
+                    <MaterialIcons
+                      name={checked ? 'check-box' : 'check-box-outline-blank'}
+                      size={28}
+                      color={checked ? theme.colors.primary : theme.colors.textSecondary}
+                    />
+                  </View>
+                </Pressable>
+                {onAddYourself && hasNoCatalogMatch(book) && (
+                  // A sibling of the checkbox, not inside it: a nested button
+                  // is unreachable by screen readers.
+                  <View style={styles.noMatchRow}>
+                    <Text
+                      style={{
+                        color: theme.colors.textSecondary,
+                        fontSize: theme.typography.fontSizeSM,
+                      }}
+                    >
+                      {t('bookCandidatePicker.notInCatalog')}
+                    </Text>
+                    <Pressable
+                      onPress={() => onAddYourself(book)}
+                      style={[styles.addYourself, { borderColor: theme.colors.primary }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('bookCandidatePicker.addYourselfA11y', {
+                        title: book.title,
+                      })}
+                    >
+                      <Text style={[styles.addYourselfText, { color: theme.colors.primary }]}>
+                        {t('bookCandidatePicker.addYourself')}
+                      </Text>
+                    </Pressable>
                   </View>
                 )}
               </View>
-            </Pressable>
-          ))}
+            );
+          })}
 
+          {onEnhance && (
+            <Pressable
+              style={[styles.enhanceButton, { borderColor: theme.colors.border }]}
+              onPress={onEnhance}
+              disabled={outOfCredits}
+              accessibilityRole="button"
+              accessibilityLabel={t('bookCandidatePicker.enhanceA11y')}
+              accessibilityHint={t('bookCandidatePicker.enhanceHint')}
+              accessibilityState={{ disabled: outOfCredits }}
+            >
+              <Text
+                style={{
+                  color: outOfCredits ? theme.colors.textSecondary : theme.colors.primary,
+                  fontSize: theme.typography.fontSizeBase,
+                  fontWeight: '600',
+                }}
+              >
+                {t('bookCandidatePicker.enhance')}
+              </Text>
+              <Text
+                style={{ color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM }}
+              >
+                {outOfCredits
+                  ? t('bookCandidatePicker.noCreditsLeft')
+                  : enhancedScansRemaining === null
+                    ? t('bookCandidatePicker.enhanceCostsCredit')
+                    : t('bookCandidatePicker.creditsLeft', { count: enhancedScansRemaining })}
+              </Text>
+            </Pressable>
+          )}
+        </ScrollView>
+
+        <View style={[styles.footer, { borderTopColor: theme.colors.border }]}>
           <Pressable
-            style={[styles.noneButton, { borderColor: theme.colors.border }]}
-            onPress={onDismiss}
-            accessibilityLabel={t('bookCandidatePicker.noneOfTheseA11y')}
+            style={[
+              styles.addButton,
+              { backgroundColor: theme.colors.primary, opacity: selected.size === 0 ? 0.5 : 1 },
+            ]}
+            onPress={confirm}
+            disabled={selected.size === 0}
             accessibilityRole="button"
+            accessibilityState={{ disabled: selected.size === 0 }}
+            accessibilityHint={t('bookCandidatePicker.addToWishlistHint')}
           >
             <Text
-              style={{ color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeBase }}
+              style={[
+                styles.addButtonText,
+                { color: theme.colors.onPrimary, fontSize: theme.typography.fontSizeBase },
+              ]}
             >
-              {t('bookCandidatePicker.noneOfThese')}
+              {selected.size === 0
+                ? t('bookCandidatePicker.addNone')
+                : t('bookCandidatePicker.addSelected', { count: selected.size })}
             </Text>
           </Pressable>
-        </ScrollView>
+        </View>
       </View>
     </Modal>
   );
@@ -171,18 +390,35 @@ const styles = StyleSheet.create({
   },
   title: { fontWeight: '700' },
   closeButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
-  list: { padding: 16, gap: 12 },
+  selectAll: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
+  },
+  list: { padding: 16, paddingTop: 0, gap: 12 },
   card: {
-    flexDirection: 'row',
     borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     overflow: 'hidden',
     minHeight: 44,
+  },
+  cardMain: { flexDirection: 'row', minHeight: 44 },
+  noMatchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
   },
   cover: { width: 72, height: 108 },
   coverPlaceholder: { opacity: 0.4 },
   info: { flex: 1, padding: 12, gap: 4 },
   bookTitle: { fontWeight: '600' },
+  checkbox: { justifyContent: 'center', paddingHorizontal: 12, minWidth: 44 },
+  checkboxDisabled: { opacity: 0.4 },
   badge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
@@ -191,12 +427,35 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   badgeText: { fontSize: 11, fontWeight: '600' },
-  noneButton: {
+  addYourself: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
+  },
+  addYourselfText: { fontWeight: '600' },
+  enhanceButton: {
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: 12,
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
     minHeight: 44,
     justifyContent: 'center',
+    gap: 2,
   },
+  footer: {
+    padding: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  addButton: {
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  addButtonText: { fontWeight: '600' },
 });

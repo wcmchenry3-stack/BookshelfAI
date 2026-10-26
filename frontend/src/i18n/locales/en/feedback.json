@@ -11,11 +11,8 @@
   "placeholder_description": "Describe what happened, or what you'd like to see...",
   "submit": "Submit",
   "submit_success": "Thanks for your feedback!",
-  "submit_success_issue": "Your report was filed as issue #{{number}}.",
   "submit_error": "Something went wrong. Please try again.",
   "submit_error_rate_limit": "Too many submissions. Please wait {{seconds}} seconds.",
-  "submit_error_rejected": "Your submission could not be accepted. Please revise and try again.",
-  "submit_error_network": "Network error. Please check your connection and try again.",
   "error_title_required": "Title is required.",
   "error_description_required": "Description is required."
 }

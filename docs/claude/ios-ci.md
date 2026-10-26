@@ -77,6 +77,50 @@ A fallback in the build phase detects this and runs `react-native-xcode.sh`
 directly. The `ci_post_xcodebuild.sh` script also validates the bundle exists
 in the archive as a final safety net.
 
+## Xcode version rollovers
+
+Xcode Cloud workflows set to "Latest Release" silently move to each new Xcode
+major. Pin the workflow to an explicit Xcode version in App Store Connect and
+bump it deliberately.
+
+Known rollover breakage — **Xcode 27** (build 154, Sept 2026): deployment
+targets below 15.0 became a hard error instead of a warning:
+
+```
+error: The iOS deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 11.0, but the
+range of supported deployment target versions is 15.0 to 27.0.x. (in target 'Sentry-Sentry')
+```
+
+CocoaPods resource-bundle targets (`Sentry-Sentry`,
+`RNCAsyncStorage-RNCAsyncStorage_resources`) inherit the podspec's minimum, not
+the Podfile's `platform :ios`. `react_native_post_install` already raises pod
+library targets but skips resource bundles, so the `post_install` block in
+`frontend/ios/Podfile` raises only the resource-bundle targets to the app's
+`platform :ios` target. That is set from `ios.deploymentTarget` in
+`Podfile.properties.json` (currently 16.4; the Podfile falls back to 15.1 if it
+is unset). It never lowers a higher target. Do not remove it. When this error appears,
+`ci_post_xcodebuild.sh` also logs "Could not locate .app in archive" — that is a
+symptom, not the cause.
+
+`frontend/ios/Podfile` is Expo prebuild output, so the block is owned by the
+config plugin `frontend/plugins/withPodDeploymentTargetFix.js` (registered in
+`app.json`), not edited by hand. `expo prebuild` (including `--clean`) re-inserts
+it between the `# @generated begin/end bookshelf-pod-deployment-target` markers.
+To change it, edit the plugin and re-run prebuild. The plugin throws if the Expo
+template no longer has a `react_native_post_install(...)` call, and a jest test
+(`withPodDeploymentTargetFix.test.js`) fails if the committed Podfile lacks the
+block.
+
+Note: `expo prebuild` also rewrites `Podfile.properties.json`'s
+`ios.deploymentTarget` from `app.json` (`ios.deploymentTarget`, currently
+`16.0` vs `16.4` committed). Do not commit that unrelated churn. The plugin uses
+whatever `platform :ios` resolves to.
+
+To verify locally after `pod install`, no target in `Pods/Pods.xcodeproj` should
+have `IPHONEOS_DEPLOYMENT_TARGET` below 15.0. `ios-build-check` cannot prove
+this: it runs on the runner's default Xcode (where the check is only a warning)
+and deletes `Podfile.lock` first.
+
 ## Key paths on the Xcode Cloud worker
 
 | Path | What it is |

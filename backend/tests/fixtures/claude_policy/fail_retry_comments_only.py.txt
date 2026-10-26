@@ -1,0 +1,8 @@
+import anthropic
+
+"""Retries 429, 500, 503 and 529 and honours retry-after."""
+# 429 500 503 529 retry-after stop_reason refusal
+
+
+async def call(client):
+    return await client.messages.create(model="claude-haiku-5-5", max_tokens=1)

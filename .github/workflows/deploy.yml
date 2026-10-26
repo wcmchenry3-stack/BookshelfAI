@@ -1,19 +1,79 @@
 name: Deploy
 
+# Production deploys: CI first, then a Render deploy + ZAP scan per service.
+# The prod services have autoDeploy off (render.yaml) — this workflow is the
+# only thing that deploys them, and only after CI passes.
+#
+# Each deploy job passes commit-id: ${{ github.sha }} to called-deploy-render.yml,
+# which pins the Render deploy to the exact commit this workflow run validated
+# (instead of "current HEAD of main"), so a second push landing mid-run cannot
+# cause this run to ship a commit CI didn't check.
+#
+# Service IDs are repository *variables*, not secrets: they are not sensitive,
+# and the `secrets` context is not available in a reusable-workflow call's
+# `with:` (using it there is what made this file invalid). Set them once the
+# prod services exist (Settings → Secrets and variables → Actions → Variables):
+#   RENDER_PROD_API_SERVICE_ID  srv-… of bookshelf-api
+#   RENDER_PROD_WEB_SERVICE_ID  srv-… of bookshelf-web
+# Until a variable is set its deploy job is skipped, so promoting `dev` → `main`
+# before the prod services exist does not produce a failed run. The preflight
+# job turns that skip into a visible warning, so a blank or mistyped variable
+# cannot pass for a successful deploy.
+
 on:
   push:
     branches: [main]
 
+# One deploy at a time. A newer run waits behind the one in flight (and replaces
+# any older waiting run — Render deploys HEAD anyway, so only the newest matters).
+# In-flight runs are never cancelled: that could kill a deploy half-way.
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Flag prod deploy targets that are not configured
+        env:
+          API_SERVICE_ID: ${{ vars.RENDER_PROD_API_SERVICE_ID }}
+          WEB_SERVICE_ID: ${{ vars.RENDER_PROD_WEB_SERVICE_ID }}
+        run: |
+          if [ -z "$API_SERVICE_ID" ]; then
+            echo "::warning title=Prod API will not deploy::RENDER_PROD_API_SERVICE_ID is unset or blank, so the deploy-api job is skipped. Prod autoDeploy is off - nothing else will deploy it."
+          fi
+          if [ -z "$WEB_SERVICE_ID" ]; then
+            echo "::warning title=Prod web will not deploy::RENDER_PROD_WEB_SERVICE_ID is unset or blank, so the deploy-web job is skipped. Prod autoDeploy is off - nothing else will deploy it."
+          fi
+
   ci:
-    uses: wcmchenry3-stack/book_app/.github/workflows/ci.yml@a973bcce934fef46e22d40123430ad2594d5bada
+    uses: ./.github/workflows/ci.yml
     secrets: inherit
 
-  deploy:
+  deploy-api:
     needs: ci
-    uses: wcmchenry3-stack/.github/.github/workflows/called-deploy-render.yml@a973bcce934fef46e22d40123430ad2594d5bada
+    if: ${{ vars.RENDER_PROD_API_SERVICE_ID != '' }}
+    uses: wcmchenry3-stack/.github/.github/workflows/called-deploy-render.yml@main
     with:
-      service-name: 'bookshelf-api'
-      service-id: ${{ secrets.RENDER_SERVICE_ID }}
-      zap-target-url: 'https://bookshelfapi.buffingchi.com'
+      service-name: "bookshelf-api"
+      service-id: ${{ vars.RENDER_PROD_API_SERVICE_ID }}
+      commit-id: ${{ github.sha }}
+      zap-target-url: "https://bookshelfapi.buffingchi.com"
+    secrets: inherit
+
+  # needs both ci and deploy-api (not just ci): the API's preDeployCommand runs
+  # `alembic upgrade head`, so the web frontend must never ship against a
+  # failed/incomplete API deploy. But deploy-api is legitimately skipped when
+  # RENDER_PROD_API_SERVICE_ID is blank (see preflight) — that skip must not
+  # also skip this job, only an actual API deploy *failure* should.
+  deploy-web:
+    needs: [ci, deploy-api]
+    if: ${{ !cancelled() && needs.ci.result == 'success' && needs.deploy-api.result != 'failure' && vars.RENDER_PROD_WEB_SERVICE_ID != '' }}
+    uses: wcmchenry3-stack/.github/.github/workflows/called-deploy-render.yml@main
+    with:
+      service-name: "bookshelf-web"
+      service-id: ${{ vars.RENDER_PROD_WEB_SERVICE_ID }}
+      commit-id: ${{ github.sha }}
+      zap-target-url: "https://bookshelfai.buffingchi.com"
     secrets: inherit

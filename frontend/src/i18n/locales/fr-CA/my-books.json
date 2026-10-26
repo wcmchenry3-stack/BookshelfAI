@@ -3,7 +3,7 @@
   "noBooksYet": "Aucun livre ici.",
   "statusTab": {
     "all": "Tous",
-    "wishlisted": "Liste de souhaits",
+    "wishlisted": "Souhaits",
     "purchased": "Achetés",
     "reading": "En lecture",
     "read": "Lus"
@@ -16,6 +16,7 @@
   },
   "filterBy": "Filtrer par {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Non vérifié",
   "bookCardHint": "Touchez pour détails et options",
   "markAs": "Marquer comme {{status}}",
   "markAsA11y": "Marquer comme {{status}}",
@@ -26,10 +27,10 @@
   "errorLoadBooks": "Impossible de charger les livres.",
   "errorUpdateStatus": "Impossible de mettre à jour le statut.",
   "errorRemoveBook": "Impossible de supprimer le livre.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "Rechercher dans la bibliothèque...",
+  "searchA11y": "Chercher dans la bibliothèque",
+  "sectionTitle": "Ma bibliothèque",
+  "bookCount": "{{count}} volumes dans votre collection.",
   "heroSubtitle": "Toute ta vie de lecture ici",
   "archiveSummary": "livres suivis"
 }

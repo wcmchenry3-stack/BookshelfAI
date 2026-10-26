@@ -1,16 +1,53 @@
 {
   "bookCandidatePicker": {
-    "title": "Quel livre est-ce?",
+    "title_one": "{{count}} livre trouvé",
+    "title_other": "{{count}} livres trouvés",
     "cancel": "Annuler",
     "closePicker": "Fermer la sélection",
     "selectBook": "Sélectionner {{title}} par {{author}}",
+    "selectAll": "Tout sélectionner",
+    "selectAllA11y": "Sélectionner tous les livres",
+    "clearAll": "Tout désélectionner",
+    "clearAllA11y": "Effacer toutes les sélections",
+    "addSelected_one": "Ajouter {{count}} livre à la liste",
+    "addSelected_other": "Ajouter {{count}} livres à la liste",
+    "addNone": "Sélectionnez des livres à ajouter",
     "addToWishlistHint": "Ajoute ce livre à votre liste",
     "alreadyOwned": "Déjà possédé",
-    "noneOfThese": "Aucun de ceux-ci",
-    "noneOfTheseA11y": "Aucun de ces livres ne correspond"
+    "enhance": "Livres manquants? Essayez l'amélioration",
+    "enhanceA11y": "Essayer la numérisation améliorée",
+    "enhanceHint": "Numérise de nouveau cette photo avec un modèle d'IA plus puissant. N'utilise l'une de vos numérisations améliorées que si des livres sont trouvés.",
+    "enhanceCostsCredit": "Utilise 1 numérisation améliorée si des livres sont trouvés",
+    "creditsLeft_one": "{{count}} numérisation améliorée restante",
+    "creditsLeft_other": "{{count}} numérisations améliorées restantes",
+    "noCreditsLeft": "Aucune numérisation améliorée restante",
+    "ownedSameEdition": "Vous avez déjà ce livre",
+    "ownedOtherEdition": "Vous avez déjà ce livre dans une autre édition",
+    "ownedEditionUnknown": "Vous avez déjà ce livre",
+    "notInCatalog": "Absent du catalogue",
+    "addYourself": "L'ajouter vous-même",
+    "addYourselfA11y": "Ajouter {{title}} vous-même"
   },
   "themeToggle": {
     "toDark": "Passer en mode sombre",
     "toLight": "Passer en mode clair"
+  },
+  "addUnverified": {
+    "title": "L'ajouter vous-même",
+    "intro": "Ce livre est absent de notre catalogue. Vérifiez les détails et enregistrez-le. Vous seul le verrez, marqué Non vérifié.",
+    "titleLabel": "Titre",
+    "authorLabel": "Auteur",
+    "isbnLabel": "ISBN (facultatif)",
+    "save": "Enregistrer",
+    "saveHint": "Ajoute ce livre à votre liste de souhaits, marqué Non vérifié",
+    "cancel": "Annuler",
+    "closeA11y": "Fermer le formulaire",
+    "titleRequired": "Entrez un titre",
+    "authorRequired": "Entrez un auteur",
+    "isbnInvalid": "Cet ISBN n'est pas valide. Corrigez-le ou laissez le champ vide.",
+    "invalid": "Vérifiez les détails et réessayez.",
+    "duplicate": "Vous avez déjà ajouté ce livre vous-même.",
+    "limitReached": "Vous avez atteint la limite de livres ajoutés vous-même.",
+    "failed": "Impossible d'enregistrer ce livre. Réessayez."
   }
 }

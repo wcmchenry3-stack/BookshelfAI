@@ -11,11 +11,8 @@
   "placeholder_description": "Descreva o que aconteceu ou o que gostaria de ver...",
   "submit": "Enviar",
   "submit_success": "Obrigado pelo seu feedback!",
-  "submit_success_issue": "Seu relatório foi registrado como issue #{{number}}.",
   "submit_error": "Algo deu errado. Por favor, tente novamente.",
   "submit_error_rate_limit": "Muitas submissões. Por favor, aguarde {{seconds}} segundos.",
-  "submit_error_rejected": "Sua submissão não pôde ser aceita. Por favor, revise e tente novamente.",
-  "submit_error_network": "Erro de rede. Verifique sua conexão e tente novamente.",
   "error_title_required": "O título é obrigatório.",
   "error_description_required": "A descrição é obrigatória."
 }

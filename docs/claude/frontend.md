@@ -86,6 +86,7 @@ Stack: `i18next` + `react-i18next`. All user-facing strings must use `useTransla
 | `settings` | Settings screen |
 | `wishlist` | Wishlist screen |
 | `components` | `BookCandidatePicker`, `ThemeToggleButton` |
+| `feedback` | In-app feedback widget |
 
 #### Using translations in a screen
 
@@ -111,7 +112,7 @@ t(`status.${item.status}`)
    # or all namespaces at once for one locale:
    OPENAI_API_KEY=... node scripts/translate.js --locale <code> --namespace common && ...
    ```
-3. Add 8 static imports to `src/i18n/i18n.ts` and add locale entry to `resources`
+3. Add 9 static imports (one per namespace) to `src/i18n/i18n.ts` and add locale entry to `resources`
 4. If RTL (ar/he), add to `RTL_LOCALES` in `locales.ts`
 
 #### Re-running translations (e.g. after adding keys)
@@ -127,9 +128,17 @@ node scripts/translate.js --locale es --namespace scan --dry-run
 node scripts/translate.js --all
 ```
 
+#### Key parity (every `en` key in every locale)
+
+`__tests__/unit/localeKeyParity.test.ts` fails with a list of `ns:key` entries when a locale is missing a key that `en` has, or carries a stale key that `en` no longer has. When you add or remove an `en` key, update all 12 other locales in the same PR (and `_meta/<ns>.meta.json`). Plurals: `en` uses `x_one` / `x_other`; a locale satisfies `x` with `x_other` plus its own CLDR categories (ar: zero/one/two/few/many/other, ru: one/few/many/other, he: one/two/many/other, ja/ko/zh: other only). `localeCharacterLimits.test.ts` enforces the `characterLimit` values in `_meta`. `provenance.json` currently tracks only the `feedback` namespace.
+
 #### RTL locales
 Arabic (`ar`) and Hebrew (`he`) are RTL. String translations are complete.
 Layout mirroring (`I18nManager.forceRTL()` + app restart) is a follow-up task.
+
+### Scan quota states
+
+`lib/scanErrors.ts` is the only place that knows the `POST /scan` refusal codes. `classifyScanError(err)` maps an axios error to exactly one UI state (`daily_limit`, `requests_daily_limit`, `in_progress`, `paused`, `unavailable`, `enhanced_refused`, `generic`; the table is in the file header); it distinguishes by `response.data.detail`, not status alone (429 is `daily_scan_limit`, `scan_in_progress` and `enhanced_throttled`). There is no monthly limit (#582): no `monthly_limit` state, notice or copy; a 402 from an older server (`scan_limit_reached` / `enhanced_limit_reached`) is `generic`. `enhanced_refused` (#533: `enhanced_requires_premium`, `enhanced_throttled`) has no notice card: `ScanJobContext` shows a banner (`enhancedRefusalMessage`), falls back to the standard results and stops only enhanced photos in the drain. The enhanced re-scan is offered only when `enhancedScansRemaining` (from `enhanced_scans_remaining` on scan responses: the Premium daily allowance left since #582) is above 0. `toScanNotice` / `scanNoticeMessage` turn a state into the notice the scan screen shows. `ScanJobContext` owns the `scanNotice`, the silent `scan_in_progress` retry (max 3, honouring `Retry-After`) and `usageRefreshKey`; `hooks/useScanUsage.ts` fetches `GET /scan/usage` for `components/ScanStatusPanel.tsx` (scan screen) and the Settings row, and returns `null` offline or on failure so the counter just hides. Two counters (#577): `remainingToday` (found, falling back to `used_today` / `daily_limit` from an older server) and `noMatchRemainingToday` (`null`, so the line hides, when the server sends no `no_match_*`). The no-match banner copy comes from `noMatchMessage` (`lib/scanJob.ts`) on the scan response's `no_match`. `unavailable` (503 `scan_unavailable`, #604) is the only retryable state: `ScanJobContext` retries the photo on `SCAN_RETRY_DELAYS_MS` (in `scanErrors.ts`, the one place for the delays) and stores `attempts` / `nextAttemptAt` on the job. Add new backend codes in `scanErrors.ts` and its table-driven test, never inline in a component.
 
 ## Commands
 

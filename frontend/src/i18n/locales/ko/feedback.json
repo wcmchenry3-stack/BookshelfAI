@@ -11,11 +11,8 @@
   "placeholder_description": "무슨 일이 있었는지, 또는 무엇을 원하는지 설명해 주세요...",
   "submit": "제출",
   "submit_success": "피드백을 주셔서 감사합니다!",
-  "submit_success_issue": "보고서가 issue #{{number}}로 등록되었습니다.",
   "submit_error": "오류가 발생했습니다. 다시 시도해 주세요.",
   "submit_error_rate_limit": "제출이 너무 많습니다. {{seconds}}초 후에 다시 시도해 주세요.",
-  "submit_error_rejected": "제출을 수락할 수 없습니다. 수정 후 다시 시도해 주세요.",
-  "submit_error_network": "네트워크 오류입니다. 연결을 확인하고 다시 시도해 주세요.",
   "error_title_required": "제목은 필수입니다.",
   "error_description_required": "설명은 필수입니다."
 }

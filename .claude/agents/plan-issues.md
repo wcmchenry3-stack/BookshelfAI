@@ -1,3 +1,9 @@
+---
+name: plan-issues
+description: Break a feature, bug or initiative into well-scoped GitHub issues. Investigates the code first, drafts the breakdown for confirmation, then files with `gh issue create`. Writes no code.
+model: haiku
+---
+
 # plan-issues
 
 Break down a problem statement into well-scoped GitHub issues. No code

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import MyBooksScreen from '../../app/(tabs)/my-books';
@@ -185,11 +186,11 @@ describe('MyBooksScreen', () => {
     expect(mockPatch).toHaveBeenCalledWith('/user-books/ub-1', { status: 'purchased' });
   });
 
-  it('updates status badge optimistically on "all" tab before PATCH resolves', async () => {
-    let resolvePatch!: () => void;
+  it('does not change status until PATCH resolves, then applies the server row', async () => {
+    let resolvePatch!: (row: unknown) => void;
     mockPatch.mockReturnValue(
       new Promise((resolve) => {
-        resolvePatch = () => resolve({ data: {} });
+        resolvePatch = (row) => resolve({ data: row });
       })
     );
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
@@ -200,22 +201,55 @@ describe('MyBooksScreen', () => {
 
     // Deliberately not awaited: under v14, awaiting fireEvent.press blocks
     // until all work the event triggers has settled, which would hang here
-    // on the still-pending PATCH call — defeating the point of asserting
-    // optimistic (pre-resolution) UI state. waitFor below polls independently
-    // for the synchronous state update to land.
+    // on the still-pending PATCH call.
     fireEvent.press(getByLabelText('Mark as Purchased'));
 
-    // Card a11y label reflects the new status before API resolves
-    await waitFor(() => expect(queryByLabelText('Dune — purchased')).toBeTruthy());
+    // Server-authoritative: still wishlisted while the request is in flight,
+    // and the sheet's buttons are locked. The sheet stays open, which hides the
+    // cards behind it from default queries.
+    await waitFor(() =>
+      expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(true)
+    );
+    const hidden = { includeHiddenElements: true };
+    expect(queryByLabelText('Dune — wishlisted', hidden)).toBeTruthy();
+    expect(queryByLabelText('Dune — purchased', hidden)).toBeNull();
+
     await act(async () => {
-      resolvePatch();
+      resolvePatch({
+        ...WISHLISTED_BOOK,
+        status: 'purchased',
+        purchased_at: '2026-09-21T00:00:00Z',
+      });
     });
+    // On success the sheet closes and the card shows the server's status.
+    await waitFor(() => expect(queryByLabelText('Dune — purchased')).toBeTruthy());
+    expect(queryByLabelText('Dune — wishlisted')).toBeNull();
   });
 
-  it('reverts status optimistic update when PATCH fails', async () => {
+  it('ignores a second press while a request for the same book is in flight', async () => {
+    mockPatch.mockReturnValue(new Promise(() => {}));
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — wishlisted'));
+    await fireEvent.press(getByLabelText('Dune — wishlisted'));
+    await waitFor(() => getByLabelText('Mark as Purchased'));
+
+    fireEvent.press(getByLabelText('Mark as Purchased'));
+    await waitFor(() =>
+      expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(true)
+    );
+    fireEvent.press(getByLabelText('Mark as Purchased'));
+    fireEvent.press(getByLabelText('Remove Dune'));
+
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('keeps the status and alerts when PATCH fails', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockPatch.mockRejectedValue(new Error('Network error'));
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
-    const { getByLabelText, queryByText } = await render(<MyBooksScreen />);
+    const { getByLabelText, queryByLabelText } = await render(<MyBooksScreen />);
     await waitFor(() => getByLabelText('Dune — wishlisted'));
     await fireEvent.press(getByLabelText('Dune — wishlisted'));
     await waitFor(() => getByLabelText('Mark as Purchased'));
@@ -224,7 +258,12 @@ describe('MyBooksScreen', () => {
       await fireEvent.press(getByLabelText('Mark as Purchased'));
     });
 
-    await waitFor(() => expect(queryByText('Wishlisted')).toBeTruthy());
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    // The sheet stays open so the user can retry; its buttons are unlocked again.
+    const hidden = { includeHiddenElements: true };
+    expect(queryByLabelText('Dune — purchased', hidden)).toBeNull();
+    expect(queryByLabelText('Dune — wishlisted', hidden)).toBeTruthy();
+    expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(false);
   });
 
   it('does not show advance button for read books', async () => {
@@ -250,7 +289,7 @@ describe('MyBooksScreen', () => {
     expect(mockDelete).toHaveBeenCalledWith('/user-books/ub-1');
   });
 
-  it('removes book optimistically before DELETE resolves', async () => {
+  it('keeps the book until DELETE resolves, then removes it', async () => {
     let resolveDelete!: () => void;
     mockDelete.mockReturnValue(
       new Promise((resolve) => {
@@ -266,13 +305,19 @@ describe('MyBooksScreen', () => {
     // Deliberately not awaited — see the analogous PATCH test above for why.
     fireEvent.press(getByLabelText('Remove Dune'));
 
-    await waitFor(() => expect(queryByText('Dune')).toBeNull());
+    await waitFor(() =>
+      expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true)
+    );
+    expect(queryByText('Dune')).toBeTruthy();
+
     await act(async () => {
       resolveDelete();
     });
+    await waitFor(() => expect(queryByText('Dune')).toBeNull());
   });
 
-  it('restores book when DELETE fails', async () => {
+  it('keeps the book and alerts when DELETE fails', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockDelete.mockRejectedValue(new Error('Network error'));
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
     const { getByLabelText, queryByText } = await render(<MyBooksScreen />);
@@ -284,7 +329,8 @@ describe('MyBooksScreen', () => {
       await fireEvent.press(getByLabelText('Remove Dune'));
     });
 
-    await waitFor(() => expect(queryByText('Dune')).toBeTruthy());
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(queryByText('Dune')).toBeTruthy();
   });
 
   it('refetches when a filter tab is tapped', async () => {

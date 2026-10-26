@@ -16,6 +16,7 @@
   },
   "filterBy": "Filtrar por {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Sin verificar",
   "bookCardHint": "Toca para ver detalles y opciones",
   "markAs": "Marcar como {{status}}",
   "markAsA11y": "Marcar como {{status}}",
@@ -26,10 +27,10 @@
   "errorLoadBooks": "No se pudieron cargar los libros.",
   "errorUpdateStatus": "No se pudo actualizar el estado.",
   "errorRemoveBook": "No se pudo eliminar el libro.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "Busca en tu biblioteca...",
+  "searchA11y": "Buscar en tu biblioteca",
+  "sectionTitle": "Mi biblioteca",
+  "bookCount": "{{count}} volúmenes en tu colección.",
   "heroSubtitle": "Tu vida lectora en un lugar",
   "archiveSummary": "libros registrados"
 }

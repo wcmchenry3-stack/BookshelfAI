@@ -16,6 +16,7 @@
   },
   "filterBy": "Filter op {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Niet geverifieerd",
   "bookCardHint": "Tik voor details en opties",
   "markAs": "Markeer als {{status}}",
   "markAsA11y": "Markeer als {{status}}",
@@ -26,10 +27,10 @@
   "errorLoadBooks": "Kon boeken niet laden.",
   "errorUpdateStatus": "Kon status niet bijwerken.",
   "errorRemoveBook": "Kon boek niet verwijderen.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "Zoek in je bibliotheek...",
+  "searchA11y": "Zoeken in je bibliotheek",
+  "sectionTitle": "Mijn bibliotheek",
+  "bookCount": "{{count}} boeken in je collectie.",
   "heroSubtitle": "Jouw leesleven op één plek",
   "archiveSummary": "boeken bijgehouden"
 }

@@ -24,6 +24,8 @@ OL_DOC = {
 GB_VOLUME = {
     "id": "gb_dune_001",
     "volumeInfo": {
+        "title": "Dune",
+        "authors": ["Frank Herbert"],
         "description": "A desert planet epic.",
         "publisher": "Ace Books",
         "publishedDate": "1990",
@@ -78,6 +80,21 @@ class TestEnrich:
         results = await service.enrich(five_candidates)
 
         assert len(results) == 3
+
+    async def test_respects_custom_limit(self, service):
+        # The title shown is the provider's (#602): one record per candidate.
+        service.ol.search = AsyncMock(
+            side_effect=lambda title, _author: {**OL_DOC, "title": title}
+        )
+        service.gb.search = AsyncMock(return_value=GB_VOLUME)
+
+        candidates = [
+            BookCandidate(title=f"Book {i}", author="Author", confidence=0.9)
+            for i in range(12)
+        ]
+        results = await service.enrich(candidates, limit=15)
+
+        assert [r.title for r in results] == [f"Book {i}" for i in range(12)]
 
     async def test_skips_failed_candidates(self, service):
         # When both APIs fail, the service logs warnings and continues with None values,

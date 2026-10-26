@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, DateTime, String, func
+from sqlalchemy import ARRAY, DateTime, Index, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -10,6 +10,16 @@ from app.core.database import Base
 
 class Book(Base):
     __tablename__ = "books"
+    __table_args__ = (
+        # One row per Google Books volume (#613, migration 0015, which merged
+        # the duplicates that existed before). Partial: most books have none.
+        Index(
+            "uq_books_google_books_id",
+            "google_books_id",
+            unique=True,
+            postgresql_where=text("google_books_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -34,9 +44,12 @@ class Book(Base):
         nullable=False,
     )
 
+    # Deleting a Book never deletes or orphans children: passive_deletes="all"
+    # stops the ORM from nulling out loaded children's book_id, so the
+    # ON DELETE RESTRICT FKs reject the delete.
     editions: Mapped[list["Edition"]] = relationship(  # noqa: F821
-        "Edition", back_populates="book", cascade="all, delete-orphan"
+        "Edition", back_populates="book", passive_deletes="all"
     )
     user_books: Mapped[list["UserBook"]] = relationship(  # noqa: F821
-        "UserBook", back_populates="book", cascade="all, delete-orphan"
+        "UserBook", back_populates="book", passive_deletes="all"
     )

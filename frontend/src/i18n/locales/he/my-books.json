@@ -16,6 +16,7 @@
   },
   "filterBy": "סנן לפי {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — לא מאומת",
   "bookCardHint": "הקש לפרטים ואפשרויות",
   "markAs": "סמן כ{{status}}",
   "markAsA11y": "סמן כ{{status}}",
@@ -26,10 +27,10 @@
   "errorLoadBooks": "לא ניתן לטעון ספרים.",
   "errorUpdateStatus": "לא ניתן לעדכן סטטוס.",
   "errorRemoveBook": "לא ניתן להסיר ספר.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "חיפוש בספרייה שלך...",
+  "searchA11y": "חיפוש בספרייה שלך",
+  "sectionTitle": "הספרייה שלי",
+  "bookCount": "{{count}} כרכים באוסף שלך.",
   "heroSubtitle": "חיי הקריאה שלך במקום אחד",
   "archiveSummary": "ספרים במעקב"
 }

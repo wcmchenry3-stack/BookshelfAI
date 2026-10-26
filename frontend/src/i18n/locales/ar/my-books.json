@@ -9,13 +9,14 @@
     "read": "مقروء"
   },
   "status": {
-    "wishlisted": "في قائمة الرغبات",
+    "wishlisted": "قائمة الرغبات",
     "purchased": "تم الشراء",
     "reading": "قيد القراءة",
     "read": "مقروء"
   },
   "filterBy": "تصفية حسب {{label}}",
   "bookCardA11y": "{{title}} — {{status}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}} — غير موثّق",
   "bookCardHint": "اضغط لرؤية التفاصيل والخيارات",
   "markAs": "وضع كـ {{status}}",
   "markAsA11y": "وضع كـ {{status}}",
@@ -26,10 +27,10 @@
   "errorLoadBooks": "تعذر تحميل الكتب.",
   "errorUpdateStatus": "تعذر تحديث الحالة.",
   "errorRemoveBook": "تعذر إزالة الكتاب.",
-  "searchPlaceholder": "__NEEDS_TRANSLATION__",
-  "searchA11y": "__NEEDS_TRANSLATION__",
-  "sectionTitle": "__NEEDS_TRANSLATION__",
-  "bookCount": "__NEEDS_TRANSLATION__",
+  "searchPlaceholder": "ابحث في مكتبتك...",
+  "searchA11y": "البحث في مكتبتك",
+  "sectionTitle": "مكتبتي",
+  "bookCount": "{{count}} مجلد في مجموعتك.",
   "heroSubtitle": "حياتك القرائية في مكان واحد",
   "archiveSummary": "كتب مسجلة"
 }

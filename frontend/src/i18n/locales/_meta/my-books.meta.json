@@ -65,6 +65,11 @@
     "tone": "neutral",
     "placeholders": ["{{title}}", "{{status}}"]
   },
+  "bookCardUnverifiedA11y": {
+    "description": "Accessibility label for the card of an unverified book (one the user added themselves, #616): title, status, then that it is unverified",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{status}}"]
+  },
   "bookCardHint": {
     "description": "Accessibility hint for a book card — tells the user what tapping does",
     "tone": "informative",

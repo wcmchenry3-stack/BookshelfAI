@@ -1,0 +1,23 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def a(text):
+    logger.info("%s", text.strip())
+
+
+def b(raw):
+    logger.info("%s", raw.decode("utf-8"))
+
+
+def c(reply):
+    logger.info("%s", reply.lower())
+
+
+def d(image_bytes):
+    logger.info("%s", image_bytes.hex())
+
+
+def e(text):
+    logger.info("%s", text.format(1))

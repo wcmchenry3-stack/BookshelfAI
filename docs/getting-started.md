@@ -118,6 +118,8 @@ Comma-separated list of emails permitted to authenticate. Single-user lockdown b
 ### External APIs
 ```bash
 OPENAI_API_KEY=sk-...                    # https://platform.openai.com/api-keys
+# ANTHROPIC_API_KEY=sk-ant-...           # only once a scan feature is switched to anthropic (#532)
+# AI_ANTHROPIC_BASE_URL=                    # leave unset: only the load run (backend/perf/) sets it, to a local fake; localhost only, boot fails with any value in staging/production (#539)
 GOOGLE_BOOKS_API_KEY=AIza...             # Google Cloud → Books API → credentials
 OPEN_LIBRARY_BASE_URL=https://openlibrary.org  # leave as-is
 ```
@@ -128,12 +130,38 @@ SENTRY_DSN=                              # leave blank to disable
 TURNSTILE_SECRET_KEY=                    # leave blank to skip Turnstile check on /scan
 ```
 
+### Scan dials
+```bash
+# Initial defaults only: they seed the ai_settings table on first boot. After
+# that use `python -m app.ai.settings set <key> <value>` (e.g. scan.standard.enabled).
+SCAN_ENABLED=true                        # seeds scan.standard.enabled (false → 503 scan_disabled)
+SCAN_ENHANCED_ENABLED=true               # seeds scan.enhanced.enabled
+AI_SETTINGS_CACHE_TTL_SECONDS=30         # 1..300, how long each process caches ai_settings
+AI_SETTINGS_MAX_STALE_SECONDS=300        # 1..3600 (>= TTL), max age of cached ai_settings served when a read fails
+SCAN_GLOBAL_DAILY_LIMIT=2000             # 1..1000000, seeds scan.global_daily_limit
+SCAN_FREE_DAILY_LIMIT=5                  # 0..1000, seeds quota.free.found_daily (per UTC day)
+SCAN_PREMIUM_DAILY_LIMIT=5               # 0..1000, seeds quota.premium.found_daily
+SCAN_FREE_NO_MATCH_DAILY_LIMIT=5         # 0..1000, seeds quota.free.no_match_daily
+SCAN_PREMIUM_NO_MATCH_DAILY_LIMIT=5      # 0..1000, seeds quota.premium.no_match_daily
+# No monthly limits (#582): SCAN_*_MONTHLY_LIMIT are retired and seed nothing.
+SCAN_FREE_DAILY_CEILING_MICROS=10000000  # 0..1000000000 micro-dollars/UTC day, seeds breaker.free_daily_ceiling_micros
+```
+
 ### App
 ```bash
 ENVIRONMENT=development
 CORS_ORIGINS=http://localhost:8081,exp://localhost:8081
+UNVERIFIED_BOOKS_PER_USER_MAX=200      # 1..10000, private unverified entries per user (#616); restart to change
 ```
 In dev, `CORS_ORIGINS` must include the Expo dev-server origin. The wildcard `*` is blocked by a validator in `app/core/config.py`.
+
+### Client IP and origin lockdown
+```bash
+TRUSTED_PROXY_MODE=                      # leave blank: defaults to none locally (cloudflare when ENVIRONMENT is staging/production)
+# ORIGIN_AUTH_HEADER=X-Origin-Auth       # default; omit unless your edge uses another name (empty is invalid)
+ORIGIN_AUTH_SECRET=                      # leave blank locally (origin lockdown off)
+```
+`TRUSTED_PROXY_MODE` accepts `none` or `cloudflare`; any other value stops the API from starting. A non-empty `ORIGIN_AUTH_SECRET` must be at least 32 printable ASCII characters (e.g. `openssl rand -hex 32`). See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
 
 ## 4. Frontend `.env`
 
@@ -165,6 +193,8 @@ uvicorn app.main:app --reload
 Verify it's up:
 ```bash
 curl http://localhost:8000/health
+# {"status":"ok"}
+curl http://localhost:8000/health/db
 # {"status":"ok","db":"ok"}
 ```
 
@@ -205,7 +235,7 @@ First-time Android build also needs a debug keystore — see [android-ci.md](cla
 |---|---|---|
 | `psql: FATAL: database "bookshelf" does not exist` | skipped `createdb bookshelf` | Run step 2 |
 | `alembic.util.exc.CommandError: Can't locate revision` | wrong alembic version | `alembic upgrade head` from `backend/` with venv active |
-| Backend starts but `/health` returns `db: error` | `DATABASE_URL` wrong or Postgres down | Check `brew services list`, verify username + DB name |
+| Backend starts but `/health/db` returns `db: error` | `DATABASE_URL` wrong or Postgres down | Check `brew services list`, verify username + DB name |
 | Sign-in fails with 401 | email not in `ALLOWED_EMAILS` | add to `.env`, restart uvicorn |
 | Sign-in fails with `Invalid audience` | frontend client ID doesn't match backend's list | ensure all three `GOOGLE_*_CLIENT_ID` vars match between `.env` files |
 | `/scan` returns 500 | `OPENAI_API_KEY` missing or invalid | Check OpenAI dashboard; key needs Vision access |

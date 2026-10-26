@@ -3,5 +3,10 @@
     "description": "Screen heading label for the settings page",
     "tone": "neutral",
     "characterLimit": 20
+  },
+  "scanUsageLabel": {
+    "description": "Settings row label for the scan usage figure",
+    "tone": "neutral",
+    "characterLimit": 25
   }
 }

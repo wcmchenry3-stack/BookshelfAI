@@ -2,7 +2,7 @@
 
 How the app gets shipped. Four separate pipelines — one per platform. Everything is triggered by git pushes or manual store uploads; no EAS (rules #1–3 in the native-build section of `CLAUDE.md`).
 
-For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](claude/ios-ci.md) and [`claude/android-ci.md`](claude/android-ci.md). For the architectural constraints driving the deploy layout, see [`architecture.md`](architecture.md).
+For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](claude/ios-ci.md) and [`claude/android-ci.md`](claude/android-ci.md). For the architectural constraints driving the deploy layout, see [`architecture.md`](architecture.md). For the Render dev/prod topology and Supabase connection rules, see [`RENDER.md`](RENDER.md). For nightly database backups and the restore drill, see [`backups.md`](backups.md).
 
 ## Pipelines at a glance
 
@@ -21,9 +21,9 @@ For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](clau
 **Source:** `render.yaml`
 
 **Build:** `pip install -r requirements.txt`
-**Start:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+**Start:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers`
 **Pre-deploy:** `alembic upgrade head` (migrations run before the new version takes traffic — a failing migration blocks the deploy)
-**Health check:** `/health`
+**Health check:** `/health` (liveness only, never touches the DB — a Render restart must not be triggered by a transient DB blip; use `/health/db` to check DB connectivity)
 
 **Branch:** set in the Render dashboard (not in `render.yaml`). Check with `render services get bookshelf-api` or by looking at the service settings in the dashboard.
 
@@ -38,6 +38,8 @@ TURNSTILE_SECRET_KEY      (sync:false — set in dashboard)
 SENTRY_DSN                (sync:false — set in dashboard)
 ```
 
+**`ENVIRONMENT` values:** `development` | `test` | `staging` | `production`. Only `development` and `test` are treated as trusted/local (`settings.is_hardened == False`). Any other value — including `staging` — gets full production-grade hardening: `/docs` disabled, `TrustedHostMiddleware` enforced, HSTS sent, and the `/debug/sentry-test` + `/auth/test-login` routes not even registered. `staging` still reports as `staging` (not `production`) to Sentry so events are distinguishable. A public staging deploy must always use `ENVIRONMENT=staging`, never `development`.
+
 ### Env vars that live only in the Render dashboard
 
 These aren't in `render.yaml` because they're secrets or because they change independently. Set them in the Render dashboard for the `bookshelf-api` service:
@@ -46,8 +48,42 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 - `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`
 - `ALLOWED_EMAILS`
 - `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY` (#532) — only needed once a scan feature is switched to the `anthropic` provider (see "Switching a scan feature to Claude" below). The app boots without it; a feature switched to `anthropic` while it is missing answers `503 scan_unavailable` (refunded) and logs an error. Secret: never logged, scrubbed from Sentry events
+- `AI_ANTHROPIC_BASE_URL` (#539) — **must stay unset in production and staging.** It exists only so the nightly load run (`.github/workflows/perf-ai.yml`) can point the Claude adapter at a local fake provider. Unset means `https://api.anthropic.com`. Only `localhost`, `127.0.0.1` or `::1` (with a valid port, no credentials, query or fragment) is accepted, whatever `ENVIRONMENT` says, so a deployment that forgot to set `ENVIRONMENT` still cannot send the API key and photos to another host. In a hardened environment (any `ENVIRONMENT` except `development` and `test`, so staging and production) **any non-empty value makes the app fail at boot.** The generic `ANTHROPIC_BASE_URL` is ignored. Check that the service does not have it set when you add a variable.
 - `GOOGLE_BOOKS_API_KEY`
 - `OPENAI_MAX_TOKENS` (optional)
+
+Scan dials (optional; defaults shown; change in the dashboard and restart, no release needed — out-of-range values fail at boot):
+
+- `SCAN_ENABLED` (`true`), `SCAN_ENHANCED_ENABLED` (`true`), `SCAN_MAX_IMAGE_PIXELS`, `SCAN_MODEL`, `SCAN_ENHANCED_MODEL` — **initial defaults only** (#526). They seed the `ai_settings` table on first boot (see "AI settings" below); after that, changing the env var does nothing for a key that already has a row. They are also the fallback for a key whose row is missing
+- `SCAN_GLOBAL_DAILY_LIMIT` (`2000`, range 1–1,000,000) — **initial default only** (#528): seeds `scan.global_daily_limit`, scans per UTC day across all users
+- `SCAN_FREE_DAILY_CEILING_MICROS` (`10000000` = $10, range 0–1,000,000,000) — **initial default only** (#531): seeds `breaker.free_daily_ceiling_micros`, the service-wide AI spend per UTC day (micro-dollars, all tiers counted) above which Free-tier scans pause with `503 ai_budget_reached`. Premium continues (decision #544). `0` pauses every Free scan
+- `SCAN_FREE_DAILY_LIMIT` (`5`, range 0–1000), `SCAN_PREMIUM_DAILY_LIMIT` (`5`, range 0–1000; `30` before #577) — **initial defaults only** (#528): since #577 they seed `quota.free.found_daily` and `quota.premium.found_daily` (scans that found books; the retired `quota.<tier>.daily`). Launch values (OD-1): every user is Free, 5 scans a day. `0` refuses every scan for that tier
+- `SCAN_FREE_NO_MATCH_DAILY_LIMIT` (`5`, range 0–1000), `SCAN_PREMIUM_NO_MATCH_DAILY_LIMIT` (`5`, range 0–1000) — **initial defaults only** (#577): they seed `quota.free.no_match_daily` and `quota.premium.no_match_daily`, the photos per user per UTC day where the AI found no book that do not use a scan
+- `SCAN_FREE_MONTHLY_LIMIT`, `SCAN_PREMIUM_MONTHLY_LIMIT`, `SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT` — **retired** (#582): there is no monthly limit, so they seed nothing. The app still accepts them (an integer, or unset) so an existing `.env` keeps booting; remove them from the Render environment and local `.env` files. They are deleted from the settings class with the contract migration that drops the retired `ai_settings` rows
+- `ENHANCED_SCAN_FREE_CREDITS` — **no longer used** since #533 (the lifetime enhanced-scan credit balance is gone); still accepted so an existing environment loads, and removed in #540
+- `UNVERIFIED_BOOKS_PER_USER_MAX` (`200`, range 1–10,000) — the most private unverified library entries one user can have (#616, `POST /wishlist/unverified` answers `409 unverified_limit_reached` above it). Read at startup, so a change needs a restart
+- `SCAN_DAILY_LIMIT_PER_USER` — **no longer applied to `/scan`** since #528 (the per-user daily cap is now `quota.<tier>.daily`); read only by the legacy `scan_quota` module until #540 removes it
+- `SCAN_MAX_IMAGE_PIXELS` (`40000000`, range 1,000,000–100,000,000) — seed for `scan.max_image_pixels`; decompression-bomb guard: an upload whose width × height is above this gets `413 image_too_large_pixels` before it is decoded
+- `SCAN_NORMALISE_CONCURRENCY` (`1`, range 1–8) — how many scan images are normalised (decoded and resized, in worker threads) at once per process. Each can briefly hold a few hundred MB for a 40 MP image, so this bounds peak memory; requests over the limit wait for a slot. Peak is roughly 160–350 MB per 40 MP image, times this value, times the uvicorn worker count; keep it at 1 on a 512 MB instance and raise it only with more memory. Stays env (not in `ai_settings`): it sizes a process-wide `anyio.CapacityLimiter` created at import, so a database change could not take effect without a restart
+- `AI_SETTINGS_CACHE_TTL_SECONDS` (`30`, range 1–300) — how long each process (uvicorn worker) reuses the `ai_settings` rows it last read
+- `AI_SETTINGS_MAX_STALE_SECONDS` (`300`, range 1–3600, and never below `AI_SETTINGS_CACHE_TTL_SECONDS`; the app refuses to boot otherwise) — when a read of `ai_settings` fails, how old the cached rows may be and still be used; past this, scans return `503 ai_unavailable`
+- `SCAN_MAX_TOKENS` (`2048`, range 1–16384) and `SCAN_TIMEOUT_SECONDS` (`45`, range 1–120) — reply cap and timeout for the vision call (the timeout is also the gateway's overall deadline for the whole provider call; past it the scan is refunded with `503 scan_unavailable`)
+- `SCAN_MODEL` (`gpt-4o-mini`) and `SCAN_ENHANCED_MODEL` (`gpt-4o`) — must be an allowed OpenAI model (list in `backend/app/ai/models_allowlist.py`); the app names the env var and refuses to boot otherwise. This is deliberate (#552): a bad value stops the whole API, not just scans. Before removing a model from the allowlist, check that no environment (prod, dev, preview) still sets it, and that no `ai_settings` row still names it (`python -m app.ai.settings list`; a row naming a removed model is ignored with a warning)
+
+AI settings (`ai_settings` table; no release or restart needed):
+
+- Keys: `scan.standard.enabled` (all scans), `scan.enhanced.enabled`, `scan.standard.provider`, `scan.enhanced.provider` (`openai` or `anthropic`), `scan.standard.model`, `scan.enhanced.model`, `scan.max_image_pixels` (1,000,000–100,000,000). Models must be in the provider's allow-list.
+- **Switching a scan feature to Claude (#532).** Set `ANTHROPIC_API_KEY` on the service first, then run `python -m app.ai.settings switch scan.standard anthropic --by <you>` (and/or `scan.enhanced`). It writes the provider and model rows together; the model defaults to the registry's per-provider model (`claude-haiku-5-5` for standard, `claude-sonnet-5-5` for enhanced; `--model` picks another allow-listed Anthropic model). Every process picks it up within `AI_SETTINGS_CACHE_TTL_SECONDS`. Roll back with `python -m app.ai.settings switch scan.standard openai --by <you>`. `set scan.standard.provider anthropic` on its own is refused, because the stored model is still an OpenAI one. Check with `python -m app.ai.settings list`, then confirm a new `ai_usage` row with `model = 'claude-haiku-5-5'` after a scan. **Production stays on `openai`** until the data-handling question (#549) and the owner actions in #542 are resolved; staging may switch now.
+- Quota keys (#528): `scan.global_daily_limit` (1–1,000,000; `503 scan_capacity` when today's scans across all users reach it), `quota.<tier>.found_daily` and `quota.<tier>.no_match_daily` (0–1000 per user per UTC day, #577). Every scan needs a found unit; a standard scan that finds no book moves to no-match while it has room. Standard and enhanced scans share the found allowance. `quota.free.daily` and `quota.premium.daily` are retired (#577): the CLI refuses them, they are not seeded and a stored row is ignored, except that an operator-set value (a row not written by `seed`) is carried over to `found_daily` when no `found_daily` row exists yet (at the first boot of #577 the seed writes it). Remove the old rows with a later contract migration. There is no monthly limit (#582): `quota.free.monthly`, `quota.premium.monthly` and `quota.premium.enhanced_monthly` are retired, the CLI refuses them as unknown keys and stored rows are ignored. What bounds a month: each user's daily limit, `scan.global_daily_limit`, the daily cost ceiling below (a worst-case month for Free is about 31 × it) and the monthly spend limit in the provider console (#542; keep it set). Monthly spend and call counts are in `ai_usage_daily`. These are the dials to cut spend quickly, e.g. `python -m app.ai.settings set quota.free.found_daily 0 --by <you>`. An invalid stored value is ignored with a warning and the env default is used.
+- Cost ceiling (#531): `breaker.free_daily_ceiling_micros` (0–1,000,000,000 micro-dollars per UTC day; default $10). Once today's reserved plus settled AI spend (all tiers) would pass it, Free scans get `503 ai_budget_reached` until UTC midnight; Premium scans continue within their own allowances and the count cap. Sentry gets one warning per day at 50, 75 and 90 % of it (fingerprint `ai-breaker:<day>:<pct>`, sent as `["ai-breaker", "<day>", "<pct>"]`; thresholds fixed in code). Check that the Sentry project has an alert rule that notifies on these events before relying on them. E.g. `python -m app.ai.settings set breaker.free_daily_ceiling_micros 0 --by <you>` pauses Free scans at once. Today's totals are in the `ai_spend_daily` row for the UTC date.
+- Enhanced scans (#533): Premium-only, limited by the shared daily allowance (no enhanced monthly allowance since #582; #583 adds a daily Sonnet counter). `scan.enhanced.zero_result_threshold` (0–20, default 3), `scan.enhanced.zero_result_window_hours` (1–720, default 24) and `scan.enhanced.zero_result_action` (`charge`, default, or `throttle`). An enhanced scan that finds no books is recorded while the user has fewer than the threshold such recorded scans in the window; after that nothing more is recorded (`charge`) or enhanced scans are refused with `429 enhanced_throttled` until the window clears (`throttle`). Every enhanced scan uses the daily unit, empty or not. Threshold `0` records nothing (`charge`) or refuses every enhanced scan (`throttle`). The three zero-result keys have no env seed (code defaults). Sentry gets at most one warning per user per window when they reach the threshold (fingerprint `["ai-enhanced-zero-results", "<action>"]`, no user data); add an alert rule for it. E.g. `python -m app.ai.settings set scan.enhanced.zero_result_action throttle --by <you>`.
+- Scan records (#585): `scan_records.enabled` (bool, default `true`; the kill switch: `false` stops both lookups and saves, so every scan takes the normal, charged path and repeats are no longer free; an invalid value counts as disabled), `scan_records.retention_days` (1–30, default 30; days a record is kept and served; a lowered value applies to reads at once and to the next daily purge) and `scan_records.max_per_user` (1–10,000, default 500; oldest evicted first). No env seed (code defaults). E.g. `python -m app.ai.settings set scan_records.enabled false --by <you>`. Old records are purged by the daily cleanup task. To watch failure rates, count the `scan_record event=…` log lines (e.g. `event=saved … enrich_done=false` for records left without an enrichment step, `event=repeat … in_library=0` for repeats whose books are not in the library, and `attempt=N`, #603, for which try of the request it was: 1 first, 2–6 the app's retries); they carry no user id or content. The retry rate of all scans is counted from `ai_usage.attempt` (one row per request that reached the provider or was a repeat).
+- Request limit (#586): `scan.requests_per_user_daily` (1–10,000, default 100): `/scan` requests per user per UTC day, new photo or repeat, allowed or refused later. At the limit the user gets `429 scan_requests_daily_limit` until UTC midnight. Raise it for a user base that legitimately scans more; it is an abuse control, not a cost limit (the found allowance and the global cap bound AI calls).
+- Change them from a shell with the app's `DATABASE_URL` (e.g. the Render shell): `python -m app.ai.settings list`, `python -m app.ai.settings get scan.standard.enabled`, `python -m app.ai.settings set scan.standard.enabled false --by <you>`. `set` validates against the same bounds and records `updated_at` and `updated_by` (`--by`, else `$USER`, else `cli`); a bad value exits non-zero and writes nothing. Editing the row directly in the database also works, but skips validation. An invalid provider, model or pixel cap is then ignored with a warning and the default is used; an invalid `*.enabled` value (anything but JSON `true`/`false`, e.g. `"false"`, `0` or `null`) is treated as **disabled**, with a warning.
+- Deleting an `*.enabled` row re-enables per `SCAN_ENABLED`/`SCAN_ENHANCED_ENABLED` (a missing row falls back to the env default); use `set … false` to disable.
+- The cache is per process (per uvicorn worker). A change reaches every process within `AI_SETTINGS_CACHE_TTL_SECONDS` (30 s). With two instances running (zero-downtime deploys), or several workers, they can disagree for up to that long.
+- If the table cannot be read and a process has never read it, scans return `503 ai_unavailable`. A process that has read it before keeps using the last value it read, with a warning, while that value is at most `AI_SETTINGS_MAX_STALE_SECONDS` (300 s) old; after that it logs an error and scans return `503 ai_unavailable` until a read succeeds.
 
 ### Database
 
@@ -64,6 +100,8 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 Verify the new version is live:
 ```bash
 curl https://bookshelfapi.buffingchi.com/health
+# {"status":"ok"}
+curl https://bookshelfapi.buffingchi.com/health/db
 # {"status":"ok","db":"ok"}
 ```
 
@@ -74,6 +112,8 @@ Two options:
 - **Git revert + push** — creates a new commit that undoes the change. Correct when the bad deploy succeeded but the code is bad. Slower (waits for the next deploy cycle).
 
 If a migration is the problem, the rollback deploy will re-run `alembic upgrade head` which is a no-op against the current schema. You may need an explicit `alembic downgrade -1` migration to reverse the schema change.
+
+**Rolling back past the unverified-books release (#616, migration `0016`) needs `alembic downgrade 0015` first, and that deletes data.** Users' private unverified library entries (`user_books` rows with `custom_book_id` set, and their `user_custom_books` rows) are removed by the downgrade. Do not skip it: the previous release's `UserBookRead` cannot serialise a library row whose `book` is `None`, so with those rows still in the table `GET /user-books`, `POST /wishlist` and the other endpoints that return a library entry would answer `500` for every user who has one. Run `alembic downgrade 0015` (against the production database, before or while switching traffic to the older deploy), then roll the deploy back. The entries cannot be restored by rolling forward again; take a database backup first if they matter.
 
 ## Web frontend — Render
 
@@ -180,7 +220,7 @@ See [`getting-started.md`](getting-started.md) for the full local-env setup.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Render deploy fails at `alembic upgrade head` | migration error | fix the migration, re-push; the old version keeps serving traffic |
-| `/health` returns 503 after deploy | DB unreachable | check `bookshelf-db` status in Render dashboard |
+| `/health/db` returns 503 after deploy | DB unreachable | check `bookshelf-db` status in Render dashboard |
 | Web site serving old JS | browser cached `/*` | `Cache-Control: no-cache` is set on HTML but browsers sometimes cache aggressively — hard-reload |
 | iOS build fails at `ci_post_clone.sh` | Node version mismatch (rule #12) | see `claude/ios-ci.md` |
 | Android `bundleRelease` fails with CMake error | JDK 24+ on path | `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` (rule #22, preflight in `settings.gradle`) |

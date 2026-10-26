@@ -29,16 +29,6 @@
     "tone": "neutral",
     "characterLimit": 20
   },
-  "bookCandidatePicker.noneOfThese": {
-    "description": "Button label at the bottom of the picker to dismiss without selecting any book",
-    "tone": "neutral",
-    "characterLimit": 25
-  },
-  "bookCandidatePicker.noneOfTheseA11y": {
-    "description": "Accessibility label for the none-of-these button",
-    "tone": "neutral",
-    "characterLimit": 40
-  },
   "themeToggle.toDark": {
     "description": "Accessibility label for the theme toggle button when currently in light mode",
     "tone": "neutral",
@@ -48,5 +38,176 @@
     "description": "Accessibility label for the theme toggle button when currently in dark mode",
     "tone": "neutral",
     "characterLimit": 30
+  },
+  "bookCandidatePicker.ownedSameEdition": {
+    "description": "Note on a scan or search result the user already has in this exact edition (same ISBN); the book can't be added again",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "bookCandidatePicker.ownedOtherEdition": {
+    "description": "Note on a scan or search result whose title the user already has, but in a different edition; the book can't be added again",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "bookCandidatePicker.ownedEditionUnknown": {
+    "description": "Note on a scan or search result the user already has when the edition can't be compared (no ISBN); same text as ownedSameEdition",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "bookCandidatePicker.notInCatalog": {
+    "description": "Note on a scan result that no catalog (Open Library / Google Books) matched.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "bookCandidatePicker.addYourself": {
+    "description": "Button on a scan result with no catalog match: opens a form to add the book yourself as an unverified entry.",
+    "tone": "friendly",
+    "characterLimit": 25
+  },
+  "bookCandidatePicker.addYourselfA11y": {
+    "description": "Accessibility label for the Add it yourself button. {{title}} is the book title.",
+    "tone": "neutral",
+    "characterLimit": 60,
+    "placeholders": ["{{title}}"]
+  },
+  "addUnverified.title": {
+    "description": "Header of the form for adding a book the catalog could not find.",
+    "tone": "friendly",
+    "characterLimit": 30
+  },
+  "addUnverified.intro": {
+    "description": "Explains the form: the book was not found; check the details; only the user sees it, marked Unverified.",
+    "tone": "friendly",
+    "characterLimit": 160
+  },
+  "addUnverified.titleLabel": {
+    "description": "Label of the book title field.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "addUnverified.authorLabel": {
+    "description": "Label of the author field.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "addUnverified.isbnLabel": {
+    "description": "Label of the optional ISBN field.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "addUnverified.save": {
+    "description": "Button that saves the book.",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "addUnverified.saveHint": {
+    "description": "Accessibility hint of the Save button.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "addUnverified.cancel": {
+    "description": "Button that closes the form without saving.",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "addUnverified.closeA11y": {
+    "description": "Accessibility label of the Cancel button.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "addUnverified.titleRequired": {
+    "description": "Error shown when the title field is empty.",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "addUnverified.authorRequired": {
+    "description": "Error shown when the author field is empty.",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "addUnverified.isbnInvalid": {
+    "description": "Error when the server rejects the ISBN.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "addUnverified.invalid": {
+    "description": "Error when the server rejects the details for another reason.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "addUnverified.duplicate": {
+    "description": "Error (409 unverified_duplicate): the user already added this book themselves.",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "addUnverified.limitReached": {
+    "description": "Error (409 unverified_limit_reached): the user holds the maximum number of books added themselves.",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "addUnverified.failed": {
+    "description": "Error when saving failed for an unknown reason (network, server).",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "bookCandidatePicker.selectAll": {
+    "description": "Button label that selects every book in the picker",
+    "tone": "action",
+    "characterLimit": 20
+  },
+  "bookCandidatePicker.selectAllA11y": {
+    "description": "Accessibility label for the select-all button",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "bookCandidatePicker.clearAll": {
+    "description": "Button label that clears every selected book",
+    "tone": "action",
+    "characterLimit": 20
+  },
+  "bookCandidatePicker.clearAllA11y": {
+    "description": "Accessibility label for the clear-all button",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "bookCandidatePicker.addSelected": {
+    "description": "Primary button adding the selected books to the wishlist. Plural: _one/_other (and locale categories). {{count}} is the number selected.",
+    "tone": "action",
+    "placeholders": ["{{count}}"]
+  },
+  "bookCandidatePicker.addNone": {
+    "description": "Disabled primary button text shown when no book is selected",
+    "tone": "neutral",
+    "characterLimit": 35
+  },
+  "bookCandidatePicker.enhance": {
+    "description": "Button label offering an enhanced re-scan when books seem to be missing",
+    "tone": "action",
+    "characterLimit": 45
+  },
+  "bookCandidatePicker.enhanceA11y": {
+    "description": "Accessibility label for the enhanced scan button",
+    "tone": "action",
+    "characterLimit": 45
+  },
+  "bookCandidatePicker.enhanceHint": {
+    "description": "Accessibility hint explaining that the enhanced scan uses a more powerful model and is only counted if it finds books",
+    "tone": "informative",
+    "characterLimit": 200
+  },
+  "bookCandidatePicker.enhanceCostsCredit": {
+    "description": "Caption under the enhanced scan button when the remaining count is unknown",
+    "tone": "informative",
+    "characterLimit": 60
+  },
+  "bookCandidatePicker.creditsLeft": {
+    "description": "Caption under the enhanced scan button with remaining enhanced scans. Plural: _one/_other (and locale categories). {{count}} is the number left.",
+    "tone": "informative",
+    "placeholders": ["{{count}}"]
+  },
+  "bookCandidatePicker.noCreditsLeft": {
+    "description": "Caption under the enhanced scan button when none are left",
+    "tone": "informative",
+    "characterLimit": 45
   }
 }

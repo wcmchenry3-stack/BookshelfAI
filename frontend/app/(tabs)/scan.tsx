@@ -4,10 +4,16 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useTranslation } from 'react-i18next';
 
+import { openScanQueue } from '../../lib/scanQueueNav';
 import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useBanner } from '../../hooks/useBanner';
+import { useScanUsage } from '../../hooks/useScanUsage';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { isScanningLimited } from '../../lib/scanErrors';
+import { isAwaitingRetry } from '../../lib/scanJob';
+import { ScanStatusPanel } from '../../components/ScanStatusPanel';
 
 type InputMode = 'camera' | 'search';
 type CameraFacing = 'back' | 'front';
@@ -18,7 +24,37 @@ export default function ScanScreen() {
   // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
   const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
   const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
-  const { startScan } = useScanJobs();
+  const {
+    jobs,
+    startScan,
+    resumeQueue,
+    isQueueFull,
+    pendingCount,
+    scanNotice,
+    dismissScanNotice,
+    usageRefreshKey,
+  } = useScanJobs();
+  // The enhanced re-scan offer uses `enhanced_scans_remaining` from scan
+  // responses (#582: the usage counters no longer carry an enhanced count).
+  const usage = useScanUsage(usageRefreshKey ?? 0);
+  const { isConnected } = useNetworkStatus();
+  // While scanning is limited or paused, a full queue is not "wait for uploads":
+  // the saved photos go out once scanning is available again.
+  function queueFullMessage(): string {
+    return t(isScanningLimited(scanNotice, jobs ?? []) ? 'queueFullLimited' : 'queueFull');
+  }
+  function handleRetryNotice() {
+    // Offline: keep the notice and say why nothing was sent.
+    if (!isConnected) {
+      showBanner({
+        message: t('requiresConnection', { ns: 'common' }),
+        type: 'error',
+        duration: 4000,
+      });
+      return;
+    }
+    resumeQueue?.();
+  }
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
   const [inputMode, setInputMode] = useState<InputMode>('camera');
@@ -36,6 +72,10 @@ export default function ScanScreen() {
     const file: File | undefined = e?.target?.files?.[0];
     if (!file) return;
     if (webInputRef.current) webInputRef.current.value = '';
+    if (isQueueFull) {
+      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
+      return;
+    }
 
     // On web, pass the File object URL. The ScanJobContext handles FormData.
     let uri: string;
@@ -50,6 +90,11 @@ export default function ScanScreen() {
   // Native: camera shutter — take photo, persist to document dir, start background scan.
   async function handleCapture() {
     if (!cameraRef.current || capturing) return;
+    // Check before copying to scan-queue/ so a rejected capture leaves no file behind.
+    if (isQueueFull) {
+      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
+      return;
+    }
     setCapturing(true);
     Sentry.addBreadcrumb({
       category: 'scan',
@@ -142,6 +187,10 @@ export default function ScanScreen() {
   function handleSearch() {
     const q = query.trim();
     if (!q) return;
+    if (isQueueFull) {
+      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
+      return;
+    }
     startScan('text', undefined, q);
     setQuery('');
   }
@@ -183,11 +232,70 @@ export default function ScanScreen() {
     </View>
   );
 
+  const failedCount = (jobs ?? []).filter((j) => j.status === 'failed').length;
+  const pendingBadge =
+    pendingCount > 0 ? (
+      <View
+        style={[styles.pendingBadge, { backgroundColor: theme.colors.surfaceContainerHighest }]}
+        accessibilityRole="text"
+        accessibilityLiveRegion="polite"
+      >
+        <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
+          {t('pendingUploads', { count: pendingCount })}
+        </Text>
+        <Pressable
+          onPress={openScanQueue}
+          style={styles.sendNow}
+          accessibilityRole="button"
+          accessibilityLabel={t('viewQueue')}
+        >
+          <Text style={[styles.sendNowText, { color: activeColor }]}>{t('viewQueue')}</Text>
+        </Pressable>
+        {isConnected ? (
+          <Pressable
+            onPress={handleRetryNotice}
+            style={styles.sendNow}
+            accessibilityRole="button"
+            accessibilityLabel={t('sendPendingNow')}
+          >
+            <Text style={[styles.sendNowText, { color: activeColor }]}>{t('sendPendingNow')}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    ) : failedCount > 0 ? (
+      // Only failed scans are left: still a way into the queue (#605).
+      <Pressable
+        onPress={openScanQueue}
+        style={[styles.sendNow, styles.failedLink]}
+        accessibilityRole="button"
+        accessibilityLabel={t('viewQueueFailed', { count: failedCount })}
+      >
+        <Text style={[styles.sendNowText, { color: activeColor }]}>
+          {t('viewQueueFailed', { count: failedCount })}
+        </Text>
+      </Pressable>
+    ) : null;
+
+  const statusPanel = (
+    <ScanStatusPanel
+      usage={usage}
+      notice={scanNotice ?? null}
+      onDismissNotice={dismissScanNotice ?? (() => {})}
+      // No "Try again" while a photo waits on the retry schedule (#604): the
+      // queue waits for that photo's next attempt, so it would send nothing.
+      onRetryNotice={
+        pendingCount > 0 && !(jobs ?? []).some(isAwaitingRetry) ? handleRetryNotice : undefined
+      }
+    />
+  );
+
   // ── Search mode ──────────────────────────────────────────────────────────
   if (inputMode === 'search') {
     return (
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         {modeToggle}
+        {pendingBadge}
+        {statusPanel}
         <View style={styles.searchContainer}>
           <TextInput
             style={[
@@ -236,6 +344,8 @@ export default function ScanScreen() {
         })}
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
           {modeToggle}
+          {pendingBadge}
+          {statusPanel}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
             onPress={() => webInputRef.current?.click()}
@@ -300,7 +410,12 @@ export default function ScanScreen() {
           children still receive them. Without this, iOS was swallowing the
           shutter press on top of the CameraView. */}
       <View style={styles.overlay} pointerEvents="box-none">
-        {modeToggle}
+        {/* Grouped so the badge appearing doesn't shift the space-between layout. */}
+        <View style={styles.topGroup}>
+          {modeToggle}
+          {pendingBadge}
+          {statusPanel}
+        </View>
 
         {/* Viewfinder: corner-bracket markers + scanning line */}
         <View style={styles.frameWrapper} pointerEvents="none">
@@ -329,12 +444,14 @@ export default function ScanScreen() {
 
         <View style={styles.cameraControls}>
           <Pressable
-            style={styles.flipButton}
+            style={[styles.flipButton, { backgroundColor: theme.colors.surfaceContainerHighest }]}
             onPress={() => setFacing((f) => (f === 'back' ? 'front' : 'back'))}
             accessibilityRole="button"
             accessibilityLabel={t('flipCameraA11y')}
           >
-            <Text style={styles.flipButtonText}>{t('flipCamera')}</Text>
+            <Text style={[styles.flipButtonText, { color: theme.colors.onSurface }]}>
+              {t('flipCamera')}
+            </Text>
           </Pressable>
           {/* Shutter: outer ring in activeColor, inner disc in onSurface */}
           <Pressable
@@ -375,6 +492,21 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     minHeight: 44,
     justifyContent: 'center',
+  },
+  topGroup: { alignItems: 'center' },
+  pendingBadge: {
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 8,
+    alignItems: 'center',
+  },
+  sendNow: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  failedLink: { alignSelf: 'center', marginBottom: 8 },
+  sendNowText: { fontWeight: '600', fontSize: 13 },
+  pendingBadgeText: {
+    fontWeight: '600',
+    fontSize: 12,
   },
   modeTabText: {
     fontWeight: '600',
@@ -436,10 +568,8 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   flipButtonText: {
-    color: '#fff',
     fontWeight: '600',
     fontSize: 12,
   },

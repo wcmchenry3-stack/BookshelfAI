@@ -74,24 +74,24 @@ class TestTestLoginSecurity:
         assert "allowlist" in resp.json()["detail"]
 
     def test_endpoint_not_registered_in_production(self):
-        """The /auth/test-login route must not exist in production."""
+        """The /auth/test-login route must not exist when hardened (staging/production)."""
         from pathlib import Path
 
         main_py = Path(__file__).resolve().parent.parent.parent / "app" / "main.py"
         source = main_py.read_text()
 
-        # The endpoint is inside the `if settings.environment != "production":` block
-        # Verify it's gated correctly by checking the source structure
-        assert 'settings.environment != "production"' in source
+        # The endpoint is inside the `if not settings.is_hardened:` block.
+        # Verify it's gated correctly by checking the source structure.
+        assert "not settings.is_hardened" in source
         assert "/auth/test-login" in source
 
         # Find the route decorator for test-login and verify it comes AFTER
-        # the production guard
+        # the hardened guard
         lines = source.split("\n")
         guard_line = None
         endpoint_line = None
         for i, line in enumerate(lines):
-            if guard_line is None and 'settings.environment != "production"' in line:
+            if guard_line is None and "not settings.is_hardened" in line:
                 guard_line = i
             if "@app.post" in line and "test-login" in line:
                 endpoint_line = i
@@ -100,7 +100,7 @@ class TestTestLoginSecurity:
         assert endpoint_line is not None
         assert (
             endpoint_line > guard_line
-        ), "/auth/test-login must be inside the production guard block"
+        ), "/auth/test-login must be inside the is_hardened guard block"
 
     def test_timing_safe_comparison(self):
         """Secret comparison must use hmac.compare_digest (timing-safe)."""

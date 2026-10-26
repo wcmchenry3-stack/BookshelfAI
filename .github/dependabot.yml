@@ -115,6 +115,18 @@ updates:
           - "version-update:semver-minor"
       - dependency-name: "react"
         update-types: ["version-update:semver-major"]
+      # Expo SDK 56 pins jest to ~29.7.0 and @types/jest to 29.5.14, and
+      # jest-expo@56 still depends on jest 29 packages. Bumping to jest 30
+      # fails the expo-compat check (see closed PR #441). Revisit when an
+      # Expo SDK release moves to jest 30.
+      - dependency-name: "jest"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "@types/jest"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
       # Expo SDK 56 compatibility matrix requires ~7.11.0 — block all bumps until
       # Expo explicitly supports a newer major.
       - dependency-name: "@sentry/react-native"

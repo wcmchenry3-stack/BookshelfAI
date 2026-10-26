@@ -144,5 +144,408 @@
     "description": "Label on the web camera button that opens the device camera to scan a book cover",
     "tone": "action",
     "characterLimit": 25
+  },
+  "queueFull": {
+    "description": "Error banner shown when the offline scan queue has reached its 50-scan limit and a new capture is rejected",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "pendingUploads": {
+    "description": "Badge on the scan screen showing how many scans are waiting to upload; {{count}} is a number",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "usageToday": {
+    "description": "Counter on the scan screen: scans left today (daily allowance). {{count}} is a number.",
+    "tone": "neutral",
+    "characterLimit": 45
+  },
+  "usageNoMatch": {
+    "description": "Counter on the scan screen and in Settings, under the scans-left counter (#577): how many more photos where no book could be recognised are allowed today without using a scan. {{count}} is a number.",
+    "tone": "neutral",
+    "characterLimit": 45
+  },
+  "noBooksFoundFree": {
+    "description": "Banner after a scan found no book (#577): says this photo did not use one of today's scans. Short: shown in at most two lines beside an action button, so the counters on the scan screen carry the detail.",
+    "tone": "reassuring",
+    "characterLimit": 60
+  },
+  "noBooksFoundCounted": {
+    "description": "Banner after a scan found no book (#577) when this photo did use one of today's scans. Short: shown in at most two lines beside an action button, so the counters on the scan screen carry the detail.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "dailyLimit": {
+    "description": "Shown when the daily scan limit is reached. Keep 'UTC' and keep {{time}}, the reset time in the user's local time.",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
+  "requestsDailyLimit": {
+    "description": "Shown when the user has made the most scan requests allowed today (new photos and repeats both count; #586). Different from dailyLimit. Keep {{time}}, the local time the limit resets (UTC midnight).",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "stillProcessing": {
+    "description": "Neutral message when the server is still working on the user's previous scan after silent retries.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "scanPaused": {
+    "description": "Neutral message when scanning is temporarily unavailable server-side. Not an error the user caused.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "dismissNotice": {
+    "description": "Button that dismisses the scan notice card",
+    "tone": "neutral",
+    "characterLimit": 12
+  },
+  "tryAgainNotice": {
+    "description": "Button on the scan notice card that retries the refused scan",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "queueFullLimited": {
+    "description": "Error banner when the offline queue is full while scanning is limited or paused; saved photos are sent later. No upsell.",
+    "tone": "neutral",
+    "characterLimit": 120
+  },
+  "sendPendingNow": {
+    "description": "Button next to the pending-uploads badge that sends the waiting scans now",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "enhancedRequiresPremium": {
+    "description": "Info banner when a user who is not Premium asks for an enhanced scan (enhanced scans are Premium-only). Keep 'Premium' as the product name. No upsell.",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "enhancedThrottled": {
+    "description": "Info banner when enhanced scans are paused for the user because several recent enhanced scans found no books. Keep {{time}}, the local time enhanced scans are allowed again. Not an accusation.",
+    "tone": "neutral",
+    "characterLimit": 120
+  },
+  "enhancedThrottledLater": {
+    "description": "Same as enhancedThrottled, when the time enhanced scans are allowed again is unknown.",
+    "tone": "neutral",
+    "characterLimit": 120
+  },
+  "repeatAlreadyHaveOne": {
+    "description": "Info banner (#588) when the user re-sends a photo already scanned and its one book is already in their library.",
+    "tone": "neutral",
+    "characterLimit": 50
+  },
+  "repeatAlreadyHaveMany": {
+    "description": "Info banner (#588) when the user re-sends a photo already scanned and all its books (two or more) are already in their library. No number is shown, so this is a fixed plural, not an i18next count plural.",
+    "tone": "neutral",
+    "characterLimit": 50
+  },
+  "repeatNotInLibrary": {
+    "description": "Banner (#588) for a photo scanned before whose books are not all in the library (rejected, deleted or not saved). Ends with a question; the Re-add button sits beside it. Re-adding uses the saved result.",
+    "tone": "friendly",
+    "characterLimit": 90
+  },
+  "repeatReAdd": {
+    "description": "Button on the repeat-photo banner (#588): opens the earlier results so the user can add the books again. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "repeatNoMatch": {
+    "description": "Banner (#588) for a photo scanned before in which no book was found. Suggests a clearer photo or another angle. The user is not charged, but do not mention scans or charges.",
+    "tone": "reassuring",
+    "characterLimit": 120
+  },
+  "scanFailedFinal": {
+    "description": "Error banner (#604) when a photo still failed after every automatic retry because the scanner was unavailable. Tells the user to tap the banner's Retry button (scanFailedFinalRetry; use the same word) to try again. Do not mention deleting or the queue: the banner's View queue button (scanFailedFinalViewQueue) covers that. Not the user's fault.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "scanFailedFinalRetry": {
+    "description": "Button on the final scan failure banner (#604): sends the photo again now and restarts its automatic retries. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queueTitle": {
+    "description": "Title of the scan queue screen: lists photos waiting to be scanned and photos that failed",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueBack": {
+    "description": "Button at the top of the scan queue screen that goes back to the previous screen. One short word.",
+    "tone": "neutral",
+    "characterLimit": 14
+  },
+  "queueWaitingTitle": {
+    "description": "Section heading on the scan queue screen for photos waiting to be scanned",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueWaitingEmpty": {
+    "description": "Empty state under the waiting section of the scan queue screen when no photo is waiting",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "queueFailedTitle": {
+    "description": "Section heading on the scan queue screen for scans that failed",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueFailedEmpty": {
+    "description": "Empty state under the failed section of the scan queue screen when no scan has failed",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "queueFailedNote": {
+    "description": "Note under the failed-scans heading: failed scans stay on the phone for 7 days and are then removed automatically. Keep the number 7.",
+    "tone": "neutral",
+    "characterLimit": 64
+  },
+  "queueStateWaiting": {
+    "description": "State of a queued photo that cannot be sent yet because the phone is offline or the scanner is paused",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "queueStateNextTry": {
+    "description": "State of a queued photo that will be tried again automatically; {{time}} is a local time of day such as 3:45 PM",
+    "tone": "neutral",
+    "characterLimit": 36
+  },
+  "queueStateSending": {
+    "description": "State of a queued photo that is being sent to be scanned right now",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "queueFailedAt": {
+    "description": "Line on a failed scan saying when it failed; {{time}} is a local date and time such as Oct 22, 2026, 3:45 PM",
+    "tone": "neutral",
+    "characterLimit": 44
+  },
+  "queueRetry": {
+    "description": "Button on a failed scan: sends the photo again now and restarts its automatic retries. Use the same word as scanFailedFinalRetry. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queueDelete": {
+    "description": "Button on a failed scan: deletes the scan and its photo from the phone. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queuePhotoA11y": {
+    "description": "Screen reader label for the thumbnail of a photo in the scan queue",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "viewQueue": {
+    "description": "Button on the scan screen's pending-uploads badge that opens the scan queue screen",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "scanFailedFinalViewQueue": {
+    "description": "Second button on the final scan failure banner (#604): opens the scan queue screen where the failed photo can be retried or deleted. Same wording as viewQueue.",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "queueDeleteConfirm": {
+    "description": "Confirmation shown before a failed scan is deleted from the scan queue screen. Says the scan will be deleted and its photo removed (permanent). Two short sentences, a question then a statement.",
+    "tone": "neutral",
+    "characterLimit": 80
+  },
+  "queueDeleteCancel": {
+    "description": "Cancel button in the delete-scan confirmation. One short word.",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "queueRetryA11y": {
+    "description": "Screen-reader label for a failed scan's Retry button. {{time}} is the date and time the scan failed, so each row's button is distinct. Use the same word for retry as queueRetry.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "queueDeleteA11y": {
+    "description": "Screen-reader label for a failed scan's Delete button. {{time}} is the date and time the scan failed, so each row's button is distinct. Use the same word for delete as queueDelete.",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "queueRowA11y": {
+    "description": "Screen-reader label that reads a queue row's photo and state as one item. {{what}} is the photo label or the search text; {{state}} is the row's state text. Keep the placeholders and the colon-style separator.",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
+  "viewQueueFailed": {
+    "description": "Link on the scan screen, shown when only failed scans exist (nothing waiting), that opens the scan queue screen. {{count}} is the number of failed scans.",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "alreadyInLibraryMessage": {
+    "description": "Banner after adding one book that was already in the user's library, so nothing was added. {{title}} is the book title.",
+    "tone": "friendly",
+    "placeholders": ["{{title}}"]
+  },
+  "alreadyInLibraryManyMessage": {
+    "description": "Banner after adding several books that were all already in the user's library. {{count}} is the number of books (2 or more).",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{count}}"]
+  },
+  "addedAndOwnedMessage": {
+    "description": "Banner after adding books when some were added and the rest were already in the user's library. {{added}} and {{owned}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{added}}", "{{owned}}"]
+  },
+  "addedSomeOwnedMessage": {
+    "description": "Error banner after adding books when some could not be saved and some were already in the user's library. {{added}} were added now, {{owned}} were already in the library, {{failed}} failed and stay in the list to retry with the Add button.",
+    "tone": "friendly",
+    "characterLimit": 110,
+    "placeholders": ["{{added}}", "{{owned}}", "{{failed}}"]
+  },
+  "notInCatalogMessage": {
+    "description": "Banner when the server refuses to add one book because it has no catalog match (422 book_not_in_catalog). Suggests searching by title or adding it yourself (the banner's Add it yourself action, #616).",
+    "tone": "friendly",
+    "characterLimit": 130
+  },
+  "notInCatalogManyMessage": {
+    "description": "Same as notInCatalogMessage for several books. {{count}} is the number of books (2 or more).",
+    "tone": "friendly",
+    "characterLimit": 150,
+    "placeholders": ["{{count}}"]
+  },
+  "catalogTokenInvalidMessage": {
+    "description": "Banner when the server refuses to add one book because its scan or search result is stale (422 catalog_token_invalid).",
+    "tone": "friendly",
+    "characterLimit": 90
+  },
+  "catalogTokenInvalidManyMessage": {
+    "description": "Same as catalogTokenInvalidMessage for several results. {{count}} is the number (2 or more).",
+    "tone": "friendly",
+    "characterLimit": 100,
+    "placeholders": ["{{count}}"]
+  },
+  "notSavedSummaryMessage": {
+    "description": "First sentence of the error banner when some books could not be saved for a specific reason and none were already owned. {{added}} added, {{notSaved}} not saved.",
+    "tone": "friendly",
+    "characterLimit": 60,
+    "placeholders": ["{{added}}", "{{notSaved}}"]
+  },
+  "notSavedSummaryOwnedMessage": {
+    "description": "Same as notSavedSummaryMessage when some books were already in the library. {{owned}} is that count.",
+    "tone": "friendly",
+    "characterLimit": 90,
+    "placeholders": ["{{added}}", "{{owned}}", "{{notSaved}}"]
+  },
+  "reasonNotInCatalog": {
+    "description": "Sentence after the summary: {{count}} books are not in the catalog; suggests searching by title.",
+    "tone": "friendly",
+    "characterLimit": 70,
+    "placeholders": ["{{count}}"]
+  },
+  "reasonTokenInvalid": {
+    "description": "Sentence after the summary: {{count}} results are out of date; suggests scanning or searching again.",
+    "tone": "friendly",
+    "characterLimit": 60,
+    "placeholders": ["{{count}}"]
+  },
+  "retryOthersHint": {
+    "description": "Sentence after the reasons: books that failed for other reasons stay in the list; Add retries them.",
+    "tone": "friendly",
+    "characterLimit": 60
+  },
+  "notSavedOwnedOnlyMessage": {
+    "description": "Error banner summary when no book was added, some were already in the library and some could not be saved. {{owned}} and {{notSaved}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 80,
+    "placeholders": ["{{owned}}", "{{notSaved}}"]
+  },
+  "notSavedOnlyMessage": {
+    "description": "Error banner summary when no book was added and none were already owned. {{notSaved}} is the count of books not saved.",
+    "tone": "friendly",
+    "characterLimit": 40,
+    "placeholders": ["{{notSaved}}"]
+  },
+  "ownedNotSavedRetryMessage": {
+    "description": "Error banner when no book was added, some were already in the library and some failed and stay to retry with Add. {{owned}} and {{failed}} are counts.",
+    "tone": "friendly",
+    "characterLimit": 110,
+    "placeholders": ["{{owned}}", "{{failed}}"]
+  },
+  "addItYourself": {
+    "description": "Action button on the banner shown when a book is not in the catalog: opens the Add it yourself form.",
+    "tone": "friendly",
+    "characterLimit": 25
+  },
+  "unverifiedSavedMessage": {
+    "description": "Banner after the user saved a book themselves. {{title}} is the book title.",
+    "tone": "friendly",
+    "characterLimit": 100,
+    "placeholders": ["{{title}}"]
+  },
+  "bookFound": {
+    "description": "Notice that a book was found in the background. {{title}} is dynamic.",
+    "tone": "neutral",
+    "placeholders": ["{{title}}"]
+  },
+  "viewResults": {
+    "description": "Short button label opening the scan results",
+    "tone": "action",
+    "characterLimit": 12
+  },
+  "retryNow": {
+    "description": "Short button label retrying a failed or paused scan now",
+    "tone": "action",
+    "characterLimit": 15
+  },
+  "saveForLater": {
+    "description": "Button label saving the photo to the scan queue for later",
+    "tone": "action",
+    "characterLimit": 22
+  },
+  "savedOffline": {
+    "description": "Notice that the photo was saved because the device is offline",
+    "tone": "reassuring",
+    "characterLimit": 50
+  },
+  "maxRetries": {
+    "description": "Notice that the scan hit its retry limit and was saved for later",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "noBooksFound": {
+    "description": "Short notice that a scan found no books",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "booksFound": {
+    "description": "Notice with the number of books a scan found. Plural: _one/_other (and locale categories). {{count}} is the number.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "addedManyMessage": {
+    "description": "Banner after adding several books to the wishlist. {{count}} is the number.",
+    "tone": "positive",
+    "placeholders": ["{{count}}"]
+  },
+  "addedSomeMessage": {
+    "description": "Banner after adding only some of the books; tells the user to tap Add to retry the rest. {{added}} and {{total}} are numbers.",
+    "tone": "neutral",
+    "placeholders": ["{{added}}", "{{total}}"]
+  },
+  "tryEnhanced": {
+    "description": "Button label offering an enhanced scan after a scan found nothing",
+    "tone": "action",
+    "characterLimit": 40
+  },
+  "enhancedNoBooksFound": {
+    "description": "Message that the enhanced scan also found no books",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "enhancedNoNewBooks": {
+    "description": "Message that the enhanced scan found no more books and the earlier results are shown",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
+  "enhancedFailed": {
+    "description": "Message that the enhanced scan failed and the earlier results are shown",
+    "tone": "neutral",
+    "characterLimit": 80
   }
 }

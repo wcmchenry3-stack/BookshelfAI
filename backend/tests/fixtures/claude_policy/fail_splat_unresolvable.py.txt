@@ -1,0 +1,7 @@
+RETRYABLE = {429, 500, 503, 529}
+RETRY_HEADER = "retry-after"
+
+
+async def call(client, request):
+    message = await client.messages.create(**request)
+    return message.stop_reason == "refusal"
