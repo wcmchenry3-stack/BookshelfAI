@@ -4,7 +4,13 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import { InAppBanner } from '../../components/InAppBanner';
 import { BannerProvider } from '../../contexts/BannerContext';
 import { useBanner } from '../../hooks/useBanner';
-import { Pressable, Text } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const mockOnSuccess = '#A1B2C3';
+const mockOnError = '#D1E2F3';
+const mockOnPrimary = '#E4F5A6';
 
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
@@ -18,6 +24,9 @@ jest.mock('../../hooks/useTheme', () => ({
         primary: '#007AFF',
         success: '#16A34A',
         error: '#DC2626',
+        onSuccess: mockOnSuccess,
+        onError: mockOnError,
+        onPrimary: mockOnPrimary,
       },
       typography: { fontSizeBase: 16 },
     },
@@ -160,6 +169,56 @@ describe('InAppBanner', () => {
     // The action is still there to use.
     await fireEvent.press(getByLabelText('Add it yourself'));
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  describe('action button styling (#632)', () => {
+    const cases: { type: 'success' | 'error' | 'info'; expected: string }[] = [
+      { type: 'success', expected: mockOnSuccess },
+      { type: 'error', expected: mockOnError },
+      { type: 'info', expected: mockOnPrimary },
+    ];
+
+    it.each(cases)(
+      'styles the action as a themed outline for type $type',
+      async ({ type, expected }) => {
+        const { getByTestId, getByLabelText } = await renderWithBanner({
+          message: 'Message',
+          type,
+          actions: [{ label: 'Act', onPress: jest.fn() }],
+        });
+        await fireEvent.press(getByTestId('trigger'));
+        const style = StyleSheet.flatten(getByLabelText('Act').props.style);
+
+        expect(style.borderColor).toBe(expected);
+        expect(style.borderWidth).toBe(1);
+        expect(style.backgroundColor).toBeUndefined();
+        expect(style.minWidth).toBe(44);
+        expect(style.minHeight).toBe(44);
+      }
+    );
+
+    it('keeps the accessibility role and label on the action button', async () => {
+      const { getByTestId, getByLabelText } = await renderWithBanner({
+        message: 'Message',
+        type: 'error',
+        actions: [{ label: 'Retry', onPress: jest.fn() }],
+      });
+      await fireEvent.press(getByTestId('trigger'));
+      const button = getByLabelText('Retry');
+      expect(button.props.accessibilityRole).toBe('button');
+      expect(button.props.accessibilityLabel).toBe('Retry');
+    });
+
+    it('contains no colour literal in InAppBanner.tsx', () => {
+      const source = fs.readFileSync(
+        path.join(__dirname, '../../components/InAppBanner.tsx'),
+        'utf8'
+      );
+      // rgb()/rgba() calls, and hex colours inside string literals only, so an
+      // issue reference in a comment such as (#632) is not a false positive.
+      expect(source).not.toMatch(/rgba?\(/);
+      expect(source).not.toMatch(/['"`]#[0-9a-fA-F]{3,8}['"`]/);
+    });
   });
 
   it('dismisses on tap', async () => {
