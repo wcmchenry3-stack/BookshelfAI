@@ -163,21 +163,26 @@ def cap_micros_from_usd(cap_usd: float) -> int:
 class SpendCap:
     """Hard cap. ``spent`` is the priced usage of answered calls; ``assumed``
     is the bound charged for each errored call (a timeout or dropped
-    connection may still have been billed). A call is only made when
-    ``spent + assumed + its bound <= cap``. ``estimate`` is the worst-case
-    bound for any image (reported); ``max_bound`` the largest bound a call
-    was actually checked against."""
+    connection may still have been billed). ``reserved`` holds the bound of
+    each call in flight: it is reserved BEFORE the provider is awaited and
+    settled when the call returns (replaced by the real cost, or moved to
+    ``assumed`` for an error); a call interrupted mid-await (Ctrl-C,
+    cancellation) keeps its reservation, since it may have been billed. A
+    call is only made when ``spent + assumed + reserved + its bound <= cap``.
+    ``estimate`` is the worst-case bound for any image (reported);
+    ``max_bound`` the largest bound a call was actually checked against."""
 
     cap: int
     estimate: int
     spent: int = 0
     assumed: int = 0
+    reserved: int = 0
     max_bound: int = 0
     stopped: bool = False
 
     @property
     def total(self) -> int:
-        return self.spent + self.assumed
+        return self.spent + self.assumed + self.reserved
 
     def allows(self, bound: int) -> bool:
         return self.total + bound <= self.cap
@@ -269,6 +274,7 @@ def build_report(
     scores: list[ImageScore],
     invalid_images: int,
     unreadable: int,
+    interrupted: int,
     cap: SpendCap,
     aborted: str | None,
     started_at: datetime,
@@ -276,7 +282,7 @@ def build_report(
     """The aggregate report. Counts, rates, tokens, cost and the run's
     settings only: no image, EXIF, title, author, case id, object key,
     bucket or endpoint. ``scores[i]`` belongs to ``records[i]``."""
-    attempted = len(records)
+    attempted = len(records)  # calls that returned (answered or errored)
     outcomes = Counter(r.outcome for r in records)
     reported = Counter(r.reported for r in records)
     answered = [r for r in records if r.outcome != "error"]
@@ -302,10 +308,15 @@ def build_report(
             "books_total": books_total,
         },
         "run": {
-            "cases_attempted": attempted,
+            # Every call made, including one interrupted mid-await; the
+            # outcome rates below are over the calls that returned.
+            "cases_attempted": attempted + interrupted,
             "cases_invalid_image": invalid_images,
             "cases_unreadable": unreadable,
-            "cases_not_run": cases_total - attempted - invalid_images - unreadable,
+            "cases_not_run": (
+                cases_total - attempted - interrupted - invalid_images - unreadable
+            ),
+            "calls_interrupted": interrupted,
             "calls_answered": len(answered),
             "calls_errored": outcomes.get("error", 0),
             "error_types": dict(sorted(errors.items())),
@@ -361,6 +372,7 @@ def build_report(
             "worst_case_call_bound_usd": _usd(cap.estimate),
             "largest_call_bound_used_usd": _usd(cap.max_bound),
             "assumed_for_errored_calls_usd": _usd(cap.assumed),
+            "reserved_for_interrupted_calls_usd": _usd(cap.reserved),
             "counted_usd": _usd(cap.total),
             "stopped_by_cap": cap.stopped,
         },
@@ -406,6 +418,7 @@ class EvalRun:
         self.scores: list[ImageScore] = []
         self.invalid_images = 0
         self.unreadable = 0
+        self.interrupted = 0
         self.aborted: str | None = None
         self.manifest: Manifest | None = None
 
@@ -422,6 +435,7 @@ class EvalRun:
             scores=self.scores,
             invalid_images=self.invalid_images,
             unreadable=self.unreadable,
+            interrupted=self.interrupted,
             cap=self.cap,
             aborted=self.aborted,
             started_at=self.started_at,
@@ -487,7 +501,17 @@ class EvalRun:
                     )
                     break
                 cap.max_bound = max(cap.max_bound, bound)
-                record = await call_once(provider, spec, image_bytes, self.clock)
+                # Reserve the bound before awaiting the provider, so a call
+                # interrupted mid-await (Ctrl-C, cancellation) is still counted.
+                cap.reserved += bound
+                try:
+                    record = await call_once(provider, spec, image_bytes, self.clock)
+                except BaseException:
+                    # KeyboardInterrupt, cancellation: the call may have been
+                    # billed, so its reservation stays in the counted spend.
+                    self.interrupted += 1
+                    raise
+                cap.reserved -= bound
                 if record.outcome == "error":
                     cap.assumed += bound
                     consecutive += 1

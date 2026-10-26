@@ -143,9 +143,13 @@ dimensions (`ai_scan/image_tokens.py`):
 plus 2,000 prompt tokens, all at the model's highest input rate, plus a full
 `max_tokens` reply at the output rate (so a larger `SCAN_MAX_TOKENS` raises
 the bound), and never below the registry's `est_cost_ceiling_micros`. An
-allow-listed model with no image-token rule is refused. An answered call
-adds its real cost; an errored call adds its bound (a timeout may still have
-been billed). The adapters keep their own retry and backoff on 429 and 5xx,
+allow-listed model with no image-token rule is refused. Each call's bound is
+reserved in the counted spend BEFORE the provider is awaited; when the call
+returns, an answered call's reservation is replaced by its real cost and an
+errored call keeps its bound (a timeout may still have been billed). A call
+interrupted mid-await (Ctrl-C, cancellation) also keeps its bound, and is
+counted in `run.calls_interrupted` and
+`spend_cap.reserved_for_interrupted_calls_usd`. The adapters keep their own retry and backoff on 429 and 5xx,
 which are not billed.
 
 A run that stops early (5 failed cases in a row, an R2 or disk error, an

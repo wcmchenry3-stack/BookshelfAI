@@ -614,7 +614,8 @@ def test_ctrl_c_still_writes_the_partial_report(tmp_path, capsys):
     assert code == 130
     report = json.loads(out.read_text())
     assert report["run"]["aborted"] == "interrupted"
-    assert report["run"]["cases_attempted"] == 1
+    assert report["run"]["cases_attempted"] == 2  # 1 answered + 1 interrupted
+    assert report["run"]["calls_interrupted"] == 1
     assert report["cost"]["total_usd"] > 0
     assert "interrupted" in capsys.readouterr().err
 
@@ -743,3 +744,78 @@ def test_fixture_restores_the_eval_logger_level():
 
     assert "eval.ai_scan" in f.LOGGERS_TO_RESTORE
     assert logging.getLogger("eval.ai_scan") is cli.logger
+
+
+# --- Calls interrupted mid-await keep their reservation (Codex round 2) -------------
+
+
+def _bound():
+    """The bound of one call on the fakes' 64 x 48 photo (normalisation keeps
+    that size)."""
+    return runner.estimate_call_micros(HAIKU, 64, 48)
+
+
+class _InterruptFirst:
+    def __init__(self, spec):
+        pass
+
+    async def identify(self, _img):
+        import anyio
+
+        await anyio.lowlevel.checkpoint()  # mid-await
+        raise KeyboardInterrupt
+
+
+def test_ctrl_c_during_the_first_call_counts_its_bound(tmp_path):
+    ds, _ = f.dataset(f.objects_for([f.case(1), f.case(2)]))
+    out = tmp_path / "report.json"
+    with (
+        patch.object(settings, "anthropic_api_key", "test-key"),
+        patch.object(gateway, "AnthropicVisionProvider", _InterruptFirst),
+    ):
+        code = cli.main(_cli_args(out), dataset=ds)
+    assert code == 130
+    report = json.loads(out.read_text())
+    assert report["run"]["calls_interrupted"] == 1
+    assert report["run"]["cases_attempted"] == 1
+    assert report["run"]["cases_not_run"] == 1
+    cap = report["spend_cap"]
+    assert cap["counted_usd"] == pytest.approx(_bound() / 1e6)
+    assert cap["reserved_for_interrupted_calls_usd"] == pytest.approx(_bound() / 1e6)
+    assert report["cost"]["total_usd"] == 0
+
+
+def test_cancellation_during_a_call_counts_its_bound():
+    import anyio
+
+    class Slow:
+        async def identify(self, _img):
+            await anyio.sleep(30)
+
+    ds, _ = f.dataset(f.objects_for([f.case(1), f.case(2)]))
+    run = runner.EvalRun(HAIKU, ds, cap_usd=1.0, provider_factory=lambda _s: Slow())
+
+    async def go():
+        with anyio.move_on_after(0.2):
+            await run.execute()
+
+    anyio.run(go)
+    report = run.report()
+    assert report["run"]["calls_interrupted"] == 1
+    assert report["spend_cap"]["counted_usd"] == pytest.approx(_bound() / 1e6)
+    assert report["run"]["calls_answered"] == 0
+
+
+def test_reservation_is_replaced_by_the_real_cost():
+    report, _, _ = _run([_haiku_result(10), _haiku_result(10)], [f.case(1), f.case(2)])
+    cap = report["spend_cap"]
+    assert cap["reserved_for_interrupted_calls_usd"] == 0
+    assert report["run"]["calls_interrupted"] == 0
+    assert cap["counted_usd"] == report["cost"]["total_usd"]
+    assert cap["counted_usd"] < _bound() / 1e6
+
+
+def test_cap_check_includes_reservations():
+    cap = runner.SpendCap(cap=100, estimate=10, spent=50, assumed=20, reserved=25)
+    assert cap.total == 95
+    assert cap.allows(5) and not cap.allows(6)
