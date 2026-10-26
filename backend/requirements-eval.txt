@@ -5,7 +5,7 @@
 # added (boto3 / botocore 1.43.111: 2026-10-09; s3transfer 0.19.2:
 # 2026-07-22; jmespath 1.0.1: 2022-06-17).
 -r requirements.txt
-boto3==1.43.111
-botocore==1.43.111
-s3transfer==0.19.2
-jmespath==1.0.1
+boto3==1.43.118
+botocore==1.43.118
+s3transfer==0.19.3
+jmespath==1.1.0

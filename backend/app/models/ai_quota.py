@@ -81,20 +81,13 @@ class AIInflight(Base):
     lease_expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    # Which scan units this lease's holder took (#590). Each flag is set in
+    # Whether this lease's holder took its scan unit (#590). The flag is set in
     # the same transaction as its ai_quota increment and cleared in the same
     # transaction as its give-back, so a commit whose acknowledgement was lost
     # can be told apart afterwards and a unit is never given back twice. A
-    # takeover of an expired lease resets them (they belong to the new lease).
-    # Since #582 only daily_taken is used: there is no monthly or enhanced
-    # monthly unit, so monthly_taken and enhanced_taken are never set (kept
-    # until a contract migration drops them; a takeover still clears them).
+    # takeover of an expired lease resets it (it belongs to the new lease).
+    # Only the daily unit exists: there is no monthly or enhanced monthly unit
+    # (#582; the retired columns were dropped by migration 0018, #594).
     daily_taken: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=false()
-    )
-    monthly_taken: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=false()
-    )
-    enhanced_taken: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )

@@ -79,8 +79,7 @@ carried, so the new default applies (Premium: 30 before, 5 now). Once a
 and ``quota.premium.enhanced_monthly`` are retired (:data:`RETIRED_KEYS`):
 there is no monthly limit. The CLI rejects them as unknown keys, seeding no
 longer writes them, and a row still stored for one is ignored on read
-(without a warning). The rows are deleted by a later contract migration,
-once no running release reads them.
+(without a warning). Migration 0018 (#594) deleted the stored rows.
 
 **Seeding.** At startup :func:`seed_ai_settings_at_startup` inserts every key
 that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
@@ -218,8 +217,8 @@ SCAN_REQUESTS_PER_USER_DAILY_KEY = "scan.requests_per_user_daily"
 SCAN_REQUESTS_PER_USER_DAILY_BOUNDS = (1, 10_000)
 DEFAULT_SCAN_REQUESTS_PER_USER_DAILY = 100
 # Keys removed by #582 (no monthly limits). Unknown to the CLI and the seed;
-# a stored row is skipped on read without a warning until a contract
-# migration deletes it.
+# migration 0018 (#594) deleted the stored rows. Kept so a row restored from a
+# backup or written by an older instance is skipped on read without a warning.
 # #577 retired quota.<tier>.daily: it became quota.<tier>.found_daily (with
 # the carry-over in carried_over()).
 RETIRED_KEYS = frozenset(
