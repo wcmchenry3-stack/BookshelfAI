@@ -26,7 +26,7 @@ beforeEach(() => {
 describe('Index (root redirect)', () => {
   it('shows loading indicator while auth state resolves', async () => {
     mockUseAuth.mockReturnValue({ isAuthenticated: false, isLoading: true });
-    const { queryByTestId, UNSAFE_queryByType } = await render(<Index />);
+    const { queryByTestId } = await render(<Index />);
     // Should NOT redirect while loading
     expect(queryByTestId('redirect')).toBeNull();
   });
