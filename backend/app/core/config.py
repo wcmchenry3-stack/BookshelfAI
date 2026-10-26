@@ -1,9 +1,15 @@
+import os
 import re
 from typing import Literal
 from urllib.parse import urlsplit
 
+from dotenv import dotenv_values
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from app.ai.models_allowlist import (
     ALLOWED_MODELS,
@@ -30,12 +36,96 @@ _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _PRINTABLE_ASCII_PATTERN = re.compile(r"[\x20-\x7e]+")
 
 
+# Settings where a blank value is NOT treated as unset (#648). Everywhere else a
+# blank env var means "not set, use the default" (env_ignore_empty). These two
+# have defaults that would silently change security posture if a blank value
+# fell back to them: a blank ENVIRONMENT used to mean "hardened" (anything but
+# development/test), and the default is "development"; TRUSTED_HOSTS defaults
+# to ["*"]. So a blank value stays a hard boot error.
+_BLANK_IS_ERROR = ("ENVIRONMENT", "TRUSTED_HOSTS")
+
+
+class BlankSettingError(ValueError):
+    """A setting that must not be blank is set to a blank value."""
+
+
+class _BlankGuardSource(PydanticBaseSettingsSource):
+    """Raises when a variable in _BLANK_IS_ERROR is present but blank (empty or
+    whitespace only) in the process environment or in the .env file(s).
+
+    env_ignore_empty drops blanks before field validators run, so they have to
+    be detected on the raw sources. Contributes no values itself.
+    """
+
+    def __init__(self, settings_cls, env_files) -> None:
+        super().__init__(settings_cls)
+        self._env_files = env_files
+
+    def get_field_value(self, field, field_name):  # pragma: no cover - unused
+        return None, field_name, False
+
+    def __call__(self) -> dict:
+        blank: list[str] = []
+        raw: list[dict] = [dict(os.environ)]
+        for path in self._env_files:
+            try:
+                raw.append(dict(dotenv_values(path, encoding="utf-8")))
+            except OSError:  # unreadable file: the normal source reports it
+                continue
+        for name in _BLANK_IS_ERROR:
+            for source in raw:
+                for key, value in source.items():
+                    if (
+                        key.upper() == name
+                        and (value is None or not value.strip())
+                        and name not in blank
+                    ):
+                        blank.append(name)
+        if blank:
+            raise BlankSettingError(
+                f"{', '.join(blank)} must not be blank: unset it to use the "
+                "default, or give it a value"
+            )
+        return {}
+
+
 class Settings(BaseSettings):
     # hide_input_in_errors: a validation error must never echo a secret value
     # (e.g. ORIGIN_AUTH_SECRET) into boot logs.
+    # env_ignore_empty (#648): a blank env var (process or .env) is treated as
+    # not set, so the default applies. Required settings (DATABASE_URL) stay
+    # errors because they have no default. ENVIRONMENT and TRUSTED_HOSTS are
+    # the exception: see _BlankGuardSource.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", hide_input_in_errors=True
+        env_file=".env",
+        env_file_encoding="utf-8",
+        hide_input_in_errors=True,
+        env_ignore_empty=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        env_file = getattr(dotenv_settings, "env_file", None)
+        if env_file is None:
+            files = []
+        elif isinstance(env_file, (list, tuple)):
+            files = list(env_file)
+        else:
+            files = [env_file]
+        return (
+            _BlankGuardSource(settings_cls, files),
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     # Database
     database_url: str
