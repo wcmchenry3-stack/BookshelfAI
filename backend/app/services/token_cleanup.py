@@ -23,13 +23,24 @@ The same daily run also purges, in bounded batches:
 
 The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
+
+Each step is isolated (one failing never skips the others) and runs through
+``_run_step``, which retries transient connection errors (DNS failure,
+connect timeout, SQLAlchemy ``OperationalError`` / ``InterfaceError``) a
+bounded number of times with exponential backoff (#661).  A blip that recovers
+logs only a warning; a step that exhausts its retries, or fails with any other
+error, logs one ``logger.exception`` so a persistent outage still reaches
+Sentry.  ``asyncio.CancelledError`` is never caught.
 """
 
 import asyncio
 import logging
+import socket
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import delete
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.ai.breaker import purge_old_spend
 from app.ai.ledger import rollup_and_purge
@@ -44,72 +55,117 @@ _INTERVAL_SECONDS = 86_400  # 24 hours
 _INITIAL_DELAY_SECONDS = 60  # wait a minute after startup before first run
 
 
+_RETRY_ATTEMPTS = 3  # total tries per step (first try + 2 retries)
+_RETRY_BASE_DELAY_SECONDS = 5.0  # backoff: 5s, then 10s
+
+_TRANSIENT_ERRORS = (
+    socket.gaierror,
+    TimeoutError,
+    OperationalError,
+    InterfaceError,
+)
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """True for connection-level blips worth retrying (checks the cause chain)."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, _TRANSIENT_ERRORS):
+            return True
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+async def _run_step(step: Callable[[], Awaitable[None]], label: str = "") -> None:
+    """Run one purge step in isolation, retrying transient connection errors.
+
+    ``label`` (e.g. ``"ai quota"``) is appended to the error message.  Never
+    raises except ``asyncio.CancelledError`` (a BaseException, not caught here).
+    """
+    suffix = f" ({label})" if label else ""
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            await step()
+            return
+        except Exception as exc:
+            if _is_transient(exc) and attempt < _RETRY_ATTEMPTS:
+                delay = _RETRY_BASE_DELAY_SECONDS * 2 ** (attempt - 1)
+                logger.warning(
+                    "token_cleanup: transient DB error during cleanup run%s "
+                    "(attempt %d/%d, %s); retrying in %.0fs",
+                    suffix,
+                    attempt,
+                    _RETRY_ATTEMPTS,
+                    type(exc).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.exception("token_cleanup: error during cleanup run%s", suffix)
+            return
+
+
+async def _purge_quota() -> None:
+    async with AsyncSessionLocal() as db:
+        purged = await purge_old_quota(db)
+        logger.info("token_cleanup: purged %d old ai_quota row(s)", purged)
+
+
+async def _purge_usage() -> None:
+    async with AsyncSessionLocal() as db:
+        rolled, purged = await rollup_and_purge(db)
+        logger.info(
+            "token_cleanup: rolled up %d ai_usage row(s), "
+            "purged %d ai_usage_daily row(s)",
+            rolled,
+            purged,
+        )
+
+
+async def _purge_spend() -> None:
+    async with AsyncSessionLocal() as db:
+        purged = await purge_old_spend(db, utc_today())
+        logger.info("token_cleanup: purged %d old ai_spend_daily row(s)", purged)
+
+
+async def _purge_zero_results() -> None:
+    async with AsyncSessionLocal() as db:
+        purged = await purge_old_zero_results(db)
+        logger.info(
+            "token_cleanup: purged %d old ai_enhanced_zero_results row(s)", purged
+        )
+
+
+async def _purge_scan_records() -> None:
+    async with AsyncSessionLocal() as db:
+        purged = await purge_old_scan_records(db)
+        logger.info("token_cleanup: purged %d old scan_records row(s)", purged)
+
+
+async def _purge_refresh_tokens() -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            delete(RefreshToken).where(RefreshToken.expires_at < datetime.now(UTC))
+        )
+        await db.commit()
+        logger.info(
+            "token_cleanup: deleted %d expired refresh token(s)", result.rowcount
+        )
+
+
 async def cleanup_expired_tokens() -> None:
     """Long-running coroutine; meant to be wrapped in asyncio.create_task()."""
     await asyncio.sleep(_INITIAL_DELAY_SECONDS)
 
     while True:
-        # Separate try blocks: one purge failing must not skip the other.
-        try:
-            async with AsyncSessionLocal() as db:
-                purged = await purge_old_quota(db)
-                logger.info("token_cleanup: purged %d old ai_quota row(s)", purged)
-        except Exception:
-            logger.exception("token_cleanup: error during cleanup run (ai quota)")
-
-        try:
-            async with AsyncSessionLocal() as db:
-                rolled, purged = await rollup_and_purge(db)
-                logger.info(
-                    "token_cleanup: rolled up %d ai_usage row(s), "
-                    "purged %d ai_usage_daily row(s)",
-                    rolled,
-                    purged,
-                )
-        except Exception:
-            logger.exception("token_cleanup: error during cleanup run (ai usage)")
-
-        try:
-            async with AsyncSessionLocal() as db:
-                purged = await purge_old_spend(db, utc_today())
-                logger.info(
-                    "token_cleanup: purged %d old ai_spend_daily row(s)", purged
-                )
-        except Exception:
-            logger.exception("token_cleanup: error during cleanup run (ai spend)")
-
-        try:
-            async with AsyncSessionLocal() as db:
-                purged = await purge_old_zero_results(db)
-                logger.info(
-                    "token_cleanup: purged %d old ai_enhanced_zero_results row(s)",
-                    purged,
-                )
-        except Exception:
-            logger.exception(
-                "token_cleanup: error during cleanup run (enhanced zero results)"
-            )
-
-        try:
-            async with AsyncSessionLocal() as db:
-                purged = await purge_old_scan_records(db)
-                logger.info("token_cleanup: purged %d old scan_records row(s)", purged)
-        except Exception:
-            logger.exception("token_cleanup: error during cleanup run (scan records)")
-
-        try:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    delete(RefreshToken).where(
-                        RefreshToken.expires_at < datetime.now(UTC)
-                    )
-                )
-                await db.commit()
-                logger.info(
-                    "token_cleanup: deleted %d expired refresh token(s)",
-                    result.rowcount,
-                )
-        except Exception:
-            logger.exception("token_cleanup: error during cleanup run")
+        # Each step is isolated by _run_step: one failing must not skip the rest.
+        await _run_step(_purge_quota, "ai quota")
+        await _run_step(_purge_usage, "ai usage")
+        await _run_step(_purge_spend, "ai spend")
+        await _run_step(_purge_zero_results, "enhanced zero results")
+        await _run_step(_purge_scan_records, "scan records")
+        await _run_step(_purge_refresh_tokens)
 
         await asyncio.sleep(_INTERVAL_SECONDS)
