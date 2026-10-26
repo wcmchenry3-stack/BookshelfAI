@@ -14,12 +14,15 @@ A predicted book MATCHES a ground-truth book when either:
    ``normalise_text`` forms are equal, or their last words (the surname:
    "Frank Herbert" and "F. Herbert") are equal and non-empty.
 
+Before matching, duplicate ground-truth entries of one book (the same
+normalised title and author, or a shared ISBN) are collapsed: both adapters
+drop duplicate predictions, so two copies on a shelf can only ever be
+predicted once.
+
 Matching is one-to-one: a maximum bipartite matching between the scan's
 predictions and the image's ground truth, so a prediction counts for at most
-one book and a book is found at most once. Two identical predictions find
-two books only when the ground truth lists that book twice (two copies on
-the shelf); otherwise the second one is a false positive. A prediction that
-could match two different books counts once.
+one book and a book is found at most once. A repeated prediction is a false
+positive. A prediction that could match two different books counts once.
 
 Per image: ``matched`` true positives, ``predicted - matched`` false
 positives, ``truth - matched`` missed books.
@@ -33,9 +36,14 @@ from dataclasses import dataclass
 # app.schemas first: importing app.services.enrichment on its own trips an
 # import cycle (enrichment -> app.schemas -> user_book -> enrichment).
 import app.schemas  # noqa: F401
-from app.services.enrichment import normalise_isbn_13, normalise_text, titles_agree
+from app.services.enrichment import (
+    normalise_isbn_13,
+    normalise_text,
+    normalise_title,
+    titles_agree,
+)
 
-MATCHING_RULE = "isbn-or-title+author/one-to-one/v1"
+MATCHING_RULE = "isbn-or-title+author/one-to-one/dedup-truth/v2"
 
 
 @dataclass(frozen=True)
@@ -114,7 +122,30 @@ class ImageScore:
         return self.matched / self.truth if self.truth else None
 
 
+def _same_book(a: Book, b: Book) -> bool:
+    """Two ground-truth entries for one book: the same normalised title and
+    author, or a shared ISBN."""
+    if _isbn_keys(a) & _isbn_keys(b):
+        return True
+    return normalise_title(a.title) == normalise_title(b.title) and normalise_text(
+        a.author
+    ) == normalise_text(b.author)
+
+
+def collapse_truth(truth: Sequence[Book]) -> list[Book]:
+    """The ground truth with duplicate entries of one book removed (the
+    first is kept). Both adapters drop duplicate predictions (same
+    casefolded title and author), so a book listed twice could never be
+    found twice; counting it twice would only lower recall."""
+    kept: list[Book] = []
+    for book in truth:
+        if not any(_same_book(book, k) for k in kept):
+            kept.append(book)
+    return kept
+
+
 def score_image(predicted: Sequence[Book], truth: Sequence[Book]) -> ImageScore:
+    truth = collapse_truth(truth)
     return ImageScore(len(predicted), len(truth), match_count(predicted, truth))
 
 
@@ -135,10 +166,10 @@ def aggregate(scores: Sequence[ImageScore]) -> dict[str, float | int | None]:
     matched = sum(s.matched for s in scores)
     precision = _ratio(matched, predicted)
     recall = _ratio(matched, truth)
-    f1: float | None = None
-    if precision is not None and recall is not None:
-        total = precision + recall
-        f1 = 2 * precision * recall / total if total else 0.0
+    # F1 = 2 TP / (2 TP + FP + FN) = 2 matched / (predicted + truth): 0.0
+    # when nothing was predicted but there were books; None only when there
+    # was nothing on either side.
+    f1 = 2 * matched / (predicted + truth) if predicted + truth else None
     return {
         "images_scored": len(scores),
         "books_predicted": predicted,

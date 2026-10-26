@@ -245,12 +245,42 @@ class Manifest(_Strict):
         return self
 
 
+# The only location parts an error message may name: the schema's own field
+# names and list indices. Anything else (an unknown JSON key, which could be a
+# title) is replaced, so a message never echoes dataset content.
+SCHEMA_FIELDS = frozenset(
+    {
+        "schema_version",
+        "dataset_version",
+        "cases",
+        "id",
+        "image",
+        "books",
+        "title",
+        "author",
+        "isbn",
+    }
+)
+UNKNOWN_KEY = "<unknown-key>"
+_ERROR_TYPE = re.compile(r"^[a-z_]{1,40}$")
+
+
+def _safe_loc_part(part: object) -> str:
+    if isinstance(part, int) and not isinstance(part, bool):
+        return str(part)
+    if isinstance(part, str) and part in SCHEMA_FIELDS:
+        return part
+    return UNKNOWN_KEY
+
+
 def _safe_errors(exc: ValidationError) -> str:
-    """Field locations and error types only: never an input value."""
+    """Allow-listed field names, list indices and error types only: never an
+    input value or an unknown key."""
     parts = []
     for err in exc.errors(include_input=False, include_url=False)[:10]:
-        loc = ".".join(str(p) for p in err.get("loc", ())) or "<root>"
-        parts.append(f"{loc}: {err.get('type', 'invalid')}")
+        loc = ".".join(_safe_loc_part(p) for p in err.get("loc", ())) or "<root>"
+        kind = str(err.get("type", "invalid"))
+        parts.append(f"{loc}: {kind if _ERROR_TYPE.match(kind) else 'invalid'}")
     return "; ".join(parts)
 
 
@@ -320,9 +350,9 @@ class R2Dataset:
 
     @contextlib.contextmanager
     def open(self) -> Iterator[R2Dataset]:
+        # mkdtemp creates the directory with mode 0700.
         workdir = Path(tempfile.mkdtemp(prefix="ai-eval-"))
         try:
-            os.chmod(workdir, 0o700)
             self.workdir = workdir
             try:
                 self._client = self._client_factory(self._config)
@@ -353,13 +383,18 @@ class R2Dataset:
         return parse_manifest(self._get(MANIFEST_NAME, MAX_MANIFEST_BYTES, "manifest"))
 
     def image(self, index: int, case: Case) -> bytes:
-        """Download case ``index`` (1-based) to the temp dir and return its
-        bytes."""
+        """Download case ``index`` (1-based) through the temp dir and return
+        its bytes. The file is deleted as soon as it is read, so a long run
+        never holds more than one photo on disk."""
         what = f"image of case #{index}"
         data = self._get(case.image, MAX_IMAGE_BYTES, what)
         if self.workdir is None:  # pragma: no cover - only inside open()
             raise EvalError("dataset is not open")
         path = self.workdir / f"{index:05d}.img"
-        path.write_bytes(data)
-        os.chmod(path, 0o600)
-        return path.read_bytes()
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            return path.read_bytes()
+        finally:
+            path.unlink(missing_ok=True)

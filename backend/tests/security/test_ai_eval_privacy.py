@@ -153,11 +153,21 @@ def test_failures_name_no_location_or_key(tmp_path, capsys, caplog, failure):
             ],
             dataset=ds,
         )
-    assert code == 2
     captured = capsys.readouterr()
-    assert "could not read" in captured.err
-    _assert_clean(captured.out + captured.err + caplog.text, "the failure output")
-    assert not (tmp_path / "r.json").exists()
+    output = captured.out + captured.err + caplog.text
+    if failure == "manifest":
+        # Nothing has run: refused, no report.
+        assert code == 2
+        assert "could not read" in captured.err
+        assert not (tmp_path / "r.json").exists()
+    else:
+        # One photo unreadable: counted and skipped; the report is written.
+        assert code == 0
+        report_text = (tmp_path / "r.json").read_text()
+        assert json.loads(report_text)["run"]["cases_unreadable"] == 1
+        assert "image unreadable" in output
+        _assert_clean(report_text, "the report")
+    _assert_clean(output, "the failure output")
 
 
 def test_invalid_manifest_error_names_no_title(capsys):
@@ -186,3 +196,41 @@ def test_invalid_manifest_error_names_no_title(capsys):
     err = capsys.readouterr().err
     assert "manifest is invalid" in err
     _assert_clean(err, "stderr")
+
+
+def test_unknown_manifest_key_is_never_echoed(capsys, caplog):
+    """A title typed as a JSON key (pydantic puts unknown keys in the error
+    location) must not reach the console or the logs."""
+    objects = _objects()
+    objects[S_PREFIX + "manifest.json"] = json.dumps(
+        {
+            "schema_version": 1,
+            "dataset_version": "v1",
+            S_TITLE: S_AUTHOR,
+            "cases": [
+                {
+                    "id": "c1",
+                    "image": "a.jpg",
+                    "books": [{"title": "T", "author": "A", S_PRED_TITLE: True}],
+                }
+            ],
+        }
+    ).encode()
+    ds, _ = f.dataset(objects, endpoint=S_ENDPOINT, bucket=S_BUCKET, prefix=S_PREFIX)
+    caplog.set_level(logging.DEBUG)
+    with patch.object(settings, "anthropic_api_key", "test-key"):
+        code = cli.main(
+            [
+                "--feature",
+                "scan.standard",
+                "--model",
+                "claude-haiku-5-5",
+                "--spend-cap-usd",
+                "1",
+            ],
+            dataset=ds,
+        )
+    assert code == 2
+    captured = capsys.readouterr()
+    assert "<unknown-key>: extra_forbidden" in captured.err
+    _assert_clean(captured.out + captured.err + caplog.text, "the manifest error")

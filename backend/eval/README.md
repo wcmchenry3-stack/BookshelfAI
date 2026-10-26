@@ -1,5 +1,13 @@
 # AI scan evaluation (#536)
 
+> **Security: set up the `ai-eval` GitHub environment BEFORE adding any
+> secret.** In Settings > Environments > `ai-eval`, first set deployment
+> branches to `dev` only, the owner as required reviewer, and "Prevent
+> self-review" if available; only then add the secrets. The code cannot
+> enforce this: without those rules anyone with write access could dispatch
+> an edited copy of `ai-eval.yml` from another branch and exfiltrate the
+> provider keys and the R2 credential.
+
 A repeatable, on-demand evaluation of one scan model on the owner's real,
 labelled shelf photos, used to pick the model per tier (default: Haiku 5.5 for
 `scan.standard`, Sonnet 5.5 for `scan.enhanced`, #547). It is **not** a test
@@ -10,6 +18,7 @@ evaluation") for when to run it and what the report holds.
 |---|---|
 | `ai_scan/run_eval.py` | CLI entry point |
 | `ai_scan/runner.py` | Spend cap, the adapter call, the report |
+| `ai_scan/image_tokens.py` | Per-model upper bound on an image's input tokens |
 | `ai_scan/dataset.py` | R2 location from the environment, manifest validation, temporary downloads |
 | `ai_scan/scoring.py` | Deterministic matching and precision / recall |
 | `../requirements-eval.txt` | The app requirements plus the pinned S3 client (boto3) |
@@ -22,8 +31,9 @@ Cloudflare R2 bucket (#546). Nothing from the dataset is committed, stored in
 Git LFS or uploaded as a CI artifact: `.gitignore` ignores image and manifest
 files under `backend/eval/`, and `tests/unit/test_ai_eval_repo.py` fails if one
 is tracked. The runner downloads each photo into a private temporary directory
-(mode 0700, files named `00001.img`, never the object key) that is deleted when
-the run ends, also when it fails. The report, the console and the logs never
+(mode 0700, files named `00001.img`, never the object key); each file is
+deleted as soon as it is read, and the directory when the run ends, also when
+it fails. The report, the console and the logs never
 hold a bucket name, endpoint, object key, case id, title, author, image or
 EXIF data (`tests/security/test_ai_eval_privacy.py` plants sentinels in all of
 them and checks).
@@ -60,7 +70,9 @@ images/case-002.heic
 ```
 
 It is validated strictly before any model call, and the run refuses an invalid
-manifest (the error names only field positions and error types):
+manifest. The error names only the schema's own field names, list indices and
+error types; any other key (an unknown key could be a title) is shown as
+`<unknown-key>`:
 
 - `schema_version` is `1`; no unknown keys anywhere.
 - `dataset_version`: 1 to 32 of `A-Z a-z 0-9 . _ -`. It is copied into the
@@ -72,10 +84,18 @@ manifest (the error names only field positions and error types):
   no `.` or `..` segment) ending in `.jpg`, `.jpeg`, `.png`, `.webp`, `.heic`
   or `.heif`; at most 25 MB.
 - `books`: every book you can read in the photo, at most 100 (an empty list is
-  allowed: a photo with no readable book tests false positives). List a book
-  twice when two copies are on the shelf. `title` and `author` are non-blank
-  strings of at most 500 characters. `isbn` is optional: a valid ISBN-10 or
-  ISBN-13 (hyphens and spaces allowed, checksum checked).
+  allowed: a photo with no readable book tests false positives). **List each
+  title once per photo**, even when two copies are on the shelf: both
+  adapters drop duplicate predictions, so the scorer also collapses duplicate
+  entries (same normalised title and author, or a shared ISBN). `title` and
+  `author` are non-blank strings of at most 500 characters. `isbn` is
+  optional: a valid ISBN-10 or ISBN-13 (hyphens and spaces allowed, checksum
+  checked).
+- `author`: one primary author as printed, "First Last" (e.g. "Frank
+  Herbert", not "Herbert, Frank" and not a list of co-authors). Matching
+  accepts the same name or the same surname (last word), so "F. Herbert"
+  matches; "Herbert, Frank" does not, and two different authors who share a
+  surname do (the title must still agree).
 
 ## How a prediction is scored
 
@@ -92,25 +112,46 @@ book when:
    authors agree: equal `normalise_text` forms, or the same last word
    (surname: "F. Herbert" matches "Frank Herbert").
 
-Matching is one-to-one: a maximum bipartite matching per photo, so a
+Duplicate ground-truth entries of one book in a photo are collapsed first.
+Matching is then one-to-one: a maximum bipartite matching per photo, so a
 prediction finds at most one book and a book is found at most once. A
-duplicated prediction is a false positive unless the book is listed twice.
+repeated prediction is a false positive.
 Precision = matched / predicted and recall = matched / ground truth, summed
 over every scanned photo (micro); the per-photo means are also reported. A
 call that errored, was refused or was malformed predicted nothing, so it
-lowers recall (that is what the user would have got).
+lowers recall (that is what the user would have got). `accuracy_answered_calls`
+repeats precision, recall and F1 over answered calls only, so provider errors
+are not mistaken for model accuracy. F1 is 2 x matched / (predicted + truth),
+0 when nothing was predicted.
 
 ## Spend cap and cost
 
-Before every call the runner checks that the spend so far plus an upper bound
-for one call stays within `--spend-cap-usd`, and stops before the call
-otherwise (`spend_cap.stopped_by_cap` in the report). The bound is every
-prompt token (4,000 image + 2,000 prompt, more than a normalised photo can
-use) at the model's highest input rate plus a full `max_tokens` reply at the
-output rate, and never below the registry's `est_cost_ceiling_micros`. An
-answered call adds its real cost; an errored call adds the bound (a timeout
-may still have been billed). The adapters keep their own retry and backoff on
-429 and 5xx, which are not billed.
+`--spend-cap-usd` is required and at most $100. Before every call the runner
+checks that the spend so far plus an upper bound for that call stays within
+the cap, and stops before the call otherwise (`spend_cap.stopped_by_cap` in
+the report). The bound is computed from the normalised photo's real
+dimensions (`ai_scan/image_tokens.py`):
+
+- Claude: `ceil(width x height / 750)` image tokens (Anthropic's vision
+  formula; their own downscaling only lowers it);
+- OpenAI high detail: fit within 2048 x 2048, shortest side to 768, 512 px
+  tiles; gpt-4o 85 + 170 per tile, gpt-4o-mini 2,833 + 5,667 per tile (a
+  1568 x 768 photo is 8 tiles, about 48,000 tokens on gpt-4o-mini). Where the
+  docs are unclear (a shortest side under 768) the larger of both readings
+  is used;
+
+plus 2,000 prompt tokens, all at the model's highest input rate, plus a full
+`max_tokens` reply at the output rate (so a larger `SCAN_MAX_TOKENS` raises
+the bound), and never below the registry's `est_cost_ceiling_micros`. An
+allow-listed model with no image-token rule is refused. An answered call
+adds its real cost; an errored call adds its bound (a timeout may still have
+been billed). The adapters keep their own retry and backoff on 429 and 5xx,
+which are not billed.
+
+A run that stops early (5 failed cases in a row, an R2 or disk error, an
+unexpected error, Ctrl-C) still writes its partial report, with
+`run.aborted` saying why; a photo that cannot be downloaded is counted in
+`run.cases_unreadable` and skipped.
 
 Cost is priced with the usage ledger's own function
 (`app.ai.prices.cost_micros` at `CURRENT_PRICE_VERSION`) from each call's
@@ -136,9 +177,11 @@ database, quota, breaker or ledger.
    that is NOT put in GitHub).
 5. **GitHub environment.** Repository Settings > Environments > New
    environment `ai-eval`:
-   - Deployment branches: **Selected branches**, `dev` only, so a branch with
-     modified code cannot run with these secrets.
-   - Required reviewers: the owner, so every run is approved.
+   - FIRST, before any secret: deployment branches **Selected branches**,
+     `dev` only, so a branch with modified code cannot run with these
+     secrets.
+   - Required reviewers: the owner, so every run is approved; tick "Prevent
+     self-review" if it is offered.
    - Environment secrets: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` (keys for
      the eval only, with a low spend limit set at the provider),
      `AI_EVAL_R2_ENDPOINT`, `AI_EVAL_R2_BUCKET`, `AI_EVAL_R2_ACCESS_KEY_ID`,
@@ -163,9 +206,12 @@ python -m eval.ai_scan.run_eval --feature scan.standard \
 ```
 
 `--provider` is optional (it follows from the model). It refuses to start
-without `--spend-cap-usd`, without the four `AI_EVAL_R2_*` variables (or with
-an endpoint that is not an `https://<account>.r2.cloudflarestorage.com` URL),
-or without the provider's API key. Exit codes: 0 finished (also when the cap
-stopped it), 1 aborted after 5 errored calls in a row
-(`--max-consecutive-errors`), 2 refused or failed with a reason, 3 an
-unexpected failure (only its type is printed, never its message).
+without `--spend-cap-usd` (or above $100), without the four `AI_EVAL_R2_*`
+variables (or with an endpoint that is not an
+`https://<account>.r2.cloudflarestorage.com` URL), for a model with no
+image-token rule, or without the provider's API key. Exit codes: 0 finished
+(also when the cap stopped it), 1 aborted after 5 failed cases in a row
+(`--max-consecutive-errors`, at least 1), 2 refused or failed with a reason,
+3 an unexpected failure (only its type is printed, never its message), 130
+interrupted. In every early stop after the manifest was read, the partial
+report is still written.

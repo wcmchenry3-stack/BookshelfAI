@@ -11,7 +11,6 @@ from unittest.mock import patch
 import pytest
 
 from app.ai import gateway
-from app.ai.models_allowlist import ALLOWED_MODELS
 from app.ai.prices import CURRENT_PRICE_VERSION, cost_micros
 from app.ai.providers.base import ProviderTimeoutError
 from app.ai.registry import FEATURES
@@ -77,26 +76,74 @@ def test_invalid_spec_is_refused(feature, model, provider):
 # --- Spend cap -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "feature, model",
-    [
-        (feat, m)
-        for feat in FEATURES
-        for models in ALLOWED_MODELS.values()
-        for m in models
-    ],
-)
-def test_estimate_bounds_a_worst_case_call(feature, model):
-    spec = runner.resolve_spec(feature, model)
-    worst = cost_micros(
-        model,
-        CURRENT_PRICE_VERSION,
-        cache_write_tokens=runner.IMAGE_TOKEN_BOUND + runner.PROMPT_TOKEN_BOUND,
-        output_tokens=spec.max_tokens,
+def _worst_usage_cost(model, prompt_tokens, output_tokens):
+    """The most a call with these token counts can cost: every prompt token
+    in its dearest category (input, cache read or cache write)."""
+    return max(
+        cost_micros(model, CURRENT_PRICE_VERSION, output_tokens=output_tokens, **kw)
+        for kw in (
+            {"input_tokens": prompt_tokens},
+            {"cache_read_tokens": prompt_tokens},
+            {"cache_write_tokens": prompt_tokens},
+        )
     )
-    estimate = runner.estimate_call_micros(spec)
-    assert estimate >= worst
-    assert estimate >= spec.est_cost_ceiling_micros
+
+
+# (model, normalised width, height, image tokens by the published formula)
+_PUBLISHED = [
+    ("claude-haiku-5-5", 1568, 1568, 3279),
+    ("claude-sonnet-5-5", 1568, 1176, 2459),
+    ("gpt-4o", 1568, 768, 85 + 170 * 8),
+    ("gpt-4o-mini", 1568, 768, 2833 + 5667 * 8),
+]
+
+
+@pytest.mark.parametrize("feature", sorted(FEATURES))
+@pytest.mark.parametrize("model, w, h, image", _PUBLISHED)
+@pytest.mark.parametrize("max_tokens", [None, 8_192, 16_384])
+def test_estimate_bounds_a_worst_case_call(feature, model, w, h, image, max_tokens):
+    spec = runner.resolve_spec(feature, model)
+    if max_tokens is not None:
+        spec = replace(spec, max_tokens=max_tokens)  # a larger SCAN_MAX_TOKENS
+    worst = _worst_usage_cost(model, image + 2_000, spec.max_tokens)
+    assert runner.estimate_call_micros(spec, w, h) >= worst
+    # The bound for unknown dimensions covers the largest image too.
+    assert runner.estimate_call_micros(spec) >= worst
+    assert runner.estimate_call_micros(spec, w, h) >= spec.est_cost_ceiling_micros
+
+
+def _png(w, h):
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (90, 60, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_cap_is_never_exceeded_on_gpt_4o_mini_at_the_max_long_edge():
+    # gpt-4o-mini at high detail: a 1568 x 768 photo is 8 tiles, 48,169
+    # image tokens (2,833 + 5,667 x 8). With max_tokens = 8,192 every call
+    # really bills (48,169 + 2,000) x $0.15/M + 8,192 x $0.60/M = 12,441
+    # micros. A $0.06 cap fits 4 such calls (49,764) but not 5 (62,205).
+    spec = replace(
+        runner.resolve_spec("scan.standard", "gpt-4o-mini"), max_tokens=8_192
+    )
+    worst = f.result(
+        [("Dune", "Frank Herbert")],
+        input_tokens=48_169 + 2_000,
+        output_tokens=8_192,
+    )
+    cases = [f.case(i) for i in range(1, 8)]
+    report, provider, _ = _run(
+        [worst] * len(cases), cases, cap_usd=0.06, spec=spec, image=_png(1568, 768)
+    )
+    assert report["cost"]["total_usd"] <= 0.06
+    assert report["spend_cap"]["counted_usd"] <= report["spend_cap"]["cap_usd"]
+    assert len(provider.images) == 4
+    assert report["spend_cap"]["stopped_by_cap"] is True
+    assert report["spend_cap"]["largest_call_bound_used_usd"] >= 0.012441
 
 
 @pytest.mark.parametrize("bad", [0, -1, math.nan, math.inf, True, "10"])
@@ -306,7 +353,7 @@ def test_consecutive_errors_abort_the_run():
     script = [ScanUnavailableError("x") for _ in cases]
     report, provider, _ = _run(script, cases, max_consecutive_errors=3)
     assert len(provider.images) == 3
-    assert report["run"]["aborted"] == "3 consecutive errored calls"
+    assert report["run"]["aborted"] == "3 consecutive failed cases"
 
 
 def test_deadline_is_the_specs_timeout():
@@ -473,3 +520,226 @@ def test_cli_unexpected_failure_reports_type_only(capsys):
     assert code == 3
     err = capsys.readouterr().err
     assert "RuntimeError" in err and "secret" not in err
+
+
+# --- Early stops keep the report (review should-fix 2) --------------------------
+
+
+def _cli_args(report, *extra):
+    return [
+        "--feature",
+        "scan.standard",
+        "--model",
+        "claude-haiku-5-5",
+        "--spend-cap-usd",
+        "1",
+        "--report",
+        str(report),
+        *extra,
+    ]
+
+
+def test_unreadable_image_is_counted_and_skipped():
+    cases = [f.case(i) for i in range(1, 4)]
+    objects = f.objects_for(cases)
+    del objects[cases[1]["image"]]  # R2 read fails for case 2
+    ds, _ = f.dataset(objects)
+    provider = f.ScriptedProvider([_haiku_result(10), _haiku_result(10)])
+    import anyio
+
+    report = anyio.run(
+        lambda: runner.run_eval(
+            HAIKU, ds, cap_usd=1.0, provider_factory=lambda _s: provider
+        )
+    )
+    assert len(provider.images) == 2
+    assert report["run"]["cases_unreadable"] == 1
+    assert report["run"]["cases_attempted"] == 2
+    assert report["run"]["cases_not_run"] == 0
+    assert report["run"]["aborted"] is None
+
+
+def test_disk_error_is_counted_as_unreadable(monkeypatch):
+    from eval.ai_scan import dataset as dataset_mod
+
+    def full(*_a, **_k):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(dataset_mod.os, "fdopen", full)
+    report, provider, _ = _run([_haiku_result(1)] * 2, [f.case(1), f.case(2)])
+    assert provider.images == []
+    assert report["run"]["cases_unreadable"] == 2
+
+
+def test_consecutive_unreadable_images_abort():
+    cases = [f.case(i) for i in range(1, 6)]
+    ds, _ = f.dataset({"manifest.json": f.manifest(cases)})  # no images at all
+    import anyio
+
+    report = anyio.run(
+        lambda: runner.run_eval(
+            HAIKU,
+            ds,
+            cap_usd=1.0,
+            provider_factory=lambda _s: f.ScriptedProvider([]),
+            max_consecutive_errors=2,
+        )
+    )
+    assert report["run"]["cases_unreadable"] == 2
+    assert report["run"]["aborted"] == "2 consecutive failed cases"
+
+
+class _InterruptOnSecond:
+    calls = 0
+
+    def __init__(self, spec):
+        pass
+
+    async def identify(self, _img):
+        _InterruptOnSecond.calls += 1
+        if _InterruptOnSecond.calls == 2:
+            raise KeyboardInterrupt
+        return _haiku_result(1_000)
+
+
+def test_ctrl_c_still_writes_the_partial_report(tmp_path, capsys):
+    _InterruptOnSecond.calls = 0
+    ds, _ = f.dataset(f.objects_for([f.case(i) for i in range(1, 5)]))
+    out = tmp_path / "report.json"
+    with (
+        patch.object(settings, "anthropic_api_key", "test-key"),
+        patch.object(gateway, "AnthropicVisionProvider", _InterruptOnSecond),
+    ):
+        code = cli.main(_cli_args(out), dataset=ds)
+    assert code == 130
+    report = json.loads(out.read_text())
+    assert report["run"]["aborted"] == "interrupted"
+    assert report["run"]["cases_attempted"] == 1
+    assert report["cost"]["total_usd"] > 0
+    assert "interrupted" in capsys.readouterr().err
+
+
+def test_unexpected_error_mid_run_still_writes_the_report(tmp_path, capsys):
+    cases = [f.case(i) for i in range(1, 4)]
+    ds, _ = f.dataset(f.objects_for(cases))
+    real = runner.normalise_image
+    seen = []
+
+    def explode_second(raw, **kw):
+        seen.append(1)
+        if len(seen) == 2:
+            raise RuntimeError("secret-key in a message")
+        return real(raw, **kw)
+
+    class OneOk:
+        def __init__(self, spec):
+            pass
+
+        async def identify(self, _img):
+            return _haiku_result(1_000)
+
+    out = tmp_path / "report.json"
+    with (
+        patch.object(settings, "anthropic_api_key", "test-key"),
+        patch.object(gateway, "AnthropicVisionProvider", OneOk),
+        patch.object(runner, "normalise_image", explode_second),
+    ):
+        code = cli.main(_cli_args(out), dataset=ds)
+    assert code == 3
+    report = json.loads(out.read_text())
+    assert report["run"]["aborted"] == "error (RuntimeError)"
+    assert report["run"]["cases_attempted"] == 1
+    assert report["cost"]["total_usd"] > 0
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and "secret-key" not in err
+
+
+def test_no_report_before_the_manifest_is_read(tmp_path):
+    ds, _ = f.dataset({})  # no manifest
+    out = tmp_path / "report.json"
+    with patch.object(settings, "anthropic_api_key", "test-key"):
+        code = cli.main(_cli_args(out), dataset=ds)
+    assert code == 2
+    assert not out.exists()
+
+
+def test_aborted_run_exits_1_with_report(tmp_path):
+    ds, _ = f.dataset(f.objects_for([f.case(i) for i in range(1, 4)]))
+
+    class Down:
+        def __init__(self, spec):
+            pass
+
+        async def identify(self, _img):
+            raise ScanUnavailableError("down")
+
+    out = tmp_path / "report.json"
+    with (
+        patch.object(settings, "anthropic_api_key", "test-key"),
+        patch.object(gateway, "AnthropicVisionProvider", Down),
+    ):
+        code = cli.main(_cli_args(out, "--max-consecutive-errors", "2"), dataset=ds)
+    assert code == 1
+    assert json.loads(out.read_text())["run"]["aborted"] == "2 consecutive failed cases"
+
+
+# --- CLI limits ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "x"])
+def test_max_consecutive_errors_must_be_at_least_one(value):
+    with pytest.raises(SystemExit) as info:
+        cli.main(
+            _cli_args("r.json", "--max-consecutive-errors", value), dataset=_Exploding()
+        )
+    assert info.value.code == 2
+
+
+def test_run_refuses_max_consecutive_errors_below_one():
+    ds, _ = f.dataset({})
+    with pytest.raises(EvalError, match="at least 1"):
+        runner.EvalRun(HAIKU, ds, cap_usd=1.0, max_consecutive_errors=0)
+
+
+@pytest.mark.parametrize("cap", ["100.01", "1000"])
+def test_cli_refuses_a_spend_cap_above_the_maximum(cap):
+    with pytest.raises(SystemExit) as info:
+        cli.main(
+            [
+                "--feature",
+                "scan.standard",
+                "--model",
+                "claude-haiku-5-5",
+                "--spend-cap-usd",
+                cap,
+            ],
+            dataset=_Exploding(),
+        )
+    assert info.value.code == 2
+
+
+def test_runner_refuses_a_spend_cap_above_the_maximum():
+    assert runner.cap_micros_from_usd(100) == 100_000_000
+    with pytest.raises(EvalError, match="at most 100"):
+        runner.cap_micros_from_usd(100.01)
+
+
+# --- Accuracy over answered calls ---------------------------------------------------
+
+
+def test_recall_over_answered_calls_excludes_provider_errors():
+    cases = [f.case(1), f.case(2)]
+    script = [f.result([("Dune", "Frank Herbert")]), ScanUnavailableError("down")]
+    report, _, _ = _run(script, cases)
+    assert report["accuracy"]["recall"] == 0.5
+    answered = report["accuracy_answered_calls"]
+    assert answered["recall"] == 1.0
+    assert answered["precision"] == 1.0
+    assert answered["images_scored"] == 1
+
+
+def test_fixture_restores_the_eval_logger_level():
+    import logging
+
+    assert "eval.ai_scan" in f.LOGGERS_TO_RESTORE
+    assert logging.getLogger("eval.ai_scan") is cli.logger

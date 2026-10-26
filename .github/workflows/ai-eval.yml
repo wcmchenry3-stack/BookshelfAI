@@ -1,5 +1,14 @@
 name: AI eval (labelled scan photos)
 
+# !!! SECURITY: SET UP THE `ai-eval` ENVIRONMENT BEFORE ADDING ANY SECRET !!!
+# The keys below are only as safe as the environment's protection rules,
+# which this file cannot enforce. In Settings > Environments > ai-eval,
+# FIRST set: deployment branches = `dev` only, required reviewer = the
+# owner, and "Prevent self-review" if available; only THEN add the secrets.
+# Without those rules, anyone with write access could dispatch an edited
+# copy of this workflow from another branch and exfiltrate the provider
+# keys and the R2 credential. See backend/eval/README.md ("Owner setup").
+
 # Labelled evaluation of one scan model (#536, epic #524): every photo in the
 # owner's private R2 dataset goes through the provider adapter and is scored
 # against its ground truth. It calls a REAL, PAID model, so it only ever runs
@@ -44,7 +53,7 @@ on:
           - gpt-4o-mini
           - gpt-4o
       spend_cap_usd:
-        description: Hard spend cap for this run, in US dollars
+        description: Hard spend cap for this run, in US dollars (at most 100; the runner refuses more)
         type: string
         required: true
         default: '10'

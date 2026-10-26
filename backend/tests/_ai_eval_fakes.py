@@ -145,13 +145,20 @@ class ScriptedProvider:
         return item
 
 
-@pytest.fixture
-def restore_logger_levels():
-    """``run_eval.main`` pins some third-party loggers to WARNING; put them
-    back so other tests see the levels they expect."""
+def _loggers_to_restore() -> tuple[str, ...]:
     from eval.ai_scan.run_eval import QUIET_LOGGERS
 
-    saved = {name: logging.getLogger(name).level for name in QUIET_LOGGERS}
+    return (*QUIET_LOGGERS, "eval.ai_scan")
+
+
+LOGGERS_TO_RESTORE = _loggers_to_restore()
+
+
+@pytest.fixture
+def restore_logger_levels():
+    """``run_eval.main`` pins some third-party loggers to WARNING and its own
+    to INFO; put them back so other tests see the levels they expect."""
+    saved = {name: logging.getLogger(name).level for name in LOGGERS_TO_RESTORE}
     yield
     for name, level in saved.items():
         logging.getLogger(name).setLevel(level)

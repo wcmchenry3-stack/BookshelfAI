@@ -2,11 +2,15 @@
 strict manifest validation, temp download directory always removed."""
 
 import json
+import os
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from eval.ai_scan import EvalError
+from eval.ai_scan import dataset as dataset_mod
 from eval.ai_scan.dataset import (
     ENV_ACCESS_KEY_ID,
     ENV_BUCKET,
@@ -162,6 +166,20 @@ def test_invalid_manifests_are_refused(raw):
         parse_manifest(raw)
 
 
+def test_manifest_error_never_echoes_an_unknown_key():
+    # An unknown key could be a title typed in the wrong place.
+    raw = _raw(
+        cases=[_case(books=[{"title": "T", "author": "A", "Sentinel Title Key": 1}])],
+        **{"Sentinel Top Key": True},
+    )
+    with pytest.raises(EvalError) as info:
+        parse_manifest(raw)
+    msg = str(info.value)
+    assert "Sentinel" not in msg
+    assert "<unknown-key>" in msg
+    assert "cases.0.books.0.<unknown-key>: extra_forbidden" in msg
+
+
 def test_manifest_error_never_echoes_a_value():
     raw = _raw(
         cases=[
@@ -192,12 +210,22 @@ def _cases(n=2):
 def test_reads_manifest_and_images_under_the_prefix():
     cases = _cases()
     ds, client = f.dataset(f.objects_for(cases, prefix="p/"), prefix="p/")
-    with ds.open() as opened:
+    written: list[str] = []
+    real_open = os.open
+
+    def spy_open(path, *a, **kw):
+        written.append(str(path))
+        return real_open(path, *a, **kw)
+
+    with ds.open() as opened, patch.object(dataset_mod.os, "open", spy_open):
         m = opened.manifest()
         data = opened.image(1, m.cases[0])
-        files = sorted(p.name for p in opened.workdir.iterdir())
+        left = list(opened.workdir.iterdir())
     assert data[:2] == b"\xff\xd8"
-    assert files == ["00001.img"]  # generated name, never the key
+    # Written under a generated name (never the key) in the temp dir...
+    assert [Path(w).name for w in written] == ["00001.img"]
+    # ...and deleted as soon as it was read.
+    assert left == []
     assert client.calls == [
         (f.BUCKET, "p/manifest.json"),
         (f.BUCKET, "p/images/case-001.jpg"),
@@ -211,7 +239,6 @@ def test_temp_dir_removed_after_success():
         m = opened.manifest()
         opened.image(1, m.cases[0])
         assert workdir.is_dir()
-        assert oct(workdir.stat().st_mode & 0o777) == "0o700"
     assert not workdir.exists()
     assert ds.workdir is None
 
@@ -227,20 +254,54 @@ def test_temp_dir_removed_after_an_error():
     assert seen and not seen[0].exists()
 
 
-def test_temp_dir_removed_when_the_client_cannot_be_built():
-    created: list[Path] = []
+@pytest.fixture
+def made_dirs(monkeypatch):
+    """The temp dirs R2Dataset.open() creates in this test (no globbing of
+    the shared temp dir)."""
+    made: list[Path] = []
+    real = tempfile.mkdtemp
 
+    def spy(*args, **kwargs):
+        path = real(*args, **kwargs)
+        made.append(Path(path))
+        return path
+
+    monkeypatch.setattr(dataset_mod.tempfile, "mkdtemp", spy)
+    return made
+
+
+def test_temp_dir_is_private(made_dirs):
+    ds, _ = f.dataset(f.objects_for(_cases()))
+    with ds.open():
+        assert oct(made_dirs[0].stat().st_mode & 0o777) == "0o700"
+    assert not made_dirs[0].exists()
+
+
+def test_temp_dir_removed_when_the_client_cannot_be_built(made_dirs):
     def factory(_cfg):
-        import tempfile
-
-        created.extend(Path(tempfile.gettempdir()).glob("ai-eval-*"))
         raise ValueError(f"bad endpoint {f.ENDPOINT}")
 
     ds = f.R2Dataset(R2Config(f.ENDPOINT, f.BUCKET, "a", "b"), client_factory=factory)
     with pytest.raises(EvalError) as info, ds.open():
         pass
     assert f.ENDPOINT not in str(info.value)
-    assert all(not p.exists() for p in created)
+    assert len(made_dirs) == 1
+    assert not made_dirs[0].exists()
+
+
+def test_image_file_removed_when_the_write_fails(made_dirs, monkeypatch):
+    ds, _ = f.dataset(f.objects_for(_cases()))
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    with ds.open() as opened:
+        m = opened.manifest()
+        monkeypatch.setattr(dataset_mod.os, "fdopen", boom)
+        with pytest.raises(OSError):
+            opened.image(1, m.cases[0])
+        assert list(made_dirs[0].iterdir()) == []
+    assert not made_dirs[0].exists()
 
 
 def test_download_error_names_no_key_or_bucket():
@@ -258,8 +319,6 @@ def test_download_error_names_no_key_or_bucket():
 
 
 def test_oversized_image_is_refused(monkeypatch):
-    from eval.ai_scan import dataset as dataset_mod
-
     monkeypatch.setattr(dataset_mod, "MAX_IMAGE_BYTES", 10)
     ds, _ = f.dataset(f.objects_for(_cases()))
     with ds.open() as opened:

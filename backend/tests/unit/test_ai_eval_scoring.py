@@ -7,6 +7,7 @@ from eval.ai_scan.scoring import (
     ImageScore,
     aggregate,
     books_match,
+    collapse_truth,
     match_count,
     score_image,
     truth_book,
@@ -57,24 +58,44 @@ def test_duplicate_predictions_count_once():
     assert score.recall == 1.0
 
 
-def test_two_copies_on_the_shelf_can_both_be_found():
-    preds = [Book("Dune", "Frank Herbert"), Book("Dune", "Frank Herbert")]
-    assert match_count(preds, [DUNE, DUNE]) == 2
+def test_duplicate_truth_entries_are_collapsed():
+    # Both adapters drop duplicate predictions, so a book listed twice could
+    # never be found twice: it counts once.
+    preds = [Book("Dune", "Frank Herbert")]
+    score = score_image(preds, [DUNE, truth_book("dune", "FRANK HERBERT", None)])
+    assert (score.truth, score.matched) == (1, 1)
+    assert score.recall == 1.0
+
+
+def test_truth_entries_sharing_an_isbn_are_collapsed():
+    a = truth_book("Dune", "Frank Herbert", "9780441013593")
+    b = truth_book("Dune (Penguin)", "F. Herbert", "0441013597")
+    assert collapse_truth([a, b]) == [a]
+
+
+def test_different_books_are_not_collapsed():
+    emma = truth_book("Emma", "Jane Austen", None)
+    messiah = truth_book("Dune Messiah", "Frank Herbert", None)
+    assert collapse_truth([DUNE, emma, messiah]) == [DUNE, emma, messiah]
 
 
 def test_a_prediction_matching_two_truths_counts_once():
-    other_dune = truth_book("Dune", "Frank Herbert", "9780593099322")
-    score = score_image([Book("Dune", "Frank Herbert")], [DUNE, other_dune])
-    assert score.matched == 1
+    # The prediction matches "Dune Messiah" by ISBN and "Dune" by title.
+    messiah = truth_book("Dune Messiah", "Frank Herbert", "9780441013593")
+    plain = truth_book("Dune", "Frank Herbert", None)
+    pred = Book("Dune", "Frank Herbert", isbn_13="9780441013593")
+    assert books_match(pred, messiah) and books_match(pred, plain)
+    score = score_image([pred], [messiah, plain])
+    assert (score.truth, score.matched) == (2, 1)
     assert score.recall == 0.5
 
 
 def test_matching_is_maximum_not_greedy():
     # p1 matches both truths, p2 only the first. Greedy (p1 -> t1) finds 1;
     # the maximum matching (p1 -> t2, p2 -> t1) finds 2.
-    t1 = truth_book("Dune", "Frank Herbert", "9780441013593")
+    t1 = truth_book("Dune Messiah", "Frank Herbert", "9780441013593")
     t2 = truth_book("Dune", "Frank Herbert", None)
-    p1 = Book("Dune", "Frank Herbert")
+    p1 = Book("Dune", "Frank Herbert", isbn_13="9780441013593")
     p2 = Book("smudged", "?", isbn_13="9780441013593")
     assert match_count([p1, p2], [t1, t2]) == 2
 
@@ -111,4 +132,11 @@ def test_aggregate_with_nothing():
 
 def test_aggregate_zero_matches_gives_zero_f1():
     agg = aggregate([ImageScore(predicted=2, truth=2, matched=0)])
+    assert agg["f1"] == 0.0
+
+
+def test_f1_is_zero_when_nothing_was_predicted():
+    agg = aggregate([ImageScore(predicted=0, truth=3, matched=0)])
+    assert agg["precision"] is None
+    assert agg["recall"] == 0.0
     assert agg["f1"] == 0.0

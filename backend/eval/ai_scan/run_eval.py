@@ -9,9 +9,11 @@ From ``backend/``::
 required. The dataset location and its read-only credential come from the
 ``AI_EVAL_R2_*`` environment variables; the provider's API key from the
 app settings' usual environment variable. Writes only the aggregate JSON
-report. Exit codes: 0 finished (also when the spend cap stopped it; see
-``spend_cap.stopped_by_cap``), 1 aborted after repeated errors, 2 refused
-or failed with a reported reason, 3 unexpected failure (type name only).
+report (also, partial, when a run that has started stops early).
+``--spend-cap-usd`` is at most 100. Exit codes: 0 finished (also when the
+spend cap stopped it; see ``spend_cap.stopped_by_cap``), 1 aborted after
+repeated failed cases, 2 refused or failed with a reported reason, 3
+unexpected failure (type name only), 130 interrupted.
 """
 
 from __future__ import annotations
@@ -36,9 +38,10 @@ from eval.ai_scan import EvalError
 from eval.ai_scan.dataset import R2Dataset, r2_config_from_env
 from eval.ai_scan.runner import (
     DEFAULT_MAX_CONSECUTIVE_ERRORS,
+    MAX_SPEND_CAP_USD,
+    EvalRun,
     provider_configured,
     resolve_spec,
-    run_eval,
 )
 
 logger = logging.getLogger("eval.ai_scan")
@@ -73,7 +76,19 @@ def _positive_usd(value: str) -> float:
         raise argparse.ArgumentTypeError("must be a number of US dollars") from None
     if not math.isfinite(amount) or amount <= 0:
         raise argparse.ArgumentTypeError("must be a positive number of US dollars")
+    if amount > MAX_SPEND_CAP_USD:
+        raise argparse.ArgumentTypeError(f"must be at most {MAX_SPEND_CAP_USD}")
     return amount
+
+
+def _at_least_one(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a whole number") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,12 +107,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--spend-cap-usd",
         type=_positive_usd,
         default=None,
-        help="REQUIRED hard spend cap in US dollars (the workflow defaults to 10)",
+        help=(
+            "REQUIRED hard spend cap in US dollars, at most "
+            f"{MAX_SPEND_CAP_USD} (the workflow defaults to 10)"
+        ),
     )
     ap.add_argument("--report", default="ai-eval-report.json", type=Path)
     ap.add_argument(
         "--max-consecutive-errors",
-        type=int,
+        type=_at_least_one,
         default=DEFAULT_MAX_CONSECUTIVE_ERRORS,
     )
     return ap
@@ -126,12 +144,22 @@ def _summary(report: dict) -> str:
     )
 
 
+def _write_report(path: Path, report: dict) -> None:
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+
+
 def main(argv: list[str] | None = None, *, dataset: R2Dataset | None = None) -> int:
-    """``dataset`` is injected by the tests; otherwise R2 from the env."""
+    """``dataset`` is injected by the tests; otherwise R2 from the env.
+
+    Once the manifest has been read, a report is ALWAYS written, also when
+    the run stops early (an error, Ctrl-C): ``run.aborted`` says why, and the
+    spend so far is in it. Errors are reported by type name only."""
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     logger.setLevel(logging.INFO)
     quiet_third_party_loggers()
+    run: EvalRun | None = None
+    code = 0
     try:
         if args.spend_cap_usd is None:
             raise EvalError("refusing to run without --spend-cap-usd")
@@ -142,23 +170,36 @@ def main(argv: list[str] | None = None, *, dataset: R2Dataset | None = None) -> 
             raise EvalError(
                 f"refusing to run: no API key is configured for {spec.provider}"
             )
-        report = anyio.run(
-            lambda: run_eval(
-                spec,
-                dataset,
-                cap_usd=args.spend_cap_usd,
-                max_consecutive_errors=args.max_consecutive_errors,
-            )
+        run = EvalRun(
+            spec,
+            dataset,
+            cap_usd=args.spend_cap_usd,
+            max_consecutive_errors=args.max_consecutive_errors,
         )
+        anyio.run(run.execute)
+        if run.aborted:
+            code = 1
+    except KeyboardInterrupt:
+        print("ai-eval: interrupted", file=sys.stderr)
+        if run is not None:
+            run.aborted = "interrupted"
+        code = 130
     except EvalError as exc:
         print(f"ai-eval: {exc}", file=sys.stderr)
-        return 2
+        if run is not None:
+            run.aborted = "error (EvalError)"
+        code = 2
     except Exception as exc:  # noqa: BLE001 - its message may hold a key or title
         print(f"ai-eval: failed ({type(exc).__name__})", file=sys.stderr)
-        return 3
-    args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    print(_summary(report))
-    return 1 if report["run"]["aborted"] else 0
+        if run is not None:
+            run.aborted = f"error ({type(exc).__name__})"
+        code = 3
+    finally:
+        report = run.report() if run is not None else None
+        if report is not None:
+            _write_report(args.report, report)
+            print(_summary(report))
+    return code
 
 
 if __name__ == "__main__":

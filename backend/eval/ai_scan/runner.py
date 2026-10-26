@@ -19,6 +19,7 @@ There are no ledger rows: the eval has no app database.
 
 from __future__ import annotations
 
+import io
 import logging
 import math
 import time
@@ -29,6 +30,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import anyio
+from PIL import Image
 
 from app.ai import gateway
 from app.ai.images import ImageNormalisationError, normalise_image
@@ -42,7 +44,13 @@ from app.ai.prices import (
 from app.ai.registry import FeatureSpec, get_feature
 from app.core.config import settings
 from eval.ai_scan import EvalError
-from eval.ai_scan.dataset import R2Dataset
+from eval.ai_scan.dataset import Manifest, R2Dataset
+from eval.ai_scan.image_tokens import (
+    NoImageTokenRule,
+    image_tokens,
+    rule_for,
+    worst_case_image_tokens,
+)
 from eval.ai_scan.scoring import (
     MATCHING_RULE,
     Book,
@@ -57,13 +65,14 @@ logger = logging.getLogger(__name__)
 REPORT_VERSION = 1
 MICROS_PER_USD = 1_000_000
 
-# Conservative per-call token bounds for the pre-call estimate. A normalised
-# photo has a long edge of at most max_image_long_edge_px (1568): about
-# 3,300 tokens for Claude (w x h / 750 for a square photo) and at most
-# 1,445 for OpenAI "high" detail (8 tiles). The prompt (system prompt, user
-# text, Claude's structured-output schema) is under 1,000 tokens.
-IMAGE_TOKEN_BOUND = 4_000
+# Upper bound on the non-image prompt tokens of one call: the system prompt
+# (about 300 tokens), the user text and, for Claude, the structured-output
+# schema are well under this. The image's tokens are bounded per model by
+# eval.ai_scan.image_tokens.
 PROMPT_TOKEN_BOUND = 2_000
+
+# The largest --spend-cap-usd accepted (the workflow's default is 10).
+MAX_SPEND_CAP_USD = 100
 
 DEFAULT_MAX_CONSECUTIVE_ERRORS = 5
 
@@ -91,9 +100,18 @@ def resolve_spec(feature: str, model: str, provider: str | None = None) -> Featu
     provider = provider or infer_provider(model)
     try:
         base = get_feature(feature)
-        return replace(base, provider=provider, model=model, enabled=True)
+        spec = replace(base, provider=provider, model=model, enabled=True)
     except (LookupError, ValueError) as exc:
         raise EvalError(f"invalid feature/provider/model: {exc}") from None
+    try:
+        rule_for(spec.model)
+    except NoImageTokenRule:
+        # Fail closed: a call whose cost cannot be bounded never runs.
+        raise EvalError(
+            "refusing to run: no image-token rule for this model, so the spend "
+            "cap cannot bound a call (add one in eval/ai_scan/image_tokens.py)"
+        ) from None
+    return spec
 
 
 def provider_configured(spec: FeatureSpec) -> bool:
@@ -104,14 +122,25 @@ def provider_configured(spec: FeatureSpec) -> bool:
 # --- Spend cap ------------------------------------------------------------------
 
 
-def estimate_call_micros(spec: FeatureSpec) -> int:
-    """An upper bound on one call's cost: every prompt token at the model's
-    highest input rate (input, cache read or cache write), a full
-    ``max_tokens`` reply, and never less than the registry's own per-call
-    estimate (``est_cost_ceiling_micros``)."""
+def estimate_call_micros(
+    spec: FeatureSpec, width: int | None = None, height: int | None = None
+) -> int:
+    """An upper bound on one call's cost in micro-dollars.
+
+    Prompt tokens: the image's bound for this model (from the normalised
+    image's ``width`` x ``height``, or the worst case for any image within
+    the feature's long-edge cap when they are not given) plus
+    ``PROMPT_TOKEN_BOUND``, all at the model's highest input rate (input,
+    cache read or cache write). Output: a full ``max_tokens`` reply. Never
+    less than the registry's own per-call estimate
+    (``est_cost_ceiling_micros``)."""
+    if width is None or height is None:
+        img = worst_case_image_tokens(spec.model, spec.max_image_long_edge_px)
+    else:
+        img = image_tokens(spec.model, width, height)
     price = price_for(spec.model, CURRENT_PRICE_VERSION)
     input_rate = max(price.input, price.cache_read, price.cache_write)
-    scaled = (IMAGE_TOKEN_BOUND + PROMPT_TOKEN_BOUND) * input_rate
+    scaled = (img + PROMPT_TOKEN_BOUND) * input_rate
     scaled += spec.max_tokens * price.output
     bound = -(-scaled // TOKENS_PER_PRICE_UNIT)
     return max(bound, spec.est_cost_ceiling_micros)
@@ -125,28 +154,33 @@ def cap_micros_from_usd(cap_usd: float) -> int:
         or cap_usd <= 0
     ):
         raise EvalError("--spend-cap-usd must be a positive number")
+    if cap_usd > MAX_SPEND_CAP_USD:
+        raise EvalError(f"--spend-cap-usd must be at most {MAX_SPEND_CAP_USD}")
     return math.floor(cap_usd * MICROS_PER_USD)
 
 
 @dataclass
 class SpendCap:
     """Hard cap. ``spent`` is the priced usage of answered calls; ``assumed``
-    is the estimate charged for each errored call (a timeout or dropped
+    is the bound charged for each errored call (a timeout or dropped
     connection may still have been billed). A call is only made when
-    ``spent + assumed + estimate <= cap``."""
+    ``spent + assumed + its bound <= cap``. ``estimate`` is the worst-case
+    bound for any image (reported); ``max_bound`` the largest bound a call
+    was actually checked against."""
 
     cap: int
     estimate: int
     spent: int = 0
     assumed: int = 0
+    max_bound: int = 0
     stopped: bool = False
 
     @property
     def total(self) -> int:
         return self.spent + self.assumed
 
-    def allows_next_call(self) -> bool:
-        return self.total + self.estimate <= self.cap
+    def allows(self, bound: int) -> bool:
+        return self.total + bound <= self.cap
 
 
 # --- One call -------------------------------------------------------------------
@@ -234,19 +268,22 @@ def build_report(
     records: list[CallRecord],
     scores: list[ImageScore],
     invalid_images: int,
+    unreadable: int,
     cap: SpendCap,
     aborted: str | None,
     started_at: datetime,
 ) -> dict[str, Any]:
     """The aggregate report. Counts, rates, tokens, cost and the run's
     settings only: no image, EXIF, title, author, case id, object key,
-    bucket or endpoint."""
+    bucket or endpoint. ``scores[i]`` belongs to ``records[i]``."""
     attempted = len(records)
     outcomes = Counter(r.outcome for r in records)
     reported = Counter(r.reported for r in records)
     answered = [r for r in records if r.outcome != "error"]
+    answered_scores = [s for r, s in zip(records, scores) if r.outcome != "error"]
     latencies = [r.latency_s for r in answered if r.latency_s is not None]
     errors = Counter(r.error_type for r in records if r.error_type)
+    answered_agg = aggregate(answered_scores)
     return {
         "report_version": REPORT_VERSION,
         "started_at": started_at.isoformat(timespec="seconds"),
@@ -267,13 +304,23 @@ def build_report(
         "run": {
             "cases_attempted": attempted,
             "cases_invalid_image": invalid_images,
-            "cases_not_run": cases_total - attempted - invalid_images,
+            "cases_unreadable": unreadable,
+            "cases_not_run": cases_total - attempted - invalid_images - unreadable,
             "calls_answered": len(answered),
             "calls_errored": outcomes.get("error", 0),
             "error_types": dict(sorted(errors.items())),
             "aborted": aborted,
         },
+        # Over every attempted call (an errored call predicted nothing: what
+        # the user would have got), and over answered calls only (the
+        # model's accuracy, without provider errors).
         "accuracy": {"matching_rule": MATCHING_RULE, **aggregate(scores)},
+        "accuracy_answered_calls": {
+            "precision": answered_agg["precision"],
+            "recall": answered_agg["recall"],
+            "f1": answered_agg["f1"],
+            "images_scored": answered_agg["images_scored"],
+        },
         "outcomes": {
             "counts": {
                 k: outcomes.get(k, 0)
@@ -311,7 +358,8 @@ def build_report(
         },
         "spend_cap": {
             "cap_usd": _usd(cap.cap),
-            "estimate_per_call_usd": _usd(cap.estimate),
+            "worst_case_call_bound_usd": _usd(cap.estimate),
+            "largest_call_bound_used_usd": _usd(cap.max_bound),
             "assumed_for_errored_calls_usd": _usd(cap.assumed),
             "counted_usd": _usd(cap.total),
             "stopped_by_cap": cap.stopped,
@@ -320,6 +368,150 @@ def build_report(
 
 
 # --- The run ----------------------------------------------------------------------
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int]:
+    with Image.open(io.BytesIO(data)) as img:
+        return img.size
+
+
+class EvalRun:
+    """One eval run. :meth:`execute` runs it; :meth:`report` builds the
+    report from whatever has run so far, so a run that stops early (an
+    error, Ctrl-C) still reports what was spent. ``report()`` is None until
+    the manifest has been read (before that nothing is spent)."""
+
+    def __init__(
+        self,
+        spec: FeatureSpec,
+        dataset: R2Dataset,
+        *,
+        cap_usd: float,
+        provider_factory: ProviderFactory | None = None,
+        max_consecutive_errors: int = DEFAULT_MAX_CONSECUTIVE_ERRORS,
+        clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
+        if max_consecutive_errors < 1:
+            raise EvalError("--max-consecutive-errors must be at least 1")
+        self.spec = spec
+        self.dataset = dataset
+        self.cap = SpendCap(
+            cap=cap_micros_from_usd(cap_usd), estimate=estimate_call_micros(spec)
+        )
+        self.provider_factory = provider_factory
+        self.max_consecutive_errors = max_consecutive_errors
+        self.clock = clock
+        self.started_at = datetime.now(UTC)
+        self.records: list[CallRecord] = []
+        self.scores: list[ImageScore] = []
+        self.invalid_images = 0
+        self.unreadable = 0
+        self.aborted: str | None = None
+        self.manifest: Manifest | None = None
+
+    def report(self) -> dict[str, Any] | None:
+        if self.manifest is None:
+            return None
+        cases = self.manifest.cases
+        return build_report(
+            spec=self.spec,
+            dataset_version=self.manifest.dataset_version,
+            cases_total=len(cases),
+            books_total=sum(len(c.books) for c in cases),
+            records=self.records,
+            scores=self.scores,
+            invalid_images=self.invalid_images,
+            unreadable=self.unreadable,
+            cap=self.cap,
+            aborted=self.aborted,
+            started_at=self.started_at,
+        )
+
+    async def execute(self) -> dict[str, Any]:
+        """Run every case (in manifest order) until done, the spend cap would
+        be exceeded by the next call, or ``max_consecutive_errors`` cases in a
+        row failed (an errored call or an unreadable image)."""
+        spec, cap = self.spec, self.cap
+        # The gateway's own adapter dispatch, looked up at call time (tests
+        # patch the adapter classes on app.ai.gateway, as the app's tests do).
+        provider = (self.provider_factory or gateway._build_provider)(spec)
+        consecutive = 0
+        # The bound for the smallest possible image: when even that does not
+        # fit, stop before downloading anything more.
+        smallest_bound = estimate_call_micros(spec, 1, 1)
+        with self.dataset.open() as ds:
+            self.manifest = ds.manifest()
+            cases = self.manifest.cases
+            total = len(cases)
+            for index, case in enumerate(cases, start=1):
+                if not cap.allows(smallest_bound):
+                    cap.stopped = True
+                    logger.warning(
+                        "spend cap reached: stopping before case %d/%d", index, total
+                    )
+                    break
+                try:
+                    raw = ds.image(index, case)
+                except (EvalError, OSError) as exc:
+                    self.unreadable += 1
+                    consecutive += 1
+                    logger.warning(
+                        "case %d/%d: image unreadable (%s)",
+                        index,
+                        total,
+                        type(exc).__name__,
+                    )
+                    if consecutive >= self.max_consecutive_errors:
+                        self.aborted = f"{consecutive} consecutive failed cases"
+                        break
+                    continue
+                try:
+                    image_bytes = await anyio.to_thread.run_sync(
+                        lambda raw=raw: normalise_image(
+                            raw,
+                            max_long_edge_px=spec.max_image_long_edge_px,
+                            max_pixels=settings.scan_max_image_pixels,
+                        )
+                    )
+                except ImageNormalisationError as exc:
+                    self.invalid_images += 1
+                    logger.warning(
+                        "case %d/%d: image rejected (%s)", index, total, exc.code
+                    )
+                    continue
+                bound = estimate_call_micros(spec, *_jpeg_size(image_bytes))
+                if not cap.allows(bound):
+                    cap.stopped = True
+                    logger.warning(
+                        "spend cap reached: stopping before case %d/%d", index, total
+                    )
+                    break
+                cap.max_bound = max(cap.max_bound, bound)
+                record = await call_once(provider, spec, image_bytes, self.clock)
+                if record.outcome == "error":
+                    cap.assumed += bound
+                    consecutive += 1
+                else:
+                    cap.spent += record.cost_micros
+                    consecutive = 0
+                truth = [truth_book(b.title, b.author, b.isbn) for b in case.books]
+                self.records.append(record)
+                self.scores.append(score_image(record.predictions, truth))
+                logger.info(
+                    "case %d/%d: %s%s",
+                    index,
+                    total,
+                    record.outcome,
+                    f" ({record.error_type})" if record.error_type else "",
+                )
+                if consecutive >= self.max_consecutive_errors:
+                    self.aborted = f"{consecutive} consecutive failed cases"
+                    logger.error("aborting: %s", self.aborted)
+                    break
+        report = self.report()
+        if report is None:  # pragma: no cover - the manifest was read above
+            raise EvalError("no manifest")
+        return report
 
 
 async def run_eval(
@@ -331,80 +523,13 @@ async def run_eval(
     max_consecutive_errors: int = DEFAULT_MAX_CONSECUTIVE_ERRORS,
     clock: Callable[[], float] = time.perf_counter,
 ) -> dict[str, Any]:
-    """Run every case (in manifest order) until done, the spend cap would be
-    exceeded by the next call, or ``max_consecutive_errors`` calls in a row
-    raised. Returns the report. The dataset's temp directory is removed when
-    this returns or raises."""
-    cap = SpendCap(
-        cap=cap_micros_from_usd(cap_usd), estimate=estimate_call_micros(spec)
+    """Build and execute an :class:`EvalRun`; return its report."""
+    run = EvalRun(
+        spec,
+        dataset,
+        cap_usd=cap_usd,
+        provider_factory=provider_factory,
+        max_consecutive_errors=max_consecutive_errors,
+        clock=clock,
     )
-    started_at = datetime.now(UTC)
-    # The gateway's own adapter dispatch, looked up at call time (tests patch
-    # the adapter classes on app.ai.gateway, as the app's own tests do).
-    provider = (provider_factory or gateway._build_provider)(spec)
-    records: list[CallRecord] = []
-    scores: list[ImageScore] = []
-    invalid_images = 0
-    aborted: str | None = None
-    consecutive_errors = 0
-
-    with dataset.open() as ds:
-        manifest = ds.manifest()
-        cases = manifest.cases
-        total = len(cases)
-        for index, case in enumerate(cases, start=1):
-            if not cap.allows_next_call():
-                cap.stopped = True
-                logger.warning(
-                    "spend cap reached: stopping before case %d/%d", index, total
-                )
-                break
-            raw = ds.image(index, case)
-            try:
-                image_bytes = await anyio.to_thread.run_sync(
-                    lambda raw=raw: normalise_image(
-                        raw,
-                        max_long_edge_px=spec.max_image_long_edge_px,
-                        max_pixels=settings.scan_max_image_pixels,
-                    )
-                )
-            except ImageNormalisationError as exc:
-                invalid_images += 1
-                logger.warning(
-                    "case %d/%d: image rejected (%s)", index, total, exc.code
-                )
-                continue
-            record = await call_once(provider, spec, image_bytes, clock)
-            records.append(record)
-            if record.outcome == "error":
-                cap.assumed += cap.estimate
-                consecutive_errors += 1
-            else:
-                cap.spent += record.cost_micros
-                consecutive_errors = 0
-            truth = [truth_book(b.title, b.author, b.isbn) for b in case.books]
-            scores.append(score_image(record.predictions, truth))
-            logger.info(
-                "case %d/%d: %s%s",
-                index,
-                total,
-                record.outcome,
-                f" ({record.error_type})" if record.error_type else "",
-            )
-            if consecutive_errors >= max_consecutive_errors:
-                aborted = f"{consecutive_errors} consecutive errored calls"
-                logger.error("aborting: %s", aborted)
-                break
-
-    return build_report(
-        spec=spec,
-        dataset_version=manifest.dataset_version,
-        cases_total=total,
-        books_total=sum(len(c.books) for c in cases),
-        records=records,
-        scores=scores,
-        invalid_images=invalid_images,
-        cap=cap,
-        aborted=aborted,
-        started_at=started_at,
-    )
+    return await run.execute()
