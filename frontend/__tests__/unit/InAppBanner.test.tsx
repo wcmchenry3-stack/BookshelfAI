@@ -214,8 +214,10 @@ describe('InAppBanner', () => {
         path.join(__dirname, '../../components/InAppBanner.tsx'),
         'utf8'
       );
-      expect(source).not.toMatch(/rgba\(/);
-      expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+      // rgb()/rgba() calls, and hex colours inside string literals only, so an
+      // issue reference in a comment such as (#632) is not a false positive.
+      expect(source).not.toMatch(/rgba?\(/);
+      expect(source).not.toMatch(/['"`]#[0-9a-fA-F]{3,8}['"`]/);
     });
   });
 
