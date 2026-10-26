@@ -53,6 +53,8 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 - `GOOGLE_BOOKS_API_KEY`
 - `OPENAI_MAX_TOKENS` (optional)
 
+Every scan limit and dial (default, bounds, setting, what the user sees, where it is counted) is listed in one place in [`scan-limits.md`](scan-limits.md); `python -m app.ai.settings list` shows them grouped by area with the current value, default and bounds.
+
 Scan dials (optional; defaults shown; change in the dashboard and restart, no release needed — out-of-range values fail at boot):
 
 - `SCAN_ENABLED` (`true`), `SCAN_ENHANCED_ENABLED` (`true`), `SCAN_MAX_IMAGE_PIXELS`, `SCAN_MODEL`, `SCAN_ENHANCED_MODEL` — **initial defaults only** (#526). They seed the `ai_settings` table on first boot (see "AI settings" below); after that, changing the env var does nothing for a key that already has a row. They are also the fallback for a key whose row is missing
@@ -63,7 +65,7 @@ Scan dials (optional; defaults shown; change in the dashboard and restart, no re
 - `SCAN_FREE_MONTHLY_LIMIT`, `SCAN_PREMIUM_MONTHLY_LIMIT`, `SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT` — **retired** (#582): there is no monthly limit, so they seed nothing. The app still accepts them (an integer, or unset) so an existing `.env` keeps booting; remove them from the Render environment and local `.env` files. They are deleted from the settings class with the contract migration that drops the retired `ai_settings` rows
 - `ENHANCED_SCAN_FREE_CREDITS` — **no longer used** since #533 (the lifetime enhanced-scan credit balance is gone); still accepted so an existing environment loads, and removed in #540
 - `UNVERIFIED_BOOKS_PER_USER_MAX` (`200`, range 1–10,000) — the most private unverified library entries one user can have (#616, `POST /wishlist/unverified` answers `409 unverified_limit_reached` above it). Read at startup, so a change needs a restart
-- `SCAN_DAILY_LIMIT_PER_USER` — **no longer applied to `/scan`** since #528 (the per-user daily cap is now `quota.<tier>.daily`); read only by the legacy `scan_quota` module until #540 removes it
+- `SCAN_DAILY_LIMIT_PER_USER` — **no longer applied to `/scan`** since #528 (the per-user daily cap is now `quota.<tier>.found_daily`); read only by the legacy `scan_quota` module until #540 removes it
 - `SCAN_MAX_IMAGE_PIXELS` (`40000000`, range 1,000,000–100,000,000) — seed for `scan.max_image_pixels`; decompression-bomb guard: an upload whose width × height is above this gets `413 image_too_large_pixels` before it is decoded
 - `SCAN_NORMALISE_CONCURRENCY` (`1`, range 1–8) — how many scan images are normalised (decoded and resized, in worker threads) at once per process. Each can briefly hold a few hundred MB for a 40 MP image, so this bounds peak memory; requests over the limit wait for a slot. Peak is roughly 160–350 MB per 40 MP image, times this value, times the uvicorn worker count; keep it at 1 on a 512 MB instance and raise it only with more memory. Stays env (not in `ai_settings`): it sizes a process-wide `anyio.CapacityLimiter` created at import, so a database change could not take effect without a restart
 - `AI_SETTINGS_CACHE_TTL_SECONDS` (`30`, range 1–300) — how long each process (uvicorn worker) reuses the `ai_settings` rows it last read
