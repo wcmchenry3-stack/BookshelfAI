@@ -113,6 +113,8 @@ jobs:
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
           format: 'table'
+          # Expiring suppressions for dev/build-time tooling only (#629).
+          trivyignores: '.trivyignore'
 
   # ── Security-marked pytest suite ──────────────────────────────────────────
   pytest-security:

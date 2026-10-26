@@ -26,7 +26,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Shared-catalog integrity | `books` / `editions` are written only from server-produced provider data, via server-signed results (`catalog_token`). See [Shared catalog trust model](#shared-catalog-trust-model) |
 | HTTPS | Render TLS termination; HSTS header (hardened — staging + production); Cloudflare Full-strict TLS |
 | Secret scanning | `gitleaks` pre-commit hook + GitHub Secret Scanning |
-| Dependency CVEs | Dependabot + `pip-audit` + `npm audit` + Trivy (OSV+NVD) in CI |
+| Dependency CVEs | Dependabot + `pip-audit` + `npm audit` + Trivy (OSV+NVD) in CI. Trivy suppressions live in `.trivyignore`: each needs an `exp:` date and a justification, and only dev/build-time tooling may be suppressed, never shipped code (#629) |
 | SAST | Bandit (Python) — HIGH/MEDIUM findings block CI |
 | DAST | OWASP ZAP active scan (weekly + manual dispatch) |
 | CI supply chain | All reusable workflow refs pinned to commit SHA |
