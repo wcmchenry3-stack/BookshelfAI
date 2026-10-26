@@ -40,7 +40,7 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 | `outline` | `#737780` | `#8e9299` | Borders, dividers |
 
 #### Typography
-- **Headline font**: Noto Serif (`NotoSerif_700Bold`, `NotoSerif_800ExtraBold`) — loaded via `useFonts` in `app/_layout.tsx`
+- **Headline font**: Noto Serif (`NotoSerif_700Bold`, `NotoSerif_800ExtraBold`) — loaded via `useFonts` in `app/_layout.tsx` (if loading fails, e.g. the web 12s timeout, the app renders with system fonts rather than a blank screen)
 - **Body / label font**: Inter (`Inter_400Regular`, `Inter_500Medium`, `Inter_600SemiBold`, `Inter_700Bold`)
 - Token: `theme.typography.fontFamilyHeadline` → `'NotoSerif_700Bold'`
 - Token: `theme.typography.fontFamilyBody` → `'Inter_400Regular'`

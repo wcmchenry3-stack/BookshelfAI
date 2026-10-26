@@ -158,7 +158,7 @@ function GlobalScanModals() {
 }
 
 function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontsError] = useFonts({
     NotoSerif_700Bold,
     NotoSerif_800ExtraBold,
     Inter_400Regular,
@@ -167,8 +167,9 @@ function RootLayout() {
     Inter_700Bold,
   });
 
-  // Hold the splash until fonts are ready; system fonts render if load fails.
-  if (!fontsLoaded) {
+  // Hold the splash until fonts are ready; if loading fails (blocked font
+  // request, 12s timeout on web) fall through and render with system fonts.
+  if (!fontsLoaded && !fontsError) {
     return <View />;
   }
 
