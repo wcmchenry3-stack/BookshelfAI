@@ -7,7 +7,7 @@ What the app does from a user's perspective, with flow diagrams. For the REST su
 Navigation is file-based via `expo-router`. Two route groups:
 
 ### `(auth)` — unauthenticated stack
-- **`login.tsx`** — Google Sign-In. The only screen reachable before auth. Tapping the Google button opens the system OAuth flow; on success the app exchanges the Google ID token for a Bookshelf access + refresh pair.
+- **`login.tsx`** — Google Sign-In. The only screen reachable before auth. Tapping the Google button opens the system OAuth flow; on success the app exchanges the Google ID token for a Bookshelf access + refresh pair. If the OAuth prompt fails to start (network error, blocked popup) or Google returns an error, an inline localized error with a "Try again" button is shown instead of an unhandled promise rejection.
 
 ### `(tabs)` — authenticated tab bar
 - **Scan** (`scan.tsx`) — camera viewfinder (native) or file picker (web). Primary path into the app.
