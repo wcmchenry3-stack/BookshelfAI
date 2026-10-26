@@ -240,3 +240,227 @@ class TestAISpendPurge:
 
         assert "ai spend" in caplog.text
         assert "refresh_tokens" in str(mock_session.execute.call_args[0][0])
+
+
+class TestTransientRetry:
+    """#661: transient DB connection errors are retried per step; only an
+    exhausted retry budget reaches Sentry (logger.exception)."""
+
+    @staticmethod
+    def _patches(quota, base_delay=0):
+        mock_factory, mock_session, _ = _make_db_mock()
+        patches = [
+            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.purge_old_quota", quota),
+            patch(
+                "app.services.token_cleanup.rollup_and_purge",
+                AsyncMock(return_value=(0, 0)),
+            ),
+            patch(
+                "app.services.token_cleanup.purge_old_spend",
+                AsyncMock(return_value=0),
+            ),
+            patch(
+                "app.services.token_cleanup.purge_old_zero_results",
+                AsyncMock(return_value=0),
+            ),
+            patch(
+                "app.services.token_cleanup.purge_old_scan_records",
+                AsyncMock(return_value=0),
+            ),
+            patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
+            patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
+            patch("app.services.token_cleanup._RETRY_BASE_DELAY_SECONDS", base_delay),
+        ]
+        return mock_session, patches
+
+    @staticmethod
+    async def _run_once(patches, caplog):
+        import contextlib
+        import logging
+
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            stack.enter_context(
+                caplog.at_level(logging.WARNING, logger="app.services.token_cleanup")
+            )
+            task = asyncio.create_task(cleanup_expired_tokens())
+            for _ in range(60):
+                await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.asyncio
+    async def test_gaierror_once_then_success_logs_no_error(self, caplog) -> None:
+        import logging
+        import socket
+
+        quota = AsyncMock(
+            side_effect=[socket.gaierror(-2, "Name or service not known"), 4]
+        )
+        mock_session, patches = self._patches(quota)
+        await self._run_once(patches, caplog)
+
+        assert quota.await_count == 2
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
+        assert "refresh_tokens" in str(mock_session.execute.call_args[0][0])
+
+    @pytest.mark.asyncio
+    async def test_operational_error_is_retried(self, caplog) -> None:
+        import logging
+
+        from sqlalchemy.exc import OperationalError
+
+        quota = AsyncMock(
+            side_effect=[OperationalError("SELECT 1", {}, Exception("conn")), 0]
+        )
+        _session, patches = self._patches(quota)
+        await self._run_once(patches, caplog)
+
+        assert quota.await_count == 2
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+    @pytest.mark.asyncio
+    async def test_persistent_failure_logs_one_error_and_other_steps_run(
+        self, caplog
+    ) -> None:
+        import logging
+        import socket
+
+        from app.services import token_cleanup
+
+        quota = AsyncMock(side_effect=socket.gaierror(-2, "Name or service not known"))
+        mock_session, patches = self._patches(quota)
+        await self._run_once(patches, caplog)
+
+        assert quota.await_count == token_cleanup._RETRY_ATTEMPTS
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert len(errors) == 1
+        assert "ai quota" in errors[0].getMessage()
+        assert "refresh_tokens" in str(mock_session.execute.call_args[0][0])
+
+    @pytest.mark.asyncio
+    async def test_non_transient_error_is_not_retried(self, caplog) -> None:
+        import logging
+
+        quota = AsyncMock(side_effect=ValueError("bug"))
+        _session, patches = self._patches(quota)
+        await self._run_once(patches, caplog)
+
+        assert quota.await_count == 1
+        assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 1
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_backoff_propagates(self) -> None:
+        import contextlib
+        import socket
+
+        quota = AsyncMock(side_effect=socket.gaierror(-2, "x"))
+        _session, patches = self._patches(quota, base_delay=3600)
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            task = asyncio.create_task(cleanup_expired_tokens())
+            for _ in range(10):
+                await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert quota.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_backoff_delays_are_five_then_ten(self, caplog) -> None:
+        import socket
+
+        real_sleep = asyncio.sleep
+        calls: list[float] = []
+
+        async def fake_sleep(delay, *a, **k):
+            calls.append(delay)
+            await real_sleep(3600 if delay >= 9999 else 0)
+
+        gai = socket.gaierror(-2, "x")
+        quota = AsyncMock(side_effect=[gai, gai, 1])
+        _session, patches = self._patches(quota, base_delay=5.0)
+        patches.append(patch("app.services.token_cleanup.asyncio.sleep", fake_sleep))
+        await self._run_once(patches, caplog)
+
+        assert quota.await_count == 3
+        assert [d for d in calls if d in (5.0, 10.0)] == [5.0, 10.0]
+
+    def test_is_transient_follows_cause_chain(self) -> None:
+        from sqlalchemy.exc import OperationalError
+
+        from app.services.token_cleanup import _is_transient
+
+        try:
+            try:
+                raise OperationalError("SELECT 1", {}, Exception("conn"))
+            except OperationalError as inner:
+                raise RuntimeError("wrapped") from inner
+        except RuntimeError as wrapped:
+            assert _is_transient(wrapped) is True
+
+        assert _is_transient(ValueError("nope")) is False
+        assert _is_transient(ConnectionError("lost")) is False
+
+    @pytest.mark.asyncio
+    async def test_warning_has_attempt_count_and_label(self, caplog) -> None:
+        import logging
+        import socket
+
+        quota = AsyncMock(side_effect=[socket.gaierror(-2, "x"), 0])
+        _session, patches = self._patches(quota)
+        await self._run_once(patches, caplog)
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        msg = warnings[0].getMessage()
+        assert "ai quota" in msg
+        assert "1/3" in msg
+        assert "gaierror" in msg
+
+    @pytest.mark.asyncio
+    async def test_scan_records_step_is_retried(self, caplog) -> None:
+        import logging
+        import socket
+
+        scan = AsyncMock(side_effect=[socket.gaierror(-2, "x"), 0])
+        _session, patches = self._patches(AsyncMock(return_value=0))
+        patches.append(patch("app.services.token_cleanup.purge_old_scan_records", scan))
+        await self._run_once(patches, caplog)
+
+        assert scan.await_count == 2
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_step_is_retried(self, caplog) -> None:
+        import logging
+        import socket
+
+        session, patches = self._patches(AsyncMock(return_value=0))
+        session.execute = AsyncMock(
+            side_effect=[socket.gaierror(-2, "x"), MagicMock(rowcount=1)]
+        )
+        await self._run_once(patches, caplog)
+
+        assert session.execute.await_count == 2
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+    @pytest.mark.asyncio
+    async def test_interface_error_is_retried(self, caplog) -> None:
+        import logging
+
+        from sqlalchemy.exc import InterfaceError
+
+        quota = AsyncMock(
+            side_effect=[InterfaceError("SELECT 1", {}, Exception("conn")), 0]
+        )
+        _session, patches = self._patches(quota)
+        await self._run_once(patches, caplog)
+
+        assert quota.await_count == 2
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
