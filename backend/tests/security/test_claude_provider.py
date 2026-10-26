@@ -31,7 +31,6 @@ PROVIDERS_DIR = APP_ROOT / "ai" / "providers"
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-00000000a532"),
     email="sec532@example.com",
-    enhanced_scan_credits=3,
 )
 ANTHROPIC_ROWS = {
     "scan.standard.provider": "anthropic",

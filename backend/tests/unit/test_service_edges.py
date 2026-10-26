@@ -134,7 +134,6 @@ class TestCleanupIsolation:
     """One failing purge must not stop the others, or the loop."""
 
     PURGES: ClassVar[list[str]] = [
-        "purge_old_scan_usage",
         "purge_old_quota",
         "rollup_and_purge",
         "purge_old_spend",
@@ -185,7 +184,7 @@ class TestCleanupIsolation:
         await self._run_once(patches, caplog)
         for name, mock in mocks.items():
             assert mock.await_count == 1, name
-        # six purges plus the refresh-token delete each logged their failure.
+        # five purges plus the refresh-token delete each logged their failure.
         assert caplog.text.count("error during cleanup run") == len(self.PURGES) + 1
 
     async def test_refresh_token_failure_alone_is_logged_not_raised(self, caplog):

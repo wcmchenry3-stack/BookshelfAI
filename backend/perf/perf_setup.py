@@ -4,7 +4,7 @@ DANGER: this wipes data. For the database named by DATABASE_URL it deletes
 
 - EVERY row of ``ai_settings``, ``ai_quota``, ``ai_inflight``,
   ``ai_spend_daily``, ``ai_usage``, ``ai_usage_daily``,
-  ``ai_enhanced_zero_results``, ``scan_records`` and ``scan_usage_daily``
+  ``ai_enhanced_zero_results`` and ``scan_records``
   (``ai_settings`` included: that is every operator dial and kill switch, and
   why the database must be throwaway);
 - the users whose email ends in ``@perf.invalid`` and only THEIR
@@ -143,7 +143,6 @@ async def _reset_and_create_users(count: int) -> list[str]:
         AIUsageDaily,
         RefreshToken,
         ScanRecord,
-        ScanUsageDaily,
         User,
     )
 
@@ -159,7 +158,6 @@ async def _reset_and_create_users(count: int) -> list[str]:
             AIUsage,
             AIUsageDaily,
             ScanRecord,
-            ScanUsageDaily,
         ):
             await db.execute(delete(model))
         # Only the perf users' tokens; the users themselves go next.

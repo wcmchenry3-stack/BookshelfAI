@@ -301,7 +301,7 @@ class TestZeroResultAuthority:
 
 class TestLegacyCreditsUnused:
     def test_no_app_code_reads_or_writes_enhanced_scan_credits(self):
-        """Only the model column definition remains (dropped in #540)."""
+        """The column is gone (dropped in #540): nothing in app/ names it."""
         offenders = []
         for path in APP_ROOT.rglob("*.py"):
             tree = ast.parse(path.read_text())
@@ -317,5 +317,4 @@ class TestLegacyCreditsUnused:
                     name = node.value
                 if name == "enhanced_scan_credits":
                     offenders.append((path.relative_to(APP_ROOT), node.lineno))
-        # The one allowed occurrence: the column declaration in the model.
-        assert [str(p) for p, _ in offenders] == ["models/user.py"]
+        assert offenders == []
