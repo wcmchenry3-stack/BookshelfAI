@@ -1,6 +1,7 @@
 import { renderHook, act } from '@testing-library/react-native';
 import {
   useFeedbackSubmit,
+  type FeedbackPayload,
   _resetFeedbackThrottle,
   DESCRIPTION_MAX,
   SUBMIT_COOLDOWN_MS,
@@ -27,10 +28,10 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-const basePayload = {
+const basePayload: FeedbackPayload = {
   title: 'Test title',
   description: 'Test description',
-  type: 'bug' as const,
+  type: 'bug',
 };
 
 async function submitOnce(payload = basePayload) {

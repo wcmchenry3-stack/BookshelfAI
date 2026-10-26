@@ -234,6 +234,9 @@ npx jest --coverage
 # Single file
 npx jest __tests__/unit/useScanJobs.test.tsx
 
+# Type-check (tsc --noEmit; also the typecheck-frontend CI job)
+npm run typecheck
+
 # Watch mode
 npx jest --watch
 
@@ -262,7 +265,7 @@ test('renders and responds to tap', async () => {
 
 ## CI test jobs
 
-Each job is a reusable workflow from `wcmchenry3-stack/.github`:
+Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-frontend`, `js-bundle-check` and the other bundle/build checks are defined inline in `ci.yml`:
 
 | Job | What it runs |
 |---|---|
@@ -272,6 +275,7 @@ Each job is a reusable workflow from `wcmchenry3-stack/.github`:
 | `pytest -m security` | Separate security-suite run (on every PR) |
 | `lint-python` | `black --check` + `ruff` |
 | `lint-frontend` | `eslint` + `prettier --check` |
+| `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
 | `cve-python` | `pip-audit` |
 | `cve-frontend` | `npm audit` |
 | `sast-python` | Bandit static analysis |
