@@ -86,7 +86,7 @@ export function InAppBanner() {
                   action.onPress();
                   dismiss();
                 }}
-                style={styles.actionButton}
+                style={[styles.actionButton, { borderColor: textColor }]}
                 accessibilityRole="button"
                 accessibilityLabel={action.label}
               >
@@ -130,7 +130,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderWidth: 1,
     minWidth: 44,
     minHeight: 44,
     alignItems: 'center',
