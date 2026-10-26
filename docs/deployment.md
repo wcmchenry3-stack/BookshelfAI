@@ -53,6 +53,8 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 - `GOOGLE_BOOKS_API_KEY`
 - `OPENAI_MAX_TOKENS` (optional)
 
+Every scan limit and dial (default, bounds, setting, what the user sees, where it is counted) is listed in one place in [`scan-limits.md`](scan-limits.md); `python -m app.ai.settings list` shows them grouped by area with the current value, default and bounds.
+
 Scan dials (optional; defaults shown; change in the dashboard and restart, no release needed — out-of-range values fail at boot):
 
 - `SCAN_ENABLED` (`true`), `SCAN_ENHANCED_ENABLED` (`true`), `SCAN_MAX_IMAGE_PIXELS`, `SCAN_MODEL`, `SCAN_ENHANCED_MODEL` — **initial defaults only** (#526). They seed the `ai_settings` table on first boot (see "AI settings" below); after that, changing the env var does nothing for a key that already has a row. They are also the fallback for a key whose row is missing
