@@ -54,6 +54,7 @@ MIGRATION = (
     Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0007_ai_quota.py"
 )
 FLAGS_MIGRATION = MIGRATION.with_name("0012_ai_inflight_units_taken.py")
+CONTRACT_MIGRATION = MIGRATION.with_name("0018_drop_retired_monthly_quota.py")
 
 
 def _distinct_jpeg() -> bytes:
@@ -854,8 +855,10 @@ def _load_migration(path=MIGRATION, name="migration_0007"):
 def _migration_cycle(connection) -> None:
     migration = _load_migration()
     assert (migration.revision, migration.down_revision) == ("0007", "0006")
-    # 0012 (#590) adds the unit flags to ai_inflight; the model is 0007 + 0012.
+    # 0012 (#590) adds the unit flags to ai_inflight and 0018 (#594) drops the
+    # two retired ones; the model is 0007 + 0012 + 0018.
     flags = _load_migration(FLAGS_MIGRATION, "migration_0012")
+    contract = _load_migration(CONTRACT_MIGRATION, "migration_0018")
     context = MigrationContext.configure(connection)
     tables = ("ai_quota", "ai_inflight")
 
@@ -875,12 +878,14 @@ def _migration_cycle(connection) -> None:
         assert present() == set()
         migration.upgrade()
         flags.upgrade()
+        contract.upgrade()
         assert present() == set(tables)
         assert diffs() == []
         migration.downgrade()
         assert present() == set()
         migration.upgrade()
         flags.upgrade()
+        contract.upgrade()
         assert diffs() == []
 
 

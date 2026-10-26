@@ -877,16 +877,9 @@ class TestSeeding:
             # #528 seeds
             patch.object(ai_settings.settings, "scan_global_daily_limit", 77),
             patch.object(ai_settings.settings, "scan_free_daily_limit", 4),
-            # #582: retired, must seed nothing
-            patch.object(ai_settings.settings, "scan_free_monthly_limit", 6),
             patch.object(ai_settings.settings, "scan_premium_daily_limit", 31),
-            patch.object(ai_settings.settings, "scan_premium_monthly_limit", 301),
             # #531 seed
             patch.object(ai_settings.settings, "scan_free_daily_ceiling_micros", 42),
-            # #533 seed
-            patch.object(
-                ai_settings.settings, "scan_premium_enhanced_monthly_limit", 21
-            ),
         ):
             values = ai_settings.seed_values()
         assert values == {
@@ -904,8 +897,7 @@ class TestSeeding:
             "quota.free.no_match_daily": 5,
             "quota.premium.no_match_daily": 5,
             "breaker.free_daily_ceiling_micros": 42,
-            # #533: code defaults (the retired monthly env vars seed nothing,
-            # #582)
+            # #533: code defaults (no monthly keys are seeded, #582)
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
