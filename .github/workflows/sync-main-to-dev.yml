@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
 
+# The pinned called workflow sets no permissions of its own, so it runs with
+# whatever this caller grants; the repo default token is read-only, which is
+# why `gh pr create` failed with "Resource not accessible by integration"
+# (#410). The repo setting "Allow GitHub Actions to create and approve pull
+# requests" must also be on.
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   sync:
     uses: wcmchenry3-stack/.github/.github/workflows/called-sync-main-to-dev.yml@a973bcce934fef46e22d40123430ad2594d5bada
