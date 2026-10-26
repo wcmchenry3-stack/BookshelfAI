@@ -12,7 +12,7 @@ PyJWT[cryptography]==2.15.1
 httpx==0.28.1
 # Claude provider (#532). Pinned exactly; 1.x is built on httpx2, which the
 # adapter also imports, so it is pinned too (anthropic allows >=2.0.0,<3).
-anthropic==1.12.1
+anthropic==2.2.0
 httpx2==2.13.1
 slowapi==0.1.10
 python-multipart==0.0.32
