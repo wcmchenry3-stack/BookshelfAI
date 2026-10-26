@@ -929,10 +929,31 @@ def _migration_cycle(connection) -> None:
         return [d for d in compare_metadata(context, Base.metadata) if table in repr(d)]
 
     with Operations.context(context):
-        if present():
+        # Tables from later revisions that reference scan_records (0017
+        # scan_corrections) are dropped first, as a real downgrade orders it;
+        # the whole cycle is rolled back afterwards.
+        # They are created again after each upgrade.
+        insp = inspect(connection)
+        dependents = [
+            Base.metadata.tables[name]
+            for name in insp.get_table_names()
+            if any(fk["referred_table"] == table for fk in insp.get_foreign_keys(name))
+        ]
+
+        def downgrade() -> None:
+            for dependent in dependents:
+                dependent.drop(connection)
             migration.downgrade()
+
+        def upgrade() -> None:
+            migration.upgrade()
+            for dependent in dependents:
+                dependent.create(connection)
+
+        if present():
+            downgrade()
         assert not present()
-        migration.upgrade()
+        upgrade()
         assert present()
         assert diffs() == []
         insp = inspect(connection)
@@ -964,9 +985,9 @@ def _migration_cycle(connection) -> None:
             "created_at",
             "updated_at",
         }
-        migration.downgrade()
+        downgrade()
         assert not present()
-        migration.upgrade()
+        upgrade()
         assert diffs() == []
 
 

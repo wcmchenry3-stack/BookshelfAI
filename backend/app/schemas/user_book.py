@@ -77,6 +77,19 @@ def normalise_user_isbn(value: str) -> str:
     raise ValueError("isbn must be a valid ISBN-13 or ISBN-10")
 
 
+class ScanReference(BaseModel):
+    """Which scan candidate an "Add it yourself" form was pre-filled from
+    (#631): ``ScanResponse.scan_record_id`` and the book's
+    ``candidate_index``, as /scan returned them. Never the pre-filled values
+    themselves: the server compares the saved entry with the candidate it
+    stored. Only these two fields exist (anything else is 422)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scan_record_id: uuid.UUID
+    candidate_index: int = Field(..., ge=0, le=999)
+
+
 class UnverifiedBookCreate(BaseModel):
     """Body for POST /wishlist/unverified (#616): a book the catalog could
     not find, added by the user as their own private, unverified entry.
@@ -94,6 +107,10 @@ class UnverifiedBookCreate(BaseModel):
     # ISBN-10 or ISBN-13, hyphens and spaces allowed (17 characters for a
     # hyphenated ISBN-13; a little slack for spaces).
     isbn: str | None = Field(None, max_length=20)
+    # Optional (#631): the scan candidate the form was pre-filled from. The
+    # entry is saved the same way with or without it; the server only
+    # records whether the title, author and ISBN were changed.
+    scan_reference: ScanReference | None = None
 
     @field_validator("title", "author")
     @classmethod

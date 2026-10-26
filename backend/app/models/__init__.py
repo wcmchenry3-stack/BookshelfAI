@@ -7,6 +7,7 @@ from app.models.ai_usage import AIUsage, AIUsageDaily
 from app.models.book import Book
 from app.models.edition import Edition
 from app.models.refresh_token import RefreshToken
+from app.models.scan_correction import ScanCorrection, ScanCorrectionDaily
 from app.models.scan_record import ScanRecord
 from app.models.scan_usage import ScanUsageDaily
 from app.models.user import User
@@ -24,6 +25,8 @@ __all__ = [
     "Book",
     "Edition",
     "RefreshToken",
+    "ScanCorrection",
+    "ScanCorrectionDaily",
     "ScanRecord",
     "ScanUsageDaily",
     "User",

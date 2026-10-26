@@ -35,7 +35,7 @@ import {
   type ScanResponse,
 } from '../lib/scanJob';
 import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../lib/scanJobStorage';
-import { draftFromBook, type UnverifiedDraft } from '../lib/unverified';
+import { draftFromBook, withScanRecord, type UnverifiedDraft } from '../lib/unverified';
 
 /** An "Add it yourself" form waiting to be shown, with its own id (#616). */
 export type PendingUnverifiedDraft = UnverifiedDraft & { id: string };
@@ -1196,7 +1196,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               !inFlightRef.current.has(j.id)
           );
           if (waiting && !drainingRef.current) void drainQueue();
-          results = response.data?.books ?? [];
+          // Each result keeps the scan record it came from (#631), so an
+          // "Add it yourself" form pre-filled from it can name it, even
+          // after the job was queued, retried or reopened.
+          results = withScanRecord(response.data?.books ?? [], response.data?.scan_record_id);
           const reportedNoMatch = response.data?.no_match;
           if (reportedNoMatch === 'free' || reportedNoMatch === 'counted') {
             noMatch = reportedNoMatch;

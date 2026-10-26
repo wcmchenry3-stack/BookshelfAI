@@ -27,6 +27,9 @@ export interface ScanResponse {
    * 'free' = it did not use a scan; 'counted' = it used one because today's
    * allowance for unrecognised photos is used up; null/absent otherwise. */
   no_match?: 'free' | 'counted' | null;
+  /** Opaque reference to the scan record holding this answer (#631); absent
+   * when none was saved. Kept with each result (`withScanRecord`). */
+  scan_record_id?: string;
 }
 
 export interface ScanJob {

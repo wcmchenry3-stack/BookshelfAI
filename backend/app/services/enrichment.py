@@ -283,8 +283,11 @@ class EnrichmentService:
         tasks = [_bounded(c) for c in candidates[:limit]]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         enriched = []
-        for r in results:
+        for index, r in enumerate(results):
             if isinstance(r, EnrichedBook):
+                # Which candidate it came from (#631): a failed candidate is
+                # dropped, so the position in this list is not enough.
+                r.candidate_index = index
                 enriched.append(r)
             else:
                 logger.warning("Enrichment failed for a candidate: %s", r)

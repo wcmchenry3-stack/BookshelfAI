@@ -382,6 +382,28 @@ async def _save_enrichment_step(
         return False
 
 
+async def _saved_record_id(
+    db: AsyncSession,
+    *,
+    fingerprint: str | None,
+    user_id: uuid.UUID,
+    ai_created_at: datetime | None,
+) -> uuid.UUID | None:
+    """The id of the record just saved for this answer (#631), for
+    ``ScanResponse.scan_record_id``; None when nothing was saved, the stored
+    answer is another one, or on any failure. Never raises."""
+    if fingerprint is None or ai_created_at is None:
+        return None
+    try:
+        return await scan_records.record_id(
+            db, user_id=user_id, fingerprint=fingerprint, ai_created_at=ai_created_at
+        )
+    except Exception as exc:  # noqa: BLE001 - scan records never fail a scan
+        logger.warning("scan: scan-record id read failed (%s)", type(exc).__name__)
+        await _recover_session(db)
+        return None
+
+
 async def _serve_repeat(
     db: AsyncSession,
     *,
@@ -449,6 +471,7 @@ async def _serve_repeat(
         enhanced=enhanced,
         enhanced_scans_remaining=remaining,
         repeat=True,
+        scan_record_id=record.id,
     )
 
 
@@ -942,6 +965,9 @@ async def scan(
             ai_created_at=ai_saved_at,
             books=books,
         )
+    record_id = await _saved_record_id(
+        db, fingerprint=fingerprint, user_id=user_id, ai_created_at=ai_saved_at
+    )
     books = await _mark_library(db, user_id, books)
     if ai_saved_at is not None:
         scan_records.log_event(
@@ -958,6 +984,7 @@ async def scan(
         enhanced=enhanced,
         enhanced_scans_remaining=await _enhanced_remaining(db, reservation),
         no_match=_no_match_field(moved),
+        scan_record_id=record_id,
     )
 
 

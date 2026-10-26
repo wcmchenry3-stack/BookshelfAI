@@ -244,7 +244,8 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
   "enhanced": false,
   "enhanced_scans_remaining": null,
   "repeat": false,
-  "no_match": null
+  "no_match": null,
+  "scan_record_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 }
 ```
 
@@ -260,6 +261,8 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 Only the requesting user's library counts. It is checked on every response (new scans, repeats served from a scan record, `GET /books/search`) and never stored in a scan record. `already_in_library` and `in_library` (#585) are kept for older clients: both are `true` exactly when `ownership` is not `not_owned` (see [data-model.md](data-model.md#dedup-strategy--why-work_id-not-isbn)). `repeat` (#585) is `true` when the answer came from the user's saved scan record for this exact photo (no AI call, nothing charged; see "Scan records" below) and `false` otherwise. Both fields are additive: older clients can ignore them.
 
 `catalog_token` (#602) is the server's signature over this book's catalog fields (`open_library_work_id`, `google_books_id`, `title`, `author`, `description`, `cover_url`, `subjects`, and per edition `isbn_13`, `isbn_10`, `publisher`, `publish_year`, `format`, `page_count`, `open_library_edition_id`) and the requesting user. It is opaque: the app keeps it unchanged and posts it back with the book, fields unchanged, to `POST /wishlist`. Every signed field comes from Open Library / Google Books: when a provider matched, `title` and `author` are the provider's (not the vision model's reading of the photo), and an edition `isbn_13` / `isbn_10` is present only when a provider confirmed it. A book with no provider ID (neither `open_library_work_id` nor `google_books_id`; nothing matched, so its title and author are the model's reading) always has `catalog_token: null` and cannot be added to the wishlist. Every response signs afresh (new scans, repeats served from a scan record, and `GET /books/search`); it is never stored in a scan record. It expires 30 days after the end of the UTC day it was issued, so the same result signed for the same user on the same day gives the same token. A book the server could not sign has `catalog_token: null` and can only be linked to an existing catalog entry.
+
+`scan_record_id` (#631) is an opaque reference to the user's scan record that holds this answer (its UUID; unguessable, and only ever looked up together with the session's user), on a new scan whose answer was saved and on a repeat served from a record. It is **left out of the body** when there is no record (scan records off, the save failed, or a standard answer that did not replace a still-valid enhanced record). Each book also carries `candidate_index` (#631): which of the scan's candidates (0-based) it was enriched from, or `null` when not known (a book saved in a record before #631); on `GET /books/search` it is the position among the search candidates and has no use. The app keeps `scan_record_id` with each book and posts both back as `scan_reference` from an "Add it yourself" save (`POST /wishlist/unverified`), never its own copy of the pre-filled values. Both fields are additive: older clients can ignore them.
 
 `no_match` (#577) is set only for a **standard** scan whose provider answered properly but found no book (`"books": []`, a genuine no-match): `"free"` — it did not use a scan (it moved to the day's no-match allowance); `"counted"` — it used a scan, because today's no-match allowance is used up. It is `null` otherwise: books found, an enhanced scan, a repeat served from a scan record, or when the decision could not be made or confirmed (a lost database acknowledgement or a failed move: the scan then stays counted as a scan). Additive: older clients can ignore it.
 
@@ -407,12 +410,18 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 **Rate limit:** `rate_limit_writes`
 **Source:** `backend/app/api/user_books.py:add_unverified_to_wishlist`, `backend/app/services/unverified_books.py`
 
-**Request** (no other field is accepted: provider IDs, `cover_url`, `catalog_token`, `user_id`, `status` and so on are refused with `422`):
+**Request** (no other field is accepted: provider IDs, `cover_url`, `catalog_token`, `user_id`, `status`, correction flags and so on are refused with `422`):
 ```json
-{ "title": "Pond Notes", "author": "A. Local", "isbn": "0-306-40615-2" }
+{
+  "title": "Pond Notes",
+  "author": "A. Local",
+  "isbn": "0-306-40615-2",
+  "scan_reference": { "scan_record_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "candidate_index": 0 }
+}
 ```
 - `title`, `author` — required, 1–500 characters after trimming, no control characters.
 - `isbn` — optional, at most 20 characters; an ISBN-13 or ISBN-10 with a correct check digit, hyphens and spaces allowed; digits written in another script (Arabic-Indic, fullwidth) are read as the ASCII digits they stand for and only ASCII is stored. An ISBN-10 is converted to ISBN-13. Empty or blank means none.
+- `scan_reference` — optional (#631), sent by the app when the form was pre-filled from a photo scan result and left out otherwise: `scan_record_id` (a UUID, the `/scan` response's `scan_record_id`) and `candidate_index` (integer 0–999, the book's `candidate_index`); no other field (`422`). A non-UUID id or a negative index is `422`. Once the entry is saved, the server loads that candidate from the user's own scan record and records only whether the saved title, author and ISBN differ from what the form was pre-filled with (booleans, never text; see [data-model.md](data-model.md#scan_corrections-backendappmodelsscan_correctionpy)). A record that does not exist, expired, belongs to another user, or an index out of range is silently ignored: the entry is saved and the response is the same as without a reference. A second save naming the same candidate is not counted again. The correction step never fails the save.
 
 **Response `201`:** a `UserBookRead` with `unverified: true`. `book` carries the entry's own `id`, `title` and `author` only (no provider IDs, cover, description or editions; `language` is `null`), `edition` is `null`, and `unverified_isbn_13` is the normalised ISBN (or `null`):
 ```json

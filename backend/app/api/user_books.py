@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.ai import scan_corrections
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -114,11 +115,19 @@ async def add_unverified_to_wishlist(
     req: UnverifiedBookCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> UserBook:
+) -> UserBookRead:
     """Add a book the catalog cannot find as the user's own, private,
-    unverified entry (#616). Never touches ``books`` / ``editions``."""
+    unverified entry (#616). Never touches ``books`` / ``editions``.
+
+    With ``scan_reference`` (#631), once the entry is saved, the server
+    records whether the title, author and ISBN differ from the scan
+    candidate it names (``app.ai.scan_corrections``). The response is built
+    before that and never depends on it: a reference to nothing usable
+    (another user's record, an expired one, a bad index) is ignored, and a
+    failure there never fails the save."""
+    user_id = current_user.id
     try:
-        return await UnverifiedBookService().add(db, current_user.id, req)
+        entry = await UnverifiedBookService().add(db, user_id, req)
     except UnverifiedDuplicateError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=UNVERIFIED_DUPLICATE
@@ -127,6 +136,21 @@ async def add_unverified_to_wishlist(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=UNVERIFIED_LIMIT_REACHED
         ) from None
+    # Serialised now, so nothing the correction step does (a rollback that
+    # expires the row) can change or break the response.
+    body = UserBookRead.model_validate(entry)
+    ref = req.scan_reference
+    if ref is not None:
+        await scan_corrections.record_quietly(
+            db,
+            user_id=user_id,
+            scan_record_id=ref.scan_record_id,
+            candidate_index=ref.candidate_index,
+            title=req.title,
+            author=req.author,
+            isbn=req.isbn,
+        )
+    return body
 
 
 @router.get("/user-books", response_model=list[UserBookRead])
