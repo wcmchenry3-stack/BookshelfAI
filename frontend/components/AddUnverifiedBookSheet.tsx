@@ -104,6 +104,9 @@ export function AddUnverifiedBookSheet({
         title: cleanTitle,
         author: cleanAuthor,
         isbn: isbn.trim() || null,
+        // Which scan candidate the form was pre-filled from (#631); left
+        // out for a form with no scan behind it.
+        ...(draft.scanReference ? { scan_reference: draft.scanReference } : {}),
       });
       // onSaved is this render's callback, bound to the draft being saved.
       onSaved(data);

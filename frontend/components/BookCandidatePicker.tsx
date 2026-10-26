@@ -42,6 +42,14 @@ export interface EnrichedBook {
    * never be added (422 `book_not_in_catalog`). Never edit the book's fields
    * before posting. */
   catalog_token?: string;
+  /** Which of the scan's candidates this result came from (#631); set by
+   * POST /scan. Opaque to the app: sent back with `scan_record_id` when an
+   * "Add it yourself" form pre-filled from this book is saved. */
+  candidate_index?: number | null;
+  /** The scan record this result came from (#631): the response's
+   * `scan_record_id`, copied onto each result by the app so it stays with
+   * the book (and its job) until the form is saved. */
+  scan_record_id?: string;
 }
 
 interface Props {
