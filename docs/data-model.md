@@ -14,6 +14,7 @@ erDiagram
   USERS |o--o{ AI_USAGE : "provider calls (set null on delete)"
   USERS ||--o{ AI_ENHANCED_ZERO_RESULTS : "recorded empty enhanced scans"
   USERS ||--o{ SCAN_RECORDS : "scan records"
+  SCAN_RECORDS ||--o{ SCAN_CORRECTIONS : "correction flags (#631, cascade)"
   USERS ||--o{ USER_CUSTOM_BOOKS : "own unverified entries (#616)"
   USER_CUSTOM_BOOKS ||--o| USER_BOOKS : "held by (cascade)"
   BOOKS ||--o{ EDITIONS : "has editions"
@@ -144,6 +145,28 @@ erDiagram
     timestamptz created_at "indexed"
     timestamptz updated_at
   }
+  SCAN_CORRECTIONS {
+    bigint id PK
+    uuid scan_record_id FK "cascade delete, unique with candidate_index"
+    smallint candidate_index "check >= 0"
+    varchar feature
+    varchar tier
+    varchar model
+    boolean title_edited
+    boolean author_edited
+    boolean isbn_edited
+    timestamptz created_at "indexed"
+  }
+  SCAN_CORRECTIONS_DAILY {
+    date day PK "UTC"
+    varchar feature PK
+    varchar model PK
+    bigint prefilled_saves
+    bigint title_edited
+    bigint author_edited
+    bigint isbn_edited
+    bigint any_edited
+  }
   AI_SPEND_DAILY {
     date day PK "UTC"
     bigint reserved_micros "check >= 0"
@@ -158,7 +181,7 @@ erDiagram
   }
 ```
 
-All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id` (`BIGSERIAL`) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
+All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id` and `scan_corrections.id` (`BIGSERIAL`) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
 
 **Deletion semantics.** Shared catalog rows (`books`, `editions`) must never take user data with them:
 
@@ -168,6 +191,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 | `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
 | `scan_usage_daily.user_id`, `ai_quota.user_id`, `ai_inflight.user_id`, `ai_enhanced_zero_results.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters, any lease and its zero-result enhanced-scan rows. |
 | `scan_records.user_id` → `users.id` | `CASCADE` | Deleting an account removes its scan records. |
+| `scan_corrections.scan_record_id` → `scan_records.id` | `CASCADE` | A scan record's correction flags go with it (retention purge, per-user cap, account deletion); the daily totals in `scan_corrections_daily` (no user) stay. |
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
@@ -381,6 +405,21 @@ Daily totals of `ai_usage` per UTC day, feature, model and status (#530). No use
 
 **Volume and retention:** tens of rows per day (features × models × statuses), each under 100 bytes. Rows are kept 400 days; the same cleanup run deletes older ones in bounded batches.
 
+**Cost per scan and correction rate (#631).** Cost per scan comes from `ai_usage` (the last 30 days) and `ai_usage_daily` (older days), per day, feature and model. Next to it, `scan_corrections_daily` (below) gives how often users corrected the AI's reading when they saved an "Add it yourself" entry pre-filled from a scan, on the same key, for every day including today (it is counted when the save happens, not after 30 days). For example, per model over the last 30 days:
+
+```sql
+SELECT feature, model,
+       SUM(any_edited)::float    / NULLIF(SUM(prefilled_saves), 0) AS correction_rate,
+       SUM(title_edited)::float  / NULLIF(SUM(prefilled_saves), 0) AS title_rate,
+       SUM(author_edited)::float / NULLIF(SUM(prefilled_saves), 0) AS author_rate,
+       SUM(isbn_edited)::float   / NULLIF(SUM(prefilled_saves), 0) AS isbn_rate
+FROM scan_corrections_daily
+WHERE day >= CURRENT_DATE - 30
+GROUP BY feature, model;
+```
+
+Join it with the cost per scan on `(day, feature, model)` (sum `cost_micros` and `calls` over the statuses of `ai_usage_daily`, plus the raw `ai_usage` rows of the last 30 days) to compare models on both. The rate only covers results no catalog matched (the only ones "Add it yourself" is offered for), so it is a signal of reading quality on hard spines, not of every scan.
+
 ### `ai_enhanced_zero_results` (`backend/app/models/ai_enhanced_zero_result.py`)
 
 One row per recorded enhanced scan that returned no books (#533). Before #582 such a scan was not charged an enhanced monthly unit and the rows stopped that from being farmed; with no enhanced monthly unit any more (the daily unit is always charged) they remain the abuse signal behind the warning and the throttle: the per-user count inside `scan.enhanced.zero_result_window_hours` is compared with `scan.enhanced.zero_result_threshold` (see [architecture.md](architecture.md#book-identification--dedup-pipeline)).
@@ -422,9 +461,49 @@ Constraints: `uq_scan_records_user_fingerprint (user_id, fingerprint)`; `ck_scan
 
 **Indexes:** the unique `(user_id, fingerprint)` for the lookup; `ix_scan_records_user_created (user_id, created_at)` for the per-user eviction and the cascade; `ix_scan_records_created_at (created_at)` for the purge.
 
-**Writes:** after a successful provider call (outcome `ok`, with books or a genuine no-match, #572), `/scan` saves the record step by step after the settle, outside the lease. The AI step is an upsert on `(user_id, fingerprint)` that sets the candidates, feature, tier and model, clears the enrichment (stored as SQL NULL, not JSON `null`) and resets `created_at`, then deletes the user's rows beyond `scan_records.max_per_user` (default 500) oldest first (at most 1,000 per save), in one transaction. An existing `scan.enhanced` record that is still within `scan_records.retention_days` is never replaced by a `scan.standard` one (a standard and an enhanced scan of the same new photo running at once); an expired one is replaced, since lookups no longer serve it; the skipped save leaves the row's `created_at` unchanged, so that standard scan's enrichment step matches nothing. The enrichment step is an update matched on the AI step's `created_at` (so it never lands on a newer answer), saved only when every lookup finished; a repeat whose enrichment step is missing saves it the same way. Both are idempotent: re-running one (a commit whose acknowledgement was lost, then a retry) leaves the same single row. A genuine no-match (an empty `ok` list) is saved as a finished record with empty `candidates` and `enrichment`, so its re-upload is a free repeat (#572, owner decision on #573). Refusals, truncated or malformed replies, errors, timeouts and unavailability are never saved. Reads serve only rows of the requesting user with `ai_done` and `created_at` within `scan_records.retention_days`, and at most `SCAN_MAX_BOOKS` candidates or books (checked on write and read). A read or write failure is logged without content and never fails the scan. No client-supplied value is stored.
+**Writes:** after a successful provider call (outcome `ok`, with books or a genuine no-match, #572), `/scan` saves the record step by step after the settle, outside the lease. The AI step is an upsert on `(user_id, fingerprint)` that sets the candidates, feature, tier and model, clears the enrichment (stored as SQL NULL, not JSON `null`) and resets `created_at`, then deletes the user's rows beyond `scan_records.max_per_user` (default 500) oldest first (at most 1,000 per save), in one transaction. An existing `scan.enhanced` record that is still within `scan_records.retention_days` is never replaced by a `scan.standard` one (a standard and an enhanced scan of the same new photo running at once); an expired one is replaced, since lookups no longer serve it; the skipped save leaves the row's `created_at` unchanged, so that standard scan's enrichment step matches nothing. The enrichment step is an update matched on the AI step's `created_at` (so it never lands on a newer answer), saved only when every lookup finished; a repeat whose enrichment step is missing saves it the same way. Both are idempotent: re-running one (a commit whose acknowledgement was lost, then a retry) leaves the same single row. A genuine no-match (an empty `ok` list) is saved as a finished record with empty `candidates` and `enrichment`, so its re-upload is a free repeat (#572, owner decision on #573). Refusals, truncated or malformed replies, errors, timeouts and unavailability are never saved. Reads serve only rows of the requesting user with `ai_done` and `created_at` within `scan_records.retention_days`, and at most `SCAN_MAX_BOOKS` candidates or books (checked on write and read). A read or write failure is logged without content and never fails the scan. No client-supplied value is stored. The record's `id` is returned as `scan_record_id` on `/scan` (#631) so an "Add it yourself" save can name the candidate it came from; it is only ever looked up together with the session's user.
 
 **Volume and retention:** usually 1–10 KB per row (the enrichment carries book descriptions of up to 5,000 characters; a full shelf of 15 books can approach 80 KB). Bounded per user by `scan_records.max_per_user` and by the retention: rows older than `scan_records.retention_days` (default 30, at most 30) are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `scan_records.purge_old_scan_records`; if the settings cannot be read it uses 30) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
+
+### `scan_corrections` (`backend/app/models/scan_correction.py`)
+
+Whether the user changed the scan's reading when they saved an "Add it yourself" entry (`POST /wishlist/unverified`) pre-filled from it (#631). Written only by `app/ai/scan_corrections.py`. **No text column:** neither what the scan read nor what the user typed is stored, only three server-derived booleans.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigserial PK | |
+| `scan_record_id` | UUID FK → `scan_records.id`, not null, `ON DELETE CASCADE` | the record the app named (`scan_reference.scan_record_id`), looked up for the session's user only; the user is reachable through it (no `user_id` column) |
+| `candidate_index` | smallint, not null, ≥ 0 | which of the record's `candidates` the form was pre-filled from |
+| `feature` | varchar(64), not null | copied from the record |
+| `tier` | varchar(16), not null | copied from the record |
+| `model` | varchar(64), not null | copied from the record |
+| `title_edited` | boolean, not null | saved title differs from the pre-filled one after `normalise_title` (case, punctuation, spacing and a leading article are not edits) |
+| `author_edited` | boolean, not null | saved author differs after `normalise_text` (the author string as read, however many authors it names) |
+| `isbn_edited` | boolean, not null | saved ISBN differs as an ISBN-13 (hyphens, spaces, the ISBN-10 form are not edits); added, removed or changed is an edit. The form's ISBN starts empty for every result "Add it yourself" is offered for (enrichment keeps only provider-confirmed ISBNs, and no provider matched), so today this means the user typed one |
+| `created_at` | timestamptz, not null, default `now()` | |
+
+Constraints: `uq_scan_corrections_record_candidate (scan_record_id, candidate_index)` (a second save of the same candidate inserts nothing, `ON CONFLICT DO NOTHING`, and is not counted again); `ck_scan_corrections_index`. **Indexes:** the unique one (also serves the cascade); `ix_scan_corrections_created_at` for the purge.
+
+**Writes:** after the entry is saved and its response built, in its own transaction: the insert and, when it inserted a row, the add to `scan_corrections_daily`, committed together. A reference to a record that does not exist, expired (`scan_records.retention_days`), belongs to another user or does not validate, and an index out of range, are ignored (nothing written, same response). Any failure is logged (error type only) and rolled back; the save never fails because of it.
+
+**Volume and retention:** about 60 bytes per pre-filled save, at most one per (record, candidate). Rows go with their scan record (cascade) and are deleted 30 days after `created_at` by the ledger's daily run (`ledger.rollup_and_purge`, in batches of 5,000, at most 20 per run). **Phase 2 account deletion and data export must include this table.**
+
+### `scan_corrections_daily` (`backend/app/models/scan_correction.py`)
+
+Daily totals of `scan_corrections` per UTC day, feature and model (#631). No user column.
+
+| Column | Type | Notes |
+|---|---|---|
+| `day` | date, PK | UTC day of the save |
+| `feature` | varchar(64), PK | |
+| `model` | varchar(64), PK | |
+| `prefilled_saves` | bigint, not null, ≥ 0 | correction rows counted |
+| `title_edited`, `author_edited`, `isbn_edited` | bigint, not null, ≥ 0 | rows with that flag set |
+| `any_edited` | bigint, not null, ≥ 0 | rows with at least one flag set |
+
+**Writes:** an upsert that adds 1 / 0 to each count (`INSERT … ON CONFLICT (day, feature, model) DO UPDATE SET prefilled_saves = prefilled_saves + excluded.prefilled_saves, …`) in the same transaction as the `scan_corrections` insert. **Why at write time, not after 30 days like `ai_usage`:** a correction row cascades with its scan record, which can be deleted well before 30 days (`scan_records.retention_days` can be as low as 1, the per-user cap evicts the oldest records, account deletion), so a 30-day rollup could lose rows; counting in the insert's transaction cannot lose or double-count one, and the daily run only deletes.
+
+**Volume and retention:** tens of rows per day, under 100 bytes each. Kept 400 days; `ledger.rollup_and_purge` deletes older rows.
 
 ### `ai_spend_daily` (`backend/app/models/ai_spend.py`)
 
@@ -515,6 +594,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0013_ai_usage_malformed_status.py` — widens the status CHECK of `ai_usage` and `ai_usage_daily` (`ck_ai_usage_status`, `ck_ai_usage_daily_status`) to allow `malformed` (#572); additive. Each widened CHECK is added `NOT VALID` under a 5 s `lock_timeout`, the swap is committed, then each is validated in its own transaction (`VALIDATE CONSTRAINT`, which does not block reads or writes), so no ACCESS EXCLUSIVE lock is held while rows are scanned. The downgrade is deliberately a no-op: both widened CHECKs stay, because any narrower CHECK (even `NOT VALID`) would break the old code on the kept `malformed` rows (the rollup into `ai_usage_daily`, and deleting their user, which sets `user_id` to NULL). The old code never writes `malformed`.
 - `0014_ai_usage_attempt.py` — adds the nullable `smallint` column `ai_usage.attempt` (#603); expand only. Existing rows stay NULL (unknown); no default, so only the catalog changes (no rewrite), under a 5 s `lock_timeout`. The downgrade drops the column; roll the app code back first, since the #603 ledger insert always names `attempt`.
 - `0015_books_google_books_id_unique.py` — merges duplicate `books` rows sharing a `google_books_id`, then creates the partial unique index `uq_books_google_books_id` on `books (google_books_id) WHERE google_books_id IS NOT NULL` (#613, owner decision option A). Per volume the oldest row (`created_at`, then `id`) is kept. `user_books` on the newer rows move to it; where a user has more than one entry for the merged book (`uq_user_books_user_book`), the entry already on the kept row survives (else the user's oldest), its NULL fields (`edition_id`, `notes`, `rating`, the `*_at` timestamps) take the first non-NULL value from the others (oldest first), its `status` becomes the most advanced among the merged entries (wishlisted < purchased < reading < read), and the others are hard-deleted (`user_books` has no `deleted_at`). `editions` move to the kept row; if the kept row has no `open_library_work_id`, the oldest duplicate's moves to it; the duplicates are then deleted. Counts are logged, with at most 20 deleted book IDs per batch. Batches of 500 kept books with set-based SQL bound statement size only: it is all one transaction. More than 10,000 duplicate rows fails the upgrade with a message to merge by hand. Before reading the duplicates it takes `LOCK TABLE books, user_books, editions IN SHARE ROW EXCLUSIVE MODE` (writes to the three tables wait, reads run; 5 s `lock_timeout`, reset to the default at the end of the revision), held until the whole `alembic upgrade` run commits, so no write can race the merge, and builds a plain `CREATE UNIQUE INDEX`, not `CONCURRENTLY`, so no duplicate can slip in between the merge and the build. Offline `alembic upgrade --sql` is refused (the merge reads rows). The downgrade drops the index only; merged rows are not restored.
+- `0017_scan_corrections.py` — adds `scan_corrections` (correction flags per scan record and candidate, #631; FK `scan_records` `ON DELETE CASCADE`, unique `(scan_record_id, candidate_index)`, `created_at` index) and `scan_corrections_daily` (daily totals, no user); expand only, the downgrade drops only these two tables
 
 ### Writing a new migration
 
