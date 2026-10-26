@@ -25,7 +25,7 @@ from app.api.scan import MAX_SCAN_REQUEST_BYTES, SCAN_UPLOAD_PATH
 from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
 from app.core import catalog_token
-from app.core.config import settings
+from app.core.config import check_turnstile_configured, settings
 from app.core.database import AsyncSessionLocal
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
@@ -223,12 +223,7 @@ class RequestSizeLimitMiddleware:
 
 async def _validate_config() -> None:
     """Fail fast on misconfigured deployments before any request is served."""
-    if settings.turnstile_required and not settings.turnstile_secret_key:
-        raise RuntimeError(
-            "TURNSTILE_SECRET_KEY must be configured when TURNSTILE_REQUIRED=true. "
-            "Set TURNSTILE_REQUIRED=false to explicitly disable bot protection "
-            "(dev / test environments only)."
-        )
+    check_turnstile_configured(settings)
     # The catalog-token key (#602) is derived from JWT_PRIVATE_KEY; a
     # hardened environment without it must not start.
     catalog_token.check_configured(settings)
