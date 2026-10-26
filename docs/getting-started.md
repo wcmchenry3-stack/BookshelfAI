@@ -143,7 +143,7 @@ SCAN_FREE_DAILY_LIMIT=5                  # 0..1000, seeds quota.free.found_daily
 SCAN_PREMIUM_DAILY_LIMIT=5               # 0..1000, seeds quota.premium.found_daily
 SCAN_FREE_NO_MATCH_DAILY_LIMIT=5         # 0..1000, seeds quota.free.no_match_daily
 SCAN_PREMIUM_NO_MATCH_DAILY_LIMIT=5      # 0..1000, seeds quota.premium.no_match_daily
-# No monthly limits (#582): SCAN_*_MONTHLY_LIMIT are retired and seed nothing.
+# No monthly limits (#582): do not set SCAN_*_MONTHLY_LIMIT in this file; the backend refuses to start with them (#594).
 SCAN_FREE_DAILY_CEILING_MICROS=10000000  # 0..1000000000 micro-dollars/UTC day, seeds breaker.free_daily_ceiling_micros
 ```
 

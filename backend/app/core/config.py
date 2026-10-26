@@ -241,14 +241,6 @@ class Settings(BaseSettings):
     # not use a found unit while this allowance lasts (#577).
     scan_free_no_match_daily_limit: int = Field(default=5, ge=0, le=1000)
     scan_premium_no_match_daily_limit: int = Field(default=5, ge=0, le=1000)
-    # LEGACY (#582): SCAN_FREE_MONTHLY_LIMIT, SCAN_PREMIUM_MONTHLY_LIMIT and
-    # SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT seeded the retired monthly keys.
-    # Nothing reads them; they are accepted (any integer, or unset) only so
-    # an existing .env that still sets them loads (extra keys are refused).
-    # Delete them with the contract migration that drops the retired rows.
-    scan_free_monthly_limit: int | None = None
-    scan_premium_monthly_limit: int | None = None
-    scan_premium_enhanced_monthly_limit: int | None = None
     # Cost circuit breaker (#531). INITIAL DEFAULT ONLY: seeds the ai_settings
     # row breaker.free_daily_ceiling_micros (same bounds): the service-wide
     # spend per UTC day, in micro-dollars (1,000,000 = $1), above which
