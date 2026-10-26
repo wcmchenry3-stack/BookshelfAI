@@ -281,7 +281,7 @@ describe('ScanScreen — web camera mode', () => {
     expect(queryByLabelText('Flip camera')).toBeNull();
   });
 
-  async function getWebInput(utils: ReturnType<typeof render>) {
+  async function getWebInput(utils: Awaited<ReturnType<typeof render>>) {
     // The input is style={{ display: 'none' }}, and v14 excludes hidden
     // elements from queries by default.
     return utils.findByTestId('web-file-input', { includeHiddenElements: true });

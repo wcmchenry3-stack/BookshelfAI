@@ -10,6 +10,7 @@
     "test": "jest",
     "test:ci": "jest --coverage",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "format": "prettier --write ."
   },
   "dependencies": {
