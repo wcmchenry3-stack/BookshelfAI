@@ -1,0 +1,112 @@
+name: AI eval (labelled scan photos)
+
+# !!! SECURITY: SET UP THE `ai-eval` ENVIRONMENT BEFORE ADDING ANY SECRET !!!
+# The keys below are only as safe as the environment's protection rules,
+# which this file cannot enforce. In Settings > Environments > ai-eval,
+# FIRST set: deployment branches = `dev` only, required reviewer = the
+# owner, and "Prevent self-review" if available; only THEN add the secrets.
+# Without those rules, anyone with write access could dispatch an edited
+# copy of this workflow from another branch and exfiltrate the provider
+# keys and the R2 credential. See backend/eval/README.md ("Owner setup").
+
+# Labelled evaluation of one scan model (#536, epic #524): every photo in the
+# owner's private R2 dataset goes through the provider adapter and is scored
+# against its ground truth. It calls a REAL, PAID model, so it only ever runs
+# on demand (Actions > AI eval > Run workflow). It is not a required check,
+# never runs on pull_request or on a schedule, and is not part of any test
+# job.
+#
+# Re-run it whenever a scan prompt, model or max_tokens changes (the
+# regression rule in docs/testing.md), for each model being compared.
+#
+# Spend: the runner stops BEFORE any call that could take the run over
+# spend_cap_usd (a per-call upper bound from the model's prices and the
+# feature's max_tokens), and the report says whether the cap stopped it.
+# max_tokens, model and effort come from the server registry
+# (backend/app/ai/registry.py); the adapters' own retry/backoff on 429 and
+# 5xx is unchanged.
+#
+# Secrets live in the `ai-eval` environment only (see backend/eval/README.md
+# for the owner setup): the provider API keys and a READ-ONLY R2 credential
+# scoped to the dataset bucket. Nothing here prints them, and only the
+# aggregate JSON report (no images, titles, keys or bucket names) is
+# uploaded.
+on:
+  workflow_dispatch:
+    inputs:
+      feature:
+        description: Scan feature (its registry max_tokens, effort and image size apply)
+        type: choice
+        required: true
+        default: scan.standard
+        options:
+          - scan.standard
+          - scan.enhanced
+      model:
+        description: Model (allow-listed in backend/app/ai/models_allowlist.py; the provider follows from it)
+        type: choice
+        required: true
+        default: claude-haiku-5-5
+        options:
+          - claude-haiku-5-5
+          - claude-sonnet-5-5
+          - gpt-4o-mini
+          - gpt-4o
+      spend_cap_usd:
+        description: Hard spend cap for this run, in US dollars (at most 100; the runner refuses more)
+        type: string
+        required: true
+        default: '10'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ai-eval
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install dependencies (app + S3 client)
+        run: pip install -r requirements-eval.txt
+      - name: Run the evaluation
+        # Inputs are passed through env, never interpolated into the script.
+        env:
+          FEATURE: ${{ inputs.feature }}
+          MODEL: ${{ inputs.model }}
+          SPEND_CAP_USD: ${{ inputs.spend_cap_usd }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AI_EVAL_R2_ENDPOINT: ${{ secrets.AI_EVAL_R2_ENDPOINT }}
+          AI_EVAL_R2_BUCKET: ${{ secrets.AI_EVAL_R2_BUCKET }}
+          AI_EVAL_R2_ACCESS_KEY_ID: ${{ secrets.AI_EVAL_R2_ACCESS_KEY_ID }}
+          AI_EVAL_R2_SECRET_ACCESS_KEY: ${{ secrets.AI_EVAL_R2_SECRET_ACCESS_KEY }}
+          AI_EVAL_R2_PREFIX: ${{ vars.AI_EVAL_R2_PREFIX }}
+        run: >-
+          python -m eval.ai_scan.run_eval
+          --feature "$FEATURE"
+          --model "$MODEL"
+          --spend-cap-usd "$SPEND_CAP_USD"
+          --report ai-eval-report.json
+      - name: Upload the aggregate report
+        # The report only: aggregate metrics, counts, model, feature, spend.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ai-eval-report-${{ inputs.feature }}-${{ inputs.model }}
+          path: backend/ai-eval-report.json
+          if-no-files-found: ignore
+          retention-days: 90

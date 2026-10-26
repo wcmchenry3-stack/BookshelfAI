@@ -82,3 +82,22 @@ frontend/android/app/upload-keystore.jks
 
 # Nightly /scan load run logs (backend/perf/run_scan_abuse.py)
 backend/perf-logs/
+
+# AI scan evaluation (#536): the labelled photos and their ground truth live
+# only in the private R2 bucket, never in git (or Git LFS). Ignore any image
+# or dataset file under backend/eval/ (any letter case), and the local report.
+# backend/tests/unit/test_ai_eval_repo.py fails if one is tracked.
+backend/eval/**/*.[jJ][pP][gG]
+backend/eval/**/*.[jJ][pP][eE][gG]
+backend/eval/**/*.[pP][nN][gG]
+backend/eval/**/*.[wW][eE][bB][pP]
+backend/eval/**/*.[hH][eE][iI][cC]
+backend/eval/**/*.[hH][eE][iI][fF]
+backend/eval/**/*.[gG][iI][fF]
+backend/eval/**/*.[tT][iI][fF]
+backend/eval/**/*.[tT][iI][fF][fF]
+backend/eval/**/*.[bB][mM][pP]
+backend/eval/**/*.[aA][vV][iI][fF]
+backend/eval/**/manifest.json
+backend/eval/**/ground_truth*.jsonl
+backend/ai-eval-report*.json

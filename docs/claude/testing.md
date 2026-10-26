@@ -4,12 +4,13 @@ See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for univers
 
 ## book_app specific
 - Backend: `pytest --cov=. --cov-fail-under=90` from `backend/` (what CI's `test-python` job runs). The backend gate is 90%, not the universal 80%.
-  - `backend/.coveragerc` omits `tests/` and `alembic/`, so only `app/` is measured.
+  - `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` and `eval/`, so only `app/` is measured.
   - It also sets `precision = 2`. pytest-cov rounds the total to that precision before comparing it with `--cov-fail-under`, and the default of 0 let 79.7% pass an 80% gate with exit 0 (#621). `tests/unit/test_coverage_gate.py` guards this.
 - Frontend: `npx jest --coverage`
 - E2E (Detox): runs on PRs to `main` only
 - DB isolation: rollback fixture in `backend/tests/conftest.py` — do NOT mock the database
 - Cost guard: no test may call a real AI provider. `backend/tests/_network_guard.py` (installed for every run by `backend/tests/conftest.py`) blocks any request to an Anthropic or OpenAI API host and fails the test. Fake providers at the gateway boundary (`backend/tests/limits/_harness.py`) or with `backend/tests/_claude_fake.py`.
+- AI scan evaluation (`backend/eval/ai_scan/`, #536): runs a real model only from the on-demand `ai-eval.yml` workflow, never in tests. Its tests use `backend/tests/_ai_eval_fakes.py` (fake R2 client, scripted adapter). Re-run the eval when a scan prompt, model or `max_tokens` changes; see `docs/testing.md`.
 
 ## Scan limits matrix
 

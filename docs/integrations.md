@@ -78,6 +78,8 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Cost note:** list prices per 1M tokens (in `backend/app/ai/prices.py`): Haiku 5.5 $0.10 input / $0.50 output / $0.01 cache read / $0.125 cache write, for prompts up to 100K tokens (above that $0.50 / $2.50; scans are about 3K tokens, and a longer prompt logs a warning); Sonnet 5.5 $2.00 / $10.00 / $0.20 / $2.50. The Haiku cache-read price follows Anthropic's 0.1×-input rule and must be checked on the live pricing page before production enablement. The usage ledger records the real cost per call.
 
+**Evaluation (#536):** which model serves each tier is decided from the labelled, on-demand eval in `backend/eval/ai_scan/` (`.github/workflows/ai-eval.yml`): the owner's shelf photos from a private R2 bucket, through the same image normalisation and adapter as `/scan`, scored deterministically, under a hard spend cap. Re-run it when a prompt, model or `max_tokens` changes. See [testing.md](testing.md#ai-scan-evaluation-536-on-demand).
+
 ## Google Books API
 
 **Role:** metadata enrichment — covers, descriptions, page counts, ISBNs.

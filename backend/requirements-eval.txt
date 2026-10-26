@@ -1,0 +1,11 @@
+# AI scan evaluation (#536, .github/workflows/ai-eval.yml): the app
+# requirements plus an S3 client for the private Cloudflare R2 dataset bucket.
+# Kept out of requirements.txt: the API image never reads the dataset.
+# Pinned exactly; every version was released at least two weeks before it was
+# added (boto3 / botocore 1.43.111: 2026-10-09; s3transfer 0.19.2:
+# 2026-07-22; jmespath 1.0.1: 2022-06-17).
+-r requirements.txt
+boto3==1.43.111
+botocore==1.43.111
+s3transfer==0.19.2
+jmespath==1.0.1
