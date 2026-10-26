@@ -2,4 +2,4 @@
 # requirements.txt: the API image does not need a load-testing tool.
 # Locust 2.46.7 was released 2026-10-04.
 -r requirements.txt
-locust==2.46.7
+locust==2.47.0
