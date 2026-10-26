@@ -28,11 +28,11 @@ Common status codes:
 
 | Code | Meaning | Typical causes |
 |---|---|---|
-| 400 | Bad Request | validation failure, missing Turnstile token |
+| 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware) |
 | 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
-| 413 | Payload Too Large | request body > 10 MB (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
+| 413 | Payload Too Large | request body > 6 MB on `POST /scan` or > 10 MB elsewhere, with or without `Content-Length` (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload, or an image that cannot be decoded (`image_undecodable`) |
 | 402 | Payment Required | not returned by `/scan` since #582 (there is no monthly limit; older servers sent `scan_limit_reached` / `enhanced_limit_reached`) |
 | 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), the user's `/scan` requests for the day used up (`scan_requests_daily_limit`, #586), another scan still running (`scan_in_progress`), enhanced scans throttled after repeated empty enhanced scans (`enhanced_throttled`). `Retry-After` is listed in `Access-Control-Expose-Headers`, so browser clients can read it on cross-origin responses |

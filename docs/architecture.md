@@ -77,7 +77,7 @@ Middleware is configured in `backend/app/main.py`. FastAPI's `add_middleware` wr
 | Order (outermost first) | Middleware | Role | Active in |
 |---|---|---|---|
 | 1 | `_HealthExemptTrustedHost` | Drops spoofed Host headers; exempts `/health` (not `/health/db`) so CI probes bypassing Cloudflare can still hit the origin | hardened only (staging + production) |
-| 2 | `RequestSizeLimitMiddleware` | Rejects Content-Length > 10 MB with 413 before reading the body | all envs |
+| 2 | `RequestSizeLimitMiddleware` | Pure ASGI. Caps the request body (6 MB on `POST /scan`, 10 MB elsewhere): a declared `Content-Length` over the cap → 413 before reading; chunked bodies are counted as they arrive and cut off with 413 at the cap; malformed `Content-Length` → 400 (#557) | all envs |
 | 3 | `CORSMiddleware` | Allowlisted origins only (validator blocks `*`); credentials allowed; limited methods + headers; exposes only `Retry-After` (scan 429s) | all envs |
 | 4 | `RequestIdMiddleware` | Generates a request ID, stores it in a contextvar for log correlation, returns it as `X-Request-ID` | all envs |
 | 5 | `SentryContextMiddleware` | Attaches request context to Sentry events | all envs |
@@ -88,7 +88,7 @@ Middleware is configured in `backend/app/main.py`. FastAPI's `add_middleware` wr
 
 **Why this ordering:**
 - `_HealthExemptTrustedHost` is outermost so spoofed Host headers are rejected **before any middleware runs** — minimizes attack surface. Only `/health` is exempt, because that liveness probe (CI, Render's own, uptime monitors) hits the origin by its infrastructure hostname, not the public domain, and does nothing an attacker could abuse. `/health/db` is NOT exempt — it does a real DB probe, so it stays behind Host + rate-limit enforcement like everything else.
-- `RequestSizeLimit` runs before CORS so oversized bodies are dropped without allocating request memory.
+- `RequestSizeLimit` runs before CORS so oversized bodies are dropped early: a declared oversize body is never read, and a chunked one is buffered only up to the cap.
 - `OriginAuthMiddleware` is innermost so its 403 still passes back through `SecurityHeaders` and `RequestId`, yet it rejects before routing: no handler, DB query or rate-limit counter runs for a rejected request.
 - There is no client-IP middleware: the slowapi key function calls the resolver in `app/core/client_ip.py` directly (see Rate limiting below).
 - `RequestId` runs before `SentryContext` so the request ID is available to attach to Sentry events.

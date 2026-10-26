@@ -51,6 +51,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["scan"])
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB
+# The scan upload route. app.main's RequestSizeLimitMiddleware caps the whole
+# request body on this path at MAX_SCAN_REQUEST_BYTES (#557): the image limit
+# plus 1 MB for the multipart framing and the other form fields (the Turnstile
+# token, ``enhanced``, ``attempt``), which together are a few KB.
+SCAN_UPLOAD_PATH = "/scan"
+MAX_SCAN_REQUEST_BYTES = MAX_IMAGE_BYTES + 1024 * 1024
 # Upload read size; the handler never holds more than MAX_IMAGE_BYTES + 1 bytes.
 READ_CHUNK_BYTES = 64 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
@@ -634,7 +640,7 @@ def _usage_row(
         return None
 
 
-@router.post("/scan", response_model=ScanResponse)
+@router.post(SCAN_UPLOAD_PATH, response_model=ScanResponse)
 @limiter.limit(settings.rate_limit_scan)
 async def scan(
     request: Request,
