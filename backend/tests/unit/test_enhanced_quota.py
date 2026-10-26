@@ -729,7 +729,9 @@ class TestWarningContent:
         for leak in ("198.51.100.7", "Probe/1.0", "shelf by the window"):
             assert leak not in text
         assert str(USER.id) not in text
-        assert later["request"]["headers"]["cf-connecting-ip"] == "198.51.100.7"
+        # #565: the client IP header is stripped from every event.
+        assert "cf-connecting-ip" not in later["request"]["headers"]
+        assert later["request"]["headers"]["user-agent"]
         assert later["user"] == {"id": str(USER.id)}
 
     def test_never_raises(self):

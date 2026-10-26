@@ -313,7 +313,8 @@ class TestAlertContent:
             assert leak not in text
         assert str(USER.id) not in text
         # The request's own later event is unaffected.
-        assert later["request"]["headers"]["cf-connecting-ip"] == "198.51.100.7"
+        # #565: the client IP header is stripped from every event.
+        assert "cf-connecting-ip" not in later["request"]["headers"]
         assert later["request"]["headers"]["user-agent"] == "Probe/1.0 (iPhone)"
         assert later["user"] == {"id": str(USER.id)}
         assert later["breadcrumbs"]["values"]
