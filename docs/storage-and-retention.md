@@ -9,7 +9,7 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 - **Every table that grows with usage has a retention rule and a purge** run by the daily cleanup task (`backend/app/services/token_cleanup.py:46-115`), in bounded batches (5,000 rows, at most 20 batches per table per run). A new usage-driven table adds its purge there and a row in the [retention table](#table-by-table-retention) in the same PR; `backend/tests/unit/test_storage_retention_doc.py` fails if a model table is missing from this page.
 - **Only three kinds of table may grow without a purge**: user-owned library data (`users`, `user_books`, `user_custom_books`, each capped or tied to a person), the shared catalog (`books`, `editions`, written only from signed provider data) and configuration (`ai_settings`, `ai_inflight`: bounded by user count or fixed keys). Today there is no account deletion, so a departed user's rows are never removed (gap G1).
 - **Raw per-call data lives 30 days, aggregates up to 400 days, per-user scan answers 30 days at most, counters 90 days.** Aggregates carry no user ID.
-- **On the phone, the photo is the only thing that is big.** A scan photo is kept until it is scanned and dismissed, or 7 days after it failed. The pending queue is capped at 50 photos; failed photos have an age limit and no count limit (G3). Everything else on the device is small and bounded.
+- **On the phone, the photo is the only thing that is big.** A scan photo is kept until it is scanned and dismissed, or 7 days after it failed. The pending queue is capped at 50 photos; failed photos have an age limit and no count limit, and completed photos the user has not reviewed have no limit until the next app launch (G3). Everything else on the device is small and bounded.
 - **Today the app stores the camera's full-size JPEG** (quality 0.7). The server shrinks every photo to 1,568 px on the long edge anyway. Recommendation: shrink once at capture to the same size (G2), which cuts the queue from about 125 MB to about 15 MB (estimates).
 - **Plan limits are not in the repo**: Render Postgres is `basic-256mb` (`render.yaml:244`); Supabase's plan and size are not recorded. Confirm both before the 1,000-user mark (see [growth](#expected-growth)). The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
 
@@ -76,6 +76,7 @@ Missing:
 - **No deletion on sign-out** (`AuthContext` does not touch `scan-queue/`), so the next account on the device would upload the previous account's queued photos.
 - **No per-photo size check** before queueing (a 5 MB+ photo is queued, then fails on every attempt).
 - **No count cap on failed jobs.**
+- **No cap on completed but unreviewed photos.** A successful scan keeps its image so the review sheet can offer an enhanced re-scan (`ScanJobContext.tsx:1261-1263`); it is deleted only when the user dismisses the review or on the next app launch. `isPendingUpload` (`scanJob.ts:60`) excludes completed jobs, so they do not count toward the 50-photo cap (`ScanJobContext.tsx:459`). A user who keeps scanning without opening results accumulates them without limit until the app restarts.
 
 ### Should photos be downscaled before queueing?
 
@@ -122,10 +123,11 @@ Trade-offs:
 |---|---|---|---|
 | Waiting photos (50 cap) | 5 x 2.5 = 12 MB | 125 MB (500 MB on 48 MP) | 50 x 0.4 = 20 MB |
 | Failed photos | 0 | about 350 MB (20 a day for 7 days) | cap 20 photos = 8 MB |
+| Completed, not yet reviewed | 0 to a few | uncapped until the next app launch (each scan done without opening its results) | cap 10 photos = 4 MB (oldest unreviewed is dismissed first) |
 | Camera originals in cache | one per capture until the OS clears it | same as the photos | 0 (deleted at capture) |
 | Job list (AsyncStorage) | under 10 KB | about 0.1 MB | same |
 | Tokens, log buffer, covers | under 1 MB combined | a few MB of covers | same |
-| **Budget to adopt** | | | **at most 50 MB of scan photos in total, at most 70 photos (50 waiting + 20 failed)** |
+| **Budget to adopt** | | | **at most 50 MB of scan photos in total, at most 80 photos (50 waiting + 20 failed + 10 completed but unreviewed)** |
 
 ---
 
@@ -227,7 +229,7 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 |---|---|---|
 | G1 | No account deletion; `users`, `user_books`, `user_custom_books`, `ai_*` per-user rows and `refresh_tokens` of a departed user stay forever | `backend/app/api/` |
 | G2 | Photos are stored full size; the server cap (5 MB) can be exceeded on high-resolution phones | `scan.tsx:112,159` |
-| G3 | Failed jobs have no count cap; refused (`queued`) jobs have no age cap | `scanJob.ts:7-10` |
+| G3 | Failed jobs have no count cap; refused (`queued`) jobs have no age cap; completed-but-unreviewed jobs keep their photo, uncapped, until the next launch | `scanJob.ts:7-10,60`, `ScanJobContext.tsx:1261-1263` |
 | G4 | The camera original in the cache is never deleted; queued photos are not deleted on sign-out | `scan.tsx:159`, `AuthContext` |
 | G5 | No free-space check and no storage-full message | `frontend/` |
 | G6 | Session log lines are unbounded in length | `SessionLogger.ts:11-33` |
@@ -243,9 +245,9 @@ Sizes: S under half a day, M about a day, L several days.
 - Why: the queue holds full-size JPEGs (about 2.5 MB; 5 to 10 MB on 48 MP phones) although the server uses 1,568 px, and uploads over 5 MB are refused with an unhandled `413`.
 - AC: a capture is resized to a 1,568 px long edge at JPEG 0.8 before it is saved to `scan-queue/`; the camera original is deleted in the same step; the size constants live in one place with a comment pointing to `max_image_long_edge_px`; a device measurement of before and after sizes goes in the PR; the Podfile.lock / Android prebuild rules of `CLAUDE.md` are followed; a 413 gets its own state and copy in `scanErrors.ts` (all 13 locales); jest tests cover the resize call and the deletion.
 
-**2. Bound the failed and refused queue (G3, G4) - S**
-- Why: failed photos have only an age limit and `queued` photos refused by a limit have no limit at all, so a long outage or a blocked account fills the phone.
-- AC: at most 20 failed jobs are kept (the oldest is removed with its photo when a 21st fails); a `queued` job older than 7 days is failed or removed with its photo, with copy in `queueFailedNote` style; queued and failed photos and the job list are cleared on sign-out; tests extend `scanJob` / `ScanJobContext` / `scanJobStorage` tests; docs updated here and in `frontend.md`.
+**2. Bound the failed, refused and unreviewed queue (G3, G4) - S**
+- Why: failed photos have only an age limit, `queued` photos refused by a limit have no limit at all, and completed photos the user has not reviewed are kept until the next launch, so a long outage, a blocked account or a run of scans without opening results fills the phone.
+- AC: at most 20 failed jobs are kept (the oldest is removed with its photo when a 21st fails); a `queued` job older than 7 days is failed or removed with its photo, with copy in `queueFailedNote` style; at most 10 completed-but-unreviewed jobs keep their photo (the oldest is dismissed, photo deleted, when an 11th completes); queued and failed photos and the job list are cleared on sign-out; tests extend `scanJob` / `ScanJobContext` / `scanJobStorage` tests; docs updated here and in `frontend.md`.
 
 **3. Check free space before queueing (G5) - S**
 - Why: a full disk shows only "Something went wrong" and a Sentry event.
