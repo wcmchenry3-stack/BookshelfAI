@@ -9,7 +9,7 @@ These gates are decided at module import time (docs_url, middleware
 registration, route registration), so exercising them for a non-default
 ENVIRONMENT requires actually reloading app.main + app.core.config with that
 env var set. The `_reload_app` fixture below does that and restores the
-original (development) modules afterward so later tests aren't affected.
+original module objects afterward so later tests aren't affected.
 """
 
 import os
@@ -55,6 +55,35 @@ def _restore_limiter(snapshot):
         getattr(limiter, attr).update(value)
 
 
+def _snapshot_app_modules():
+    """Every `app` / `app.*` entry in sys.modules, by name."""
+    return {
+        name: mod
+        for name, mod in sys.modules.items()
+        if name == "app" or name.startswith("app.")
+    }
+
+
+def _restore_app_modules(snapshot):
+    """Put back the exact original module objects, and drop any `app.*` module
+    first imported during the reload.
+
+    Merely popping and re-importing app.main/app.core.config would hand the
+    rest of the session *new* module objects, so modules imported earlier (e.g.
+    tests/security/test_injection.py's `app`, app.core.limiter's `settings`)
+    would disagree with `sys.modules["app.main"].settings` (#520).
+    """
+    for name in [n for n in sys.modules if n == "app" or n.startswith("app.")]:
+        if name not in snapshot:
+            del sys.modules[name]
+    sys.modules.update(snapshot)
+    # `import a.b` also binds `b` as an attribute on package `a`; rebind those.
+    for name, mod in snapshot.items():
+        parent_name, _, child = name.rpartition(".")
+        if parent_name and parent_name in sys.modules:
+            setattr(sys.modules[parent_name], child, mod)
+
+
 def _reload_app(**env_overrides):
     for key, value in env_overrides.items():
         os.environ[key] = value
@@ -75,6 +104,7 @@ def reload_app():
     """
     original_env = {k: os.environ.get(k) for k in _ENV_KEYS}
     limiter_snapshot = _snapshot_limiter()
+    modules_snapshot = _snapshot_app_modules()
 
     yield _reload_app
 
@@ -83,9 +113,7 @@ def reload_app():
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
-    for mod_name in _RELOADED_MODULES:
-        sys.modules.pop(mod_name, None)
-    import app.main  # noqa: F401 — restore the module for later tests
+    _restore_app_modules(modules_snapshot)
 
     _restore_limiter(limiter_snapshot)
 
@@ -148,3 +176,32 @@ async def test_development_is_unchanged(reload_app):
         assert resp.status_code == 403
         # No TrustedHostMiddleware: an arbitrary Host header is accepted everywhere.
         assert (await client.get("/health/db")).status_code in (200, 503)
+
+
+def test_reload_teardown_restores_original_module_objects(monkeypatch):
+    """Regression guard (#520): after the reload fixture's teardown logic, the
+    session must see the *same* app.main / app.core.config objects as before.
+    Otherwise later tests (e.g. test_injection's HSTS test) that patch
+    `app.main.settings` no longer affect the `app` they imported at module level.
+    """
+    import app.core.config
+    import app.main
+
+    original = {name: sys.modules[name] for name in _RELOADED_MODULES}
+    original_settings = app.main.settings
+    snapshot = _snapshot_app_modules()
+    limiter_snapshot = _snapshot_limiter()
+    monkeypatch.setenv("ENVIRONMENT", "development")  # undone by monkeypatch
+
+    try:
+        reloaded = _reload_app()
+        assert reloaded is not original["app.main"]  # the reload really replaced it
+    finally:
+        _restore_app_modules(snapshot)
+        _restore_limiter(limiter_snapshot)
+
+    for name, mod in original.items():
+        assert sys.modules[name] is mod
+    assert app.main.settings is original_settings
+    assert sys.modules["app"].main is original["app.main"]
+    assert sys.modules["app.main"].settings is sys.modules["app.core.config"].settings
