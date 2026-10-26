@@ -40,6 +40,9 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 - JWT RS256 only — reject all other algorithms including `none`
 - Allowlist check via `ALLOWED_EMAILS` env var after Google auth
 
+### Database
+- Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as the table owner and bypasses it; it only locks out Supabase's `anon`/`authenticated` roles. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
+
 ## Commands
 
 ```bash
