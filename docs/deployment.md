@@ -247,6 +247,16 @@ Play Console supports promoting an older release to production:
 
 See [`getting-started.md`](getting-started.md) for the full local-env setup.
 
+## Versioning and release notes (Release Please)
+
+`release-please.yml` runs on every push to `main` (the shared `called-release-please.yml`). It reads `release-please-config.json` and `.release-please-manifest.json` at the repo root.
+
+- **Version scheme:** one version for the whole repo, tracked in `version.txt` (`release-type: simple`). Pre-launch versions are `0.x`. The 2026-10-26 release (#641) is `0.1.0`, and commits before it are ignored (`bootstrap-sha`). Until 1.0, `feat:` bumps the minor version and `fix:` bumps the patch. A `!` breaking change also bumps only the minor (`bump-minor-pre-major`). 1.0.0 is the public launch, cut with a `feat!:` commit or by editing the manifest.
+- **Flow:** merge `dev` into `main`. Release Please then opens (or updates) a release PR, `chore(main): release X.Y.Z`, that bumps `version.txt` and writes `CHANGELOG.md` from the Conventional Commit titles. Merging that PR creates the `vX.Y.Z` tag and GitHub Release.
+- **App store versions are not touched.** `frontend/package.json`, `app.json` and the native iOS and Android version numbers are still set by hand for store builds.
+- **Repository settings it needs:** Settings → Actions → General → Workflow permissions → **"Allow GitHub Actions to create and approve pull requests"**. Without it, Release Please (and `sync-main-to-dev.yml`) fail with `Resource not accessible by integration`.
+- **The release PR's CI.** A PR opened with the default `GITHUB_TOKEN` does not trigger other workflows, so its CI does not start on its own. Push a commit to the release branch, or close and reopen the PR, if a required check is waiting. Alternatively, have the workflow use a fine-grained token (contents and pull-requests: write), passed as the called workflow's `release-token` secret.
+
 ## Common release gotchas
 
 | Symptom | Cause | Fix |

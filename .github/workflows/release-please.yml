@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
 
+# The called workflow's job asks for these two scopes. A called workflow can
+# never have more than its caller grants, and the repo default token is
+# read-only, so without this block every run ended in `startup_failure`.
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   release-please:
     uses: wcmchenry3-stack/.github/.github/workflows/called-release-please.yml@main
