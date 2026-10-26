@@ -60,11 +60,6 @@ function usageBody(foundUsed: number, foundLimit: number, nmUsed: number, nmLimi
     found_daily_limit: foundLimit,
     no_match_used_today: nmUsed,
     no_match_daily_limit: nmLimit,
-    used_month: null,
-    monthly_limit: null,
-    period_end: null,
-    enhanced_used_month: null,
-    enhanced_monthly_limit: null,
   };
 }
 

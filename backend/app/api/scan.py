@@ -1005,8 +1005,7 @@ async def scan_usage(
     found and no-match counters (#577). Standard and enhanced scans count
     against the same found allowance; ``used_today`` / ``daily_limit`` are
     the found counter, kept for one release for older app builds. There is
-    no monthly allowance (#582): the monthly fields are always null (kept
-    for one release so older app builds still parse the body)."""
+    no monthly allowance (#582), so the body has no monthly fields."""
     try:
         ai = await get_ai_settings(db)
     except AISettingsUnavailableError:
