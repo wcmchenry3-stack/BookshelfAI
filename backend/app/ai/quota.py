@@ -70,8 +70,8 @@ the expired lease, the takeover resets the flags (they belong to the new
 lease): a unit this request knows it took (its take was acknowledged) is then
 given back once without the gate, on the first attempt only; a unit whose
 take was never acknowledged stays charged (fails toward charging). The
-``monthly_taken`` and ``enhanced_taken`` columns are no longer set (#582);
-a takeover still clears them.
+``monthly_taken`` and ``enhanced_taken`` columns no longer exist (dropped by
+migration 0018, #594).
 
 **Found and no-match counters (#577).** Each user has two daily counters:
 ``found`` (:data:`SCAN_QUOTA_FEATURE`, the daily unit above: every scan takes
@@ -242,10 +242,6 @@ ZERO_RESULT_RETENTION_DAYS = 30
 # The ai_inflight flag (#590): whether the lease holder took its daily unit.
 FLAG_DAILY = "daily_taken"
 UNIT_FLAGS = (FLAG_DAILY,)
-# Flags of the units #582 removed (the monthly and the enhanced monthly unit).
-# Never set any more; a lease takeover still clears them, so a row left by
-# the previous release does not carry them over to a new lease.
-RETIRED_FLAGS = ("monthly_taken", "enhanced_taken")
 # What give_back_unit reports.
 UNIT_GIVEN_BACK = "given_back"
 UNIT_NOT_TAKEN = "not_taken"
@@ -438,7 +434,7 @@ async def acquire_lease(
             "lease_expires_at": stmt.excluded.lease_expires_at,
             # The old holder's unit flags (#590) do not carry over to the
             # new lease: the new holder has taken nothing yet.
-            **{flag: False for flag in UNIT_FLAGS + RETIRED_FLAGS},
+            **{flag: False for flag in UNIT_FLAGS},
         },
         where=AIInflight.lease_expires_at < _clock_timestamp(),
     ).returning(AIInflight.lease_id)

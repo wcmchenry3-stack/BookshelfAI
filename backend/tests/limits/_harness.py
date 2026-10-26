@@ -527,7 +527,7 @@ class LimitsDb:
             row = await db.get(AIInflight, user_id)
             if row is None:
                 return None
-            flags = quota.UNIT_FLAGS + quota.RETIRED_FLAGS
+            flags = quota.UNIT_FLAGS
             return {flag for flag in flags if getattr(row, flag)}
 
     async def usage(self, user_id) -> list[tuple[str, int]]:

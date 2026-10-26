@@ -1,7 +1,7 @@
 """The unit flags on the lease row (#590) against real PostgreSQL: each unit
 is taken with its flag in one commit and given back at most once, gated on
 the flag; a lease taken over by another request carries no flags over; and
-the 0012 migration's upgrade -> check -> downgrade cycle.
+the 0018 migration's (#594) upgrade -> check -> downgrade cycle.
 
 Skipped automatically when DATABASE_URL is the dummy URL (see conftest.py).
 Each test creates its own users and deletes them afterwards; quota and lease
@@ -17,7 +17,7 @@ import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import delete, inspect, select, update
+from sqlalchemy import delete, inspect, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.ai import quota
@@ -34,7 +34,7 @@ MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "alembic"
     / "versions"
-    / "0012_ai_inflight_units_taken.py"
+    / "0018_drop_retired_monthly_quota.py"
 )
 
 
@@ -81,7 +81,7 @@ async def _flags(factory, user_id) -> set[str] | None:
         row = await db.get(AIInflight, user_id)
         if row is None:
             return None
-        flags = quota.UNIT_FLAGS + quota.RETIRED_FLAGS
+        flags = quota.UNIT_FLAGS
         return {flag for flag in flags if getattr(row, flag)}
 
 
@@ -225,35 +225,21 @@ class TestGiveBackUnit:
         async with factory() as db:
             assert (await db.get(AIInflight, user_id)).lease_id == fresh
 
-    async def test_a_takeover_clears_the_retired_flags(self, sessions):
-        """#582: monthly_taken / enhanced_taken are never set any more, but a
-        lease row the previous release left with them set must not carry
-        them over to a new lease."""
-        factory, make_user = sessions
-        user_id = await make_user()
-        async with factory() as db:
-            stale = await quota.acquire_lease(db, user_id, 60)
-            await db.execute(
-                update(AIInflight)
-                .where(AIInflight.user_id == user_id)
-                .values({flag: True for flag in quota.RETIRED_FLAGS})
-            )
-            await db.commit()
-        assert await _flags(factory, user_id) == set(quota.RETIRED_FLAGS)
-        await _expire_lease(factory, user_id)
-        async with factory() as db:
-            fresh = await quota.acquire_lease(db, user_id, 60)
-        assert fresh is not None and fresh != stale
-        assert await _flags(factory, user_id) == set()
-
 
 # ---------------------------------------------------------------------------
-# Migration 0012
+# Migration 0018 (#594)
 # ---------------------------------------------------------------------------
+
+RETIRED_COLUMNS = ("monthly_taken", "enhanced_taken")
+RETIRED_KEYS = (
+    "quota.free.monthly",
+    "quota.premium.monthly",
+    "quota.premium.enhanced_monthly",
+)
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0012", MIGRATION)
+    spec = importlib.util.spec_from_file_location("migration_0018", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -261,7 +247,7 @@ def _load_migration():
 
 def _migration_cycle(connection) -> None:
     migration = _load_migration()
-    assert (migration.revision, migration.down_revision) == ("0012", "0011")
+    assert (migration.revision, migration.down_revision) == ("0018", "0017")
     context = MigrationContext.configure(connection)
     table = "ai_inflight"
 
@@ -271,28 +257,47 @@ def _migration_cycle(connection) -> None:
     def diffs() -> list:
         return [d for d in compare_metadata(context, Base.metadata) if table in repr(d)]
 
-    # The three columns 0012 adds; #582 stopped setting two of them
-    # (RETIRED_FLAGS) but they stay in the schema.
-    flags = quota.UNIT_FLAGS + quota.RETIRED_FLAGS
+    def keys() -> set[str]:
+        rows = connection.execute(text("SELECT key FROM ai_settings"))
+        return {r[0] for r in rows}
 
     with Operations.context(context):
-        if set(flags) <= set(columns()):
-            migration.downgrade()
-        assert not set(flags) & set(columns())
-        migration.upgrade()
+        # The model has no retired columns, so the current schema is the
+        # upgraded one.
+        assert not set(RETIRED_COLUMNS) & set(columns())
         assert diffs() == []
-        for flag in flags:
-            assert columns()[flag]["nullable"] is False
-            assert "false" in str(columns()[flag]["default"]).lower()
+        # Downgrade recreates them as 0012 made them.
         migration.downgrade()
-        assert not set(flags) & set(columns())
-        assert {"user_id", "lease_id", "lease_expires_at"} <= set(columns())
+        for name in RETIRED_COLUMNS:
+            assert columns()[name]["nullable"] is False
+            assert "false" in str(columns()[name]["default"]).lower()
+        assert quota.FLAG_DAILY in columns()
+        # Upgrade deletes exactly the three retired keys and nothing else.
+        connection.execute(
+            text(
+                "INSERT INTO ai_settings (key, value) VALUES "
+                "('quota.free.monthly', '5'), "
+                "('quota.premium.monthly', '300'), "
+                "('quota.premium.enhanced_monthly', '20'), "
+                "('quota.free.found_daily', '5') "
+                "ON CONFLICT (key) DO NOTHING"
+            )
+        )
         migration.upgrade()
+        assert not set(RETIRED_COLUMNS) & set(columns())
         assert diffs() == []
+        assert not set(RETIRED_KEYS) & keys()
+        assert "quota.free.found_daily" in keys()
+        # Re-running the data step on a clean table is a no-op.
+        connection.execute(
+            migration.sa.delete(migration.ai_settings).where(
+                migration.ai_settings.c.key.in_(RETIRED_KEYS)
+            )
+        )
 
 
 async def test_migration_upgrade_check_downgrade_cycle():
-    """Runs 0012 in a transaction that is rolled back (Postgres DDL is
+    """Runs 0018 in a transaction that is rolled back (Postgres DDL is
     transactional), so the shared test database is left as it was."""
     engine = create_async_engine(settings.async_database_url)
     try:
