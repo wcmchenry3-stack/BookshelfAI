@@ -35,7 +35,6 @@ APP_ROOT = Path(app_package.__file__).resolve().parent
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-00000000531a"),
     email="breaker-authority@example.com",
-    enhanced_scan_credits=0,
 )
 
 # Every name a client might try, as form fields, query params and headers.

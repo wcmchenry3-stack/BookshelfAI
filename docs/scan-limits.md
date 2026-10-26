@@ -112,4 +112,4 @@ Not live limits; kept only so an old row or `.env` still loads.
 
 - `quota.free.monthly`, `quota.premium.monthly`, `quota.premium.enhanced_monthly` (#582): there is no monthly limit. The CLI rejects these keys, seeding no longer writes them and a stored row is ignored on read. Migration 0018 (#594) deleted the stored rows, and the env fields `SCAN_FREE_MONTHLY_LIMIT`, `SCAN_PREMIUM_MONTHLY_LIMIT` and `SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT` are gone (a local `.env` that still lists one fails to boot; see the upgrade notes in `docs/deployment.md`).
 - `quota.free.daily`, `quota.premium.daily` (#577): became `quota.<tier>.found_daily`.
-- `SCAN_DAILY_LIMIT_PER_USER` (20) and `ENHANCED_SCAN_FREE_CREDITS` (5): not applied to `/scan`; legacy, removed in #540.
+- `SCAN_DAILY_LIMIT_PER_USER` and `ENHANCED_SCAN_FREE_CREDITS`: removed in #540, with the `scan_usage_daily` table and the `users.enhanced_scan_credits` column (migration 0019). A local `.env` that still lists one fails to boot; see the upgrade notes in `docs/deployment.md`.

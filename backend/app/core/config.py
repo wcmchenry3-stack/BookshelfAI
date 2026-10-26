@@ -202,11 +202,6 @@ class Settings(BaseSettings):
     # standard scan misses books. Premium-only (#533); it uses the shared
     # daily allowance (there is no monthly allowance, #582).
     scan_enhanced_model: str = "gpt-4o"
-    # LEGACY: the old lifetime enhanced-scan credit grant. Unused since #533
-    # (nothing reads users.enhanced_scan_credits any more); kept only so an
-    # existing .env that sets ENHANCED_SCAN_FREE_CREDITS still loads. Removed
-    # with the column in #540.
-    enhanced_scan_free_credits: int = 5
     # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
     # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
     # boot, and after that the DB row is the source of truth (change it with
@@ -217,11 +212,6 @@ class Settings(BaseSettings):
     # scan.enhanced.enabled=false rejects only enhanced scans.
     scan_enabled: bool = True
     scan_enhanced_enabled: bool = True
-    # LEGACY (#509): read only by app/services/scan_quota.py, which /scan no
-    # longer calls since #528 (deleted in #540). The per-user allowances now
-    # come from the ai_settings quota.* keys seeded from SCAN_FREE_* and
-    # SCAN_PREMIUM_* below.
-    scan_daily_limit_per_user: int = Field(default=20, ge=1, le=1000)
     # INITIAL DEFAULT ONLY: seeds the ai_settings row scan.global_daily_limit
     # (same bounds): scans per UTC day across all users, checked before any
     # per-user reservation (503 scan_capacity). Approximate under concurrency.

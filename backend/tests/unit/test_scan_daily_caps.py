@@ -5,7 +5,6 @@ import asyncio
 import contextlib
 import io
 import uuid
-from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,14 +21,12 @@ from app.api import scan as scan_module
 from app.core.config import Settings
 from app.main import app
 from app.models.user import User
-from app.services import scan_quota
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
 from tests.unit._quota_fake import FakeQuotaStore
 
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-0000000005a9"),
     email="caps@example.com",
-    enhanced_scan_credits=3,
 )
 
 
@@ -408,46 +405,6 @@ class TestRequestSession:
         other_sessions.assert_not_called()
 
 
-class TestQuotaHelpers:
-    def test_seconds_until_utc_midnight(self):
-        now = datetime(2026, 10, 21, 23, 59, 0, tzinfo=UTC)
-        assert scan_quota.seconds_until_utc_midnight(now) == 60
-        start = datetime(2026, 10, 21, 0, 0, 0, tzinfo=UTC)
-        assert scan_quota.seconds_until_utc_midnight(start) == 86_400
-
-    def test_seconds_until_midnight_is_at_least_one(self):
-        now = datetime(2026, 10, 21, 23, 59, 59, 999_999, tzinfo=UTC)
-        assert scan_quota.seconds_until_utc_midnight(now) == 1
-
-    def test_utc_today_uses_utc(self):
-        from datetime import timedelta, timezone
-
-        late_pacific = datetime(
-            2026, 10, 21, 20, 0, tzinfo=timezone(timedelta(hours=-7))
-        )
-        assert scan_quota.utc_today(late_pacific) == date(2026, 10, 22)
-
-    async def test_purge_deletes_in_bounded_batches(self):
-        results = [
-            MagicMock(rowcount=scan_quota.PURGE_BATCH_SIZE),
-            MagicMock(rowcount=7),
-        ]
-        db = AsyncMock()
-        db.execute = AsyncMock(side_effect=results)
-        total = await scan_quota.purge_old_scan_usage(db, today=date(2026, 10, 21))
-        assert total == scan_quota.PURGE_BATCH_SIZE + 7
-        assert db.execute.await_count == 2
-        assert "scan_usage_daily" in str(db.execute.call_args[0][0])
-
-    async def test_purge_stops_at_max_batches(self):
-        db = AsyncMock()
-        db.execute = AsyncMock(
-            return_value=MagicMock(rowcount=scan_quota.PURGE_BATCH_SIZE)
-        )
-        await scan_quota.purge_old_scan_usage(db)
-        assert db.execute.await_count == scan_quota.PURGE_MAX_BATCHES
-
-
 _DB = "postgresql+asyncpg://u:p@localhost/db"
 
 
@@ -456,29 +413,20 @@ class TestSettingsBounds:
         s = Settings(database_url=_DB)
         assert s.scan_enabled is True
         assert s.scan_enhanced_enabled is True
-        assert s.scan_daily_limit_per_user == 20
         assert s.scan_global_daily_limit == 2000
-
-    @pytest.mark.parametrize("value", [0, -1, 1001])
-    def test_per_user_limit_out_of_bounds_rejected(self, value):
-        with pytest.raises(ValidationError):
-            Settings(database_url=_DB, scan_daily_limit_per_user=value)
 
     @pytest.mark.parametrize("value", [0, 1_000_001])
     def test_global_limit_out_of_bounds_rejected(self, value):
         with pytest.raises(ValidationError):
             Settings(database_url=_DB, scan_global_daily_limit=value)
 
-    @pytest.mark.parametrize(
-        "field,value",
-        [("scan_daily_limit_per_user", 1000), ("scan_global_daily_limit", 1)],
-    )
-    def test_bounds_inclusive(self, field, value):
-        assert getattr(Settings(database_url=_DB, **{field: value}), field) == value
+    def test_bounds_inclusive(self):
+        s = Settings(database_url=_DB, scan_global_daily_limit=1)
+        assert s.scan_global_daily_limit == 1
 
     def test_read_from_env(self, monkeypatch):
         monkeypatch.setenv("SCAN_ENABLED", "false")
-        monkeypatch.setenv("SCAN_DAILY_LIMIT_PER_USER", "5")
+        monkeypatch.setenv("SCAN_GLOBAL_DAILY_LIMIT", "5")
         s = Settings(database_url=_DB)
         assert s.scan_enabled is False
-        assert s.scan_daily_limit_per_user == 5
+        assert s.scan_global_daily_limit == 5

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,15 +18,6 @@ class User(Base):
     google_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    # LEGACY: the lifetime enhanced-scan credit balance. Since #533 nothing in
-    # the app reads or writes it (enhanced scans are Premium-only and use the
-    # shared daily allowance, #582); new rows get the server
-    # default. The column is dropped in #540.
-    enhanced_scan_credits: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default="5",
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

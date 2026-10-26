@@ -347,7 +347,6 @@ async def _one_cleanup_run(factory, purge):
 
     with (
         patch("app.services.token_cleanup.AsyncSessionLocal", factory),
-        patch("app.services.token_cleanup.purge_old_scan_usage", AsyncMock()),
         patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
         patch(
             "app.services.token_cleanup.rollup_and_purge",
