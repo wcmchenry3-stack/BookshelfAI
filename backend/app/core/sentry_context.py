@@ -6,6 +6,7 @@ from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from app.core.client_ip import CF_CONNECTING_IP
 from app.core.logging import request_id_var
 
 
@@ -96,6 +97,54 @@ def build_event_scrubber() -> EventScrubber:
 
 _FILTERED = "[Filtered]"
 
+# Headers that identify where the caller is. Removed (not masked) from every
+# event, case-insensitively. ``sentry-sdk`` only filters ``X-Forwarded-For`` and
+# ``X-Real-IP`` by default, so Cloudflare's ``CF-Connecting-IP`` — the header the
+# API itself trusts for the client IP — reached Sentry in the clear (#565).
+# ``CF-IPCountry`` is approximate location. ``CF-Ray`` is deliberately kept.
+_CLIENT_IP_HEADERS = frozenset(
+    {
+        CF_CONNECTING_IP,
+        "cf-connecting-ipv6",
+        "cf-pseudo-ipv4",
+        "cf-ipcountry",
+        "true-client-ip",
+        "x-client-ip",
+        "x-forwarded-for",
+        "x-real-ip",
+        "forwarded",
+    }
+)
+# WSGI/ASGI-style ``request.env`` keys that carry the peer address.
+_CLIENT_IP_ENV_KEYS = frozenset({"remote_addr", "remote_host", "http_x_forwarded_for"})
+
+
+def _strip_client_ip(event: dict) -> None:
+    """Remove client IP / location from ``request`` and ``user``, in place."""
+    request = event.get("request")
+    if isinstance(request, dict):
+        headers = request.get("headers")
+        if isinstance(headers, dict):
+            for name in [k for k in headers if str(k).lower() in _CLIENT_IP_HEADERS]:
+                del headers[name]
+        elif isinstance(headers, list):
+            request["headers"] = [
+                h
+                for h in headers
+                if not (
+                    isinstance(h, (list, tuple))
+                    and h
+                    and str(h[0]).lower() in _CLIENT_IP_HEADERS
+                )
+            ]
+        env = request.get("env")
+        if isinstance(env, dict):
+            for name in [k for k in env if str(k).lower() in _CLIENT_IP_ENV_KEYS]:
+                del env[name]
+    user = event.get("user")
+    if isinstance(user, dict):
+        user.pop("ip_address", None)
+
 
 def _strip_query(data: dict) -> None:
     """Drop URL query strings from a span/breadcrumb ``data`` dict, in place."""
@@ -125,6 +174,7 @@ def _scrub_event(event: dict, _hint: dict | None = None) -> dict:
     values = crumbs.get("values") if isinstance(crumbs, dict) else crumbs
     for crumb in values or []:
         _scrub_breadcrumb(crumb)
+    _strip_client_ip(event)
     request = event.get("request")
     if isinstance(request, dict) and request.get("query_string"):
         request["query_string"] = _FILTERED
