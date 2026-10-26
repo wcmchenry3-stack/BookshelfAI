@@ -457,7 +457,12 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def reject_transaction_pooler_port(cls, v: str) -> str:
-        port = urlsplit(v).port
+        # Value-free messages: urllib's own text echoes parts of the URL (a
+        # password, for a malformed one), and boot logs must never carry it.
+        try:
+            port = urlsplit(v).port
+        except ValueError:
+            raise ValueError("DATABASE_URL is not a valid URL") from None
         if port == _SUPABASE_TRANSACTION_POOLER_PORT:
             raise ValueError(
                 f"DATABASE_URL uses port {_SUPABASE_TRANSACTION_POOLER_PORT} "

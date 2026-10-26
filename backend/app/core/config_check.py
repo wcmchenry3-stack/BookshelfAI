@@ -10,6 +10,7 @@ never values. Run it in the production Render shell before a release
 (docs/deployment.md).
 """
 
+import os
 import re
 import sys
 
@@ -17,8 +18,38 @@ import sys
 _QUOTED_VALUE = re.compile(r"=(?:'[^']*'|\"[^\"]*\")")
 
 
+_TOKEN_SPLIT = re.compile(r"""[\s'"`,;:=()\[\]{}<>]+""")
+_MIN_SECRET_FRAGMENT = 4
+
+# Variable names in a message (SCAN_MODEL, ENVIRONMENT) are what the reader
+# needs; they are never redacted.
+_VARIABLE_NAME = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|ENVIRONMENT")
+
+# Every raw value the check can see (process env and .env files), set by main().
+_raw_values: list[str] = []
+
+
+def _collect_raw_values() -> list[str]:
+    values = [v for v in os.environ.values() if v]
+    from dotenv import dotenv_values
+
+    # A missing file yields no values; a broken one is reported by Settings.
+    values.extend(v for v in dotenv_values(".env").values() if v)
+    return values
+
+
 def _reason(text: str) -> str:
-    return _QUOTED_VALUE.sub("=<redacted>", text).splitlines()[0]
+    """First line of ``text`` with anything that looks like a configuration
+    value removed: quoted ``=value`` text, and every token of 4+ characters
+    that occurs inside a raw environment or .env value."""
+    line = _QUOTED_VALUE.sub("=<redacted>", text).splitlines()[0]
+    parts = _TOKEN_SPLIT.split(line)
+    for token in set(parts):
+        if len(token) < _MIN_SECRET_FRAGMENT or _VARIABLE_NAME.fullmatch(token):
+            continue
+        if any(token in value for value in _raw_values):
+            line = line.replace(token, "<redacted>")
+    return line
 
 
 def collect_problems() -> list[str]:
@@ -72,6 +103,7 @@ def _validation_problems(exc) -> list[str]:
 
 
 def main() -> int:
+    _raw_values[:] = _collect_raw_values()
     problems = collect_problems()
     if not problems:
         print("OK")

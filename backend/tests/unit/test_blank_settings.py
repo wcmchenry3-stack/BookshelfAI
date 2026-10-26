@@ -260,3 +260,37 @@ def test_later_dotenv_file_overrides_earlier(env, tmp_path):
 def test_init_kwarg_overrides_blank_env(env):
     env.setenv("ENVIRONMENT", "")
     assert Settings(_env_file=None, environment="staging").environment == "staging"
+
+
+@pytest.mark.security
+def test_check_does_not_print_password_from_malformed_database_url():
+    r = _run_check(
+        {
+            "DATABASE_URL": "postgresql://user:very-secret-password/db",
+            "TURNSTILE_REQUIRED": "false",
+        }
+    )
+    assert r.returncode == 1
+    out = r.stdout + r.stderr
+    assert "very-secret-password" not in out
+    assert "DATABASE_URL" in out
+
+
+@pytest.mark.security
+def test_malformed_database_url_error_carries_no_value(env):
+    env.setenv("DATABASE_URL", "postgresql://user:very-secret-password/db")
+    with pytest.raises(ValidationError) as exc:
+        Settings(_env_file=None)
+    assert "very-secret-password" not in str(exc.value)
+
+
+@pytest.mark.security
+def test_reason_redacts_fragments_of_raw_values(monkeypatch):
+    from app.core import config_check
+
+    monkeypatch.setattr(config_check, "_raw_values", ["xx-hunter2-secret-yy"])
+    out = config_check._reason(
+        "SCAN_MODEL must differ from hunter2-secret (ENVIRONMENT ok)"
+    )
+    assert "hunter2-secret" not in out
+    assert "SCAN_MODEL" in out and "ENVIRONMENT" in out
