@@ -28,7 +28,6 @@ APP_ROOT = Path(app_package.__file__).resolve().parent
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-00000000a526"),
     email="sec@example.com",
-    enhanced_scan_credits=3,
 )
 
 # Every key, and the short names a client might guess, as request inputs.

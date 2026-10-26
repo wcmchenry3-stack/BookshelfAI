@@ -24,7 +24,6 @@ from app.models.user import User
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-000000000526"),
     email="dials@example.com",
-    enhanced_scan_credits=3,
 )
 
 
@@ -877,16 +876,9 @@ class TestSeeding:
             # #528 seeds
             patch.object(ai_settings.settings, "scan_global_daily_limit", 77),
             patch.object(ai_settings.settings, "scan_free_daily_limit", 4),
-            # #582: retired, must seed nothing
-            patch.object(ai_settings.settings, "scan_free_monthly_limit", 6),
             patch.object(ai_settings.settings, "scan_premium_daily_limit", 31),
-            patch.object(ai_settings.settings, "scan_premium_monthly_limit", 301),
             # #531 seed
             patch.object(ai_settings.settings, "scan_free_daily_ceiling_micros", 42),
-            # #533 seed
-            patch.object(
-                ai_settings.settings, "scan_premium_enhanced_monthly_limit", 21
-            ),
         ):
             values = ai_settings.seed_values()
         assert values == {
@@ -904,8 +896,7 @@ class TestSeeding:
             "quota.free.no_match_daily": 5,
             "quota.premium.no_match_daily": 5,
             "breaker.free_daily_ceiling_micros": 42,
-            # #533: code defaults (the retired monthly env vars seed nothing,
-            # #582)
+            # #533: code defaults (no monthly keys are seeded, #582)
             "scan.enhanced.zero_result_threshold": 3,
             "scan.enhanced.zero_result_window_hours": 24,
             "scan.enhanced.zero_result_action": "charge",
@@ -1114,11 +1105,62 @@ class TestCLI:
         assert "by seed" in out
 
         assert ai_settings.main(["list"]) == 0
-        lines = capsys.readouterr().out.strip().splitlines()
-        assert len(lines) == len(ai_settings.KNOWN_KEYS)
+        lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        # One line per key plus one heading per area (#581).
+        headings = [ln for ln in lines if ln.startswith("== ")]
+        key_lines = [ln for ln in lines if not ln.startswith("== ")]
+        assert len(key_lines) == len(ai_settings.KNOWN_KEYS)
+        assert len(headings) == len(ai_settings.keys_by_area())
         joined = "\n".join(lines)
         assert "scan.max_image_pixels = 40000000  (stored value is INVALID" in joined
         assert "scan.standard.enabled = true  (no row" in joined
+
+    def test_list_groups_keys_by_area_with_default_and_bounds(self, cli_db, capsys):
+        """#581: list prints a heading per area, then its keys in order, each
+        with its default and bounds."""
+        assert ai_settings.main(["list"]) == 0
+        lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        by_area: dict[str, list[str]] = {}
+        area = None
+        for line in lines:
+            if line.startswith("== "):
+                area = line.strip("= ")
+                by_area[area] = []
+            else:
+                assert area is not None, "a key line came before any heading"
+                by_area[area].append(line.split(" = ")[0])
+        assert by_area == {a: list(k) for a, k in ai_settings.keys_by_area().items()}
+        assert "Allowances: Free" in by_area and "Spend breaker" in by_area
+        assert by_area["Allowances: Free"] == [
+            "quota.free.found_daily",
+            "quota.free.no_match_daily",
+        ]
+        assert by_area["Spend breaker"] == ["breaker.free_daily_ceiling_micros"]
+        text = "\n".join(lines)
+        assert (
+            "quota.free.found_daily = 5  (no row; env/registry default)  "
+            "[default 5; bounds 0..1,000]" in text
+        )
+        assert (
+            "scan.max_image_pixels = 40000000  (no row; env/registry default)  "
+            "[default 40000000; bounds 1,000,000..100,000,000]" in text
+        )
+        assert '[default "charge"; bounds charge or throttle]' in text
+
+    def test_get_output_is_unchanged_by_grouping(self, cli_db, capsys):
+        assert ai_settings.main(["get", "quota.free.found_daily"]) == 0
+        out = capsys.readouterr().out
+        assert out.count("\n") == 1
+        assert "[default" not in out and "==" not in out
+
+    def test_every_key_has_an_area_and_bounds(self):
+        assert ai_settings.OTHER_AREA not in {
+            ai_settings.area_of(k) for k in ai_settings.KNOWN_KEYS
+        }, "give the new key an area in AREA_RULES (app/ai/settings.py)"
+        grouped = [k for keys in ai_settings.keys_by_area().values() for k in keys]
+        assert sorted(grouped) == sorted(ai_settings.KNOWN_KEYS)
+        for key, definition in ai_settings.DEFINITIONS.items():
+            assert definition.bounds, f"{key} has no bounds text"
 
     def test_invalid_switch_described_as_disabled(self, cli_db, capsys):
         cli_db.stored = {

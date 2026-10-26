@@ -33,7 +33,6 @@ from tests.unit._sentry_capture import captured_events
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-000000000531"),
     email="breaker@example.com",
-    enhanced_scan_credits=3,
 )
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
 TODAY = date(2026, 10, 21)

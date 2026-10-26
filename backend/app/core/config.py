@@ -1,9 +1,15 @@
+import os
 import re
 from typing import Literal
 from urllib.parse import urlsplit
 
+from dotenv import dotenv_values
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from app.ai.models_allowlist import (
     ALLOWED_MODELS,
@@ -30,12 +36,117 @@ _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _PRINTABLE_ASCII_PATTERN = re.compile(r"[\x20-\x7e]+")
 
 
+# Settings where a blank value is NOT treated as unset (#648). Everywhere else a
+# blank env var means "not set, use the default" (env_ignore_empty). These two
+# have defaults that would silently change security posture if a blank value
+# fell back to them: a blank ENVIRONMENT used to mean "hardened" (anything but
+# development/test), and the default is "development"; TRUSTED_HOSTS defaults
+# to ["*"]. So a blank value stays a hard boot error.
+_BLANK_IS_ERROR = ("ENVIRONMENT", "TRUSTED_HOSTS")
+
+
+class BlankSettingError(ValueError):
+    """A setting that must not be blank is set to a blank value."""
+
+
+class _BlankGuardSource(PydanticBaseSettingsSource):
+    """Raises when the effective raw value of a variable in _BLANK_IS_ERROR is
+    blank (empty or whitespace only).
+
+    env_ignore_empty drops blanks before field validators run, so they have to
+    be detected on the raw sources. "Effective" follows pydantic-settings
+    precedence: an init kwarg, then the process environment (keys matched
+    case-insensitively), then the .env files, where a later file overrides an
+    earlier one. A blank in a lower-precedence source that a higher one
+    overrides is harmless. Contributes no values itself.
+    """
+
+    def __init__(self, settings_cls, init_settings, env_files) -> None:
+        super().__init__(settings_cls)
+        self._init_kwargs = dict(getattr(init_settings, "init_kwargs", {}) or {})
+        self._env_files = env_files
+
+    def get_field_value(self, field, field_name):  # pragma: no cover - unused
+        return None, field_name, False
+
+    @staticmethod
+    def _lookup(mapping: dict, name: str):
+        """(found, value) for ``name`` matched case-insensitively."""
+        found, value = False, None
+        for key, val in mapping.items():
+            if str(key).upper() == name:
+                found, value = True, val
+        return found, value
+
+    def _effective(self, name: str):
+        found, value = self._lookup(self._init_kwargs, name)
+        if found:
+            return True, value
+        found, value = self._lookup(dict(os.environ), name)
+        if found:
+            return True, value
+        result = (False, None)
+        for path in self._env_files:  # later files override earlier ones
+            try:
+                values = dict(dotenv_values(path, encoding="utf-8"))
+            except OSError:  # unreadable file: the normal source reports it
+                continue
+            found, value = self._lookup(values, name)
+            if found:
+                result = (True, value)
+        return result
+
+    def __call__(self) -> dict:
+        blank = []
+        for name in _BLANK_IS_ERROR:
+            found, value = self._effective(name)
+            if found and (value is None or not str(value).strip()):
+                blank.append(name)
+        if blank:
+            raise BlankSettingError(
+                f"{', '.join(blank)} must not be blank: unset it to use the "
+                "default, or give it a value"
+            )
+        return {}
+
+
 class Settings(BaseSettings):
     # hide_input_in_errors: a validation error must never echo a secret value
     # (e.g. ORIGIN_AUTH_SECRET) into boot logs.
+    # env_ignore_empty (#648): a blank env var (process or .env) is treated as
+    # not set, so the default applies. Required settings (DATABASE_URL) stay
+    # errors because they have no default. ENVIRONMENT and TRUSTED_HOSTS are
+    # the exception: see _BlankGuardSource.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", hide_input_in_errors=True
+        env_file=".env",
+        env_file_encoding="utf-8",
+        hide_input_in_errors=True,
+        env_ignore_empty=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        env_file = getattr(dotenv_settings, "env_file", None)
+        if env_file is None:
+            files = []
+        elif isinstance(env_file, (list, tuple)):
+            files = list(env_file)
+        else:
+            files = [env_file]
+        return (
+            _BlankGuardSource(settings_cls, init_settings, files),
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     # Database
     database_url: str
@@ -91,11 +202,6 @@ class Settings(BaseSettings):
     # standard scan misses books. Premium-only (#533); it uses the shared
     # daily allowance (there is no monthly allowance, #582).
     scan_enhanced_model: str = "gpt-4o"
-    # LEGACY: the old lifetime enhanced-scan credit grant. Unused since #533
-    # (nothing reads users.enhanced_scan_credits any more); kept only so an
-    # existing .env that sets ENHANCED_SCAN_FREE_CREDITS still loads. Removed
-    # with the column in #540.
-    enhanced_scan_free_credits: int = 5
     # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
     # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
     # boot, and after that the DB row is the source of truth (change it with
@@ -106,11 +212,6 @@ class Settings(BaseSettings):
     # scan.enhanced.enabled=false rejects only enhanced scans.
     scan_enabled: bool = True
     scan_enhanced_enabled: bool = True
-    # LEGACY (#509): read only by app/services/scan_quota.py, which /scan no
-    # longer calls since #528 (deleted in #540). The per-user allowances now
-    # come from the ai_settings quota.* keys seeded from SCAN_FREE_* and
-    # SCAN_PREMIUM_* below.
-    scan_daily_limit_per_user: int = Field(default=20, ge=1, le=1000)
     # INITIAL DEFAULT ONLY: seeds the ai_settings row scan.global_daily_limit
     # (same bounds): scans per UTC day across all users, checked before any
     # per-user reservation (503 scan_capacity). Approximate under concurrency.
@@ -130,14 +231,6 @@ class Settings(BaseSettings):
     # not use a found unit while this allowance lasts (#577).
     scan_free_no_match_daily_limit: int = Field(default=5, ge=0, le=1000)
     scan_premium_no_match_daily_limit: int = Field(default=5, ge=0, le=1000)
-    # LEGACY (#582): SCAN_FREE_MONTHLY_LIMIT, SCAN_PREMIUM_MONTHLY_LIMIT and
-    # SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT seeded the retired monthly keys.
-    # Nothing reads them; they are accepted (any integer, or unset) only so
-    # an existing .env that still sets them loads (extra keys are refused).
-    # Delete them with the contract migration that drops the retired rows.
-    scan_free_monthly_limit: int | None = None
-    scan_premium_monthly_limit: int | None = None
-    scan_premium_enhanced_monthly_limit: int | None = None
     # Cost circuit breaker (#531). INITIAL DEFAULT ONLY: seeds the ai_settings
     # row breaker.free_daily_ceiling_micros (same bounds): the service-wide
     # spend per UTC day, in micro-dollars (1,000,000 = $1), above which
@@ -346,7 +439,12 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def reject_transaction_pooler_port(cls, v: str) -> str:
-        port = urlsplit(v).port
+        # Value-free messages: urllib's own text echoes parts of the URL (a
+        # password, for a malformed one), and boot logs must never carry it.
+        try:
+            port = urlsplit(v).port
+        except ValueError:
+            raise ValueError("DATABASE_URL is not a valid URL") from None
         if port == _SUPABASE_TRANSACTION_POOLER_PORT:
             raise ValueError(
                 f"DATABASE_URL uses port {_SUPABASE_TRANSACTION_POOLER_PORT} "
@@ -405,6 +503,16 @@ class Settings(BaseSettings):
     @property
     def allowed_emails_list(self) -> list[str]:
         return [e.strip() for e in self.allowed_emails.split(",") if e.strip()]
+
+
+def check_turnstile_configured(cfg: "Settings") -> None:
+    """Database-free boot check shared by app startup and config_check."""
+    if cfg.turnstile_required and not cfg.turnstile_secret_key:
+        raise RuntimeError(
+            "TURNSTILE_SECRET_KEY must be configured when TURNSTILE_REQUIRED=true. "
+            "Set TURNSTILE_REQUIRED=false to explicitly disable bot protection "
+            "(dev / test environments only)."
+        )
 
 
 settings = Settings()

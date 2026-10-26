@@ -6,8 +6,6 @@ causes unbounded table growth and slows the JTI revocation lookup index.
 
 The same daily run also purges, in bounded batches:
 
-- the legacy scan usage counters (``scan_usage_daily``) older than 90 days
-  (app/services/scan_quota.py, removed in #540);
 - AI quota counters (``ai_quota``): day rows older than 90 days and month rows
   (no longer written since #582) older than 13 months (app/ai/quota.py);
 - the AI usage ledger (``ai_usage``): raw rows older than 30 days are rolled
@@ -39,7 +37,6 @@ from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
 from app.core.database import AsyncSessionLocal
 from app.models.refresh_token import RefreshToken
-from app.services.scan_quota import purge_old_scan_usage
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +50,6 @@ async def cleanup_expired_tokens() -> None:
 
     while True:
         # Separate try blocks: one purge failing must not skip the other.
-        try:
-            async with AsyncSessionLocal() as db:
-                purged = await purge_old_scan_usage(db)
-                logger.info("token_cleanup: purged %d old scan usage row(s)", purged)
-        except Exception:
-            logger.exception("token_cleanup: error during cleanup run (scan usage)")
-
         try:
             async with AsyncSessionLocal() as db:
                 purged = await purge_old_quota(db)

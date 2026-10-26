@@ -79,8 +79,7 @@ carried, so the new default applies (Premium: 30 before, 5 now). Once a
 and ``quota.premium.enhanced_monthly`` are retired (:data:`RETIRED_KEYS`):
 there is no monthly limit. The CLI rejects them as unknown keys, seeding no
 longer writes them, and a row still stored for one is ignored on read
-(without a warning). The rows are deleted by a later contract migration,
-once no running release reads them.
+(without a warning). Migration 0018 (#594) deleted the stored rows.
 
 **Seeding.** At startup :func:`seed_ai_settings_at_startup` inserts every key
 that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
@@ -125,7 +124,10 @@ used.
   :class:`AISettingsUnavailableError` is raised (fail closed). Every request
   retries the read, so the first success refreshes the cache.
 
-**CLI.** ``python -m app.ai.settings list | get <key> | set <key> <value>
+**CLI.** ``python -m app.ai.settings list`` groups the keys by area
+(:data:`AREA_RULES`) and shows each key's value, default and bounds; every key
+also has a row in ``docs/scan-limits.md`` (a unit test fails when one is
+missing). ``python -m app.ai.settings list | get <key> | set <key> <value>
 [--by NAME]``. It uses the app's ``DATABASE_URL``. ``set`` validates exactly
 as above, then upserts the row with ``updated_at`` and ``updated_by`` (``--by``,
 else ``$USER``, else ``cli``). Values are parsed as JSON when possible
@@ -215,8 +217,8 @@ SCAN_REQUESTS_PER_USER_DAILY_KEY = "scan.requests_per_user_daily"
 SCAN_REQUESTS_PER_USER_DAILY_BOUNDS = (1, 10_000)
 DEFAULT_SCAN_REQUESTS_PER_USER_DAILY = 100
 # Keys removed by #582 (no monthly limits). Unknown to the CLI and the seed;
-# a stored row is skipped on read without a warning until a contract
-# migration deletes it.
+# migration 0018 (#594) deleted the stored rows. Kept so a row restored from a
+# backup or written by an older instance is skipped on read without a warning.
 # #577 retired quota.<tier>.daily: it became quota.<tier>.found_daily (with
 # the carry-over in carried_over()).
 RETIRED_KEYS = frozenset(
@@ -344,6 +346,16 @@ class SettingDefinition:
     # when the row is missing or invalid.
     default: Callable[[], Any]
     description: str
+    # Human-readable allowed values, shown by ``list`` (#581). The validator
+    # stays the authority; this is for the operator's eyes.
+    bounds: str = ""
+
+
+def _range(bounds: tuple[int, int]) -> str:
+    return f"{bounds[0]:,}..{bounds[1]:,}"
+
+
+_BOOL_BOUNDS = "true or false"
 
 
 def _definitions() -> MappingProxyType[str, SettingDefinition]:
@@ -353,12 +365,14 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             _bool,
             lambda: settings.scan_enabled,
             "all scanning on/off (seed: SCAN_ENABLED)",
+            bounds=_BOOL_BOUNDS,
         ),
         SettingDefinition(
             "scan.enhanced.enabled",
             _bool,
             lambda: settings.scan_enhanced_enabled,
             "enhanced scans on/off (seed: SCAN_ENHANCED_ENABLED)",
+            bounds=_BOOL_BOUNDS,
         ),
     ]
     for feature in SCAN_FEATURES:
@@ -368,12 +382,14 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
                 _provider,
                 lambda f=feature: get_feature(f).provider,
                 f"{feature} provider (seed: registry default)",
+                bounds="a provider in ALLOWED_MODELS",
             ),
             SettingDefinition(
                 f"{feature}.model",
                 _model,
                 lambda f=feature: get_feature(f).model,
                 f"{feature} model (seed: registry default from env)",
+                bounds="a model in the provider's allow-list",
             ),
         ]
     defs.append(
@@ -382,6 +398,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             _max_image_pixels,
             lambda: settings.scan_max_image_pixels,
             "decoded pixel cap for /scan uploads (seed: SCAN_MAX_IMAGE_PIXELS)",
+            bounds=_range(MAX_IMAGE_PIXELS_BOUNDS),
         )
     )
     defs.append(
@@ -390,6 +407,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             _global_daily_limit,
             lambda: settings.scan_global_daily_limit,
             "scans per UTC day across all users (seed: SCAN_GLOBAL_DAILY_LIMIT)",
+            bounds=_range(GLOBAL_DAILY_LIMIT_BOUNDS),
         )
     )
     for tier in QUOTA_TIERS:
@@ -401,6 +419,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
                 f"{tier} scans per user per UTC day that found books, standard "
                 f"and enhanced combined; also the units a scan needs to start "
                 f"(seed: SCAN_{tier.upper()}_DAILY_LIMIT)",
+                bounds=_range(DAILY_ALLOWANCE_BOUNDS),
             ),
             SettingDefinition(
                 no_match_key(tier),
@@ -409,6 +428,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
                 f"{tier} standard scans per user per UTC day where the model "
                 f"answered but found no book, not counted as a found scan "
                 f"(seed: SCAN_{tier.upper()}_NO_MATCH_DAILY_LIMIT)",
+                bounds=_range(DAILY_ALLOWANCE_BOUNDS),
             ),
         ]
     defs.append(
@@ -418,6 +438,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: settings.scan_free_daily_ceiling_micros,
             "AI spend per UTC day in micro-dollars, all tiers counted, above "
             "which Free-tier scans pause (seed: SCAN_FREE_DAILY_CEILING_MICROS)",
+            bounds=_range(FREE_DAILY_CEILING_MICROS_BOUNDS),
         )
     )
     defs += [
@@ -427,12 +448,14 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: DEFAULT_ZERO_RESULT_THRESHOLD,
             "zero-result enhanced scans recorded per user per window before "
             "the action applies (seed: code default 3)",
+            bounds=_range(ZERO_RESULT_THRESHOLD_BOUNDS),
         ),
         SettingDefinition(
             ZERO_RESULT_WINDOW_HOURS_KEY,
             _zero_result_window_hours,
             lambda: DEFAULT_ZERO_RESULT_WINDOW_HOURS,
             "hours the zero-result count covers (seed: code default 24)",
+            bounds=_range(ZERO_RESULT_WINDOW_HOURS_BOUNDS),
         ),
         SettingDefinition(
             ZERO_RESULT_ACTION_KEY,
@@ -441,6 +464,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             "at the threshold: charge (stop recording; every scan uses the "
             "daily unit) or throttle (refuse enhanced scans until the window "
             "clears) (seed: charge)",
+            bounds=" or ".join(ZERO_RESULT_ACTIONS),
         ),
         SettingDefinition(
             SCAN_RECORDS_ENABLED_KEY,
@@ -448,6 +472,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: DEFAULT_SCAN_RECORDS_ENABLED,
             "per-user scan records on/off; off, every scan takes the normal "
             "path; an invalid value disables them (seed: code default true)",
+            bounds=_BOOL_BOUNDS,
         ),
         SettingDefinition(
             SCAN_RECORDS_RETENTION_DAYS_KEY,
@@ -455,6 +480,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: DEFAULT_SCAN_RECORDS_RETENTION_DAYS,
             "days a scan record is kept and served, then purged "
             "(seed: code default 30)",
+            bounds=_range(SCAN_RECORDS_RETENTION_DAYS_BOUNDS),
         ),
         SettingDefinition(
             SCAN_RECORDS_MAX_PER_USER_KEY,
@@ -462,6 +488,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: DEFAULT_SCAN_RECORDS_MAX_PER_USER,
             "scan records kept per user, oldest evicted first "
             "(seed: code default 500)",
+            bounds=_range(SCAN_RECORDS_MAX_PER_USER_BOUNDS),
         ),
         SettingDefinition(
             SCAN_REQUESTS_PER_USER_DAILY_KEY,
@@ -469,6 +496,7 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
             lambda: DEFAULT_SCAN_REQUESTS_PER_USER_DAILY,
             "/scan requests per user per UTC day, new photo or repeat, "
             "refused or not (seed: code default 100)",
+            bounds=_range(SCAN_REQUESTS_PER_USER_DAILY_BOUNDS),
         ),
     ]
     return MappingProxyType({d.key: d for d in defs})
@@ -476,6 +504,43 @@ def _definitions() -> MappingProxyType[str, SettingDefinition]:
 
 DEFINITIONS: MappingProxyType[str, SettingDefinition] = _definitions()
 KNOWN_KEYS = tuple(DEFINITIONS)
+
+# Areas for ``list`` (#581), in display order. The first matching key prefix
+# wins; a key that matches none is shown under OTHER_AREA (a test fails then,
+# so a new key gets an area here and a row in docs/scan-limits.md).
+AREA_RULES: tuple[tuple[str, str], ...] = (
+    ("scan.standard.enabled", "Switches"),
+    ("scan.enhanced.enabled", "Switches"),
+    ("scan.standard.", "Providers and models"),
+    ("scan.enhanced.zero_result_", "Enhanced scans"),
+    ("scan.enhanced.", "Providers and models"),
+    ("scan.requests_per_user_daily", "Request and global limits"),
+    ("scan.global_daily_limit", "Request and global limits"),
+    ("scan.max_image_pixels", "Uploads and images"),
+    ("quota.free.", "Allowances: Free"),
+    ("quota.premium.", "Allowances: Premium"),
+    ("breaker.", "Spend breaker"),
+    ("scan_records.", "Scan records (repeat photos)"),
+)
+OTHER_AREA = "Other"
+
+
+def area_of(key: str) -> str:
+    """The ``list`` group of ``key``."""
+    for prefix, area in AREA_RULES:
+        if key.startswith(prefix):
+            return area
+    return OTHER_AREA
+
+
+def keys_by_area() -> dict[str, tuple[str, ...]]:
+    """Every known key grouped by area, areas in :data:`AREA_RULES` order and
+    keys in registry order within an area."""
+    order = [*dict.fromkeys(area for _, area in AREA_RULES), OTHER_AREA]
+    grouped: dict[str, list[str]] = {area: [] for area in order}
+    for key in KNOWN_KEYS:
+        grouped[area_of(key)].append(key)
+    return {area: tuple(keys) for area, keys in grouped.items() if keys}
 
 
 def _pair_problems(rows: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -1017,6 +1082,11 @@ def _describe(key: str, stored: Mapping[str, AISetting]) -> str:
     )
 
 
+def _default_and_bounds(key: str) -> str:
+    definition = DEFINITIONS[key]
+    return f"default {json.dumps(definition.default())}; bounds {definition.bounds}"
+
+
 async def _run(args: argparse.Namespace) -> int:
     async with _open_session() as db:
         if args.command == "set":
@@ -1041,9 +1111,13 @@ async def _run(args: argparse.Namespace) -> int:
             )
             return 0
         stored = await read_rows(db)
-        keys = KNOWN_KEYS if args.command == "list" else (args.key,)
-        for key in keys:
-            print(_describe(key, stored))
+        if args.command == "list":
+            for area, keys in keys_by_area().items():
+                print(f"\n== {area} ==")
+                for key in keys:
+                    print(f"{_describe(key, stored)}  [{_default_and_bounds(key)}]")
+            return 0
+        print(_describe(args.key, stored))
         return 0
 
 
@@ -1059,7 +1133,7 @@ def main(argv: list[str] | None = None) -> int:
     set_cmd.add_argument("--by", help="who made the change (default: $USER)")
     get_cmd = sub.add_parser("get", help="show one key")
     get_cmd.add_argument("key", choices=KNOWN_KEYS)
-    sub.add_parser("list", help="show every key")
+    sub.add_parser("list", help="show every key by area, with default and bounds")
     switch_cmd = sub.add_parser(
         "switch", help="set a feature's provider and model together"
     )

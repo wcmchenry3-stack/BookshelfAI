@@ -25,7 +25,6 @@ pytestmark = pytest.mark.security
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-00000000528a"),
     email="authority@example.com",
-    enhanced_scan_credits=0,
 )
 
 

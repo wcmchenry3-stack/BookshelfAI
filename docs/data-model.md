@@ -8,7 +8,6 @@ PostgreSQL schema, entity reference, and the dedup strategy that makes the colle
 erDiagram
   USERS ||--o{ USER_BOOKS : owns
   USERS ||--o{ REFRESH_TOKENS : issued
-  USERS ||--o{ SCAN_USAGE_DAILY : "scans per day (legacy)"
   USERS ||--o{ AI_QUOTA : "AI calls per window"
   USERS ||--o| AI_INFLIGHT : "call in flight"
   USERS |o--o{ AI_USAGE : "provider calls (set null on delete)"
@@ -27,7 +26,6 @@ erDiagram
     string google_id UK
     string display_name
     string avatar_url
-    int enhanced_scan_credits "legacy, unused since #533; dropped in #540"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -79,11 +77,6 @@ erDiagram
     timestamptz issued_at
     timestamptz expires_at
     timestamptz revoked_at
-  }
-  SCAN_USAGE_DAILY {
-    uuid user_id PK,FK "cascade delete"
-    date usage_date PK "UTC, indexed"
-    int scans
   }
   AI_QUOTA {
     uuid user_id PK,FK "cascade delete"
@@ -189,7 +182,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 |---|---|---|
 | `user_books.user_id` → `users.id` | `CASCADE` | Deleting an account removes that user's library (intentional). |
 | `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
-| `scan_usage_daily.user_id`, `ai_quota.user_id`, `ai_inflight.user_id`, `ai_enhanced_zero_results.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters, any lease and its zero-result enhanced-scan rows. |
+| `ai_quota.user_id`, `ai_inflight.user_id`, `ai_enhanced_zero_results.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters, any lease and its zero-result enhanced-scan rows. |
 | `scan_records.user_id` → `users.id` | `CASCADE` | Deleting an account removes its scan records. |
 | `scan_corrections.scan_record_id` → `scan_records.id` | `CASCADE` | A scan record's correction flags go with it (retention purge, per-user cap, account deletion); the daily totals in `scan_corrections_daily` (no user) stay. |
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
@@ -210,7 +203,6 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 | `google_id` | string, **unique**, not null | Google OAuth `sub` claim |
 | `display_name` | string, nullable | from Google profile |
 | `avatar_url` | string, nullable | from Google profile |
-| `enhanced_scan_credits` | int, not null, server default 5 | **legacy:** the old lifetime enhanced-scan balance (migration 0003). Since #533 nothing in the app reads or writes it (enhanced scans use the Premium enhanced allowance in `ai_quota`, quota key `scan.enhanced`); new rows get the server default. Dropped in #540 |
 | `created_at` / `updated_at` | timestamptz, server defaults | `updated_at` auto-bumps on row change |
 
 **Lockdown:** the backend enforces `ALLOWED_EMAILS` at the `/auth/google` endpoint — any Google account whose email isn't in that comma-separated env var is rejected *before* a User row is created. See [`architecture.md`](architecture.md#auth-architecture).
@@ -307,22 +299,6 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 
 **Lifecycle:** `/auth/refresh` validates the presented refresh JWT → checks `jti` exists and `revoked_at IS NULL` → issues a new access+refresh pair, inserts a new row, and sets `revoked_at = now()` on the old row. The effect is that **refresh tokens are single-use** — a stolen copy is invalidated by the legitimate client's next refresh.
 
-### `scan_usage_daily` (`backend/app/models/scan_usage.py`)
-
-**Legacy since #528:** `/scan` no longer reads or writes it (the caps moved to `ai_quota` below). The table, `app/services/scan_quota.py` and its purge stay until #540 removes them; existing rows age out through the purge.
-
-Counts scans that reached the vision provider, per user per UTC day. Backed the per-user and global daily scan caps of #509.
-
-| Column | Type | Notes |
-|---|---|---|
-| `user_id` | UUID FK → `users.id`, cascade delete, PK part | |
-| `usage_date` | date, PK part, indexed (`ix_scan_usage_daily_usage_date`) | UTC day |
-| `scans` | int, not null, server default 0 | incremented by the reservation upsert, decremented (never below 0) on a refund |
-
-**Keys:** the composite primary key `(user_id, usage_date)` is the unique key the reservation upsert targets. The `usage_date` index serves the global daily sum and the retention purge.
-
-**Volume and retention:** one row per active user per day (~40 bytes of data, roughly 100 bytes on disk with the indexes). The daily cleanup task (`app/services/token_cleanup.py`, calling `scan_quota.purge_old_scan_usage`) deletes rows with `usage_date` older than 90 days, in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade.
-
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 
 Per-user count of AI calls reserved, per quota key and window (#528). Backs the daily found and no-match scan allowances (#577), the global daily ceiling and, under its own key, the per-user daily `/scan` request limit (#586). There is no monthly allowance since #582: month rows are legacy, no longer read or written ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
@@ -351,10 +327,8 @@ The per-user lease that allows one paid AI call in flight at a time (#528).
 | `lease_id` | UUID, not null | random per acquisition; the release deletes the row only while it still holds this id, so a slow request whose lease expired and was taken over cannot release the new holder's lease |
 | `lease_expires_at` | timestamptz, not null | `clock_timestamp()` + the feature's `timeout_s` + 30 s; an expired lease can be taken over |
 | `daily_taken` | boolean, not null, server default false | the holder took its daily `ai_quota` unit (#590, migration 0012); set in the same commit as the increment, cleared in the same commit as the give-back |
-| `monthly_taken` | boolean, not null, server default false | legacy: the same for the monthly unit; never set since #582 (a takeover still clears it), dropped by a later contract migration |
-| `enhanced_taken` | boolean, not null, server default false | legacy: the same for the Premium enhanced month unit; never set since #582, as above |
 
-**Writes:** acquired with `INSERT … ON CONFLICT (user_id) DO UPDATE … WHERE ai_inflight.lease_expires_at < clock_timestamp()` (a takeover also resets the three flags, the two legacy ones included), deleted when the call settles or is refunded (always, in a `finally`). Each unit flag is set with `UPDATE … WHERE user_id = ? AND lease_id = ?` in the transaction that takes the unit, and cleared with `UPDATE … WHERE user_id = ? AND lease_id = ? AND <flag> RETURNING` in the transaction that gives it back, which decrements only when a row came back, so a retried give-back never gives a unit back twice ([architecture.md](architecture.md)).
+**Writes:** acquired with `INSERT … ON CONFLICT (user_id) DO UPDATE … WHERE ai_inflight.lease_expires_at < clock_timestamp()` (a takeover also resets the flag), deleted when the call settles or is refunded (always, in a `finally`). Each unit flag is set with `UPDATE … WHERE user_id = ? AND lease_id = ?` in the transaction that takes the unit, and cleared with `UPDATE … WHERE user_id = ? AND lease_id = ? AND <flag> RETURNING` in the transaction that gives it back, which decrements only when a row came back, so a retried give-back never gives a unit back twice ([architecture.md](architecture.md)).
 
 **Volume and retention:** at most one row per user with a call in flight (~65 bytes; the flags add 3 bytes and no rows). Rows are deleted on release; a row left by a crashed request stays until that user's next scan takes it over (it is harmless once expired), or the user is deleted.
 
@@ -535,7 +509,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 **Writes:** only the startup seed (insert-if-missing) and the CLI `python -m app.ai.settings set`. No endpoint reads or writes it from a request.
 
-**Volume and retention:** 20 known keys today (7 from #526, plus `scan.global_daily_limit` and the found and no-match allowances per tier from #528 and #577, plus `breaker.free_daily_ceiling_micros` from #531, plus the three `scan.enhanced.zero_result_*` keys from #533, plus `scan_records.enabled`, `scan_records.retention_days` and `scan_records.max_per_user` from #585, plus `scan.requests_per_user_daily` from #586), each under 300 bytes. The three monthly keys (`quota.free.monthly`, `quota.premium.monthly`, `quota.premium.enhanced_monthly`) are retired by #582: no longer seeded, refused by the CLI and ignored on read; rows seeded before stay until a later contract migration deletes them. It does not grow with usage, so no retention job.
+**Volume and retention:** 20 known keys today (7 from #526, plus `scan.global_daily_limit` and the found and no-match allowances per tier from #528 and #577, plus `breaker.free_daily_ceiling_micros` from #531, plus the three `scan.enhanced.zero_result_*` keys from #533, plus `scan_records.enabled`, `scan_records.retention_days` and `scan_records.max_per_user` from #585, plus `scan.requests_per_user_daily` from #586), each under 300 bytes. The three monthly keys (`quota.free.monthly`, `quota.premium.monthly`, `quota.premium.enhanced_monthly`) are retired by #582: no longer seeded, refused by the CLI and ignored on read; migration 0018 (#594) deleted the rows seeded before. It does not grow with usage, so no retention job.
 
 ## Dedup strategy — why work_id, not ISBN
 
@@ -581,20 +555,22 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 
 - `0001_initial_schema.py` — creates `users`, `books`, `editions`, `user_books`
 - `0002_refresh_tokens.py` — adds `refresh_tokens` table
-- `0003_enhanced_scan_credits.py` — adds `users.enhanced_scan_credits`
+- `0003_enhanced_scan_credits.py` — adds `users.enhanced_scan_credits` (dropped by 0019)
 - `0004_restrict_catalog_deletes.py` — `user_books.book_id` and `editions.book_id` FKs become `ON DELETE RESTRICT`
-- `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps)
+- `0005_scan_usage_daily.py` — adds `scan_usage_daily` table (daily scan caps; dropped by 0019)
 - `0006_ai_settings.py` — adds `ai_settings` table (DB-backed AI dials and kill switches; rows are seeded at app startup, not by the migration)
 - `0007_ai_quota.py` — adds `ai_quota` (per-user daily/monthly AI allowance counters; month rows are legacy since #582) and `ai_inflight` (one call in flight per user) tables; additive, the downgrade drops both
 - `0008_ai_usage.py` — adds `ai_usage` (one row per paid AI provider call) and `ai_usage_daily` (daily rollup) tables; additive, the downgrade drops both
 - `0009_ai_spend_daily.py` — adds `ai_spend_daily` (service-wide daily AI spend for the cost circuit breaker); additive, the downgrade drops it
 - `0010_ai_enhanced_zero_results.py` — adds `ai_enhanced_zero_results` (uncharged empty enhanced scans, #533; `warned` boolean, default false, marks the row that sent the threshold warning) with the `(user_id, created_at)` index; additive, the downgrade drops it
 - `0011_scan_records.py` — adds `scan_records` (one record per user and photo fingerprint, #585) with the `(user_id, fingerprint)` unique constraint and the `(user_id, created_at)` and `(created_at)` indexes; additive, the downgrade drops it. The `ai_usage` status check already allowed `cache_hit` (0008), so it is unchanged
-- `0012_ai_inflight_units_taken.py` — adds `daily_taken`, `monthly_taken` and `enhanced_taken` (boolean, not null, server default false) to `ai_inflight`, so a unit whose reservation commit lost its acknowledgement can be given back at most once (#590); expand-only, the downgrade drops the three columns. Since #582 only `daily_taken` is set
+- `0012_ai_inflight_units_taken.py` — adds `daily_taken`, `monthly_taken` and `enhanced_taken` (boolean, not null, server default false) to `ai_inflight`, so a unit whose reservation commit lost its acknowledgement can be given back at most once (#590); expand-only, the downgrade drops the three columns. Since #582 only `daily_taken` is set; `monthly_taken` and `enhanced_taken` were dropped by 0018
 - `0013_ai_usage_malformed_status.py` — widens the status CHECK of `ai_usage` and `ai_usage_daily` (`ck_ai_usage_status`, `ck_ai_usage_daily_status`) to allow `malformed` (#572); additive. Each widened CHECK is added `NOT VALID` under a 5 s `lock_timeout`, the swap is committed, then each is validated in its own transaction (`VALIDATE CONSTRAINT`, which does not block reads or writes), so no ACCESS EXCLUSIVE lock is held while rows are scanned. The downgrade is deliberately a no-op: both widened CHECKs stay, because any narrower CHECK (even `NOT VALID`) would break the old code on the kept `malformed` rows (the rollup into `ai_usage_daily`, and deleting their user, which sets `user_id` to NULL). The old code never writes `malformed`.
 - `0014_ai_usage_attempt.py` — adds the nullable `smallint` column `ai_usage.attempt` (#603); expand only. Existing rows stay NULL (unknown); no default, so only the catalog changes (no rewrite), under a 5 s `lock_timeout`. The downgrade drops the column; roll the app code back first, since the #603 ledger insert always names `attempt`.
 - `0015_books_google_books_id_unique.py` — merges duplicate `books` rows sharing a `google_books_id`, then creates the partial unique index `uq_books_google_books_id` on `books (google_books_id) WHERE google_books_id IS NOT NULL` (#613, owner decision option A). Per volume the oldest row (`created_at`, then `id`) is kept. `user_books` on the newer rows move to it; where a user has more than one entry for the merged book (`uq_user_books_user_book`), the entry already on the kept row survives (else the user's oldest), its NULL fields (`edition_id`, `notes`, `rating`, the `*_at` timestamps) take the first non-NULL value from the others (oldest first), its `status` becomes the most advanced among the merged entries (wishlisted < purchased < reading < read), and the others are hard-deleted (`user_books` has no `deleted_at`). `editions` move to the kept row; if the kept row has no `open_library_work_id`, the oldest duplicate's moves to it; the duplicates are then deleted. Counts are logged, with at most 20 deleted book IDs per batch. Batches of 500 kept books with set-based SQL bound statement size only: it is all one transaction. More than 10,000 duplicate rows fails the upgrade with a message to merge by hand. Before reading the duplicates it takes `LOCK TABLE books, user_books, editions IN SHARE ROW EXCLUSIVE MODE` (writes to the three tables wait, reads run; 5 s `lock_timeout`, reset to the default at the end of the revision), held until the whole `alembic upgrade` run commits, so no write can race the merge, and builds a plain `CREATE UNIQUE INDEX`, not `CONCURRENTLY`, so no duplicate can slip in between the merge and the build. Offline `alembic upgrade --sql` is refused (the merge reads rows). The downgrade drops the index only; merged rows are not restored.
 - `0017_scan_corrections.py` — adds `scan_corrections` (correction flags per scan record and candidate, #631; FK `scan_records` `ON DELETE CASCADE`, unique `(scan_record_id, candidate_index)`, `created_at` index) and `scan_corrections_daily` (daily totals, no user); expand only, the downgrade drops only these two tables
+- `0018_drop_retired_monthly_quota.py` — contract step for #582 (#594): deletes the `ai_settings` rows `quota.free.monthly`, `quota.premium.monthly` and `quota.premium.enhanced_monthly` (only those keys) and drops `ai_inflight.monthly_taken` and `ai_inflight.enhanced_taken`. `ai_quota` month rows are left to age out through the 13-month retention. The downgrade recreates the two columns as 0012 made them (boolean, not null, default false) but cannot restore the deleted settings rows (the release before #582 re-seeds missing quota keys at boot).
+- `0019_drop_legacy_scan_counters.py` — contract step for #528 and #533 (#540): drops the table `scan_usage_daily` (with `ix_scan_usage_daily_usage_date`; the per-user daily scan counter `/scan` stopped using in #528) and the column `users.enhanced_scan_credits` (the lifetime enhanced-scan balance nothing read since #533). Both go with their data. The downgrade recreates them exactly as 0005 and 0003 made them (schema only: the table comes back empty and every user gets the column's default of 5). The previous release maps `users.enhanced_scan_credits`, so user queries fail between the migration and the new code taking traffic; see "Upgrade notes" in [`deployment.md`](deployment.md#upgrade-notes)
 
 ### Writing a new migration
 

@@ -226,6 +226,42 @@ describe('MyBooksScreen', () => {
     expect(queryByLabelText('Dune — wishlisted')).toBeNull();
   });
 
+  it('keeps the advanced book when the user has moved to its destination tab (#641)', async () => {
+    let resolvePatch!: (row: unknown) => void;
+    mockPatch.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePatch = (row) => resolve({ data: row });
+      })
+    );
+    const purchased = { ...WISHLISTED_BOOK, status: 'purchased' };
+    mockGet.mockResolvedValueOnce({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, queryByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — wishlisted'));
+    await fireEvent.press(getByLabelText('Dune — wishlisted'));
+    await waitFor(() => getByLabelText('Mark as Purchased'));
+
+    // Deliberately not awaited: the PATCH stays pending (see the test above).
+    fireEvent.press(getByLabelText('Mark as Purchased'));
+    await waitFor(() =>
+      expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(true)
+    );
+
+    // While it is in flight the user switches to the Purchased tab, whose GET
+    // already returns the committed, updated row.
+    mockGet.mockResolvedValueOnce({ data: [purchased] });
+    const hidden = { includeHiddenElements: true };
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Filter by Purchased', hidden));
+    });
+    await waitFor(() => expect(queryByLabelText('Dune — purchased', hidden)).toBeTruthy());
+
+    await act(async () => {
+      resolvePatch({ ...purchased, purchased_at: '2026-09-21T00:00:00Z' });
+    });
+    // The book belongs on this tab, so it must stay (updated), not vanish.
+    await waitFor(() => expect(queryByLabelText('Dune — purchased')).toBeTruthy());
+  });
+
   it('ignores a second press while a request for the same book is in flight', async () => {
     mockPatch.mockReturnValue(new Promise(() => {}));
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });

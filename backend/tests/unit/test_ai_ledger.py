@@ -36,7 +36,6 @@ from tests.unit._quota_fake import FakeQuotaStore
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-000000000530"),
     email="ledger@example.com",
-    enhanced_scan_credits=3,
 )
 DUNE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 CALL_ID = uuid.UUID("00000000-0000-0000-0000-00000000ca11")
@@ -667,9 +666,6 @@ class TestCleanupTask:
         sleeps = AsyncMock(side_effect=[None, _Stop()])
         with (
             patch.object(token_cleanup, "AsyncSessionLocal", factory),
-            patch.object(
-                token_cleanup, "purge_old_scan_usage", AsyncMock(return_value=0)
-            ),
             patch.object(token_cleanup, "purge_old_quota", AsyncMock(return_value=0)),
             patch.object(token_cleanup, "purge_old_spend", AsyncMock(return_value=0)),
             patch.object(

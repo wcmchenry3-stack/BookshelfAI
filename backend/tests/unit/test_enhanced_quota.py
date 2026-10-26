@@ -235,18 +235,30 @@ class TestSettings:
         assert ai_settings.main(["set", key, value]) == 2
         assert "error:" in capsys.readouterr().err
 
-    def test_retired_env_seed_still_loads_and_seeds_nothing(self, monkeypatch):
-        """#582: SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT seeds nothing any more,
-        but an environment that still sets it must boot."""
-        monkeypatch.setenv("SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT", "20")
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "SCAN_FREE_MONTHLY_LIMIT",
+            "SCAN_PREMIUM_MONTHLY_LIMIT",
+            "SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT",
+        ],
+    )
+    def test_retired_process_env_var_does_not_break_boot(self, monkeypatch, name):
+        """#594 (the Render case): the settings fields are gone, but an
+        environment (process env var) that still sets one must boot. Only a
+        key in the .env file that matches no field is refused."""
+        monkeypatch.setenv(name, "10")
         s = Settings(database_url="postgresql://u:p@localhost/db", _env_file=None)
-        assert s.scan_premium_enhanced_monthly_limit == 20  # accepted, unused
+        assert not hasattr(s, name.lower())
         assert "quota.premium.enhanced_monthly" not in ai_settings.seed_values()
 
-    def test_env_seed_that_is_not_a_number_still_fails_boot(self, monkeypatch):
-        monkeypatch.setenv("SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT", "abc")
+    def test_retired_key_in_the_env_file_is_refused(self, tmp_path):
+        """Documented upgrade note (docs/deployment.md): a local .env that
+        still lists a retired key must drop it."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("SCAN_FREE_MONTHLY_LIMIT=10\n")
         with pytest.raises(ValidationError):
-            Settings(database_url="postgresql://u:p@localhost/db", _env_file=None)
+            Settings(database_url="postgresql://u:p@localhost/db", _env_file=env_file)
 
 
 # ---------------------------------------------------------------------------
@@ -808,7 +820,6 @@ class TestCleanup:
     async def _run(self, purge, factory):
         with (
             patch("app.services.token_cleanup.AsyncSessionLocal", factory),
-            patch("app.services.token_cleanup.purge_old_scan_usage", AsyncMock()),
             patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
             patch(
                 "app.services.token_cleanup.rollup_and_purge",

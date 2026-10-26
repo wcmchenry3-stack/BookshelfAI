@@ -35,7 +35,6 @@ from tests.unit._quota_fake import FakeQuotaStore
 USER = User(
     id=uuid.UUID("00000000-0000-0000-0000-000000000532"),
     email="claude@example.com",
-    enhanced_scan_credits=3,
 )
 ANTHROPIC = {
     "scan.standard.provider": "anthropic",

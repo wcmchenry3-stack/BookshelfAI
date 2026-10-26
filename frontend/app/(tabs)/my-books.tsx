@@ -146,9 +146,13 @@ export default function MyBooksScreen() {
       // not the tab that was active when the button was pressed, which the
       // user may have since left (fetchBooks would have already replaced
       // `books` with that tab's data).
+      // Keep (and update) the row when it still belongs to the current tab —
+      // "all", or the tab for its new status, whose GET may already have
+      // returned it if the user switched there while the PATCH was in flight.
       setBooks((prev) => {
         if (!prev.some((b) => b.id === item.id)) return prev;
-        return activeTabRef.current === 'all'
+        const tab = activeTabRef.current;
+        return tab === 'all' || tab === data.status
           ? prev.map((b) => (b.id === item.id ? { ...b, ...data } : b))
           : prev.filter((b) => b.id !== item.id);
       });
