@@ -39,6 +39,13 @@ which exclude cached tokens; ``cost_micros`` includes everything). Nor does
 it carry ``attempt`` (#603): the retry rate is counted from the 30 days of
 raw rows, so the daily key stays (day, feature, model, status).
 
+Scan corrections (#631) follow the same windows: ``scan_corrections`` rows
+are counted into ``scan_corrections_daily`` when they are written
+(``app.ai.scan_corrections``; their scan record, and with it the row, can be
+deleted well before 30 days), so the same run only deletes raw rows older
+than 30 days and daily rows older than 400 days. A failure there is logged
+and never fails the usage rollup.
+
 This module never calls a provider.
 """
 
@@ -60,6 +67,7 @@ from app.models.ai_usage import (
     AIUsage,
     AIUsageDaily,
 )
+from app.models.scan_correction import ScanCorrection, ScanCorrectionDaily
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +284,36 @@ async def _purge_daily(db: AsyncSession, cutoff: date) -> int:
     return total
 
 
+async def _purge_scan_corrections(
+    db: AsyncSession, raw_cutoff: datetime, daily_cutoff: date
+) -> tuple[int, int]:
+    """Delete ``scan_corrections`` rows created before ``raw_cutoff`` (already
+    counted in the daily table) in bounded batches, then
+    ``scan_corrections_daily`` rows for days before ``daily_cutoff``.
+    Returns ``(raw rows deleted, daily rows deleted)``."""
+    raw = 0
+    for _ in range(PURGE_MAX_BATCHES):
+        batch = (
+            select(ScanCorrection.id)
+            .where(ScanCorrection.created_at < raw_cutoff)
+            .limit(PURGE_BATCH_SIZE)
+        )
+        result = await db.execute(
+            delete(ScanCorrection).where(ScanCorrection.id.in_(batch))
+        )
+        await db.commit()
+        deleted = int(result.rowcount or 0)
+        raw += deleted
+        if deleted < PURGE_BATCH_SIZE:
+            break
+    # Tens of rows per day: no batching needed.
+    result = await db.execute(
+        delete(ScanCorrectionDaily).where(ScanCorrectionDaily.day < daily_cutoff)
+    )
+    await db.commit()
+    return raw, int(result.rowcount or 0)
+
+
 def rollup_cutoffs(now: datetime) -> tuple[datetime, date]:
     """``(raw_cutoff, daily_cutoff)``: raw rows created before the first are
     rolled up; daily rows for days before the second are deleted."""
@@ -291,7 +329,9 @@ async def rollup_and_purge(
 ) -> tuple[int, int]:
     """Roll raw rows older than 30 days into ``ai_usage_daily`` (and delete
     them), then delete daily rows older than 400 days. Both in bounded
-    batches (at most ``PURGE_MAX_BATCHES`` each per run). Idempotent.
+    batches (at most ``PURGE_MAX_BATCHES`` each per run). Then the same for
+    scan corrections (#631), which are only deleted (counted when written).
+    Idempotent.
     Returns ``(raw rows rolled up, daily rows deleted)``."""
     raw_cutoff, daily_cutoff = rollup_cutoffs(now or datetime.now(UTC))
     rolled = 0
@@ -301,4 +341,17 @@ async def rollup_and_purge(
         if moved < PURGE_BATCH_SIZE:
             break
     purged = await _purge_daily(db, daily_cutoff)
+    try:
+        old_rows, old_days = await _purge_scan_corrections(db, raw_cutoff, daily_cutoff)
+        logger.info(
+            "ledger: purged %d scan_corrections row(s), %d daily row(s)",
+            old_rows,
+            old_days,
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail the usage rollup
+        logger.warning("ledger: scan_corrections purge failed (%s)", type(exc).__name__)
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            logger.warning("ledger: rollback after the scan_corrections purge failed")
     return rolled, purged

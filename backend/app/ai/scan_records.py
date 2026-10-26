@@ -11,7 +11,10 @@ Key
 The user (from the session) and the fingerprint (from the bytes after
 normalisation) only. Not the prompt, the model or the request shape: an old
 answer stays valid when either changes (decision #573 point 5). Nothing in
-the request names a record; :func:`lookup` always filters on the user.
+a /scan request names a record; :func:`lookup` always filters on the user.
+The record's id is handed to its owner as ``ScanResponse.scan_record_id``
+(#631) and read back only by :func:`lookup_by_id`, which also filters on
+the session's user (``app.ai.scan_corrections``).
 
 Steps
 -----
@@ -112,6 +115,9 @@ class Record:
     # None until the enrichment step finished.
     books: list[EnrichedBook] | None
     created_at: datetime
+    # The row's id (#631): the opaque reference /scan hands the app, so an
+    # "Add it yourself" save can name the candidate it was pre-filled from.
+    id: uuid.UUID | None = None
 
     @property
     def enrich_done(self) -> bool:
@@ -273,6 +279,73 @@ async def lookup(
         candidates=candidates,
         books=books,
         created_at=row.created_at,
+        id=row.id,
+    )
+
+
+async def record_id(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    fingerprint: str,
+    ai_created_at: datetime,
+) -> uuid.UUID | None:
+    """The id of this user's record for ``fingerprint`` whose AI step was
+    saved at ``ai_created_at`` (the value :func:`save_ai_step` returned), or
+    None when that answer is not the stored one (e.g. a valid enhanced
+    record was kept over a standard answer). Ends its read transaction."""
+    query = select(ScanRecord.id).where(
+        ScanRecord.user_id == user_id,
+        ScanRecord.fingerprint == fingerprint,
+        ScanRecord.created_at == ai_created_at,
+    )
+    found = (await db.execute(query)).scalar_one_or_none()
+    await db.commit()
+    return found if isinstance(found, uuid.UUID) else None
+
+
+async def lookup_by_id(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    record_id: uuid.UUID,
+    retention_days: int,
+    now: datetime | None = None,
+) -> Record | None:
+    """This user's record ``record_id`` with a finished AI step, younger
+    than ``retention_days`` (#631); else None, whether it does not exist,
+    expired, belongs to another user or does not validate. Only the
+    candidates are read (the enrichment is left out). Ends its read
+    transaction."""
+    query = select(
+        ScanRecord.id,
+        ScanRecord.feature,
+        ScanRecord.tier,
+        ScanRecord.model,
+        ScanRecord.candidates,
+        ScanRecord.created_at,
+    ).where(
+        ScanRecord.id == record_id,
+        ScanRecord.user_id == user_id,
+        ScanRecord.ai_done.is_(True),
+        ScanRecord.created_at > _cutoff(now or utc_now(), retention_days),
+    )
+    row = (await db.execute(query)).one_or_none()
+    await db.commit()
+    if row is None:
+        return None
+    try:
+        candidates = deserialise_candidates(row.candidates)
+    except ScanRecordError:
+        return None
+    return Record(
+        feature=row.feature,
+        tier=row.tier,
+        model=row.model,
+        candidates=candidates,
+        books=None,
+        created_at=row.created_at,
+        id=row.id,
     )
 
 

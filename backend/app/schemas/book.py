@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_serializer
 
 
 class EditionBase(BaseModel):
@@ -92,6 +92,12 @@ class EnrichedBook(BaseModel):
     # back unchanged with the book to POST /wishlist. Never stored in a
     # scan record: every response signs afresh.
     catalog_token: str | None = None
+    # Which of the scan's candidates (``scan_records.candidates``, 0-based)
+    # this book was enriched from (#631). The app posts it back with
+    # ``ScanResponse.scan_record_id`` when it saves an "Add it yourself"
+    # entry pre-filled from this book. Null when not known (e.g. a book
+    # saved in a scan record before #631).
+    candidate_index: int | None = Field(None, ge=0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -121,3 +127,17 @@ class ScanResponse(BaseModel):
     # "counted" = it used a scan because today's no-match allowance is used
     # up. None otherwise (books found, enhanced, a repeat, or not known).
     no_match: Literal["free", "counted"] | None = None
+    # Opaque reference to the user's scan record that holds this answer
+    # (#631): its id, unguessable and only ever looked up for the session's
+    # user. The app keeps it with each book (and ``candidate_index``) and
+    # posts both back from an "Add it yourself" save, so the server can tell
+    # whether the user changed the reading. Left out of the body when there
+    # is no record (e.g. its write failed).
+    scan_record_id: uuid.UUID | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_missing_scan_record(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("scan_record_id") is None:
+            data.pop("scan_record_id", None)
+        return data

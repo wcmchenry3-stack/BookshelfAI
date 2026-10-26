@@ -12,7 +12,10 @@ The same daily run also purges, in bounded batches:
   (no longer written since #582) older than 13 months (app/ai/quota.py);
 - the AI usage ledger (``ai_usage``): raw rows older than 30 days are rolled
   up into ``ai_usage_daily`` and deleted, and daily rows older than 400 days
-  are deleted (app/ai/ledger.py);
+  are deleted (app/ai/ledger.py); in the same step, scan correction flags
+  (``scan_corrections``, #631) older than 30 days and their daily totals
+  (``scan_corrections_daily``) older than 400 days are deleted (each
+  correction is counted into the daily table when it is written);
 - the daily AI spend totals (``ai_spend_daily``) older than 90 days
   (app/ai/breaker.py);
 - uncharged zero-result enhanced scans (``ai_enhanced_zero_results``) older
