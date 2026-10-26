@@ -3,6 +3,7 @@ import hmac
 import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import ClassVar
 
 import sentry_sdk
 from fastapi import FastAPI, Request
@@ -20,6 +21,7 @@ from starlette.responses import Response
 from app.ai.settings import seed_ai_settings_at_startup
 from app.api.auth import router as auth_router
 from app.api.books import router as books_router
+from app.api.scan import MAX_SCAN_REQUEST_BYTES, SCAN_UPLOAD_PATH
 from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
 from app.core import catalog_token
@@ -89,26 +91,134 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests whose Content-Length exceeds the limit before reading the body.
+class InvalidContentLength(ValueError):
+    """The request's Content-Length header cannot be trusted."""
 
-    Prevents memory exhaustion from large request bodies that bypass per-endpoint
-    size checks (e.g. chunked transfer encoding without Content-Length).
+
+def _declared_content_length(headers) -> int | None:
+    """The request's declared body length, or None when it declares none.
+
+    Raises InvalidContentLength for a value that is not a plain non-negative
+    integer (``abc``, ``-1``, ``+5``, empty) or for several values that
+    disagree (repeated headers or a comma-separated list). Identical repeats
+    are accepted as that one value (RFC 9110 section 8.6).
+    """
+    values: set[int] = set()
+    for name, raw in headers:
+        if name.lower() != b"content-length":
+            continue
+        for part in raw.split(b","):
+            part = part.strip()
+            if not part or not part.isdigit():
+                raise InvalidContentLength
+            values.add(int(part))
+    if len(values) > 1:
+        raise InvalidContentLength
+    return values.pop() if values else None
+
+
+class RequestSizeLimitMiddleware:
+    """Cap every HTTP request body by path, counting the bytes as they arrive.
+
+    Pure ASGI (not BaseHTTPMiddleware) so it sees each ``http.request``
+    message and works whether or not the request declares a Content-Length:
+    a ``Transfer-Encoding: chunked`` body has none (#557).
+
+    - The scan upload route is capped at MAX_SCAN_REQUEST_BYTES (the 5 MB
+      image limit plus multipart overhead); every other route at
+      MAX_BODY_SIZE (10 MB).
+    - A declared Content-Length over the cap is a 413 at once, without
+      reading the body. A malformed one (not a non-negative integer, or
+      conflicting values) is a 400.
+    - Otherwise the body is counted as the app reads it. Once it passes the
+      cap the app is given ``http.disconnect`` instead of more bytes (so
+      framework body parsing fails and no handler runs on a truncated body),
+      anything the app then tries to send is dropped, and this middleware
+      sends the 413 itself, provided no response had started yet.
+    - Non-HTTP scopes (lifespan, websocket) pass straight through.
     """
 
-    MAX_BODY_SIZE = (
-        10 * 1024 * 1024
-    )  # 10 MB — covers the 5 MB image limit with headroom
+    MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
+    PATH_LIMITS: ClassVar[dict[str, int]] = {SCAN_UPLOAD_PATH: MAX_SCAN_REQUEST_BYTES}
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self.MAX_BODY_SIZE:
-            return Response(
-                content='{"detail": "Request body too large"}',
-                status_code=413,
-                media_type="application/json",
-            )
-        return await call_next(request)
+    _TOO_LARGE = (413, b'{"detail": "Request body too large"}')
+    _BAD_LENGTH = (400, b'{"detail": "Invalid Content-Length header"}')
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    @classmethod
+    def limit_for(cls, path: str) -> int:
+        return cls.PATH_LIMITS.get(path.rstrip("/") or "/", cls.MAX_BODY_SIZE)
+
+    @staticmethod
+    async def _reply(send, status_body: tuple[int, bytes]) -> None:
+        status_code, body = status_body
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                    # The rest of the body is never read, so the connection
+                    # cannot be reused.
+                    (b"connection", b"close"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        limit = self.limit_for(scope.get("path", ""))
+        try:
+            declared = _declared_content_length(scope.get("headers") or [])
+        except InvalidContentLength:
+            await self._reply(send, self._BAD_LENGTH)
+            return
+        if declared is not None and declared > limit:
+            await self._reply(send, self._TOO_LARGE)
+            return
+
+        received = 0
+        exceeded = False
+        response_started = False
+
+        async def limited_receive():
+            nonlocal received, exceeded
+            if exceeded:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    exceeded = True
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded_send(message) -> None:
+            nonlocal response_started
+            if exceeded and not response_started:
+                # The app's reaction to the cut-off body (typically a 400
+                # "error parsing the body") is replaced by our 413 below.
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            # Whatever the app raised after its body was cut off is a
+            # consequence of the cut-off, not a server error.
+            if not exceeded:
+                raise
+        if exceeded and not response_started:
+            await self._reply(send, self._TOO_LARGE)
 
 
 async def _validate_config() -> None:
@@ -188,7 +298,9 @@ app.add_middleware(
     # approximations.
     expose_headers=["Retry-After"],
 )
-# RequestSizeLimitMiddleware runs before CORS/headers to drop oversized bodies early.
+# RequestSizeLimitMiddleware runs before CORS/headers to drop oversized bodies
+# early. It is pure ASGI and counts the body bytes as they arrive, so it caps
+# chunked uploads (no Content-Length) too: 6 MB on /scan, 10 MB elsewhere (#557).
 app.add_middleware(RequestSizeLimitMiddleware)
 
 

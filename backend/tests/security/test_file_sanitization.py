@@ -219,9 +219,10 @@ class TestUploadPipeline:
             returned.append(len(data))
             return data
 
-        # Over the 5MB cap but under the 10MB request-size middleware, so the
-        # handler (not the middleware) is what stops the read.
-        body = _make_jpeg() + b"x" * (MAX_IMAGE_BYTES + 3 * 1024 * 1024)
+        # Over the 5MB cap but under the scan route's request-size cap
+        # (MAX_SCAN_REQUEST_BYTES, #557), so the handler (not the middleware)
+        # is what stops the read.
+        body = _make_jpeg() + b"x" * (MAX_IMAGE_BYTES + 512 * 1024)
         with patch.object(StarletteUploadFile, "read", spy_read):
             resp = client.post(
                 "/scan", files={"file": ("big.jpg", io.BytesIO(body), "image/jpeg")}
