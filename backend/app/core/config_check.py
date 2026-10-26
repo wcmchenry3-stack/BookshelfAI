@@ -28,7 +28,11 @@ def collect_problems() -> list[str]:
     from pydantic import ValidationError
 
     try:
-        from app.core.config import BlankSettingError, Settings
+        from app.core.config import (
+            BlankSettingError,
+            Settings,
+            check_turnstile_configured,
+        )
     except ValidationError as exc:
         return _validation_problems(exc)
     except ValueError as exc:  # BlankSettingError (not importable here)
@@ -43,6 +47,12 @@ def collect_problems() -> list[str]:
 
     problems: list[str] = []
     from app.core import catalog_token
+
+    # The database-free checks of app.main._validate_config.
+    try:
+        check_turnstile_configured(cfg)
+    except RuntimeError as exc:
+        problems.append(f"TURNSTILE_SECRET_KEY: {_reason(str(exc))}")
 
     try:
         catalog_token.check_configured(cfg)

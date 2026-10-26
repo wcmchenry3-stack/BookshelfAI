@@ -50,37 +50,58 @@ class BlankSettingError(ValueError):
 
 
 class _BlankGuardSource(PydanticBaseSettingsSource):
-    """Raises when a variable in _BLANK_IS_ERROR is present but blank (empty or
-    whitespace only) in the process environment or in the .env file(s).
+    """Raises when the effective raw value of a variable in _BLANK_IS_ERROR is
+    blank (empty or whitespace only).
 
     env_ignore_empty drops blanks before field validators run, so they have to
-    be detected on the raw sources. Contributes no values itself.
+    be detected on the raw sources. "Effective" follows pydantic-settings
+    precedence: an init kwarg, then the process environment (keys matched
+    case-insensitively), then the .env files, where a later file overrides an
+    earlier one. A blank in a lower-precedence source that a higher one
+    overrides is harmless. Contributes no values itself.
     """
 
-    def __init__(self, settings_cls, env_files) -> None:
+    def __init__(self, settings_cls, init_settings, env_files) -> None:
         super().__init__(settings_cls)
+        self._init_kwargs = dict(getattr(init_settings, "init_kwargs", {}) or {})
         self._env_files = env_files
 
     def get_field_value(self, field, field_name):  # pragma: no cover - unused
         return None, field_name, False
 
-    def __call__(self) -> dict:
-        blank: list[str] = []
-        raw: list[dict] = [dict(os.environ)]
-        for path in self._env_files:
+    @staticmethod
+    def _lookup(mapping: dict, name: str):
+        """(found, value) for ``name`` matched case-insensitively."""
+        found, value = False, None
+        for key, val in mapping.items():
+            if str(key).upper() == name:
+                found, value = True, val
+        return found, value
+
+    def _effective(self, name: str):
+        found, value = self._lookup(self._init_kwargs, name)
+        if found:
+            return True, value
+        found, value = self._lookup(dict(os.environ), name)
+        if found:
+            return True, value
+        result = (False, None)
+        for path in self._env_files:  # later files override earlier ones
             try:
-                raw.append(dict(dotenv_values(path, encoding="utf-8")))
+                values = dict(dotenv_values(path, encoding="utf-8"))
             except OSError:  # unreadable file: the normal source reports it
                 continue
+            found, value = self._lookup(values, name)
+            if found:
+                result = (True, value)
+        return result
+
+    def __call__(self) -> dict:
+        blank = []
         for name in _BLANK_IS_ERROR:
-            for source in raw:
-                for key, value in source.items():
-                    if (
-                        key.upper() == name
-                        and (value is None or not value.strip())
-                        and name not in blank
-                    ):
-                        blank.append(name)
+            found, value = self._effective(name)
+            if found and (value is None or not str(value).strip()):
+                blank.append(name)
         if blank:
             raise BlankSettingError(
                 f"{', '.join(blank)} must not be blank: unset it to use the "
@@ -120,7 +141,7 @@ class Settings(BaseSettings):
         else:
             files = [env_file]
         return (
-            _BlankGuardSource(settings_cls, files),
+            _BlankGuardSource(settings_cls, init_settings, files),
             init_settings,
             env_settings,
             dotenv_settings,
@@ -495,6 +516,16 @@ class Settings(BaseSettings):
     @property
     def allowed_emails_list(self) -> list[str]:
         return [e.strip() for e in self.allowed_emails.split(",") if e.strip()]
+
+
+def check_turnstile_configured(cfg: "Settings") -> None:
+    """Database-free boot check shared by app startup and config_check."""
+    if cfg.turnstile_required and not cfg.turnstile_secret_key:
+        raise RuntimeError(
+            "TURNSTILE_SECRET_KEY must be configured when TURNSTILE_REQUIRED=true. "
+            "Set TURNSTILE_REQUIRED=false to explicitly disable bot protection "
+            "(dev / test environments only)."
+        )
 
 
 settings = Settings()

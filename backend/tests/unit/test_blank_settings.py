@@ -26,6 +26,8 @@ _MANAGED = (
     "SCAN_TIMEOUT_SECONDS",
     "DATABASE_URL",
     "JWT_PRIVATE_KEY",
+    "TURNSTILE_REQUIRED",
+    "TURNSTILE_SECRET_KEY",
 )
 
 
@@ -153,7 +155,9 @@ _DB = "postgresql://u:p@localhost:5432/db"
 
 
 def test_check_ok_on_valid_environment():
-    r = _run_check({"DATABASE_URL": _DB, "SCAN_MODEL": ""})
+    r = _run_check(
+        {"DATABASE_URL": _DB, "SCAN_MODEL": "", "TURNSTILE_REQUIRED": "false"}
+    )
     assert r.returncode == 0
     assert r.stdout.strip() == "OK"
 
@@ -187,6 +191,72 @@ def test_check_fails_on_blank_environment():
 
 @pytest.mark.security
 def test_check_fails_on_missing_jwt_key_in_production():
-    r = _run_check({"DATABASE_URL": _DB, "ENVIRONMENT": "production"})
+    r = _run_check(
+        {
+            "DATABASE_URL": _DB,
+            "ENVIRONMENT": "production",
+            "TURNSTILE_REQUIRED": "false",
+        }
+    )
     assert r.returncode == 1
     assert "JWT_PRIVATE_KEY" in r.stdout
+
+
+@pytest.mark.security
+def test_check_fails_when_turnstile_required_without_secret():
+    r = _run_check({"DATABASE_URL": _DB, "TURNSTILE_REQUIRED": "true"})
+    assert r.returncode == 1
+    assert "TURNSTILE_SECRET_KEY" in r.stdout
+
+
+def test_check_ok_when_turnstile_not_required():
+    r = _run_check({"DATABASE_URL": _DB, "TURNSTILE_REQUIRED": "false"})
+    assert r.returncode == 0
+
+
+def test_check_ok_when_turnstile_required_and_secret_set():
+    r = _run_check(
+        {
+            "DATABASE_URL": _DB,
+            "TURNSTILE_REQUIRED": "true",
+            "TURNSTILE_SECRET_KEY": "x",
+        }
+    )
+    assert r.returncode == 0
+
+
+# --- precedence of the blank guard ------------------------------------------
+
+
+@pytest.mark.security
+def test_blank_in_dotenv_but_set_in_process_env_boots(env, tmp_path):
+    f = tmp_path / ".env"
+    f.write_text("ENVIRONMENT=\n")
+    env.setenv("ENVIRONMENT", "production")
+    assert Settings(_env_file=str(f)).environment == "production"
+
+
+@pytest.mark.security
+def test_blank_in_process_env_but_set_in_dotenv_raises(env, tmp_path):
+    f = tmp_path / ".env"
+    f.write_text("ENVIRONMENT=production\n")
+    env.setenv("ENVIRONMENT", "")
+    with pytest.raises(BlankSettingError, match="ENVIRONMENT"):
+        Settings(_env_file=str(f))
+
+
+@pytest.mark.security
+def test_later_dotenv_file_overrides_earlier(env, tmp_path):
+    blank = tmp_path / "blank.env"
+    blank.write_text("ENVIRONMENT=\n")
+    full = tmp_path / "full.env"
+    full.write_text("ENVIRONMENT=production\n")
+    assert Settings(_env_file=(str(blank), str(full))).environment == "production"
+    with pytest.raises(BlankSettingError, match="ENVIRONMENT"):
+        Settings(_env_file=(str(full), str(blank)))
+
+
+@pytest.mark.security
+def test_init_kwarg_overrides_blank_env(env):
+    env.setenv("ENVIRONMENT", "")
+    assert Settings(_env_file=None, environment="staging").environment == "staging"
