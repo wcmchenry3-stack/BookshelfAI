@@ -9,6 +9,11 @@ updates:
       time: "09:00"
       timezone: "America/Los_Angeles"
     open-pull-requests-limit: 5
+    # Majors wait three weeks after release before Dependabot proposes them
+    # (#646: anthropic 2.0 arrived two days old with a new API version).
+    # Security updates are not delayed by cooldown.
+    cooldown:
+      semver-major-days: 21
     groups:
       # Security CVE fixes get their own group so they can be merged fast
       # without waiting for a routine minor/patch batch.
@@ -45,6 +50,11 @@ updates:
       time: "09:00"
       timezone: "America/Los_Angeles"
     open-pull-requests-limit: 5
+    # Majors wait three weeks after release before Dependabot proposes them
+    # (#646: anthropic 2.0 arrived two days old with a new API version).
+    # Security updates are not delayed by cooldown.
+    cooldown:
+      semver-major-days: 21
     groups:
       security-updates:
         applies-to: security-updates

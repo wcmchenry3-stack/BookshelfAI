@@ -84,12 +84,44 @@ AI settings (`ai_settings` table; no release or restart needed):
 - The cache is per process (per uvicorn worker). A change reaches every process within `AI_SETTINGS_CACHE_TTL_SECONDS` (30 s). With two instances running (zero-downtime deploys), or several workers, they can disagree for up to that long.
 - If the table cannot be read and a process has never read it, scans return `503 ai_unavailable`. A process that has read it before keeps using the last value it read, with a warning, while that value is at most `AI_SETTINGS_MAX_STALE_SECONDS` (300 s) old; after that it logs an error and scans return `503 ai_unavailable` until a read succeeds.
 
+### Required and optional production settings
+
+All settings are read from the environment by `Settings` in `backend/app/core/config.py` (the full list, with defaults and bounds, is there). **A blank value is treated as not set, so the default applies** (#648). This covers the process environment and `.env`. The exceptions, which stay boot errors, are the settings with no default or a security-sensitive one:
+
+| Name | Required? | Default | Allowed values / range | Blank |
+|---|---|---|---|---|
+| `DATABASE_URL` | required | none | Postgres URL; port 6543 (Supabase transaction pooler) refused | error (no default) |
+| `JWT_PRIVATE_KEY` | required when `ENVIRONMENT` is not `development`/`test` | empty | non-empty secret (the catalog-token key derives from it) | blank = unset, then the hardened check fails |
+| `ENVIRONMENT` | optional | `development` | any; anything but `development`/`test` is hardened | **boot error** (never silently development) |
+| `TRUSTED_HOSTS` | optional | `["*"]` | JSON list of hosts, e.g. `["api.example.com"]` | **boot error** |
+| `CORS_ORIGINS` | optional | none | JSON list; `*` refused | blank = default |
+| `SCAN_MODEL`, `SCAN_ENHANCED_MODEL` | optional | `gpt-4o-mini`, `gpt-4o` | allowed OpenAI model (`backend/app/ai/models_allowlist.py`) | blank = default |
+| `SCAN_MAX_TOKENS` | optional | `2048` | 1-16384 | blank = default |
+| `SCAN_TIMEOUT_SECONDS` | optional | `45` | 1-120 | blank = default |
+| `SCAN_ENABLED`, `SCAN_ENHANCED_ENABLED` | optional | `true` | `true`/`false` | blank = default (`true`; blank never disables) |
+| `TURNSTILE_REQUIRED` | optional | `true` | `true`/`false` | blank = default (`true`) |
+| `ORIGIN_AUTH_SECRET` | optional | empty (check off) | 32+ printable ASCII characters | blank = unset (check off) |
+| `AI_ANTHROPIC_BASE_URL` | must stay unset | empty | local host only; any value fails boot when hardened | blank = unset |
+
+Other optional settings (rate limits, scan allowances, pool sizes, `AI_SETTINGS_*`, and so on) are listed below and in `config.py`; every one of them treats blank as its default. To turn a boolean or a limit off, set an explicit value (`false`, `0`), never an empty one.
+
+Check an environment without starting the app or touching the database:
+
+```bash
+cd backend && python -m app.core.config_check
+# OK            (exit 0)
+# or a list of "NAME: reason" lines, never values (exit 1)
+```
+
+It builds `Settings` as boot does and runs the database-free checks (such as `JWT_PRIVATE_KEY` in a hardened environment).
+
 ### Database
 
 `bookshelf-db` — Postgres, `basic-256mb` plan, Oregon. Connection string is auto-injected into the API service.
 
 ### Release process (backend)
 
+0. Before merging a release: open a shell on the production `bookshelf-api` service in Render and run `cd backend && python -m app.core.config_check`. It must print `OK`; fix any listed variable first. (Alembic imports the settings, so an invalid environment otherwise fails the deploy at `alembic upgrade head`.)
 1. Merge your PR into `dev` (via CI-green draft PR per rules #1-#3).
 2. Render picks up the push and starts a new deploy.
 3. `alembic upgrade head` runs; if it fails the deploy aborts and traffic stays on the old version.
