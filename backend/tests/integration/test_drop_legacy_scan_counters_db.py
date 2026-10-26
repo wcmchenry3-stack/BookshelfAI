@@ -13,6 +13,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
@@ -22,6 +23,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
 from app.core.database import Base
+
+pytestmark = pytest.mark.integration
 
 MIGRATION = (
     Path(__file__).resolve().parents[2]
