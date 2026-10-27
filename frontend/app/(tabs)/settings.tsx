@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import { Alert, Platform, Pressable, View, Text, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -18,13 +19,25 @@ export default function SettingsScreen() {
   const noMatchLeft = usage ? noMatchRemainingToday(usage) : null;
   const { logout } = useAuth();
 
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const signingOutRef = useRef(false);
+
   async function performSignOut() {
-    await serverLogout();
-    // AuthContext's redirect effect sends the user to the login screen.
-    await logout();
+    if (signingOutRef.current) return;
+    signingOutRef.current = true;
+    setIsSigningOut(true);
+    try {
+      await serverLogout();
+      // AuthContext's redirect effect sends the user to the login screen.
+      await logout();
+    } finally {
+      signingOutRef.current = false;
+      setIsSigningOut(false);
+    }
   }
 
   function confirmSignOut() {
+    if (signingOutRef.current) return;
     const title = t('signOutConfirmTitle');
     const body = t('signOutConfirmBody');
     if (Platform.OS === 'web') {
@@ -64,9 +77,10 @@ export default function SettingsScreen() {
       <ThemeToggleButton />
       <Pressable
         onPress={confirmSignOut}
-        style={styles.signOut}
+        style={[styles.signOut, isSigningOut && styles.signOutBusy]}
         accessibilityRole="button"
-        accessibilityLabel={t('signOut')}
+        disabled={isSigningOut}
+        accessibilityState={{ disabled: isSigningOut, busy: isSigningOut }}
         testID="settings-sign-out"
       >
         <Text style={[styles.signOutText, { color: theme.colors.error }]}>{t('signOut')}</Text>
@@ -80,6 +94,7 @@ const styles = StyleSheet.create({
   usageRow: { alignItems: 'center', marginBottom: 16 },
   usageLabel: { fontSize: 12 },
   signOut: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, marginTop: 16 },
+  signOutBusy: { opacity: 0.5 },
   signOutText: { fontSize: 16, fontWeight: '600' },
   usageValue: { fontSize: 14, fontWeight: '600', textAlign: 'center' },
 });

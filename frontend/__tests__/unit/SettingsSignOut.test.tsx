@@ -1,17 +1,29 @@
 import React from 'react';
 import { Alert, Platform } from 'react-native';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import SettingsScreen from '../../app/(tabs)/settings';
-import { AuthContext } from '../../contexts/AuthContext';
+import { AuthProvider } from '../../contexts/AuthContext';
 
 const mockPost = jest.fn();
-const mockGetItem = jest.fn();
-jest.mock('../../lib/api', () => ({
-  REFRESH_TOKEN_KEY: 'bookshelf_refresh_token',
-  api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
+const mockReplace = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ replace: (...a: unknown[]) => mockReplace(...a) }),
+  useSegments: () => ['(tabs)'],
 }));
-jest.mock('../../lib/storage', () => ({ getItem: (...a: unknown[]) => mockGetItem(...a) }));
+jest.mock('../../lib/api', () => ({
+  ACCESS_TOKEN_KEY: 'access',
+  REFRESH_TOKEN_KEY: 'refresh',
+  api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
+  setAuthFailureCallback: jest.fn(),
+}));
+const mockGetItem = jest.fn();
+const mockDeleteItem = jest.fn();
+jest.mock('../../lib/storage', () => ({
+  getItem: (...a: unknown[]) => mockGetItem(...a),
+  setItem: jest.fn(),
+  deleteItem: (...a: unknown[]) => mockDeleteItem(...a),
+}));
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
     theme: { colors: { background: '#fff', text: '#000', error: '#f00' }, spacing: { md: 16 } },
@@ -21,22 +33,15 @@ jest.mock('../../hooks/useScanJobs', () => ({ useScanJobs: () => ({ usageRefresh
 jest.mock('../../hooks/useScanUsage', () => ({ useScanUsage: () => null }));
 jest.mock('../../components/ThemeToggleButton', () => ({ ThemeToggleButton: () => null }));
 
-const logout = jest.fn();
-
 async function setup() {
+  // The real AuthProvider, so logout() really deletes the tokens and the
+  // redirect effect really runs.
   const utils = await render(
-    <AuthContext.Provider
-      value={{
-        isAuthenticated: true,
-        isLoading: false,
-        login: jest.fn(),
-        testLogin: jest.fn(),
-        logout,
-      }}
-    >
+    <AuthProvider>
       <SettingsScreen />
-    </AuthContext.Provider>
+    </AuthProvider>
   );
+  await waitFor(() => expect(mockGetItem).toHaveBeenCalledWith('access'));
   fireEvent.press(utils.getByTestId('settings-sign-out'));
   return utils;
 }
@@ -47,50 +52,122 @@ function confirmButtons() {
     onPress?: () => void;
   }[];
 }
+const pressConfirm = () => confirmButtons().find((b) => b.text === 'Sign out')!.onPress!();
 
 describe('Settings sign out', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetItem.mockResolvedValue('refresh-abc');
+    mockGetItem.mockImplementation(async (k: string) => (k === 'access' ? 'at' : 'refresh-abc'));
+    mockDeleteItem.mockResolvedValue(undefined);
     mockPost.mockResolvedValue({});
     jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   });
 
-  it('confirm: revokes the refresh token server-side then logs out', async () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  async function expectSignedOut() {
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(auth)/login'));
+    expect(mockDeleteItem).toHaveBeenCalledWith('access');
+    expect(mockDeleteItem).toHaveBeenCalledWith('refresh');
+  }
+
+  it('confirm: revokes the refresh token, deletes tokens, redirects to login', async () => {
     await setup();
-    expect(logout).not.toHaveBeenCalled();
-    confirmButtons().find((b) => b.text === 'Sign out')!.onPress!();
-    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1));
-    expect(mockPost).toHaveBeenCalledWith('/auth/logout', { refresh_token: 'refresh-abc' });
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    pressConfirm();
+    await expectSignedOut();
+    expect(mockPost).toHaveBeenCalledWith(
+      '/auth/logout',
+      { refresh_token: 'refresh-abc' },
+      { timeout: 5000 }
+    );
   });
 
   it('still signs out locally when the server call fails', async () => {
     mockPost.mockRejectedValue(new Error('network'));
     await setup();
-    confirmButtons().find((b) => b.text === 'Sign out')!.onPress!();
-    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1));
+    pressConfirm();
+    await expectSignedOut();
   });
 
   it('cancel does nothing', async () => {
     await setup();
-    const cancel = confirmButtons().find((b) => b.text === 'Cancel')!;
-    cancel.onPress?.();
+    confirmButtons()
+      .find((b) => b.text === 'Cancel')!
+      .onPress?.();
     expect(mockPost).not.toHaveBeenCalled();
-    expect(logout).not.toHaveBeenCalled();
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it('uses window.confirm on web', async () => {
-    const original = Platform.OS;
-    Platform.OS = 'web';
-    const confirm = jest.fn().mockReturnValue(true);
-    (global as unknown as { window: unknown }).window = { confirm };
-    try {
+  it('disables the row while signing out and ignores a second confirm', async () => {
+    let finish: () => void = () => {};
+    mockPost.mockReturnValue(new Promise<void>((r) => (finish = r)));
+    const { getByTestId } = await setup();
+    pressConfirm();
+    await waitFor(() =>
+      expect(getByTestId('settings-sign-out').props.accessibilityState).toMatchObject({
+        disabled: true,
+        busy: true,
+      })
+    );
+    fireEvent.press(getByTestId('settings-sign-out'));
+    pressConfirm();
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+    await expectSignedOut();
+  });
+
+  describe('web', () => {
+    const originalOS = Platform.OS;
+    const originalWindow = (global as { window?: unknown }).window;
+    let confirm: jest.Mock;
+
+    beforeEach(() => {
+      Platform.OS = 'web';
+      confirm = jest.fn();
+      (global as unknown as { window: unknown }).window = { confirm };
+    });
+    afterEach(() => {
+      Platform.OS = originalOS;
+      (global as unknown as { window: unknown }).window = originalWindow;
+    });
+
+    it('confirming window.confirm signs out', async () => {
+      confirm.mockReturnValue(true);
       await setup();
       expect(Alert.alert).not.toHaveBeenCalled();
-      await waitFor(() => expect(logout).toHaveBeenCalledTimes(1));
-      expect(mockPost).toHaveBeenCalledWith('/auth/logout', { refresh_token: 'refresh-abc' });
-    } finally {
-      Platform.OS = original;
-    }
+      await expectSignedOut();
+      expect(mockPost).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancelling window.confirm does nothing', async () => {
+      confirm.mockReturnValue(false);
+      await setup();
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(mockPost).not.toHaveBeenCalled();
+      expect(mockDeleteItem).not.toHaveBeenCalled();
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+  });
+
+  // Keep last: fake timers leave the React test renderer unusable for later tests.
+  it('a stalled server call cannot block the local sign-out', async () => {
+    mockPost.mockReturnValue(new Promise(() => {}));
+    await setup();
+    jest.useFakeTimers();
+    pressConfirm();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(4000);
+    });
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1500);
+    });
+    jest.useRealTimers();
+    await expectSignedOut();
   });
 });
