@@ -22,6 +22,17 @@ from app.auth.jwt import (
     decode_token,
     token_version_claim,
 )
+from app.auth.refresh_family import (
+    REFRESH_REUSED,
+    REFRESH_REVOKED_OR_NOT_FOUND,
+    Replay,
+    alert_reuse,
+    classify_replay,
+    family_of,
+    is_rotated,
+    new_family_row,
+    successor_row,
+)
 from app.auth.sessions import revoke_all_sessions
 from app.core.config import settings
 from app.core.database import get_db
@@ -96,7 +107,7 @@ async def google_auth(
     access_token = create_access_token(str(user.id), user.email, user.token_version)
     refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
     expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
-    db.add(RefreshToken(jti=jti, user_id=user.id, expires_at=expires_at))
+    db.add(new_family_row(user.id, jti, expires_at))
     await db.commit()
     logger.info("Auth successful (user_id=%s)", user.id)
     return TokenResponse(
@@ -135,11 +146,18 @@ async def refresh(
 
     result = await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
     stored = result.scalar_one_or_none()
-    if stored is None or stored.revoked_at is not None:
+    # A rotated row (#690: revoked_at and used_at set) goes on to reuse
+    # detection below; a row revoked any other way (logout, logout-all) is a
+    # plain 401.
+    if stored is None or (stored.revoked_at is not None and not is_rotated(stored)):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token revoked or not found",
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
         )
+    # Whether the token had already been rotated before this request: if it
+    # is rotated only once we hold the lock, a concurrent request with the
+    # same token did it while we waited (Replay.RACE), not a later replay.
+    seen_rotated = is_rotated(stored)
 
     # FOR UPDATE on the user row: a concurrent revoke_all_sessions bumps
     # token_version (taking this lock) before it revokes refresh rows, so it
@@ -160,7 +178,7 @@ async def refresh(
     # Re-read the refresh row now that we hold the user lock: a concurrent
     # refresh with the same token may have rotated it while we waited, and
     # the check above saw the pre-lock state. Lock order is user -> refresh
-    # row, the same as revoke_all_sessions.
+    # rows, the same as revoke_all_sessions.
     result = await db.execute(
         select(RefreshToken)
         .where(RefreshToken.jti == jti)
@@ -168,10 +186,17 @@ async def refresh(
         .execution_options(populate_existing=True)
     )
     stored = result.scalar_one_or_none()
-    if stored is None or stored.revoked_at is not None:
+    if stored is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token revoked or not found",
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
+        )
+    if is_rotated(stored):
+        return await _refresh_rotated_token(db, user, stored, payload, seen_rotated)
+    if stored.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
         )
 
     # A token_version bump revokes the user's refresh rows (sessions.py); the
@@ -188,18 +213,106 @@ async def refresh(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=TOKEN_REVOKED
         )
 
-    # Rotate: revoke old token, issue new one
-    stored.revoked_at = datetime.now(UTC)
+    # Rotate: mark the old row rotated and issue its successor (same family).
+    now = datetime.now(UTC)
+    stored.revoked_at = now
+    stored.used_at = now
+    tokens, successor = await _issue_successor(db, user, stored)
+    stored.replaced_by_id = successor.id
+    await db.commit()
+    return tokens
+
+
+async def _issue_successor(
+    db: AsyncSession, user: User, previous: RefreshToken
+) -> tuple[TokenResponse, RefreshToken]:
+    """Mint an access token and a refresh token in ``previous``'s family, and
+    add (and flush) the new refresh row, so rows can point at its id."""
     new_refresh, new_jti = create_refresh_token(str(user.id), user.token_version)
     expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
-    db.add(RefreshToken(jti=new_jti, user_id=user.id, expires_at=expires_at))
-    access_token = create_access_token(str(user.id), user.email, user.token_version)
-    await db.commit()
-    return TokenResponse(
-        access_token=access_token,
+    row = successor_row(previous, new_jti, expires_at)
+    db.add(row)
+    await db.flush()
+    tokens = TokenResponse(
+        access_token=create_access_token(str(user.id), user.email, user.token_version),
         refresh_token=new_refresh,
         expires_in=access_token_ttl_seconds(),
     )
+    return tokens, row
+
+
+async def _refresh_rotated_token(
+    db: AsyncSession,
+    user: User,
+    stored: RefreshToken,
+    payload: dict,
+    seen_rotated: bool,
+) -> TokenResponse:
+    """A token that /auth/refresh already rotated is presented again (#690).
+    Called with the user row and ``stored`` locked. See
+    app/auth/refresh_family.py for the four cases."""
+    if not seen_rotated:
+        # Replay.RACE: rotated by a concurrent request with the same token
+        # while this one waited for the user lock (#689 behaviour).
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
+        )
+    if token_version_claim(payload) != user.token_version:
+        # Every session was already revoked (logout-all or an earlier reuse);
+        # nothing left to protect, so no second alert.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=TOKEN_REVOKED
+        )
+
+    successor = None
+    if stored.replaced_by_id is not None:
+        successor = await db.get(
+            RefreshToken,
+            stored.replaced_by_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+    now = datetime.now(UTC)
+    replay = classify_replay(
+        seen_rotated=seen_rotated,
+        used_at=stored.used_at,
+        successor=successor,
+        now=now,
+        grace_seconds=settings.refresh_reuse_grace_seconds,
+    )
+
+    if replay is Replay.RETRY:
+        # The client never got the successor: issue a fresh pair in the same
+        # family that replaces it. The successor counts as rotated from now,
+        # so if it does turn up later, that is reuse.
+        tokens, replacement = await _issue_successor(db, user, stored)
+        successor.revoked_at = now
+        successor.used_at = now
+        successor.replaced_by_id = replacement.id
+        stored.replaced_by_id = replacement.id
+        await db.commit()
+        logger.info(
+            "Refresh retried within the grace window; successor replaced "
+            "(user_id=%s)",
+            user.id,
+        )
+        return tokens
+
+    if replay is Replay.ENDED:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
+        )
+
+    # Replay.REUSE: someone else holds a copy of this token. Revoke every
+    # session the user has (the family's rows and, through the token_version
+    # bump, every access token and every other family's refresh tokens).
+    family_id = family_of(stored)
+    await revoke_all_sessions(db, user)
+    await db.commit()
+    alert_reuse(user.id, family_id)
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REFRESH_REUSED)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

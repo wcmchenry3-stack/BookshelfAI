@@ -236,6 +236,23 @@ describe('api response interceptor — revoked session', () => {
     expect(onAuthFailure).toHaveBeenCalledTimes(1);
   });
 
+  it('signs out when the refresh is rejected as reused (401 refresh_reused, #690)', async () => {
+    mockGetItem.mockImplementation((key: string) =>
+      key === REFRESH_TOKEN_KEY ? Promise.resolve('replayed-refresh') : Promise.resolve(null)
+    );
+    mockAxiosPost.mockRejectedValue({
+      response: { status: 401, data: { detail: 'refresh_reused' } },
+    });
+
+    await expect(runResponseErrorInterceptor(make401Error())).rejects.toBeDefined();
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(mockDeleteItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY);
+    expect(mockDeleteItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY);
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+  });
+
   it('still refreshes on a plain 401 (expired access token)', async () => {
     mockGetItem.mockImplementation((key: string) =>
       key === REFRESH_TOKEN_KEY ? Promise.resolve('old-refresh') : Promise.resolve(null)

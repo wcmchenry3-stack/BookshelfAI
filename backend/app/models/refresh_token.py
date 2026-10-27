@@ -30,3 +30,21 @@ class RefreshToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Refresh-token families (#690). Every row of one sign-in's rotation chain
+    # shares family_id (the first row's id). Nullable only for rows written
+    # by code from before migration 0022 during a deploy; readers fall back
+    # to the row's own id (app/auth/refresh_family.py:family_of).
+    family_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    # Set when /auth/refresh rotated this token (revoked_at is set too):
+    # used_at starts the reuse grace window, replaced_by_id is the successor.
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    replaced_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("refresh_tokens.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )

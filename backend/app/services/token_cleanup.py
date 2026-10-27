@@ -1,8 +1,12 @@
-"""Background task: periodically delete expired refresh tokens.
+"""Background task: periodically delete expired and revoked refresh tokens.
 
 Expired tokens (expires_at < now) can never be used regardless of their
-revocation status, so they are safe to remove.  Keeping them indefinitely
-causes unbounded table growth and slows the JTI revocation lookup index.
+revocation status, so they are safe to remove.  Tokens revoked without being
+rotated (logout, logout-all) are never read again and go too; rotated tokens
+stay until they expire, because reuse detection needs them (#690).  Keeping
+them indefinitely causes unbounded table growth and slows the JTI revocation
+lookup index.  The purge runs in bounded batches
+(app/auth/refresh_family.py:purge_refresh_tokens).
 
 The same daily run also purges, in bounded batches:
 
@@ -38,17 +42,15 @@ import asyncio
 import logging
 import socket
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 
-from sqlalchemy import delete
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.ai.breaker import purge_old_spend
 from app.ai.ledger import rollup_and_purge
 from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
+from app.auth.refresh_family import purge_refresh_tokens
 from app.core.database import AsyncSessionLocal
-from app.models.refresh_token import RefreshToken
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +154,9 @@ async def _purge_scan_records() -> None:
 
 async def _purge_refresh_tokens() -> None:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            delete(RefreshToken).where(RefreshToken.expires_at < datetime.now(UTC))
-        )
-        await db.commit()
+        deleted = await purge_refresh_tokens(db)
         logger.info(
-            "token_cleanup: deleted %d expired refresh token(s)", result.rowcount
+            "token_cleanup: deleted %d expired or revoked refresh token(s)", deleted
         )
 
 

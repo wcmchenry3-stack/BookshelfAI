@@ -52,7 +52,8 @@ let refreshInFlight: Promise<string | null> | null = null;
 
 // Resolves to the new access token, or null when there is none to retry
 // with. Signs out only when the server rejects the refresh (401, including
-// token_revoked); a 429, 5xx or network error keeps the stored tokens.
+// token_revoked and refresh_reused, #690: a replayed refresh token revoked
+// every session); a 429, 5xx or network error keeps the stored tokens.
 function refreshAccessToken(): Promise<string | null> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
