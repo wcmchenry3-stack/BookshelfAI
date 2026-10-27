@@ -39,6 +39,7 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 ### Auth
 - JWT RS256 only — reject all other algorithms including `none`
 - Allowlist check via `ALLOWED_EMAILS` env var after Google auth
+- Logs and Sentry: log user IDs, never emails, allowlist entries, tokens (access, refresh, ID tokens), Google/Apple `sub` values or `Authorization` headers. `tests/security/test_log_hygiene_flows.py` (helpers in `tests/_log_hygiene.py`) drives the real auth, library, scan and error flows and fails on any such value in a log record or Sentry event. A story that adds a flow handling user data (e.g. account deletion) must add it there.
 
 ## Commands
 
