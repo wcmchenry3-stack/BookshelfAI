@@ -1,0 +1,8 @@
+{
+  "packages": {
+    "node_modules/expo": {
+      "version": "56.0.23",
+      "resolved": "x"
+    }
+  }
+}
