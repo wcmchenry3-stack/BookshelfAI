@@ -9,6 +9,7 @@ import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
+import { apiErrorTags, isServiceUnavailable } from '../lib/apiErrorReporting';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
@@ -1368,7 +1369,14 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         }
 
         Sentry.captureException(err, {
-          tags: { feature: 'scan', action: 'execute_scan', jobType: job.type },
+          tags: {
+            feature: 'scan',
+            action: 'execute_scan',
+            jobType: job.type,
+            // #724: same status/path/detail tags as the central API hook
+            // (which skips POST /scan to avoid double reporting).
+            ...apiErrorTags(err),
+          },
         });
 
         // A failed enhanced re-scan must not strand the books the standard scan
@@ -1384,7 +1392,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           nextAttemptAt: undefined,
         });
         showBanner({
-          message: t('scanFailedTitle'),
+          message: isServiceUnavailable(err)
+            ? t('serviceUnavailable', { ns: 'common' })
+            : t('scanFailedTitle'),
           type: 'error',
           actions: [
             { label: t('retryNow'), onPress: () => retryScan(job.id) },
