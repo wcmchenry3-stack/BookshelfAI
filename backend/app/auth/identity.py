@@ -146,8 +146,9 @@ async def resolve_and_commit_google_user(
 
     A unique violation at commit means a concurrent sign-in won the race
     (a double tap with the same new subject, or another account taking the
-    email first, in any case: ``uq_users_email_lower``, #705). The session is rolled back and the lookup runs once more,
-    which then finds the winner's row: the same subject signs in, a
+    email first, in any case: ``uq_users_email_lower``, #705). The session
+    is rolled back and the lookup runs once more, which then finds the
+    winner's row: the same subject signs in, a
     different one gets :class:`AccountConflictError`. A second violation is
     also reported as a conflict. Any other integrity error (NOT NULL, FK)
     is a bug, not a race: it is rolled back and re-raised.

@@ -229,7 +229,7 @@ async def test_real_postgres_errors_are_classified(sessions):
     assert not is_unique_violation(not_null.value)
 
 
-async def test_case_only_change_to_another_rows_spelling_keeps_stored_email(db_session):
+async def test_case_variant_second_row_refused_by_lower_index(db_session):
     # Codex on #702 covered a known subject reporting another row's exact
     # spelling when case-duplicate rows existed. Since #705 the schema
     # (uq_users_email_lower) refuses the second, case-variant row, so that
