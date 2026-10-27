@@ -15,7 +15,7 @@ from app.auth.dependencies import get_current_user
 from app.models.user import User
 
 USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-FAKE_USER = User(id=USER_ID, email="test@example.com")
+FAKE_USER = User(id=USER_ID, email="test@example.com", token_version=0)
 
 
 @pytest.fixture(scope="module")
@@ -43,7 +43,7 @@ def patch_settings(rsa_key_pair):
     with patch("app.auth.jwt.settings") as mock:
         mock.jwt_private_key = private_pem
         mock.jwt_public_key = public_pem
-        mock.jwt_expiry_hours = 24
+        mock.jwt_access_ttl_minutes = 15
         mock.refresh_token_expiry_days = 7
         yield mock
 
@@ -59,7 +59,7 @@ class TestGetCurrentUser:
     async def test_returns_user_for_valid_access_token(self):
         from app.auth.jwt import create_access_token
 
-        token = create_access_token(str(USER_ID), "test@example.com")
+        token = create_access_token(str(USER_ID), "test@example.com", 0)
         user = await _invoke(token)
         assert user == FAKE_USER
 
@@ -87,7 +87,7 @@ class TestGetCurrentUser:
     async def test_raises_401_for_refresh_token(self):
         from app.auth.jwt import create_refresh_token
 
-        token, _ = create_refresh_token(str(USER_ID))
+        token, _ = create_refresh_token(str(USER_ID), 0)
 
         with pytest.raises(HTTPException) as exc_info:
             await _invoke(token)
@@ -97,7 +97,7 @@ class TestGetCurrentUser:
     async def test_raises_401_when_user_not_in_db(self):
         from app.auth.jwt import create_access_token
 
-        token = create_access_token(str(USER_ID), "test@example.com")
+        token = create_access_token(str(USER_ID), "test@example.com", 0)
 
         with pytest.raises(HTTPException) as exc_info:
             await _invoke(token, db_user=None)

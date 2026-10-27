@@ -181,20 +181,20 @@ Per active user per day (*estimate*):
 | `scan_records` | 3 | 15,000 |
 | `ai_usage` | 3 | 240 |
 | `ai_quota` | 3 | 210 |
-| `refresh_tokens` | 1 | 150 |
+| `refresh_tokens` | 4 (one per 15 minutes of use, about an hour a day; #689) | 600 |
 | `scan_corrections`, `ai_enhanced_zero_results` | under 0.1 | under 10 |
 | `user_books` + `books` | 1.3 | 850 |
-| **Total written** | **about 11** | **about 16.5 KB** |
+| **Total written** | **about 14** | **about 17 KB** |
 
 Steady-state size (what the purges allow) and yearly growth (what they do not):
 
 | Active users | Rows written per day | Steady-state purgeable (scan_records 30 d, usage 30 d, quota 90 d, tokens 7 d) | Rows in `scan_records` | Rows in `ai_quota` | Library + catalog growth per year |
 |---|---|---|---|---|---|
-| 100 | 1,100 | about 50 MB | 9,000 | 27,000 | about 30 MB |
-| 1,000 | 11,000 | about 500 MB | 90,000 | 270,000 | about 300 MB |
-| 10,000 | 110,000 | about 5 GB | 900,000 | 2,700,000 | about 3 GB |
+| 100 | 1,400 | about 50 MB | 9,000 | 27,000 | about 30 MB |
+| 1,000 | 14,000 | about 500 MB | 90,000 | 270,000 | about 300 MB |
+| 10,000 | 140,000 | about 5 GB | 900,000 | 2,700,000 | about 3 GB |
 
-(Steady state per user is `90 x 5 KB` = 450 KB of scan records, 7 KB of usage, 19 KB of quota and 1 KB of tokens; rounded.) `scan_records` is about 90 percent of it. With a full-shelf 80 KB record the same user would be 7 MB. The per-user cap of 500 bounds the worst case at 2.5 MB (5 KB records) to 40 MB (80 KB records) per user; the setting can go up to 10,000 records.
+(Steady state per user is `90 x 5 KB` = 450 KB of scan records, 7 KB of usage, 19 KB of quota and about 5 KB of tokens; rounded.) `scan_records` is about 90 percent of it. With a full-shelf 80 KB record the same user would be 7 MB. The per-user cap of 500 bounds the worst case at 2.5 MB (5 KB records) to 40 MB (80 KB records) per user; the setting can go up to 10,000 records.
 
 Aggregate tables are negligible: `ai_usage_daily` and `scan_corrections_daily` are tens of rows a day (under 1 MB over 400 days), `ai_spend_daily` is 90 rows.
 

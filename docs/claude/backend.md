@@ -28,7 +28,7 @@ Every endpoint is rate-limited via slowapi. The `limiter` instance lives in `app
 
 | Endpoint | Limit | Config key |
 |---|---|---|
-| `POST /auth/google`, `POST /auth/refresh` | 5/min | `rate_limit_auth` |
+| `POST /auth/google`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all` | 5/min | `rate_limit_auth` |
 | `POST /scan` | 10/min | `rate_limit_scan` |
 | `GET /books/search` | 30/min | `rate_limit_books_search` |
 | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH`, `DELETE /user-books/*` | 60/min | `rate_limit_writes` |
@@ -38,6 +38,7 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 
 ### Auth
 - JWT RS256 only — reject all other algorithms including `none`
+- Access tokens live 15 minutes (`jwt_access_ttl_minutes`). Every access and refresh token carries `tv` = `users.token_version`; `get_current_user` compares it with the row it already loads (no cache, no extra query) → 401 `token_revoked`. To revoke a user's sessions, call `app/auth/sessions.py:revoke_all_sessions(db, user)` (bumps the version and revokes all refresh rows; the caller commits) — never bump or delete tokens by hand. Issue tokens with `create_access_token(id, email, user.token_version)` / `create_refresh_token(id, user.token_version)` (#689)
 - Allowlist check via `ALLOWED_EMAILS` env var after Google auth
 - Users are matched by Google `sub` (`users.google_id`) via `app/auth/identity.py:resolve_google_user`, never by email; an email owned by another subject (compared with `lower()`) → 409 `account_conflict`; `ALLOWED_EMAILS` also ignores case
 - `/auth/test-login` exists only in development/test; hardened settings with `TEST_AUTH_SECRET` set fail boot

@@ -6,8 +6,10 @@ Database-free: a small fake session stands in for Postgres, the Google
 verifier and AI provider are faked at their boundaries, and JWTs are real
 (a throwaway RSA key), so the real ``Authorization`` handling runs.
 
-Flows covered today: Google sign-in, refresh, logout, library add (wishlist)
-and delete, a scan, the allowlist-reject path, and a server error. Account
+Flows covered today: Google sign-in, refresh, logout, sign out of all
+devices (logout-all) and the revoked-token rejections after it (#689),
+library add (wishlist) and delete, a scan, the allowlist-reject path, and a
+server error. Account
 deletion does not exist yet: the story that adds it must drive its flow inside
 ``capture()`` here (see ``tests/_log_hygiene.py``).
 
@@ -223,6 +225,24 @@ class TestAuthFlows:
         _clean(
             cap, tokens=[access, refresh, new_refresh, rotated.json()["access_token"]]
         )
+
+    def test_logout_all_and_revoked_tokens(self, db):
+        client = TestClient(app)
+        with lh.capture() as cap:
+            tokens = _sign_in(client).json()
+            access, refresh = tokens["access_token"], tokens["refresh_token"]
+            auth = {"Authorization": f"Bearer {access}"}
+            out = client.post("/auth/logout-all", headers=auth)
+            assert out.status_code == 204, out.text
+            # The fake session does not run the UPDATE: bump by hand.
+            db.user.token_version += 1
+            me = client.get("/auth/me", headers=auth)
+            assert me.status_code == 401
+            assert me.json()["detail"] == "token_revoked"
+            again = client.post("/auth/refresh", json={"refresh_token": refresh})
+            assert again.status_code == 401
+            assert again.json()["detail"] == "token_revoked"
+        _clean(cap, tokens=[access, refresh])
 
     def test_failed_sign_in_and_bad_tokens(self, db):
         client = TestClient(app)

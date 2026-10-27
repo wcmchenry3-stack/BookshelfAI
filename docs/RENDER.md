@@ -249,10 +249,12 @@ the two; an operator does, by hand:
    ```sql
    -- OPERATOR ONLY.
    DELETE FROM refresh_tokens WHERE user_id = '<old_id>';
+   UPDATE users SET token_version = token_version + 1 WHERE id = '<old_id>';
    ```
 
-   Access tokens already issued stay valid until they expire
-   (`JWT_EXPIRY_HOURS`).
+   The `token_version` bump (#689) also cuts off access tokens already
+   issued: their next request gets `401 token_revoked`. Without it they stay
+   valid until they expire (`JWT_ACCESS_TTL_MINUTES`, 15 minutes).
 
    **B. Free the email only** (the old account keeps its library and stays
    reachable through its own Google account; the new Google account gets a

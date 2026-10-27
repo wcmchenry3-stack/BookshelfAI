@@ -99,8 +99,9 @@ Middleware is configured in `backend/app/main.py`. FastAPI's `add_middleware` wr
 **Identity:** Google OAuth 2.0. The backend trusts any of three configured client IDs (`google_client_id` / `google_ios_client_id` / `google_android_client_id`) so the same API can serve web, iOS, and Android apps. `app/auth/google.py` verifies the Google ID token against Google's JWKS.
 
 **Session tokens:** JWT RS256 (asymmetric).
-- **Access token** (`type: access`, 24h default via `jwt_expiry_hours`): short-lived, sent as `Authorization: Bearer` on every authenticated request.
+- **Access token** (`type: access`, 15 minutes via `jwt_access_ttl_minutes`, bounded 1-60): short-lived, sent as `Authorization: Bearer` on every authenticated request.
 - **Refresh token** (`type: refresh`, 7d default via `refresh_token_expiry_days`): carries a `jti` claim. The `jti` is persisted in the `refresh_tokens` table at issuance time and checked on every `/auth/refresh` call.
+- Both carry `tv`, the user's `users.token_version` at issue time.
 
 **Why RS256 (not HS256):** the public key can be exposed freely (and is, if we ever need to verify tokens in a second service) while the signing key stays on the API. HS256 would require sharing the symmetric secret anywhere verification happens.
 
@@ -108,6 +109,8 @@ Middleware is configured in `backend/app/main.py`. FastAPI's `add_middleware` wr
 - `/auth/refresh` validates the incoming refresh JWT, checks the `jti` exists and is not revoked in the DB, issues a new access + refresh pair, and **marks the old `jti` as revoked**.
 - `/auth/logout` revokes the presented refresh `jti`.
 - This means a stolen refresh token is one-use: the moment the legitimate client refreshes, the attacker's copy is revoked.
+
+**Access-token revocation (#689):** `get_current_user` already loads the `User` row on every request; it also compares the token's `tv` with `users.token_version` (no cache, no extra query). Missing or different → `401 token_revoked`. `app/auth/sessions.py:revoke_all_sessions` bumps the version in SQL and revokes every refresh row of the user; `POST /auth/logout-all` calls it, and account deletion (#291) and refresh-reuse detection (#690) are to call it too. `/auth/refresh` also rejects a refresh token whose `tv` is stale, so a refresh that raced the bump cannot keep a session alive. The app (`frontend/lib/api.ts`) signs out on `token_revoked` instead of refreshing, and on any failed refresh.
 
 **Single-user lockdown:** `ALLOWED_EMAILS` (comma-separated env var) is the allowlist. Any authenticated email not in that list is rejected at the `/auth/google` exchange. Makes sense for a personal app; remove the check to open the API to arbitrary Google accounts.
 

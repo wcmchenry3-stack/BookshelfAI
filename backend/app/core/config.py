@@ -165,7 +165,14 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     jwt_private_key: str = ""
     jwt_public_key: str = ""
-    jwt_expiry_hours: int = 24
+    # Access-token lifetime in minutes (#689). Short because an access token
+    # is only revoked by users.token_version, which every request checks.
+    jwt_access_ttl_minutes: int = Field(default=15, ge=1, le=60)
+    # DEPRECATED (#689): the old 24 h access-token lifetime. Ignored; boot logs
+    # a warning when it is set (see deprecated_settings_warnings). Kept as a
+    # field for one release so a leftover JWT_EXPIRY_HOURS in a .env file does
+    # not fail boot. Remove it, and the env var on Render, in a later release.
+    jwt_expiry_hours: int | None = None
     refresh_token_expiry_days: int = 7
     allowed_emails: str = ""
 
@@ -463,6 +470,18 @@ class Settings(BaseSettings):
                 "port 5432 instead."
             )
         return v
+
+    @property
+    def deprecated_settings_warnings(self) -> list[str]:
+        """Warnings for settings that are still accepted but have no effect."""
+        warnings = []
+        if self.jwt_expiry_hours is not None:
+            warnings.append(
+                "JWT_EXPIRY_HOURS is set but ignored: access tokens now live "
+                f"JWT_ACCESS_TTL_MINUTES ({self.jwt_access_ttl_minutes}) minutes. "
+                "Remove JWT_EXPIRY_HOURS from the environment."
+            )
+        return warnings
 
     @property
     def is_hardened(self) -> bool:

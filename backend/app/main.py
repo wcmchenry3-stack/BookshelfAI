@@ -227,6 +227,8 @@ async def _validate_config() -> None:
     # The catalog-token key (#602) is derived from JWT_PRIVATE_KEY; a
     # hardened environment without it must not start.
     catalog_token.check_configured(settings)
+    for message in settings.deprecated_settings_warnings:
+        logger.warning(message)
 
 
 @asynccontextmanager
@@ -390,7 +392,11 @@ if not settings.is_hardened:
             email_allowed,
             resolve_and_commit_google_user,
         )
-        from app.auth.jwt import create_access_token, create_refresh_token
+        from app.auth.jwt import (
+            access_token_ttl_seconds,
+            create_access_token,
+            create_refresh_token,
+        )
         from app.core.database import get_db
         from app.models.refresh_token import RefreshToken as RefreshTokenModel
 
@@ -441,8 +447,10 @@ if not settings.is_hardened:
                     status_code=409, content={"detail": ACCOUNT_CONFLICT}
                 )
 
-            access_token = create_access_token(str(user.id), user.email)
-            refresh_token, jti = create_refresh_token(str(user.id))
+            access_token = create_access_token(
+                str(user.id), user.email, user.token_version
+            )
+            refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
             expires_at = datetime.now(UTC) + timedelta(
                 days=settings.refresh_token_expiry_days
             )
@@ -454,6 +462,6 @@ if not settings.is_hardened:
                 content={
                     "access_token": access_token,
                     "refresh_token": refresh_token,
-                    "expires_in": settings.jwt_expiry_hours * 3600,
+                    "expires_in": access_token_ttl_seconds(),
                 }
             )

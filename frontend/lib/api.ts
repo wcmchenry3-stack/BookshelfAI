@@ -34,11 +34,26 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-// On 401: attempt token refresh once, then give up
+// 401 detail when the session was revoked server-side (sign out of all
+// devices, #689). Refreshing cannot help, so the app signs out at once.
+export const TOKEN_REVOKED = 'token_revoked';
+
+async function signOut() {
+  await storage.deleteItem(ACCESS_TOKEN_KEY);
+  await storage.deleteItem(REFRESH_TOKEN_KEY);
+  onAuthFailure?.();
+}
+
+// On 401: attempt token refresh once, then give up. A revoked session
+// (401 token_revoked) or a failed refresh signs the user out.
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config;
+    if (error.response?.status === 401 && error.response.data?.detail === TOKEN_REVOKED) {
+      await signOut();
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
       const refreshToken = await storage.getItem(REFRESH_TOKEN_KEY);
@@ -52,9 +67,7 @@ api.interceptors.response.use(
           original.headers.Authorization = `Bearer ${data.access_token}`;
           return api(original);
         } catch {
-          await storage.deleteItem(ACCESS_TOKEN_KEY);
-          await storage.deleteItem(REFRESH_TOKEN_KEY);
-          onAuthFailure?.();
+          await signOut();
         }
       }
     }

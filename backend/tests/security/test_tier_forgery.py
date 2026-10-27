@@ -21,7 +21,11 @@ from app.models.user import User
 
 pytestmark = pytest.mark.security
 
-USER = User(id=uuid.UUID("00000000-0000-0000-0000-000000000528"), email="f@example.com")
+USER = User(
+    id=uuid.UUID("00000000-0000-0000-0000-000000000528"),
+    email="f@example.com",
+    token_version=0,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +73,7 @@ def rsa_pem():
 def jwt_keys(rsa_pem):
     with patch("app.auth.jwt.settings") as mock:
         mock.jwt_private_key, mock.jwt_public_key = rsa_pem
-        mock.jwt_expiry_hours = 1
+        mock.jwt_access_ttl_minutes = 15
         yield mock
 
 
@@ -88,6 +92,7 @@ def _forged_token() -> str:
         "iat": now,
         "exp": now + timedelta(hours=1),
         "type": "access",
+        "tv": USER.token_version,
         "tier": "premium",
         "plan": "premium",
     }
@@ -141,7 +146,9 @@ def _scan(client, token, **kwargs):
 
 
 def test_baseline_is_free(client):
-    resp, seen = _scan(client, create_access_token(str(USER.id), USER.email))
+    resp, seen = _scan(
+        client, create_access_token(str(USER.id), USER.email, USER.token_version)
+    )
     assert resp.status_code == 200, resp.text
     assert seen == [Tier.FREE]
 
@@ -149,7 +156,7 @@ def test_baseline_is_free(client):
 def test_forged_form_fields_ignored(client):
     resp, seen = _scan(
         client,
-        create_access_token(str(USER.id), USER.email),
+        create_access_token(str(USER.id), USER.email, USER.token_version),
         data={"tier": "premium", "plan": "premium"},
     )
     assert resp.status_code == 200, resp.text
@@ -159,7 +166,7 @@ def test_forged_form_fields_ignored(client):
 def test_forged_header_and_query_ignored(client):
     resp, seen = _scan(
         client,
-        create_access_token(str(USER.id), USER.email),
+        create_access_token(str(USER.id), USER.email, USER.token_version),
         headers={"X-Tier": "premium", "X-Plan": "premium"},
         params={"tier": "premium", "plan": "premium"},
     )

@@ -131,7 +131,7 @@ sequenceDiagram
   L->>SS: Store both (rule #6: SecureStore only, never AsyncStorage)
   L->>U: Navigate to (tabs)
 
-  Note over U,API: ... 24 hours pass, access token expires ...
+  Note over U,API: ... 15 minutes pass, access token expires ...
 
   U->>API: Any authenticated request
   API-->>U: 401 Unauthorized
