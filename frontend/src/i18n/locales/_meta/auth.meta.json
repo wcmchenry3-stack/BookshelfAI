@@ -24,5 +24,16 @@
     "description": "Tagline on the sign-in screen",
     "tone": "friendly",
     "characterLimit": 60
+  },
+  "signInUnavailable": {
+    "description": "Inline error shown on the login screen when Google sign-in cannot start (network or discovery failure)",
+    "tone": "reassuring",
+    "characterLimit": 100,
+    "notes": "'Google' must not be translated"
+  },
+  "signInRetry": {
+    "description": "Button label to retry Google sign-in after an error",
+    "tone": "friendly",
+    "characterLimit": 25
   }
 }

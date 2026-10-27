@@ -1,5 +1,3 @@
-from datetime import date
-
 from pydantic import BaseModel
 
 
@@ -20,10 +18,9 @@ class ScanUsageResponse(BaseModel):
     ``used_today`` / ``daily_limit`` are the found counter again, kept for
     one release for older app builds, then removed.
 
-    There is no monthly limit (#582). ``used_month``, ``monthly_limit``,
-    ``period_end``, ``enhanced_used_month`` and ``enhanced_monthly_limit``
-    are always ``null``: kept in the body for one release so an older app
-    build that still reads them gets a value it can parse, then removed.
+    There is no monthly limit (#582), so the body has no monthly fields
+    (the always-null ``used_month``, ``monthly_limit``, ``period_end``,
+    ``enhanced_used_month`` and ``enhanced_monthly_limit`` were removed, #594).
     """
 
     used_today: int
@@ -32,9 +29,3 @@ class ScanUsageResponse(BaseModel):
     found_daily_limit: int = 0
     no_match_used_today: int = 0
     no_match_daily_limit: int = 0
-    # Deprecated (#582): always null. Remove after one release.
-    used_month: int | None = None
-    monthly_limit: int | None = None
-    period_end: date | None = None
-    enhanced_used_month: int | None = None
-    enhanced_monthly_limit: int | None = None

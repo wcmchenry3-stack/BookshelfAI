@@ -207,4 +207,12 @@ class TestUsageEndpointSecurity:
         assert resp.status_code == 200
         body = resp.json()
         assert (body["used_today"], body["daily_limit"]) == (0, 5)
-        assert body["monthly_limit"] is None  # #582: no monthly limit
+        # #582 / #594: no monthly limit, and no monthly keys in the body.
+        for key in (
+            "used_month",
+            "monthly_limit",
+            "period_end",
+            "enhanced_used_month",
+            "enhanced_monthly_limit",
+        ):
+            assert key not in body

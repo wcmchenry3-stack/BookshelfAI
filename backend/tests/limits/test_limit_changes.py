@@ -100,7 +100,7 @@ async def test_raising_a_limit_lets_a_refused_user_scan_again_the_same_day(
     assert provider.calls == 3
     usage = await _usage(db, user_id, day)
     assert (usage.used_today, usage.daily_limit) == (3, 3)
-    assert usage.monthly_limit is None
+    assert not hasattr(usage, "monthly_limit")
 
 
 async def test_lowering_a_limit_below_todays_usage_refuses_the_next_scan(
@@ -239,7 +239,7 @@ async def test_retired_monthly_keys_are_unknown_and_their_rows_ignored(
     listed = await h.cli("list")
     assert listed.code == 0 and key not in listed.out
     usage = await _usage(db, user_id, day)
-    assert (usage.used_month, usage.monthly_limit) == (None, None)
+    assert not hasattr(usage, "used_month")
 
 
 async def test_every_change_records_who_made_it(

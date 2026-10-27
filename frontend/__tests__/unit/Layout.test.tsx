@@ -165,5 +165,12 @@ describe('RootLayout (_layout.tsx)', () => {
       const { getByTestId } = await render(<RootLayoutDefault />);
       expect(getByTestId('stack')).toBeTruthy();
     });
+
+    it('renders with system fonts instead of a blank screen when font loading fails (#660)', async () => {
+      const { useFonts } = require('expo-font');
+      useFonts.mockReturnValueOnce([false, new Error('12000ms timeout exceeded')]);
+      const { getByTestId } = await render(<RootLayoutDefault />);
+      expect(getByTestId('stack')).toBeTruthy();
+    });
   });
 });
