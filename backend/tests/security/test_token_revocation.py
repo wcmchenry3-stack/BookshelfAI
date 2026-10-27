@@ -88,6 +88,7 @@ class FakeDb:
             if stmt.table.name == "users":
                 assert params["id_1"] == self.user.id
                 self.user.token_version += 1
+                result.scalar_one.return_value = self.user.token_version
             elif stmt.table.name == "refresh_tokens":
                 for t in self.tokens:
                     if t.user_id == params["user_id_1"] and t.revoked_at is None:
@@ -103,7 +104,7 @@ class FakeDb:
             )
         return result
 
-    async def get(self, model, pk):
+    async def get(self, model, pk, **_options):
         self.gets += 1
         if model is User and self.user is not None and self.user.id == pk:
             return self.user
@@ -297,20 +298,33 @@ class TestLogoutAll:
             == 200
         )
 
-    def test_refresh_token_with_stale_tv_cannot_refresh(self, db, client):
+    def test_refresh_token_with_stale_tv_cannot_refresh(self, db, client, caplog):
         """A refresh that raced the bump left an unrevoked row whose token
         carries the old tv: it must not mint tokens, and the row is revoked."""
         tokens = _sign_in(client)
         db.user.token_version += 1  # bump; the row stays unrevoked (the race)
-        resp = client.post(
-            "/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
-        )
+        with caplog.at_level("WARNING", logger="app.api.auth"):
+            resp = client.post(
+                "/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+            )
         assert resp.status_code == 401
         assert resp.json()["detail"] == "token_revoked"
         assert db.tokens[0].revoked_at is not None
         assert len(db.tokens) == 1  # nothing new issued
+        # One WARNING naming the user only; the token never reaches the log.
+        (record,) = [
+            r
+            for r in caplog.records
+            if r.name == "app.api.auth" and r.levelname == "WARNING"
+        ]
+        message = record.getMessage()
+        assert str(db.user.id) in message
+        assert "token_version" in message
+        assert tokens["refresh_token"] not in caplog.text
+        assert tokens["refresh_token"].split(".")[1] not in caplog.text
+        assert db.user.email not in caplog.text
 
-    def test_refresh_token_without_tv_cannot_refresh(self, db, client, _keys):
+    def test_refresh_token_without_tv_cannot_refresh(self, db, client, _keys, caplog):
         _sign_in(client)
         row = db.tokens[0]
         now = datetime.now(UTC)
@@ -324,10 +338,13 @@ class TestLogoutAll:
             },
             _keys[0],
         )
-        resp = client.post("/auth/refresh", json={"refresh_token": legacy})
+        with caplog.at_level("WARNING", logger="app.api.auth"):
+            resp = client.post("/auth/refresh", json={"refresh_token": legacy})
         assert resp.status_code == 401
         assert resp.json()["detail"] == "token_revoked"
         assert row.revoked_at is not None
+        assert f"user_id={db.user.id}" in caplog.text
+        assert legacy not in caplog.text
 
     def test_refresh_still_works_without_a_bump(self, db, client):
         tokens = _sign_in(client)

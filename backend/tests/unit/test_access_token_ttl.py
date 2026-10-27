@@ -62,11 +62,18 @@ class TestRetiredExpiryHours:
         assert s.jwt_access_ttl_minutes == 15
         assert s.deprecated_settings_warnings
 
+    @pytest.mark.parametrize("value", ["24h", "one day"])
+    def test_non_integer_leftover_does_not_fail_boot(self, monkeypatch, value):
+        monkeypatch.setenv("JWT_EXPIRY_HOURS", value)
+        s = Settings(database_url=DB, _env_file=None)
+        assert s.jwt_access_ttl_minutes == 15
+        assert s.deprecated_settings_warnings
+
     async def test_startup_logs_the_warning(self):
         from app import main
 
         with (
-            patch.object(main.settings, "jwt_expiry_hours", 24),
+            patch.object(main.settings, "jwt_expiry_hours", "24"),
             patch.object(main, "check_turnstile_configured"),
             patch.object(main.catalog_token, "check_configured"),
             patch.object(main, "logger") as logger,

@@ -112,7 +112,7 @@ class FakeDb:
             result.scalar_one_or_none.return_value = self.user_book
         return result
 
-    async def get(self, model, pk):
+    async def get(self, model, pk, **_options):
         return self.user if model is User else None
 
     def add(self, obj):

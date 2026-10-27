@@ -171,8 +171,10 @@ class Settings(BaseSettings):
     # DEPRECATED (#689): the old 24 h access-token lifetime. Ignored; boot logs
     # a warning when it is set (see deprecated_settings_warnings). Kept as a
     # field for one release so a leftover JWT_EXPIRY_HOURS in a .env file does
-    # not fail boot. Remove it, and the env var on Render, in a later release.
-    jwt_expiry_hours: int | None = None
+    # not fail boot. A string, so a leftover non-integer value (e.g. "24h")
+    # does not fail boot either. Remove it, and the env var on Render, in a
+    # later release.
+    jwt_expiry_hours: str | None = None
     refresh_token_expiry_days: int = 7
     allowed_emails: str = ""
 

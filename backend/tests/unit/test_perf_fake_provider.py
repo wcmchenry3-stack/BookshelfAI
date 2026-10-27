@@ -327,3 +327,47 @@ class TestServerIdentityOnRealPostgres:
                     )
         finally:
             await admin.dispose()
+
+
+async def test_reset_and_create_users_mints_tokens_with_tv_claim():
+    """The nightly harness mints one access token per Free user with the
+    app's own create_access_token; the tv claim must match the new row
+    (token_version 0), or every scan request would be 401 token_revoked."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import jwt as pyjwt
+
+    from app.core import database
+    from app.models import User
+
+    private, public = perf_setup.generate_jwt_keys()
+    added = []
+    session = MagicMock()
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+    session.add = added.append
+
+    class _Session:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with (
+        patch.object(settings, "jwt_private_key", private),
+        patch.object(settings, "jwt_public_key", public),
+        patch.object(perf_setup, "require_isolated_db"),
+        patch.object(perf_setup, "verify_connected_database", AsyncMock()),
+        patch.object(database, "AsyncSessionLocal", _Session),
+    ):
+        tokens = await perf_setup._reset_and_create_users(2)
+
+    assert len(tokens) == 2
+    users = [u for u in added if isinstance(u, User)]
+    assert len(users) == 2
+    for token, user in zip(tokens, users, strict=True):
+        claims = pyjwt.decode(token, public, algorithms=["RS256"])
+        assert claims["sub"] == str(user.id)
+        assert claims["tv"] == user.token_version == 0
+    session.commit.assert_awaited_once()

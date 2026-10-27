@@ -141,7 +141,17 @@ async def refresh(
             detail="Refresh token revoked or not found",
         )
 
-    user = await db.get(User, uuid.UUID(payload["sub"]))
+    # FOR UPDATE on the user row: a concurrent revoke_all_sessions bumps
+    # token_version (taking this lock) before it revokes refresh rows, so it
+    # either commits first (we read the new token_version and reject below)
+    # or waits for this rotation to commit and then revokes the row we add.
+    # No unrevoked refresh row survives a logout-all (#689).
+    user = await db.get(
+        User,
+        uuid.UUID(payload["sub"]),
+        with_for_update=True,
+        populate_existing=True,
+    )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
@@ -151,6 +161,10 @@ async def refresh(
     # tv claim also catches a refresh token minted by a refresh that raced
     # the bump (#689). Missing tv (issued before #689) is revoked too.
     if token_version_claim(payload) != user.token_version:
+        logger.warning(
+            "Refresh rejected: token_version missing or stale (user_id=%s)",
+            user.id,
+        )
         stored.revoked_at = datetime.now(UTC)
         await db.commit()
         raise HTTPException(

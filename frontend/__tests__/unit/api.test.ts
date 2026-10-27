@@ -169,11 +169,11 @@ describe('api response interceptor — 401 handling', () => {
     expect(mockSetItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY, 'new-refresh');
   });
 
-  it('clears tokens when refresh request itself fails', async () => {
+  it('clears tokens when the server rejects the refresh (401)', async () => {
     mockGetItem.mockImplementation((key: string) =>
       key === REFRESH_TOKEN_KEY ? Promise.resolve('old-refresh') : Promise.resolve(null)
     );
-    mockAxiosPost.mockRejectedValue(new Error('refresh failed'));
+    mockAxiosPost.mockRejectedValue({ response: { status: 401 } });
 
     await expect(runResponseErrorInterceptor(make401Error())).rejects.toBeDefined();
 
@@ -251,5 +251,145 @@ describe('api response interceptor — revoked session', () => {
 
     expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Response interceptor — shared refresh (#689) ────────────────────────────
+
+describe('api response interceptor — concurrent 401s share one refresh', () => {
+  const onAuthFailure = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setAuthFailureCallback(onAuthFailure);
+    const store: Record<string, string | null> = {
+      [ACCESS_TOKEN_KEY]: 'old-access',
+      [REFRESH_TOKEN_KEY]: 'old-refresh',
+    };
+    mockGetItem.mockImplementation((key: string) => Promise.resolve(store[key] ?? null));
+    mockSetItem.mockImplementation((key: string, value: string) => {
+      store[key] = value;
+      return Promise.resolve();
+    });
+    mockDeleteItem.mockImplementation((key: string) => {
+      store[key] = null;
+      return Promise.resolve();
+    });
+  });
+
+  // A per-request adapter answers the retried request without any network,
+  // recording the Authorization header it was sent with.
+  function make401WithAdapter(name: string) {
+    const adapter = jest.fn((config: any) =>
+      Promise.resolve({
+        data: { name, auth: config.headers.Authorization },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      })
+    );
+    return { adapter, error: make401Error({ url: `/${name}`, adapter }) };
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it('posts one refresh for concurrent 401s and retries each with the new token', async () => {
+    const refresh = deferred<object>();
+    mockAxiosPost.mockReturnValue(refresh.promise);
+    const requests = ['a', 'b', 'c'].map(make401WithAdapter);
+
+    const pending = requests.map((r) => runResponseErrorInterceptor(r.error));
+    // Let every interceptor reach the shared refresh before it settles.
+    await new Promise((r) => setTimeout(r, 0));
+    refresh.resolve({ data: { access_token: 'new-access', refresh_token: 'new-refresh' } });
+    const responses = await Promise.all(pending);
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockAxiosPost).toHaveBeenCalledWith(expect.stringContaining('/auth/refresh'), {
+      refresh_token: 'old-refresh',
+    });
+    expect(responses.map((r: any) => r.data)).toEqual([
+      { name: 'a', auth: 'Bearer new-access' },
+      { name: 'b', auth: 'Bearer new-access' },
+      { name: 'c', auth: 'Bearer new-access' },
+    ]);
+    requests.forEach((r) => expect(r.adapter).toHaveBeenCalledTimes(1));
+    expect(onAuthFailure).not.toHaveBeenCalled();
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(mockSetItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY, 'new-refresh');
+  });
+
+  it('signs out once when the shared refresh is rejected with 401', async () => {
+    const refresh = deferred<object>();
+    mockAxiosPost.mockReturnValue(refresh.promise);
+    const requests = ['a', 'b'].map(make401WithAdapter);
+
+    const pending = requests.map((r) =>
+      runResponseErrorInterceptor(r.error).then(
+        () => 'resolved',
+        (e) => e
+      )
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    refresh.reject({ response: { status: 401, data: { detail: 'Refresh token expired' } } });
+    const outcomes = await Promise.all(pending);
+
+    // Each caller gets its own original 401; nothing is retried.
+    expect(outcomes).toEqual(requests.map((r) => r.error));
+    requests.forEach((r) => expect(r.adapter).not.toHaveBeenCalled());
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+    expect(mockDeleteItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY);
+    expect(mockDeleteItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY);
+  });
+
+  it.each([
+    ['429 rate limit', { response: { status: 429 } }],
+    ['503 server error', { response: { status: 503 } }],
+    ['network error', { request: {}, message: 'Network Error' }],
+  ])('keeps the session when the refresh fails with a %s', async (_label, refreshError) => {
+    mockAxiosPost.mockRejectedValue(refreshError);
+    const { adapter, error } = make401WithAdapter('a');
+
+    await expect(runResponseErrorInterceptor(error)).rejects.toBe(error);
+
+    expect(adapter).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(mockSetItem).not.toHaveBeenCalled();
+  });
+
+  it('starts a new refresh once the previous one has settled', async () => {
+    mockAxiosPost.mockRejectedValueOnce({ response: { status: 429 } }).mockResolvedValueOnce({
+      data: { access_token: 'new-access', refresh_token: 'new-refresh' },
+    });
+
+    const first = make401WithAdapter('a');
+    await expect(runResponseErrorInterceptor(first.error)).rejects.toBe(first.error);
+    const second = make401WithAdapter('b');
+    const response: any = await runResponseErrorInterceptor(second.error);
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(2);
+    expect(response.data).toEqual({ name: 'b', auth: 'Bearer new-access' });
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('a token_revoked 401 still signs out without a refresh', async () => {
+    const err = {
+      response: { status: 401, data: { detail: TOKEN_REVOKED } },
+      config: { headers: {} },
+    };
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
   });
 });

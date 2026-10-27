@@ -6,6 +6,8 @@
   with the old access token 401 token_revoked, with the same number of SQL
   statements as an accepted request, and stops the old refresh token. Another
   user's sessions are untouched.
+- A refresh that interleaves with logout-all leaves no token that works and
+  no unrevoked refresh row.
 
 Needs DATABASE_URL pointing at a Postgres database.
 """
@@ -25,7 +27,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, event, inspect, select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.auth.jwt import create_access_token, create_refresh_token
 from app.core.config import settings
@@ -248,3 +254,110 @@ async def test_concurrent_bumps_both_count(env):
     await asyncio.gather(bump(), bump())
     async with factory() as db:
         assert (await db.get(User, user.id)).token_version == 2
+
+
+async def test_revoke_all_sessions_refreshes_the_in_memory_user(env):
+    from app.auth.sessions import revoke_all_sessions
+
+    factory, _client, make_user, _statements = env
+    user, _access, _refresh = await make_user()
+    async with factory() as db:
+        loaded = await db.get(User, user.id)
+        # Someone else bumps first: the loaded row is now stale.
+        async with factory() as other:
+            await revoke_all_sessions(other, await other.get(User, user.id))
+            await other.commit()
+        assert loaded.token_version == 0
+        await revoke_all_sessions(db, loaded)
+        # RETURNING carries the value the row really has, not stale + 1 ...
+        assert loaded.token_version == 2
+        # ... and it is not dirty, so the commit writes nothing back.
+        assert loaded not in db.dirty
+        await db.commit()
+    async with factory() as db:
+        assert (await db.get(User, user.id)).token_version == 2
+
+
+class _PausingSession(AsyncSession):
+    """Runs ``after_user_load`` right after /auth/refresh loads the user
+    row, so a test can interleave another transaction at that point."""
+
+    after_user_load = None
+
+    async def get(self, entity, *args, **kwargs):
+        obj = await super().get(entity, *args, **kwargs)
+        hook = type(self).after_user_load
+        if entity is User and hook is not None:
+            await hook()
+        return obj
+
+
+async def test_refresh_interleaved_with_logout_all_leaves_nothing_usable(env):
+    """A (refresh) has read the refresh row and the user at tv=0; B
+    (logout-all) bumps and revokes and commits; A completes the rotation.
+    Neither token A could mint is accepted, and no unrevoked refresh row is
+    left behind."""
+    import asyncio
+
+    from app.auth.sessions import revoke_all_sessions
+
+    factory, client, make_user, _statements = env
+    user, _access, refresh = await make_user()
+    paused = async_sessionmaker(
+        factory.kw["bind"], class_=_PausingSession, expire_on_commit=False
+    )
+    bumped: list[asyncio.Task] = []
+
+    async def logout_all():
+        async with factory() as db:
+            await revoke_all_sessions(db, await db.get(User, user.id))
+            await db.commit()
+
+    async def interleave():
+        _PausingSession.after_user_load = None  # only the first load
+        bumped.append(asyncio.create_task(logout_all()))
+        # Give B the chance to commit before A goes on. With the user row
+        # locked by A, B waits instead and revokes A's new row after A
+        # commits; without the lock, B commits here and A's row is orphaned.
+        await asyncio.wait(bumped, timeout=1)
+
+    async def _paused_db():
+        async with paused() as session:
+            yield session
+
+    plain_db = app.dependency_overrides[get_db]
+    _PausingSession.after_user_load = interleave
+    app.dependency_overrides[get_db] = _paused_db
+    try:
+        resp = await client.post("/auth/refresh", json={"refresh_token": refresh})
+    finally:
+        _PausingSession.after_user_load = None
+        app.dependency_overrides[get_db] = plain_db
+    assert len(bumped) == 1
+    await asyncio.wait_for(bumped[0], timeout=10)
+
+    async with factory() as db:
+        assert (await db.get(User, user.id)).token_version == 1
+        rows = (
+            (
+                await db.execute(
+                    select(RefreshToken).where(RefreshToken.user_id == user.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # No orphan: every refresh row the user has is revoked.
+        assert rows and all(r.revoked_at is not None for r in rows)
+
+    if resp.status_code == 200:
+        minted = resp.json()
+        me = await client.get("/auth/me", headers=_auth(minted["access_token"]))
+        assert me.status_code == 401
+        assert me.json()["detail"] == "token_revoked"
+        again = await client.post(
+            "/auth/refresh", json={"refresh_token": minted["refresh_token"]}
+        )
+        assert again.status_code == 401
+    else:
+        assert resp.status_code == 401

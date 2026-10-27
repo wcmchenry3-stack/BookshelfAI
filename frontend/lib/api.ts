@@ -44,8 +44,43 @@ async function signOut() {
   onAuthFailure?.();
 }
 
-// On 401: attempt token refresh once, then give up. A revoked session
-// (401 token_revoked) or a failed refresh signs the user out.
+// One refresh at a time. The refresh token is single-use (rotated on every
+// /auth/refresh), so concurrent 401s must share one refresh: a second POST
+// with the same token would be rejected and sign the user out, wiping the
+// tokens the first one just stored. Cleared when it settles.
+let refreshInFlight: Promise<string | null> | null = null;
+
+// Resolves to the new access token, or null when there is none to retry
+// with. Signs out only when the server rejects the refresh (401, including
+// token_revoked); a 429, 5xx or network error keeps the stored tokens.
+function refreshAccessToken(): Promise<string | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const refreshToken = await storage.getItem(REFRESH_TOKEN_KEY);
+      if (!refreshToken) return null;
+      try {
+        const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
+          refresh_token: refreshToken,
+        });
+        await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
+        await storage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+        return data.access_token as string;
+      } catch (refreshError) {
+        if ((refreshError as { response?: { status?: number } })?.response?.status === 401) {
+          await signOut();
+        }
+        return null;
+      }
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+// On 401: refresh once (shared by every request that got a 401 meanwhile),
+// then retry with the new access token. A revoked session (401
+// token_revoked) signs the user out at once, without a refresh.
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -56,19 +91,10 @@ api.interceptors.response.use(
     }
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
-      const refreshToken = await storage.getItem(REFRESH_TOKEN_KEY);
-      if (refreshToken) {
-        try {
-          const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
-            refresh_token: refreshToken,
-          });
-          await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
-          await storage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
-          original.headers.Authorization = `Bearer ${data.access_token}`;
-          return api(original);
-        } catch {
-          await signOut();
-        }
+      const accessToken = await refreshAccessToken();
+      if (accessToken) {
+        original.headers.Authorization = `Bearer ${accessToken}`;
+        return api(original);
       }
     }
     return Promise.reject(error);
