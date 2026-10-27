@@ -137,8 +137,8 @@ production, restore into a fresh database, verify, then repoint
 **Restoring into a Supabase project.** The dump has no grants (`--no-acl`),
 and `alembic_version` already says 0022, so migration 0022 (#704) won't run
 again. Supabase's default privileges then give `anon` and `authenticated`
-`ALL` on every restored table and sequence (RLS stays on: it is part of the
-table definition, not an ACL). Before repointing `DATABASE_URL`, revoke them
+up to `ALL` (stock Supabase grants `ALL`) on every restored table and
+sequence (RLS stays on: it is part of the table definition, not an ACL). Before repointing `DATABASE_URL`, revoke them
 again as `postgres`:
 
 ```sql
@@ -146,7 +146,18 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
-SELECT has_table_privilege('anon', 'public.users', 'SELECT');  -- must be false
+```
+
+Then confirm both queries return 0 rows:
+
+```sql
+SELECT c.relname, a.grantee::regrole, a.privilege_type
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) a
+WHERE n.nspname = 'public' AND a.grantee::regrole::text IN ('anon', 'authenticated');
+SELECT d.defaclobjtype, a.grantee::regrole, a.privilege_type
+FROM pg_default_acl d, aclexplode(d.defaclacl) a
+WHERE d.defaclrole = 'postgres'::regrole AND d.defaclnamespace = 'public'::regnamespace
+  AND a.grantee::regrole::text IN ('anon', 'authenticated');
 ```
 
 ## Restore drill

@@ -1,8 +1,9 @@
 """Revoke Supabase's anon/authenticated privileges on public tables and sequences
 
 Defence in depth after 0020 (RLS on, no policies). Supabase grants its Data
-API roles ``anon`` and ``authenticated`` ``ALL`` on every table and sequence in
-``public``, and sets default privileges so future objects get the same. RLS
+API roles ``anon`` and ``authenticated`` up to ``ALL`` (stock Supabase grants
+``ALL``; the dev branch had fewer) on every table and sequence in ``public``,
+and sets default privileges so future objects get the same. RLS
 hides rows from those roles but does not govern every privilege: a role that
 holds ``TRUNCATE`` can empty a table regardless of RLS, and ``REFERENCES`` and
 ``TRIGGER`` are not row level either. Sequences have no RLS at all, so
@@ -17,7 +18,13 @@ neither, and there the migration does nothing):
 * ``REVOKE ALL ON ALL TABLES IN SCHEMA public`` and ``ON ALL SEQUENCES``;
 * ``ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES`` and
   ``ON SEQUENCES``, so tables and sequences created later by the migrating
-  role do not get the grants back.
+  role do not get the grants back;
+* a self-check: if the role still holds any privilege on a ``public`` relation
+  or in the migrating role's ``public`` default privileges, the migration
+  raises and rolls back. A ``REVOKE`` only removes grants made by the role
+  running it (or, for an owner, by the owner); a grant made by another
+  grantor is silently left in place, so the check is what makes the revoke
+  trustworthy.
 
 Default privileges are kept per granting role. ``ALTER DEFAULT PRIVILEGES``
 without ``FOR ROLE`` changes those of the role running the migration, which
@@ -43,9 +50,18 @@ and owners keep their privileges whatever is revoked from other roles. The
 nightly ``pg_dump`` runs with ``--no-acl``, so it neither needs nor carries
 these grants.
 
-Downgrade restores Supabase's defaults (``GRANT ALL`` on tables and sequences
-to both roles, plus the matching default privileges), with the same
-role-exists guard. No data is touched either way.
+Downgrade does nothing (apart from a notice). Re-granting ``ALL`` would be
+looser than the state before this migration on the dev branch, where the roles
+held only DELETE, TRUNCATE, TRIGGER and MAINTAIN, and it is never wanted. If
+Supabase's stock grants are ever needed back, run as ``postgres``, for each of
+``anon`` and ``authenticated``::
+
+    GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+    GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated;
+
+No data is touched either way.
 
 Revision ID: 0022
 Revises: 0021
@@ -69,12 +85,18 @@ _REVOKE = (
     "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM {role}",
 )
 
-_GRANT = (
-    "GRANT ALL ON ALL TABLES IN SCHEMA public TO {role}",
-    "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {role}",
-    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {role}",
-    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {role}",
-)
+_VERIFY = """\
+IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace,
+                  aclexplode(c.relacl) a
+           WHERE n.nspname = 'public'
+             AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = '{role}'))
+   OR EXISTS (SELECT 1 FROM pg_default_acl d, aclexplode(d.defaclacl) a
+              WHERE d.defaclrole = current_user::regrole
+                AND d.defaclnamespace = 'public'::regnamespace
+                AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = '{role}'))
+THEN
+    RAISE EXCEPTION '{role} still holds privileges in public after REVOKE';
+END IF"""
 
 
 def _if_role_exists(role: str, statements: tuple[str, ...]) -> str:
@@ -83,7 +105,7 @@ def _if_role_exists(role: str, statements: tuple[str, ...]) -> str:
     PL/pgSQL resolves role names in utility statements only when it reaches
     them, so the block is valid on a server without the role.
     """
-    body = "\n".join(f"        {s.format(role=role)};" for s in statements)
+    body = "\n".join(f"        {s.format(role=role)};" for s in (*statements, _VERIFY))
     return (
         "DO $$\n"
         "BEGIN\n"
@@ -101,5 +123,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for role in ROLES:
-        op.execute(_if_role_exists(role, _GRANT))
+    # Grants are not restored: see the module docstring.
+    op.execute(
+        "DO $$ BEGIN RAISE NOTICE '0022 downgrade: anon/authenticated grants "
+        "are not restored; see the migration docstring'; END $$"
+    )

@@ -63,8 +63,8 @@ Storage, or the Data API.
   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
   `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
 - **No table or sequence privileges for `anon` / `authenticated`** (migration
-  0022, #704). Supabase grants both roles `ALL` on every table and sequence in
-  `public`. RLS hides rows, but it doesn't govern `TRUNCATE`, `REFERENCES`,
+  0022, #704). Supabase grants both roles up to `ALL` (stock Supabase grants `ALL`; the
+  dev branch had fewer) on every table and sequence in `public`. RLS hides rows, but it doesn't govern `TRUNCATE`, `REFERENCES`,
   `TRIGGER` or sequences, so 0022 revokes all of it, plus the default
   privileges of the migrating role (`postgres`), so tables created later
   aren't granted either. Limits:
@@ -75,15 +75,40 @@ Storage, or the Data API.
     granted to `PUBLIC` anyway; see the migration's docstring).
   - On plain Postgres (CI, local) the roles don't exist and 0022 does nothing.
 
+  0022 checks itself: it raises, and the deploy fails, if either role still
+  holds anything after the revoke (for example a grant made by another
+  grantor, which `REVOKE` leaves in place).
+
   **Verify after each deploy that runs 0022** (Supabase SQL editor, prod and
-  the `dev` branch). Both must return `false`:
+  the `dev` branch). Both queries must return 0 rows. First, every privilege
+  either role holds on a relation in `public`:
 
   ```sql
-  SELECT has_table_privilege('anon', 'public.users', 'SELECT');
-  SELECT has_table_privilege('authenticated', 'public.users', 'TRUNCATE');
+  SELECT c.relname, a.grantee::regrole, a.privilege_type
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) a
+  WHERE n.nspname = 'public' AND a.grantee::regrole::text IN ('anon', 'authenticated');
   ```
 
-  `alembic downgrade` past 0022 grants Supabase's defaults back.
+  Second, the default privileges of `postgres` in `public` that still name
+  either role:
+
+  ```sql
+  SELECT d.defaclobjtype, a.grantee::regrole, a.privilege_type
+  FROM pg_default_acl d, aclexplode(d.defaclacl) a
+  WHERE d.defaclrole = 'postgres'::regrole AND d.defaclnamespace = 'public'::regnamespace
+    AND a.grantee::regrole::text IN ('anon', 'authenticated');
+  ```
+
+  `alembic downgrade` past 0022 does nothing to the grants; they stay revoked.
+  If Supabase's stock grants are ever needed back, run as `postgres`:
+
+  ```sql
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated;
+  ```
+
 - **Owner check: the `service_role` key.** `service_role` bypasses RLS and
   keeps its grants, so its API key (and the `sb_secret_...` secret keys) must
   not be stored anywhere the app or CI can read: not in Render env vars,
