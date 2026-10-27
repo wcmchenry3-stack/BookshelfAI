@@ -25,12 +25,14 @@ for its 409 (#587).
 """
 
 import logging
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.book import Book
 from app.models.edition import Edition
@@ -107,16 +109,33 @@ async def held_entries(
     """The user's library entries for any of these books, Open Library
     works, Google Books volumes or edition ISBNs (normalised ISBN-13), in
     one join-shaped query driven by the user's entries. No query when there
-    is nothing to look for."""
+    is nothing to look for.
+
+    An entry on a merged catalog row (#682) counts as an entry on the row it
+    was merged into: its ``book_id`` and provider IDs are the survivor's
+    (falling back to the merged row's own IDs where the survivor has none)."""
     book_ids, work_ids = set(book_ids), set(work_ids)
     volume_ids, isbns = set(volume_ids), set(isbns)
+    # The survivor of a merged row (#682), read with correlated subqueries
+    # so ``books`` stays an inner join on the entry's own book.
+    survivor = aliased(Book)
+    survivor_of = survivor.id == Book.merged_into_id
+    survivor_work = (
+        select(survivor.open_library_work_id).where(survivor_of).scalar_subquery()
+    )
+    survivor_volume = (
+        select(survivor.google_books_id).where(survivor_of).scalar_subquery()
+    )
     conditions = []
     if book_ids:
         conditions.append(UserBook.book_id.in_(book_ids))
+        conditions.append(Book.merged_into_id.in_(book_ids))
     if work_ids:
         conditions.append(Book.open_library_work_id.in_(work_ids))
+        conditions.append(survivor_work.in_(work_ids))
     if volume_ids:
         conditions.append(Book.google_books_id.in_(volume_ids))
+        conditions.append(survivor_volume.in_(volume_ids))
     if isbns:
         isbn_13s, isbn_10s = isbn_lookup_values(isbns)
         conditions.append(Edition.isbn_13.in_(isbn_13s))
@@ -132,6 +151,10 @@ async def held_entries(
             Book.google_books_id,
             Edition.isbn_13,
             Edition.isbn_10,
+            # The survivor of a merged row (#682); all NULL when not merged.
+            Book.merged_into_id,
+            survivor_work.label("survivor_work_id"),
+            survivor_volume.label("survivor_volume_id"),
         )
         .join(Book, Book.id == UserBook.book_id)
         .outerjoin(Edition, Edition.id == UserBook.edition_id)
@@ -140,16 +163,31 @@ async def held_entries(
         .order_by(UserBook.edition_id.is_(None), UserBook.created_at, UserBook.id)
         .limit(MAX_HELD)
     )
-    return [
-        Held(
-            book_id=row.book_id,
-            edition_id=row.edition_id,
-            open_library_work_id=row.open_library_work_id,
-            google_books_id=row.google_books_id,
-            isbn=normalise_isbn_13(row.isbn_13, row.isbn_10),
-        )
-        for row in result.all()
-    ]
+    return [_held(row) for row in result.all()]
+
+
+def _text(value) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _held(row) -> Held:
+    """A library query row as :class:`Held`, read as its survivor when the
+    entry's book was merged (#682): the survivor's ``book_id`` and provider
+    IDs (the merged row's own where the survivor has none). The survivor
+    columns come last and are read defensively, so a row without them (a
+    test double) is an unmerged entry."""
+    merged_into = getattr(row, "merged_into_id", None)
+    return Held(
+        book_id=merged_into if isinstance(merged_into, uuid.UUID) else row.book_id,
+        edition_id=row.edition_id,
+        open_library_work_id=(
+            _text(getattr(row, "survivor_work_id", None)) or row.open_library_work_id
+        ),
+        google_books_id=(
+            _text(getattr(row, "survivor_volume_id", None)) or row.google_books_id
+        ),
+        isbn=normalise_isbn_13(row.isbn_13, row.isbn_10),
+    )
 
 
 def matching(

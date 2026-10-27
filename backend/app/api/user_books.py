@@ -26,6 +26,7 @@ from app.schemas.user_book import (
     UserBookUpdate,
     WishlistRequest,
 )
+from app.services import catalog
 from app.services.unverified_books import (
     UnverifiedBookService,
     UnverifiedDuplicateError,
@@ -49,6 +50,9 @@ BOOK_NOT_IN_CATALOG = "book_not_in_catalog"
 # number of unverified entries (settings.unverified_books_per_user_max).
 UNVERIFIED_DUPLICATE = "unverified_duplicate"
 UNVERIFIED_LIMIT_REACHED = "unverified_limit_reached"
+# 422 detail when PATCH /user-books/{id} sends title / author / cover
+# overrides (#682) for an unverified entry (#616).
+OVERRIDES_NOT_SUPPORTED = "overrides_not_supported"
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,10 @@ def _user_book_query(user_id: uuid.UUID):
         .where(UserBook.user_id == user_id)
         .options(
             selectinload(UserBook.book).selectinload(Book.editions),
+            # A merged catalog row is read as its survivor (#682).
+            selectinload(UserBook.book)
+            .selectinload(Book.merged_into)
+            .selectinload(Book.editions),
             selectinload(UserBook.edition),
             # The user's own unverified entry (#616); only ever loaded
             # through this user's library row.
@@ -185,13 +193,17 @@ async def add_purchased(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Book not found"
         )
+    # A merged catalog row is never the target of a new entry (#682): a
+    # stale book_id adds (or promotes) the surviving row instead.
+    survivor = await catalog.resolve_survivor(db, book)
+    book_id = req.book_id if survivor is book else survivor.id
 
     # Resolve edition if ISBN provided
     edition_id: uuid.UUID | None = req.edition_id
     if req.isbn_13 and not edition_id:
         ed_result = await db.execute(
             select(Edition).where(
-                Edition.book_id == req.book_id,
+                Edition.book_id == book_id,
                 Edition.isbn_13 == req.isbn_13,
             )
         )
@@ -203,7 +215,7 @@ async def add_purchased(
     ub_result = await db.execute(
         select(UserBook).where(
             UserBook.user_id == current_user.id,
-            UserBook.book_id == req.book_id,
+            UserBook.book_id == book_id,
         )
     )
     user_book = ub_result.scalar_one_or_none()
@@ -217,7 +229,7 @@ async def add_purchased(
     else:
         user_book = UserBook(
             user_id=current_user.id,
-            book_id=req.book_id,
+            book_id=book_id,
             edition_id=edition_id,
             status="purchased",
             purchased_at=now,
@@ -249,6 +261,10 @@ async def update_user_book(
     if not user_book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
+    # The user's own title / author / cover (#682): this entry only, never
+    # the shared catalog row. Checked first, so a refusal changes nothing.
+    _apply_overrides(user_book, req)
+
     now = datetime.now(UTC)
 
     if req.status and req.status != user_book.status:
@@ -272,6 +288,23 @@ async def update_user_book(
         _user_book_query(current_user.id).where(UserBook.id == user_book.id)
     )
     return result.scalar_one()
+
+
+def _apply_overrides(user_book: UserBook, req: UserBookUpdate) -> None:
+    """Set or clear the override columns ``req`` sent, on ``user_book``
+    only (#682). An unverified entry (#616) is the user's own data and never
+    carries a cover, so it takes no overrides: 422 ``overrides_not_supported``
+    (nothing written)."""
+    changes = req.override_changes()
+    if not changes:
+        return
+    if user_book.custom_book_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=OVERRIDES_NOT_SUPPORTED,
+        )
+    for column, value in changes.items():
+        setattr(user_book, column, value)
 
 
 @router.delete("/user-books/{user_book_id}", status_code=status.HTTP_204_NO_CONTENT)

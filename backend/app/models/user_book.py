@@ -17,6 +17,19 @@ from app.core.database import Base
 
 VALID_STATUSES = ("wishlisted", "purchased", "reading", "read")
 
+# The user's own corrections of a catalog book (#682), per library entry.
+# Limits match the catalog's title / author (BookBase, WishlistRequest) and
+# cover_url fields; the request schema (UserBookUpdate) enforces them too.
+TITLE_OVERRIDE_MAX = 500
+AUTHOR_OVERRIDE_MAX = 500
+COVER_URL_OVERRIDE_MAX = 2048
+# BookRead field -> override column.
+OVERRIDE_COLUMNS = {
+    "title": "title_override",
+    "author": "author_override",
+    "cover_url": "cover_url_override",
+}
+
 
 class UserBook(Base):
     __tablename__ = "user_books"
@@ -36,6 +49,28 @@ class UserBook(Base):
         CheckConstraint(
             "rating BETWEEN 1 AND 5",
             name="ck_user_books_rating",
+        ),
+        CheckConstraint(
+            "title_override IS NULL OR char_length(title_override) "
+            f"BETWEEN 1 AND {TITLE_OVERRIDE_MAX}",
+            name="ck_user_books_title_override",
+        ),
+        CheckConstraint(
+            "author_override IS NULL OR char_length(author_override) "
+            f"BETWEEN 1 AND {AUTHOR_OVERRIDE_MAX}",
+            name="ck_user_books_author_override",
+        ),
+        CheckConstraint(
+            "cover_url_override IS NULL OR char_length(cover_url_override) "
+            f"BETWEEN 1 AND {COVER_URL_OVERRIDE_MAX}",
+            name="ck_user_books_cover_url_override",
+        ),
+        # Overrides correct a catalog book; an unverified entry (#616) is
+        # already the user's own data and never carries a cover.
+        CheckConstraint(
+            "custom_book_id IS NULL OR (title_override IS NULL "
+            "AND author_override IS NULL AND cover_url_override IS NULL)",
+            name="ck_user_books_overrides_catalog_only",
         ),
     )
 
@@ -82,6 +117,12 @@ class UserBook(Base):
     )
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
     rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The user's own title / author / cover for this copy (#682). Private to
+    # this entry: never written to ``books``. Library reads return them in
+    # place of the catalog values (UserBookRead); NULL = the catalog value.
+    title_override: Mapped[str | None] = mapped_column(String, nullable=True)
+    author_override: Mapped[str | None] = mapped_column(String, nullable=True)
+    cover_url_override: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
