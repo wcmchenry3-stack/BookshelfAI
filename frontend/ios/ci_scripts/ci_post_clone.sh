@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Xcode Cloud: runs automatically after the repo is cloned.
-# Node.js is not pre-installed on Xcode Cloud workers — install via Homebrew.
+# Node.js is not pre-installed on Xcode Cloud workers — install it from the
+# official nodejs.org tarball (see below).
 # Pods/ is gitignored, so pod install must run before xcodebuild archive.
 set -e
 
@@ -56,13 +57,20 @@ esac
 NODE_DIST="node-v${NODE_VERSION}-darwin-${NODE_ARCH}"
 NODE_ROOT="$HOME/.bookshelf-node"
 NODE_HOME="$NODE_ROOT/$NODE_DIST"
-if [[ ! -x "$NODE_HOME/bin/node" ]]; then
+# Reuse an install only if it completed: the marker is written after the
+# verified tarball was fully extracted and moved into place.
+if [[ ! -f "$NODE_HOME/.bookshelf-complete" ]]; then
+  rm -rf "$NODE_HOME"
   mkdir -p "$NODE_ROOT"
-  retry 3 10 curl -fsSL -o "$NODE_ROOT/$NODE_DIST.tar.gz" \
+  retry 3 10 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+    -o "$NODE_ROOT/$NODE_DIST.tar.gz" \
     "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_DIST}.tar.gz"
   echo "$NODE_SHA256  $NODE_ROOT/$NODE_DIST.tar.gz" | shasum -a 256 -c -
-  tar -xzf "$NODE_ROOT/$NODE_DIST.tar.gz" -C "$NODE_ROOT"
-  rm -f "$NODE_ROOT/$NODE_DIST.tar.gz"
+  NODE_TMP="$(mktemp -d "$NODE_ROOT/.extract.XXXXXX")"
+  tar -xzf "$NODE_ROOT/$NODE_DIST.tar.gz" -C "$NODE_TMP"
+  mv "$NODE_TMP/$NODE_DIST" "$NODE_HOME"
+  rm -rf "$NODE_TMP" "$NODE_ROOT/$NODE_DIST.tar.gz"
+  touch "$NODE_HOME/.bookshelf-complete"
 fi
 export PATH="$NODE_HOME/bin:$PATH"
 echo "INFO: node $(node --version), npm $(npm --version) ($(uname -m))"

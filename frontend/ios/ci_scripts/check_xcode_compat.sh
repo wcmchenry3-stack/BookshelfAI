@@ -24,8 +24,17 @@ lockfile="${1:?usage: check_xcode_compat.sh <package-lock.json>}"
 xcode_line="${XCODE_VERSION_OVERRIDE:-$(xcodebuild -version 2>/dev/null | head -1 || true)}"
 xcode_major="$(printf '%s\n' "$xcode_line" | sed -nE 's/^Xcode ([0-9]+).*/\1/p')"
 
-jsi_version="${JSI_VERSION_OVERRIDE:-$(grep -A1 '"node_modules/expo-modules-jsi"' "$lockfile" 2>/dev/null \
-  | sed -nE 's/.*"version": *"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' | head -1 || true)}"
+if [ -z "${JSI_VERSION_OVERRIDE:-}" ] && [ ! -r "$lockfile" ]; then
+  echo "ERROR: lockfile not found or unreadable: $lockfile" >&2
+  exit 1
+fi
+
+# Every expo-modules-jsi entry at any depth (a nested copy can be older than the
+# top-level one); keep the numeric x.y.z core of each version (prerelease
+# suffixes such as -canary-… are dropped) and take the lowest.
+jsi_version="${JSI_VERSION_OVERRIDE:-$(grep -A1 'node_modules/expo-modules-jsi"' "$lockfile" \
+  | sed -nE 's/.*"version": *"([0-9]+\.[0-9]+\.[0-9]+)[^"]*".*/\1/p' \
+  | sort -t. -k1,1n -k2,2n -k3,3n | head -1 || true)}"
 
 echo "INFO: ${xcode_line:-Xcode version unknown}, expo-modules-jsi ${jsi_version:-unknown}"
 
@@ -34,7 +43,8 @@ if [ "${ALLOW_UNSUPPORTED_XCODE:-}" = "1" ]; then
   exit 0
 fi
 
-# Unknown versions: don't block the build on a parsing problem.
+# Unknown versions (no Xcode on PATH, no expo-modules-jsi entry): don't block
+# the build on a parsing problem. A missing lockfile already failed above.
 if [ -z "$xcode_major" ] || [ -z "$jsi_version" ]; then
   echo "WARN: could not determine Xcode or expo-modules-jsi version, skipping the check"
   exit 0
