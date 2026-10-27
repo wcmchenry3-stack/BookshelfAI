@@ -62,6 +62,33 @@ Storage, or the Data API.
   unaffected. A new table's migration must run
   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
   `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
+- **No table or sequence privileges for `anon` / `authenticated`** (migration
+  0022, #704). Supabase grants both roles `ALL` on every table and sequence in
+  `public`. RLS hides rows, but it doesn't govern `TRUNCATE`, `REFERENCES`,
+  `TRIGGER` or sequences, so 0022 revokes all of it, plus the default
+  privileges of the migrating role (`postgres`), so tables created later
+  aren't granted either. Limits:
+  - Supabase also keeps default privileges `FOR ROLE supabase_admin`, which
+    `postgres` can't change. They only apply to objects `supabase_admin`
+    creates in `public`; the app never does, and RLS still covers those rows.
+  - Function `EXECUTE` and schema `USAGE` are left as they are (`EXECUTE` is
+    granted to `PUBLIC` anyway; see the migration's docstring).
+  - On plain Postgres (CI, local) the roles don't exist and 0022 does nothing.
+
+  **Verify after each deploy that runs 0022** (Supabase SQL editor, prod and
+  the `dev` branch). Both must return `false`:
+
+  ```sql
+  SELECT has_table_privilege('anon', 'public.users', 'SELECT');
+  SELECT has_table_privilege('authenticated', 'public.users', 'TRUNCATE');
+  ```
+
+  `alembic downgrade` past 0022 grants Supabase's defaults back.
+- **Owner check: the `service_role` key.** `service_role` bypasses RLS and
+  keeps its grants, so its API key (and the `sb_secret_...` secret keys) must
+  not be stored anywhere the app or CI can read: not in Render env vars,
+  GitHub secrets, `.env*` files or this repo. The app has no use for it.
+  Confirm this once, and again whenever someone adds a Supabase secret.
 - **No Supabase Auth.** Alembic is the only schema tool; its
   `alembic upgrade head` pre-deploy step is what keeps prod's schema current.
 - **Pro plan**: daily backups, no idle pause. The point-in-time recovery

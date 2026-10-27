@@ -134,6 +134,21 @@ Delete `restore.dump` and any copy of the key when finished. To recover
 production, restore into a fresh database, verify, then repoint
 `DATABASE_URL`; do not restore over a live database.
 
+**Restoring into a Supabase project.** The dump has no grants (`--no-acl`),
+and `alembic_version` already says 0022, so migration 0022 (#704) won't run
+again. Supabase's default privileges then give `anon` and `authenticated`
+`ALL` on every restored table and sequence (RLS stays on: it is part of the
+table definition, not an ACL). Before repointing `DATABASE_URL`, revoke them
+again as `postgres`:
+
+```sql
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+SELECT has_table_privilege('anon', 'public.users', 'SELECT');  -- must be false
+```
+
 ## Restore drill
 
 Run **DB Restore Drill** (Actions > DB Restore Drill > Run workflow) at least
