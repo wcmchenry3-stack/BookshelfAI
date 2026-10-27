@@ -60,3 +60,9 @@ def test_finding_never_prints_the_value():
     finding, *_ = check_texts([f"x {EMAIL}"], source="sentry", emails=[EMAIL])
     assert EMAIL not in str(finding) and EMAIL not in repr(finding)
     assert str(finding) == "email found in sentry"
+
+
+def test_url_encoded_known_values_are_flagged():
+    assert kinds("GET /x?email=someone%40leaktest.example", emails=[EMAIL])
+    assert kinds("GET /x?e=a%2Bb%40y.example", allowlist=["a+b@y.example"])
+    assert kinds("q=some%20secret", secrets=["some secret"])

@@ -15,6 +15,7 @@ import contextlib
 import json
 import logging
 import re
+import urllib.parse
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -48,6 +49,7 @@ class Captured:
 
     def __init__(self) -> None:
         self.log_texts: list[str] = []
+        self.error_texts: list[str] = []  # ERROR and above
         self.sentry_payloads: list[dict] = []
 
     @property
@@ -69,6 +71,11 @@ def check_texts(
     exact = [("email", e) for e in emails if e]
     exact += [("allowlist", a) for a in allowlist if a]
     exact += [("secret", s) for s in secrets if s]
+    # Also the URL-encoded form (a value inside a logged URL or query string).
+    for kind, value in list(exact):
+        for encoded in (urllib.parse.quote(value, safe=""), urllib.parse.quote(value)):
+            if encoded != value:
+                exact.append((kind, encoded))
     findings: list[Finding] = []
     for text in texts:
         for kind, value in exact:
@@ -129,7 +136,10 @@ def capture():
 
     def handle(self, record):
         try:
-            captured.log_texts.append(_record_text(record))
+            text = _record_text(record)
+            captured.log_texts.append(text)
+            if record.levelno >= logging.ERROR:
+                captured.error_texts.append(text)
         except Exception:  # noqa: BLE001, S110 - capture must never break the flow
             pass
         return original_handle(self, record)
@@ -140,6 +150,8 @@ def capture():
                 if item.headers.get("type") in ("event", "transaction"):
                     captured.sentry_payloads.append(item.payload.json)
 
+    scope = sentry_sdk.get_global_scope()
+    previous_client = scope.client
     root = logging.getLogger()
     old_level = root.level
     root.setLevel(logging.DEBUG)
@@ -163,7 +175,7 @@ def capture():
             finally:
                 client.flush()
                 client.close()
-                sentry_sdk.get_global_scope().set_client(None)
     finally:
+        scope.set_client(previous_client)
         logging.Logger.handle = original_handle  # type: ignore[method-assign]
         root.setLevel(old_level)

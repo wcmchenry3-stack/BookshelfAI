@@ -15,6 +15,7 @@ Run on its own with:  pytest -m security tests/security/test_log_hygiene_flows.p
 """
 
 import io
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -88,10 +89,14 @@ class FakeDb:
         self.fail_commit = False
 
     async def execute(self, stmt):
-        entity = stmt.column_descriptions[0]["entity"]
         result = MagicMock()
         result.all.return_value = []
         result.scalar_one_or_none.return_value = None
+        result.scalar_one.return_value = 0
+        result.rowcount = 1
+        if not getattr(stmt, "is_select", False):
+            return result  # Insert / Update / Delete: accepted, nothing stored
+        entity = stmt.column_descriptions[0]["entity"]
         if entity is User:
             result.scalar_one_or_none.return_value = self.user
         elif entity is RefreshToken:
@@ -224,7 +229,7 @@ class TestAuthFlows:
         with lh.capture() as cap:
             with patch(
                 "app.api.auth.verify_google_id_token",
-                AsyncMock(side_effect=Exception(f"bad token {ID_TOKEN}")),
+                AsyncMock(side_effect=Exception("signature mismatch")),
             ):
                 assert (
                     client.post("/auth/google", json={"id_token": ID_TOKEN}).status_code
@@ -234,7 +239,7 @@ class TestAuthFlows:
             client.get("/auth/me", headers={"Authorization": "Bearer not.a.jwt"})
         # The verifier's own exception text is the verifier's; the app's log
         # lines must not echo the ID token or email.
-        lh.assert_clean(cap, emails=[EMAIL], secrets=[SUB])
+        lh.assert_clean(cap, emails=[EMAIL], secrets=[SUB, ID_TOKEN])
 
     def test_allowlist_reject_path(self, db):
         client = TestClient(app)
@@ -308,7 +313,12 @@ class TestLibraryFlows:
                 headers={"Authorization": f"Bearer {tokens['access_token']}"},
             )
         assert resp.status_code == 500
-        assert cap.sentry_payloads, "no Sentry event captured for the 500"
+        errors = [
+            p
+            for p in cap.sentry_payloads
+            if p.get("exception") and "/user-books/" in json.dumps(p, default=str)
+        ]
+        assert errors, "no Sentry exception event captured for the failing request"
         _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
 
 
@@ -353,6 +363,7 @@ class TestScanFlow:
                 files={"file": ("s.jpg", io.BytesIO(image), "image/jpeg")},
             )
         assert resp.status_code == 200, resp.text
+        assert cap.error_texts == [], "the scan flow logged ERROR records"
         _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
 
 
