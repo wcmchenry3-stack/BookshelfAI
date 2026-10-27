@@ -7,6 +7,8 @@ import { AuthProvider } from '../../contexts/AuthContext';
 
 const mockPost = jest.fn();
 const mockReplace = jest.fn();
+const mockBreadcrumb = jest.fn();
+const mockWaitForRefresh = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ replace: (...a: unknown[]) => mockReplace(...a) }),
   useSegments: () => ['(tabs)'],
@@ -16,6 +18,10 @@ jest.mock('../../lib/api', () => ({
   REFRESH_TOKEN_KEY: 'refresh',
   api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
   setAuthFailureCallback: jest.fn(),
+  waitForPendingRefresh: () => mockWaitForRefresh(),
+}));
+jest.mock('../../lib/sentry', () => ({
+  Sentry: { addBreadcrumb: (...a: unknown[]) => mockBreadcrumb(...a) },
 }));
 const mockGetItem = jest.fn();
 const mockDeleteItem = jest.fn();
@@ -57,6 +63,7 @@ const pressConfirm = () => confirmButtons().find((b) => b.text === 'Sign out')!.
 describe('Settings sign out', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockWaitForRefresh.mockResolvedValue(undefined);
     mockGetItem.mockImplementation(async (k: string) => (k === 'access' ? 'at' : 'refresh-abc'));
     mockDeleteItem.mockResolvedValue(undefined);
     mockPost.mockResolvedValue({});
@@ -154,20 +161,57 @@ describe('Settings sign out', () => {
     });
   });
 
-  // Keep last: fake timers leave the React test renderer unusable for later tests.
   it('a stalled server call cannot block the local sign-out', async () => {
     mockPost.mockReturnValue(new Promise(() => {}));
     await setup();
     jest.useFakeTimers();
     pressConfirm();
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(4000);
-    });
+    await jest.advanceTimersByTimeAsync(4000);
     expect(mockDeleteItem).not.toHaveBeenCalled();
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(1500);
-    });
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(mockDeleteItem).toHaveBeenCalledWith('access');
+    expect(mockDeleteItem).toHaveBeenCalledWith('refresh');
+    expect(jest.getTimerCount()).toBe(0);
     jest.useRealTimers();
     await expectSignedOut();
+  });
+
+  it('a refresh in flight is awaited so the rotated token is revoked', async () => {
+    let store = 'old-refresh';
+    mockGetItem.mockImplementation(async (k: string) => (k === 'access' ? 'at' : store));
+    let finish: () => void = () => {};
+    mockWaitForRefresh.mockReturnValue(
+      new Promise<void>((r) => {
+        finish = () => {
+          store = 'rotated-refresh';
+          r();
+        };
+      })
+    );
+    await setup();
+    pressConfirm();
+    await waitFor(() => expect(mockWaitForRefresh).toHaveBeenCalled());
+    expect(mockPost).not.toHaveBeenCalled();
+    await act(async () => finish());
+    await expectSignedOut();
+    expect(mockPost).toHaveBeenCalledWith(
+      '/auth/logout',
+      { refresh_token: 'rotated-refresh' },
+      { timeout: 5000 }
+    );
+  });
+
+  it('a throwing logout leaves a breadcrumb and re-enables the row', async () => {
+    mockDeleteItem.mockRejectedValue(new Error('storage down'));
+    const { getByTestId } = await setup();
+    pressConfirm();
+    await waitFor(() =>
+      expect(mockBreadcrumb).toHaveBeenCalledWith(expect.objectContaining({ category: 'auth' }))
+    );
+    await waitFor(() =>
+      expect(getByTestId('settings-sign-out').props.accessibilityState).toMatchObject({
+        busy: false,
+      })
+    );
   });
 });

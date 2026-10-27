@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
+import { Sentry } from '../../lib/sentry';
 import { serverLogout } from '../../lib/signOut';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useScanUsage } from '../../hooks/useScanUsage';
@@ -30,6 +31,9 @@ export default function SettingsScreen() {
       await serverLogout();
       // AuthContext's redirect effect sends the user to the login screen.
       await logout();
+    } catch {
+      // Never an unhandled rejection; no values logged.
+      Sentry.addBreadcrumb({ category: 'auth', message: 'sign-out failed', level: 'warning' });
     } finally {
       signingOutRef.current = false;
       setIsSigningOut(false);

@@ -13,7 +13,7 @@ Navigation is file-based via `expo-router`. Two route groups:
 - **Scan** (`scan.tsx`) — camera viewfinder (native) or file picker (web). Primary path into the app.
 - **My Books** (`my-books.tsx`) — the user's full library with a status filter (All / Wishlisted / Purchased / Reading / Read). Tapping a book opens its detail modal for notes, rating, status transitions, or delete.
 - **Wishlist** (`wishlist.tsx`) — filtered view showing only `wishlisted` entries. One-tap "I bought this" transitions to `purchased`.
-- **Settings** (`settings.tsx`) — account info, language picker, theme toggle, scan usage, sign-out (confirm prompt; best-effort `POST /auth/logout` with the refresh token, then local sign-out and redirect to login; no "sign out of all devices" yet).
+- **Settings** (`settings.tsx`) — account info, language picker, theme toggle, scan usage, sign-out (confirm prompt; best-effort `POST /auth/logout` with the refresh token, then local sign-out and redirect to login; no "sign out of all devices" yet). Server-side revocation is best-effort: if it times out (5 s) or the device is offline, the refresh token stays valid server-side until it expires (7 days). "Sign out of all devices" is the remedy.
 
 ## Core flows
 
