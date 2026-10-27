@@ -3,6 +3,7 @@ import { useRouter, useSegments } from 'expo-router';
 
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, api, setAuthFailureCallback } from '../lib/api';
 import { clearTokensIfFreshInstall } from '../lib/freshInstall';
+import { Sentry } from '../lib/sentry';
 import * as storage from '../lib/storage';
 
 // How long launch waits for GET /auth/me before carrying on signed in (#722).
@@ -32,6 +33,10 @@ async function checkSession(): Promise<SessionCheck> {
         storage.getItem(ACCESS_TOKEN_KEY),
         storage.getItem(REFRESH_TOKEN_KEY),
       ]);
+      // Both tokens still there after a 401 means the refresh failed for a
+      // passing reason (network, 5xx, 429), so the session is kept. It also
+      // covers a refresh that succeeded but whose retry still got a 401; that
+      // needs an inconsistent server, so it is not handled here (#729 review).
       return access && refresh ? 'unknown' : 'dead';
     }
   })();
@@ -69,27 +74,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // On mount: clear tokens left in the Keychain by a previous install, then
   // confirm any stored session with the server before leaving the loading
-  // state (#722).
+  // state (#722). Whatever throws, loading always ends: signed in only if a
+  // token was read and the session was not found dead, else signed out.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await installCheck;
-      const token = await storage.getItem(ACCESS_TOKEN_KEY);
-      if (!token) {
+      let authed = false;
+      try {
+        // A fresh install whose wipe failed may still hold the previous
+        // install's tokens: this launch is signed out without reading them.
+        if ((await installCheck) === 'wipe_failed') return;
+        const token = await storage.getItem(ACCESS_TOKEN_KEY);
+        if (!token) return;
+        authed = true;
+        const session = await checkSession();
+        if (session === 'dead') {
+          authed = false;
+          await storage.deleteItem(ACCESS_TOKEN_KEY);
+          await storage.deleteItem(REFRESH_TOKEN_KEY);
+        }
+      } catch {
+        Sentry.addBreadcrumb({
+          category: 'auth',
+          message: 'launch session check failed',
+          level: 'warning',
+        });
+      } finally {
         if (!cancelled) {
-          setIsAuthenticated(false);
+          setIsAuthenticated(authed);
           setIsLoading(false);
         }
-        return;
-      }
-      const session = await checkSession();
-      if (session === 'dead') {
-        await storage.deleteItem(ACCESS_TOKEN_KEY);
-        await storage.deleteItem(REFRESH_TOKEN_KEY);
-      }
-      if (!cancelled) {
-        setIsAuthenticated(session !== 'dead');
-        setIsLoading(false);
       }
     })();
     return () => {

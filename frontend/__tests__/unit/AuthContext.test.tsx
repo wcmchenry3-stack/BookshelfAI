@@ -234,6 +234,55 @@ describe('AuthProvider fresh install (#722)', () => {
   });
 });
 
+describe('AuthProvider fresh install wipe failure (#722 review)', () => {
+  it('shows login and skips /auth/me when the wipe fails on a fresh install', async () => {
+    await AsyncStorage.clear();
+    const keychain = useKeychain(BOTH_TOKENS);
+    mockDeleteItem.mockRejectedValueOnce(new Error('keychain locked'));
+
+    const { getByTestId } = await renderProvider();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
+    // The stale tokens may still be there; the marker makes the next launch retry.
+    expect(keychain.get('bookshelf_access_token')).toBe('old-access');
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe('pending');
+  });
+});
+
+describe('AuthProvider launch errors (#722 review)', () => {
+  it('ends loading signed out when reading the token throws', async () => {
+    mockGetItem.mockRejectedValue(new Error('keychain locked'));
+
+    const { getByTestId } = await renderProvider();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it('ends loading signed in when only the session check throws', async () => {
+    useKeychain(BOTH_TOKENS);
+    mockGet.mockRejectedValue({ response: { status: 401 } });
+    // The token read at launch works; the re-read after the 401 throws.
+    mockGetItem.mockResolvedValueOnce('old-access').mockRejectedValue(new Error('keychain locked'));
+
+    const { getByTestId } = await renderProvider();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+  });
+
+  it('ends loading signed out when deleting a dead session throws', async () => {
+    useKeychain({ bookshelf_access_token: 'old-access' });
+    mockGet.mockRejectedValue({ response: { status: 401 } });
+    mockDeleteItem.mockRejectedValue(new Error('keychain locked'));
+
+    const { getByTestId } = await renderProvider();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+  });
+});
+
 describe('AuthProvider launch validation (#722)', () => {
   it('confirms the stored session with GET /auth/me while loading', async () => {
     useKeychain(BOTH_TOKENS);
@@ -252,16 +301,19 @@ describe('AuthProvider launch validation (#722)', () => {
     const keychain = useKeychain(BOTH_TOKENS);
     // The real interceptor deletes both tokens and calls onAuthFailure when
     // /auth/refresh returns 401; simulate that, then reject with the 401.
+    let registeredBeforeMe = false;
     mockGet.mockImplementation(async () => {
       keychain.clear();
+      registeredBeforeMe = mockSetAuthFailureCallback.mock.calls.length > 0;
       const onAuthFailure = mockSetAuthFailureCallback.mock.calls.at(-1)?.[0];
-      await onAuthFailure?.();
+      await onAuthFailure();
       throw { response: { status: 401 } };
     });
 
     const { getByTestId } = await renderProvider();
 
     await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    expect(registeredBeforeMe).toBe(true);
     expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
   });
 

@@ -12,12 +12,16 @@ import * as storage from './storage';
 //
 // A missing marker alone does not mean a fresh install: every install from
 // before this build has no marker either. So the decision uses all of
-// AsyncStorage's keys:
-// - marker present: a known install; nothing to do.
+// AsyncStorage's keys and the marker's value:
+// - marker 'pending': an earlier wipe did not finish. Wipe again. This is
+//   checked before the upgrade rule below, because by now the app has written
+//   other keys and the install would otherwise look like an upgrade.
+// - marker '1' (done): a known install; nothing to do.
 // - no keys at all: a fresh install. Tokens in the Keychain belong to a
-//   previous install and are deleted.
+//   previous install. The marker is set to 'pending', both tokens are
+//   deleted, and only then is the marker set to '1'.
 // - other keys but no marker: an existing install upgrading to this build.
-//   The marker is written and the tokens are kept.
+//   The marker is set to '1' and the tokens are kept.
 // In a normal session the app writes `scan_job_queue` (lib/scanJobStorage.ts):
 // ScanJobProvider persists the queue, even when it is empty, after it loads
 // on every launch. Theme and language preferences are not in AsyncStorage.
@@ -25,37 +29,36 @@ import * as storage from './storage';
 // first launch, or the queue was never written) is signed out once. That is
 // acceptable and rare.
 //
-// One getAllKeys call answers both questions. AsyncStorage runs calls in the
+// When the wipe fails (SecureStore throws), the result is 'wipe_failed' and
+// AuthProvider treats the launch as signed out without reading the tokens
+// (fail closed); the 'pending' marker makes the next launch try again.
+//
+// Known gaps. Both fail open, and both need AsyncStorage itself to fail:
+// - If getAllKeys (or reading the marker) throws, nothing is wiped, because a
+//   fresh install cannot be told from an existing one.
+// - If writing 'pending' fails and the wipe then fails too, the next launch
+//   sees the queue key and takes the upgrade path.
+// If writing '1' fails after a good wipe, the marker stays 'pending' and the
+// next launch wipes again (fail closed: at worst one more sign-in).
+//
+// The check starts with one getAllKeys call. AsyncStorage runs calls in the
 // order they are issued, and AuthProvider starts this check while it renders,
 // before any child effect (such as ScanJobProvider's) can write a key on a
 // fresh install and make it look like an upgrade.
 export const INSTALL_MARKER_KEY = 'bookshelf_install_marker';
+export const MARKER_PENDING = 'pending';
+export const MARKER_DONE = '1';
 
-async function runInstallCheck(): Promise<boolean> {
-  if (Platform.OS === 'web') return false;
+/**
+ * - `no_change`: nothing was deleted (known install, upgrade, web, fresh
+ *   install with no tokens, or AsyncStorage unreadable).
+ * - `cleared`: tokens left by a previous install were deleted.
+ * - `wipe_failed`: a wipe was needed but SecureStore failed. The tokens may
+ *   still be there, so this launch must be treated as signed out.
+ */
+export type InstallCheckResult = 'no_change' | 'cleared' | 'wipe_failed';
 
-  let keys: readonly string[];
-  try {
-    keys = await AsyncStorage.getAllKeys();
-  } catch {
-    return false;
-  }
-  if (keys.includes(INSTALL_MARKER_KEY)) return false;
-
-  if (keys.length > 0) {
-    try {
-      await AsyncStorage.setItem(INSTALL_MARKER_KEY, '1');
-      Sentry.addBreadcrumb({
-        category: 'auth',
-        message: 'upgrade: install marker set',
-        level: 'info',
-      });
-    } catch {
-      // Tried again on the next launch, which still sees the other keys.
-    }
-    return false;
-  }
-
+async function wipeTokens(): Promise<InstallCheckResult> {
   let hadTokens: boolean;
   try {
     const [access, refresh] = await Promise.all([
@@ -66,8 +69,12 @@ async function runInstallCheck(): Promise<boolean> {
     await storage.deleteItem(ACCESS_TOKEN_KEY);
     await storage.deleteItem(REFRESH_TOKEN_KEY);
   } catch {
-    // Leave the marker unset so the wipe is tried again on the next launch.
-    return false;
+    Sentry.addBreadcrumb({
+      category: 'auth',
+      message: 'fresh install: clearing stale tokens failed',
+      level: 'warning',
+    });
+    return 'wipe_failed';
   }
   if (hadTokens) {
     Sentry.addBreadcrumb({
@@ -76,28 +83,64 @@ async function runInstallCheck(): Promise<boolean> {
       level: 'info',
     });
   }
-
   try {
-    await AsyncStorage.setItem(INSTALL_MARKER_KEY, '1');
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
   } catch {
-    // The tokens are already gone; the next launch decides again.
+    // The marker stays 'pending', so the next launch wipes again.
   }
-  return hadTokens;
+  return hadTokens ? 'cleared' : 'no_change';
 }
 
-let installCheck: Promise<boolean> | null = null;
+async function runInstallCheck(): Promise<InstallCheckResult> {
+  if (Platform.OS === 'web') return 'no_change';
+
+  let keys: readonly string[];
+  let marker: string | null = null;
+  try {
+    keys = await AsyncStorage.getAllKeys();
+    if (keys.includes(INSTALL_MARKER_KEY)) {
+      marker = await AsyncStorage.getItem(INSTALL_MARKER_KEY);
+    }
+  } catch {
+    return 'no_change';
+  }
+
+  if (marker === MARKER_PENDING) return wipeTokens();
+  if (marker !== null) return 'no_change';
+
+  if (keys.length > 0) {
+    try {
+      await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
+      Sentry.addBreadcrumb({
+        category: 'auth',
+        message: 'upgrade: install marker set',
+        level: 'info',
+      });
+    } catch {
+      // Tried again on the next launch, which still sees the other keys.
+    }
+    return 'no_change';
+  }
+
+  try {
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_PENDING);
+  } catch {
+    // Wipe anyway; see the known gaps above.
+  }
+  return wipeTokens();
+}
+
+let installCheck: Promise<InstallCheckResult> | null = null;
 
 /**
- * Once per app launch: on a fresh install, delete both tokens from
- * SecureStore and then write the install marker; on an upgrade, only write
- * the marker. Resolves to true when stale tokens were cleared. Repeat calls
- * share the first call's result.
+ * Once per app launch: on a fresh install (or after an unfinished wipe),
+ * delete both tokens from SecureStore; on an upgrade, only write the install
+ * marker. Repeat calls share the first call's result.
  *
  * Native only: on web the token store is in memory, so nothing survives.
- * Fails safe toward keeping the session: if AsyncStorage cannot be read,
- * nothing is wiped. Never rejects.
+ * Never rejects.
  */
-export function clearTokensIfFreshInstall(): Promise<boolean> {
+export function clearTokensIfFreshInstall(): Promise<InstallCheckResult> {
   if (!installCheck) installCheck = runInstallCheck();
   return installCheck;
 }
