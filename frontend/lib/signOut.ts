@@ -12,6 +12,10 @@ export const SERVER_LOGOUT_TIMEOUT_MS = 5000;
  * An in-flight token refresh is awaited first (inside the same time bound),
  * so the token revoked is the rotated one and the refresh cannot write a
  * fresh token pair after the caller has logged out.
+ *
+ * Caveat: a refresh that starts after the token is read, or one that stalls
+ * past the 5 s bound, can still write tokens after logout. That is closed by
+ * the session gate in #729.
  */
 export async function serverLogout(): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
