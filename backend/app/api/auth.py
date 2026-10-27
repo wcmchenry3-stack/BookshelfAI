@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
@@ -13,7 +12,8 @@ from app.auth.google import verify_google_id_token
 from app.auth.identity import (
     ACCOUNT_CONFLICT,
     AccountConflictError,
-    resolve_google_user,
+    email_allowed,
+    resolve_and_commit_google_user,
 )
 from app.auth.jwt import create_access_token, create_refresh_token, decode_token
 from app.core.config import settings
@@ -58,7 +58,7 @@ async def google_auth(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Google email not verified"
         )
 
-    if settings.allowed_emails_list and email not in settings.allowed_emails_list:
+    if not email_allowed(email, settings.allowed_emails_list):
         logger.warning("Email not in allowlist")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Email not authorized"
@@ -73,7 +73,7 @@ async def google_auth(
 
     # Identity is the Google subject, not the email (#688).
     try:
-        user = await resolve_google_user(
+        user = await resolve_and_commit_google_user(
             db,
             google_id=google_id,
             email=email,
@@ -84,17 +84,6 @@ async def google_auth(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=ACCOUNT_CONFLICT
         )
-
-    try:
-        await db.commit()
-    except IntegrityError:
-        # A concurrent sign-in took the same google_id or email first.
-        await db.rollback()
-        logger.warning("Sign-in hit a unique constraint; rejected as a conflict")
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=ACCOUNT_CONFLICT
-        )
-    await db.refresh(user)
     logger.info("Signed-in user resolved (user_id=%s)", user.id)
 
     access_token = create_access_token(str(user.id), user.email)

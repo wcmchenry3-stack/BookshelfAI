@@ -138,6 +138,37 @@ describe('LoginScreen', () => {
     alertSpy.mockRestore();
   });
 
+  it('shows a distinct message for 409 account_conflict (#688)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    setupGoogleAuth({
+      response: { type: 'success', params: { id_token: 'token' } },
+    });
+    mockLogin.mockRejectedValue({
+      response: { status: 409, data: { detail: 'account_conflict' } },
+    });
+    await render(<LoginScreen />);
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Error',
+        'This email is linked to a different Google account. Please contact support.'
+      )
+    );
+    alertSpy.mockRestore();
+  });
+
+  it('keeps the generic message for other 409s', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    setupGoogleAuth({
+      response: { type: 'success', params: { id_token: 'token' } },
+    });
+    mockLogin.mockRejectedValue({ response: { status: 409, data: { detail: 'other' } } });
+    await render(<LoginScreen />);
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith('Error', 'Sign-in failed. Please try again.')
+    );
+    alertSpy.mockRestore();
+  });
+
   describe('Google sign-in failures (#660)', () => {
     const errorText = "Couldn't start Google sign-in. Check your connection and try again.";
 

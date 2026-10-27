@@ -387,19 +387,24 @@ if not settings.is_hardened:
         from app.auth.identity import (
             ACCOUNT_CONFLICT,
             AccountConflictError,
-            resolve_google_user,
+            email_allowed,
+            resolve_and_commit_google_user,
         )
         from app.auth.jwt import create_access_token, create_refresh_token
         from app.core.database import get_db
         from app.models.refresh_token import RefreshToken as RefreshTokenModel
 
-        if not settings.test_auth_secret:
+        # A whitespace-only secret counts as unset: the route stays disabled.
+        if not settings.test_auth_secret.strip():
             return JSONResponse(
                 status_code=403,
                 content={"detail": "TEST_AUTH_SECRET not configured"},
             )
 
-        body = await request.json()
+        try:
+            body = await request.json()
+        except ValueError:  # not JSON (json.JSONDecodeError / bad encoding)
+            return JSONResponse(status_code=422, content={"detail": "Invalid body"})
         if not isinstance(body, dict):
             return JSONResponse(status_code=422, content={"detail": "Invalid body"})
         provided_secret = body.get("secret", "")
@@ -410,7 +415,7 @@ if not settings.is_hardened:
         if not hmac.compare_digest(provided_secret, settings.test_auth_secret):
             return JSONResponse(status_code=403, content={"detail": "Invalid secret"})
 
-        if settings.allowed_emails_list and email not in settings.allowed_emails_list:
+        if not email_allowed(email, settings.allowed_emails_list):
             return JSONResponse(
                 status_code=403, content={"detail": "Email not in allowlist"}
             )
@@ -420,7 +425,7 @@ if not settings.is_hardened:
             # synthetic subject that no real Google ``sub`` (all digits) can
             # take, never by email. An email held by a real account is a 409.
             try:
-                user = await resolve_google_user(
+                user = await resolve_and_commit_google_user(
                     db,
                     google_id=f"test_{email}",
                     email=email,
@@ -431,8 +436,6 @@ if not settings.is_hardened:
                 return JSONResponse(
                     status_code=409, content={"detail": ACCOUNT_CONFLICT}
                 )
-            await db.commit()
-            await db.refresh(user)
 
             access_token = create_access_token(str(user.id), user.email)
             refresh_token, jti = create_refresh_token(str(user.id))

@@ -154,6 +154,62 @@ touches the DB itself (no separate `/health/db` exists yet).
   deploy. Its `if:` still runs when `deploy-api` was merely *skipped* (blank
   service-ID var) — only an actual API deploy failure blocks it.
 
+## Resolving a sign-in `account_conflict` (409)
+
+`POST /auth/google` answers `409 account_conflict` when a Google account the
+API has never seen (new `sub`) presents an email, ignoring case, that already
+belongs to a user with a different `google_id` (#688). The app never merges
+the two; an operator does, by hand:
+
+1. Find the holder: the API log line `Sign-in rejected: email belongs to a
+   user with a different subject (holder_user_id=<old_id>)`. Logs never carry
+   the email.
+2. **Verify ownership out of band** before changing anything: the person must
+   show they control both the old account (sign in with the old Google
+   account, or confirm from that mailbox) and the new Google account. If in
+   doubt, do nothing — the 409 is the safe state.
+3. Choose one fix. The SQL below is **operator-only**, run in a transaction
+   in the database console (Supabase SQL editor / `psql`); application code
+   stays ORM-only.
+
+   **A. Move the existing library to the new Google account.** Free the email
+   (as in B), ask the person to sign in once with the new Google account
+   (this creates an empty user; its id is in the `Signed-in user resolved
+   (user_id=<new_id>)` log line), then hand its subject to the old row:
+
+   ```sql
+   -- OPERATOR ONLY. Replace <old_id> and <new_id>.
+   BEGIN;
+   SELECT id, google_id, email, created_at FROM users
+    WHERE id IN ('<old_id>', '<new_id>');
+   -- The new row must be empty before it is deleted (expect 0):
+   SELECT count(*) FROM user_books WHERE user_id = '<new_id>';
+   CREATE TEMP TABLE moving ON COMMIT DROP AS
+     SELECT google_id, email FROM users WHERE id = '<new_id>';
+   DELETE FROM users WHERE id = '<new_id>';  -- cascades its tokens / quota rows
+   UPDATE users
+      SET google_id = (SELECT google_id FROM moving),
+          email     = (SELECT email FROM moving)
+    WHERE id = '<old_id>';
+   COMMIT;
+   ```
+
+   **B. Free the email only** (the old account keeps its library and stays
+   reachable through its own Google account; the new Google account gets a
+   fresh account on its next sign-in):
+
+   ```sql
+   -- OPERATOR ONLY. Replace <old_id>.
+   BEGIN;
+   UPDATE users SET email = 'released+' || id || '@invalid.example'
+    WHERE id = '<old_id>';
+   COMMIT;
+   ```
+
+   If the old Google account signs in later, its stored email is refreshed
+   from its token again (when no other user holds that address).
+4. Ask the person to sign in again and confirm it succeeds.
+
 ## First production deploy — cutover checklist
 
 **Requires #448 (health split) merged and deployed before cutover** — until

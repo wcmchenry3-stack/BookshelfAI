@@ -418,8 +418,8 @@ class Settings(BaseSettings):
         """TEST_AUTH_SECRET enables the dev-only /auth/test-login route, which
         mints tokens without Google. Staging and production must not boot with
         it set, even though the route is not registered there (#688). The
-        value is never echoed."""
-        if self.is_hardened and self.test_auth_secret.strip():
+        value is never echoed. Any non-empty value counts, whitespace too."""
+        if self.is_hardened and self.test_auth_secret:
             raise ValueError("TEST_AUTH_SECRET must be unset in staging and production")
         return self
 

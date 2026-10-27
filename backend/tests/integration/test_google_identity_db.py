@@ -6,9 +6,16 @@ Needs DATABASE_URL pointing at a Postgres database.
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.auth.identity import AccountConflictError, resolve_google_user
+from app.auth import identity
+from app.auth.identity import (
+    AccountConflictError,
+    resolve_and_commit_google_user,
+    resolve_google_user,
+)
+from app.core.config import settings
 from app.models.user import User
 
 pytestmark = pytest.mark.integration
@@ -93,3 +100,110 @@ async def test_new_subject_and_email_creates_user(db_session):
     await db_session.flush()
     assert got.id is not None
     assert got.google_id == f"fresh-{t}"
+
+
+async def test_case_variant_email_with_other_subject_is_conflict(db_session):
+    t = _tag()
+    victim = await _add(db_session, f"Victim-{t}@Example.com", f"victim-{t}")
+
+    with pytest.raises(AccountConflictError):
+        await _resolve(db_session, f"attacker-{t}", f"victim-{t}@example.COM")
+    await db_session.flush()
+
+    await db_session.refresh(victim)
+    assert victim.email == f"Victim-{t}@Example.com"
+    assert (
+        await db_session.execute(select(User).where(User.google_id == f"attacker-{t}"))
+    ).scalar_one_or_none() is None
+
+
+async def test_case_only_change_for_same_subject_keeps_user(db_session):
+    t = _tag()
+    user = await _add(db_session, f"alice-{t}@example.com", f"alice-{t}")
+
+    got = await _resolve(db_session, f"alice-{t}", f"Alice-{t}@Example.com")
+    await db_session.flush()
+
+    assert got.id == user.id
+    assert got.email == f"Alice-{t}@Example.com"
+
+
+@pytest.fixture
+async def sessions():
+    """Two independent committing sessions; every row they made is removed."""
+    engine = create_async_engine(settings.async_database_url)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    tag = _tag()
+    yield maker, tag
+    async with maker() as s:
+        await s.execute(delete(User).where(User.google_id.like(f"%{tag}%")))
+        await s.commit()
+    await engine.dispose()
+
+
+def _race(monkeypatch, maker, competitor: User):
+    """After the first lookup, a concurrent sign-in commits ``competitor``,
+    so this session's commit hits a real unique violation."""
+    real = identity.resolve_google_user
+    calls = {"n": 0}
+
+    async def racing(db, **kwargs):
+        user = await real(db, **kwargs)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            async with maker() as other:
+                other.add(competitor)
+                await other.commit()
+        return user
+
+    monkeypatch.setattr(identity, "resolve_google_user", racing)
+    return calls
+
+
+async def test_double_tap_same_new_subject_signs_in_once(sessions, monkeypatch):
+    maker, t = sessions
+    winner = User(email=f"tap-{t}@example.com", google_id=f"tap-{t}")
+    calls = _race(monkeypatch, maker, winner)
+
+    async with maker() as db:
+        got = await resolve_and_commit_google_user(
+            db,
+            google_id=f"tap-{t}",
+            email=f"tap-{t}@example.com",
+            display_name="After",
+            avatar_url=None,
+        )
+    assert calls["n"] == 2
+    assert got.id == winner.id
+    async with maker() as db:
+        rows = (
+            (await db.execute(select(User).where(User.google_id == f"tap-{t}")))
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1
+
+
+async def test_email_taken_concurrently_by_other_subject_is_conflict(
+    sessions, monkeypatch
+):
+    maker, t = sessions
+    other = User(email=f"race-{t}@example.com", google_id=f"other-{t}")
+    _race(monkeypatch, maker, other)
+
+    async with maker() as db:
+        with pytest.raises(AccountConflictError):
+            await resolve_and_commit_google_user(
+                db,
+                google_id=f"mine-{t}",
+                # Same case: a concurrent case-variant insert is not caught
+                # until users.email has a unique index on lower(email).
+                email=f"race-{t}@example.com",
+                display_name=None,
+                avatar_url=None,
+            )
+    async with maker() as db:
+        mine = (
+            await db.execute(select(User).where(User.google_id == f"mine-{t}"))
+        ).scalar_one_or_none()
+    assert mine is None

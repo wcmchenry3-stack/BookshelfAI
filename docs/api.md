@@ -61,7 +61,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 
 ### `POST /auth/google` — exchange Google ID token for Bookshelf tokens
 
-Verifies the ID token against Google's JWKS, checks the email against `ALLOWED_EMAILS`, finds the User by the token's `sub` (stored as `users.google_id`; never by email) or creates one, refreshes its name, avatar and email from the token, and issues fresh access + refresh tokens. If Google reports a new email that another user already holds, the stored email is kept.
+Verifies the ID token against Google's JWKS, checks the token's current email against `ALLOWED_EMAILS` (ignoring case) before any user lookup, finds the User by the token's `sub` (stored as `users.google_id`; never by email) or creates one, refreshes its name, avatar and email from the token, and issues fresh access + refresh tokens. If Google reports a new email that another user already holds, the stored email is kept. Email comparisons ignore case; a case-only change is stored. If the commit hits a unique violation (a concurrent sign-in), the lookup is retried once.
 
 **Auth:** none
 **Rate limit:** `rate_limit_auth`
@@ -87,7 +87,7 @@ The ID token's `aud` claim must match one of `GOOGLE_CLIENT_ID`, `GOOGLE_IOS_CLI
 **Errors:**
 - `401` — token verification failed / email not verified
 - `403` — email not in `ALLOWED_EMAILS`
-- `409` `account_conflict` — no user has this `sub`, but the verified email belongs to a user with a different Google subject (never merged); also returned if a concurrent sign-in claimed the same subject or email first
+- `409` `account_conflict` — no user has this `sub`, but the verified email (ignoring case) belongs to a user with a different Google subject (never merged), including when a concurrent sign-in took the email first; an operator resolves it (see `RENDER.md` → Resolving a sign-in `account_conflict`)
 
 **Example:**
 ```bash

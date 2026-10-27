@@ -5,8 +5,14 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
-from app.auth.identity import AccountConflictError, resolve_google_user
+from app.auth.identity import (
+    AccountConflictError,
+    email_allowed,
+    resolve_and_commit_google_user,
+    resolve_google_user,
+)
 from app.models.user import User
 
 
@@ -97,3 +103,97 @@ async def test_empty_google_id_is_rejected():
     with pytest.raises(ValueError):
         await _resolve(db, google_id="")
     db.execute.assert_not_called()
+
+
+async def test_case_only_email_change_refreshes_without_holder_lookup():
+    user = _user("alice@example.com", "111")
+    db = _db(user)
+    got = await _resolve(db, google_id="111", email="Alice@Example.com")
+    assert got is user
+    assert user.email == "Alice@Example.com"  # stored as Google reports it
+    assert db.execute.await_count == 1
+
+
+async def test_case_variant_of_existing_email_is_a_conflict():
+    victim = _user("victim@example.com", "999")
+    db = _db(None, victim)
+    with pytest.raises(AccountConflictError):
+        await _resolve(db, google_id="attacker", email="Victim@EXAMPLE.com")
+    where = str(db.execute.await_args_list[1].args[0].whereclause)
+    assert where == "lower(users.email) = :lower_1"
+    assert victim.email == "victim@example.com"
+
+
+async def test_changed_email_holder_lookup_ignores_case():
+    user = _user("old@example.com", "111")
+    other = _user("new@example.com", "222")
+    db = _db(user, other)
+    await _resolve(db, google_id="111", email="NEW@example.com")
+    assert user.email == "old@example.com"
+
+
+@pytest.mark.parametrize(
+    ("email", "allowlist", "expected"),
+    [
+        ("a@x.com", [], True),
+        ("A@X.com", ["a@x.com"], True),
+        ("a@x.com", ["A@X.COM"], True),
+        ("b@x.com", ["a@x.com"], False),
+    ],
+)
+def test_email_allowed_ignores_case(email, allowlist, expected):
+    assert email_allowed(email, allowlist) is expected
+
+
+def _committing_db(*lookups, commits):
+    db = _db(*lookups)
+    db.commit = AsyncMock(side_effect=commits)
+    db.rollback = AsyncMock()
+    db.refresh = AsyncMock()
+    return db
+
+
+def _dup():
+    return IntegrityError("INSERT", {}, Exception("duplicate key"))
+
+
+async def test_resolve_and_commit_retries_once_and_finds_the_winner():
+    winner = _user("new@example.com", "111")
+    db = _committing_db(None, None, winner, commits=[_dup(), None])
+    got = await resolve_and_commit_google_user(
+        db,
+        google_id="111",
+        email="new@example.com",
+        display_name=None,
+        avatar_url=None,
+    )
+    assert got is winner
+    db.rollback.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(winner)
+
+
+async def test_resolve_and_commit_conflicts_when_email_taken_meanwhile():
+    other = _user("new@example.com", "222")
+    db = _committing_db(None, None, None, other, commits=[_dup()])
+    with pytest.raises(AccountConflictError):
+        await resolve_and_commit_google_user(
+            db,
+            google_id="111",
+            email="new@example.com",
+            display_name=None,
+            avatar_url=None,
+        )
+    db.rollback.assert_awaited_once()
+
+
+async def test_resolve_and_commit_gives_up_after_two_violations():
+    db = _committing_db(None, None, None, None, commits=[_dup(), _dup()])
+    with pytest.raises(AccountConflictError):
+        await resolve_and_commit_google_user(
+            db,
+            google_id="111",
+            email="new@example.com",
+            display_name=None,
+            avatar_url=None,
+        )
+    assert db.rollback.await_count == 2

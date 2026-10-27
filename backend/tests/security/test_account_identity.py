@@ -59,6 +59,10 @@ def _fake_session(*lookups, commit_error=None):
     return db
 
 
+def _unique_violation() -> IntegrityError:
+    return IntegrityError("INSERT", {}, Exception("duplicate key"))
+
+
 def _post_google(db, claims=CLAIMS):
     from app.core.database import get_db
 
@@ -126,13 +130,77 @@ class TestEmailReuseTakeover:
         assert resp.status_code == 401
         db.execute.assert_not_awaited()
 
-    def test_unique_race_on_commit_is_409(self):
-        db = _fake_session(None, None, commit_error=IntegrityError("x", {}, None))
+    def test_double_tap_with_same_new_subject_retries_and_signs_in(self):
+        """The first commit loses the insert race to an identical sign-in;
+        the retry finds that row by subject and signs in."""
+        winner = User(id=uuid.uuid4(), email=VICTIM_EMAIL, google_id="attacker-sub-1")
+        db = _fake_session(
+            None, None, winner, commit_error=[_unique_violation(), None, None]
+        )
+        resp, access = _post_google(db)
+        assert resp.status_code == 200
+        db.rollback.assert_awaited_once()
+        assert access.call_args.args[0] == str(winner.id)
+
+    def test_email_taken_concurrently_by_other_subject_is_409(self):
+        """The retry finds the email now held by a different subject."""
+        db = _fake_session(
+            None, None, None, _victim(), commit_error=[_unique_violation()]
+        )
         resp, access = _post_google(db)
         assert resp.status_code == 409
         assert resp.json() == {"detail": "account_conflict"}
-        db.rollback.assert_awaited()
+        db.rollback.assert_awaited_once()
         access.assert_not_called()
+
+    def test_second_unique_violation_is_409(self):
+        db = _fake_session(
+            None, None, None, None, commit_error=[_unique_violation()] * 2
+        )
+        resp, access = _post_google(db)
+        assert resp.status_code == 409
+        assert db.rollback.await_count == 2
+        access.assert_not_called()
+
+    def test_case_variant_of_victim_email_is_409(self):
+        """``VICTIM@Example.com`` is the victim's address too (lower(email))."""
+        victim = _victim()
+        db = _fake_session(None, victim)
+        resp, access = _post_google(db, {**CLAIMS, "email": "VICTIM@Example.com"})
+        assert resp.status_code == 409
+        access.assert_not_called()
+        where = str(db.execute.await_args_list[1].args[0].whereclause)
+        assert where == "lower(users.email) = :lower_1"
+        assert victim.email == VICTIM_EMAIL
+
+    def test_allowlist_ignores_case(self):
+        from app.core.database import get_db
+
+        async def _get_db():
+            yield _fake_session(None, None)
+
+        app.dependency_overrides[get_db] = _get_db
+        try:
+            for allowed, expected in (
+                (["Victim@EXAMPLE.com"], 200),
+                (["someone@example.com"], 403),
+            ):
+                with (
+                    patch(
+                        "app.api.auth.verify_google_id_token",
+                        return_value={**CLAIMS, "email": "victim@Example.COM"},
+                    ),
+                    patch("app.api.auth.settings") as st,
+                    patch("app.api.auth.create_access_token", return_value="a"),
+                    patch("app.api.auth.create_refresh_token", return_value=("r", "j")),
+                ):
+                    st.allowed_emails_list = allowed
+                    st.jwt_expiry_hours = 24
+                    st.refresh_token_expiry_days = 7
+                    resp = TestClient(app).post("/auth/google", json={"id_token": "t"})
+                assert resp.status_code == expected
+        finally:
+            app.dependency_overrides.clear()
 
     def test_google_route_keeps_its_rate_limit(self):
         assert limiter._route_limits.get("app.api.auth.google_auth")
@@ -149,6 +217,15 @@ class TestTestLoginGate:
             )
         assert "TEST_AUTH_SECRET must be unset" in str(exc.value)
         assert "do-not-echo-me" not in str(exc.value)
+
+    @pytest.mark.parametrize("env", ["staging", "production"])
+    def test_hardened_boot_fails_with_whitespace_test_auth_secret(self, env):
+        with pytest.raises(ValidationError):
+            Settings(
+                database_url="postgresql+asyncpg://u:p@localhost/db",
+                environment=env,
+                test_auth_secret="  ",
+            )
 
     @pytest.mark.parametrize("env", ["development", "test"])
     def test_local_environments_accept_test_auth_secret(self, env):
@@ -194,7 +271,7 @@ class TestTestLoginGate:
 
 
 class TestTestLoginIdentity:
-    def _post(self, db, body):
+    def _post(self, db, body, secret="sekrit", raw=None):
         from app import main
         from app.core import database
 
@@ -202,13 +279,20 @@ class TestTestLoginIdentity:
             yield db
 
         with (
-            patch.object(main.settings, "test_auth_secret", "sekrit"),
+            patch.object(main.settings, "test_auth_secret", secret),
             patch.object(main.settings, "allowed_emails", ""),
             patch.object(database, "get_db", _get_db),
             patch("app.auth.jwt.create_access_token", return_value="a"),
             patch("app.auth.jwt.create_refresh_token", return_value=("r", "j")),
         ):
-            return TestClient(app).post("/auth/test-login", json=body)
+            client = TestClient(app)
+            if raw is not None:
+                return client.post(
+                    "/auth/test-login",
+                    content=raw,
+                    headers={"Content-Type": "application/json"},
+                )
+            return client.post("/auth/test-login", json=body)
 
     def test_email_of_a_real_account_is_409(self):
         victim = _victim()
@@ -246,3 +330,37 @@ class TestTestLoginIdentity:
 
     def test_test_login_keeps_its_rate_limit(self):
         assert limiter._route_limits.get("app.main.test_login")
+
+    def test_whitespace_only_secret_counts_as_unset(self):
+        db = _fake_session()
+        resp = self._post(db, {"secret": "  ", "email": "e2e@x.com"}, secret="  ")
+        assert resp.status_code == 403
+        assert "not configured" in resp.json()["detail"]
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.parametrize("raw", [b"not json", b"{", b"\xff\xfe"])
+    def test_non_json_body_is_422(self, raw):
+        db = _fake_session()
+        resp = self._post(db, None, raw=raw)
+        assert resp.status_code == 422
+        db.execute.assert_not_awaited()
+
+    def test_commit_unique_violation_twice_is_409(self):
+        db = _fake_session(
+            None, None, None, None, commit_error=[_unique_violation()] * 2
+        )
+        resp = self._post(db, {"secret": "sekrit", "email": "e2e@example.com"})
+        assert resp.status_code == 409
+        assert resp.json() == {"detail": "account_conflict"}
+        assert db.rollback.await_count == 2
+
+    def test_commit_race_with_same_subject_retries_and_signs_in(self):
+        winner = User(
+            id=uuid.uuid4(), email="e2e@example.com", google_id="test_e2e@example.com"
+        )
+        db = _fake_session(
+            None, None, winner, commit_error=[_unique_violation(), None, None]
+        )
+        resp = self._post(db, {"secret": "sekrit", "email": "e2e@example.com"})
+        assert resp.status_code == 200
+        db.rollback.assert_awaited_once()
