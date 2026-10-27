@@ -39,16 +39,41 @@ retry() {
 # (which ships with Node 25) has a known crash: "Exit handler never called!"
 # that fires on our package-lock.json tree. Node 22 LTS ships npm 10.x and
 # satisfies react-native's ">= 20.19.4" engine requirement.
-brew install node@22
-export PATH="$(brew --prefix node@22)/bin:$PATH"
+#
+# Downloaded from nodejs.org, not Homebrew (#718): Xcode Cloud runs Xcode 26.x
+# on Intel x86_64 workers, Homebrew stopped shipping Intel bottles in Sept 2026,
+# and `brew install node@22` then builds ~20 dependencies from source and fails
+# ("C compiler cannot create executables"). The official tarball is prebuilt for
+# both architectures and checked against the SHASUMS256 published by nodejs.org.
+# To bump: pick a v22.x from https://nodejs.org/dist/index.json whose npm is
+# 10.x, and copy both darwin hashes from its SHASUMS256.txt.
+NODE_VERSION="22.23.4"
+case "$(uname -m)" in
+  arm64)  NODE_ARCH="arm64"; NODE_SHA256="c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428" ;;
+  x86_64) NODE_ARCH="x64";   NODE_SHA256="efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819" ;;
+  *) echo "ERROR: unsupported CPU architecture $(uname -m)" >&2; exit 1 ;;
+esac
+NODE_DIST="node-v${NODE_VERSION}-darwin-${NODE_ARCH}"
+NODE_ROOT="$HOME/.bookshelf-node"
+NODE_HOME="$NODE_ROOT/$NODE_DIST"
+if [[ ! -x "$NODE_HOME/bin/node" ]]; then
+  mkdir -p "$NODE_ROOT"
+  retry 3 10 curl -fsSL -o "$NODE_ROOT/$NODE_DIST.tar.gz" \
+    "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_DIST}.tar.gz"
+  echo "$NODE_SHA256  $NODE_ROOT/$NODE_DIST.tar.gz" | shasum -a 256 -c -
+  tar -xzf "$NODE_ROOT/$NODE_DIST.tar.gz" -C "$NODE_ROOT"
+  rm -f "$NODE_ROOT/$NODE_DIST.tar.gz"
+fi
+export PATH="$NODE_HOME/bin:$PATH"
+echo "INFO: node $(node --version), npm $(npm --version) ($(uname -m))"
 
 # Persist NODE_BINARY for Xcode build phases (which run in separate processes).
 # Without this, .xcode.env falls back to `command -v node` which returns empty
-# on Xcode Cloud (node@22 is keg-only and not on the default PATH).
+# on Xcode Cloud (this Node is not on the default PATH).
 # An empty NODE_BINARY causes the "Bundle React Native code" phase to fail
 # silently (masked by SENTRY_ALLOW_FAILURE=true), producing an archive
 # without main.jsbundle → handleBundleLoadingError crash at launch.
-NODE22_BIN="$(brew --prefix node@22)/bin/node"
+NODE22_BIN="$NODE_HOME/bin/node"
 echo "export NODE_BINARY=\"$NODE22_BIN\"" > "$CI_PRIMARY_REPOSITORY_PATH/frontend/ios/.xcode.env.local"
 echo "INFO: wrote .xcode.env.local → NODE_BINARY=$NODE22_BIN"
 
