@@ -10,9 +10,11 @@ The lookups in ``app/auth/identity.py`` already compare ``lower(email)``
 lookup, finds the winner's row and answers ``409 account_conflict``.
 
 Expand only. The existing case-sensitive unique constraint
-(``users_email_key``) is kept: it is implied by the new index, so it can never
-fail on its own, and dropping it would be a separate contract step for no
-gain (the extra index on a small table costs next to nothing).
+(``uq_users_email``) is kept: every row it rejects the new index rejects too,
+so it changes no behaviour (an exact duplicate may be reported under either
+name; both are SQLSTATE 23505, which is all ``is_unique_violation`` checks),
+and dropping it would be a separate contract step for no gain (the extra
+index on a small table costs next to nothing).
 
 Existing case-duplicates are not merged: which row is the real account is an
 operator decision (see ``RENDER.md`` on resolving ``account_conflict``). If

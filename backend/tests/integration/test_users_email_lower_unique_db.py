@@ -129,7 +129,10 @@ def _cycle(connection) -> None:
         migration.upgrade()
         ix = _index(connection)
         assert ix is not None and ix["unique"]
-        assert ix["expressions"] == ["lower((email)::text)"]
+        # Postgres renders it as lower((email)::text) or lower(email::text).
+        assert [e.replace("(", "").replace(")", "") for e in ix["expressions"]] == [
+            "loweremail::text"
+        ]
         # Writes to users wait until the run commits, so no duplicate could
         # slip in between the pre-check and the build.
         assert _holds_share_lock_on_users(connection)
@@ -211,9 +214,9 @@ async def test_concurrent_case_variant_first_sign_ins_one_row_and_409(monkeypatc
     calls: dict[str, int] = {}
 
     async def lookup_then_wait(db, **kwargs):
-        user = await real(db, **kwargs)
         sub = kwargs["google_id"]
         calls[sub] = calls.get(sub, 0) + 1
+        user = await real(db, **kwargs)
         if calls[sub] == 1:  # only the first lookup of each request
             await asyncio.wait_for(barrier.wait(), timeout=10)
         return user
@@ -225,7 +228,12 @@ async def test_concurrent_case_variant_first_sign_ins_one_row_and_409(monkeypatc
     monkeypatch.setattr(settings, "allowed_emails", "")
     app.dependency_overrides[get_db] = _db
     try:
-        with patch("app.api.auth.verify_google_id_token", side_effect=verify):
+        with (
+            patch("app.api.auth.verify_google_id_token", side_effect=verify),
+            # Token signing is not under test here.
+            patch("app.api.auth.create_access_token", return_value="a"),
+            patch("app.api.auth.create_refresh_token", return_value=("r", tag)),
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:

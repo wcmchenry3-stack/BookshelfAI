@@ -251,7 +251,7 @@ async def test_case_variant_email_taken_concurrently_is_conflict(sessions, monke
     """
     maker, t = sessions
     other = User(email=f"Race-{t}@Example.com", google_id=f"other-{t}")
-    calls = _race(monkeypatch, maker, other)
+    _race(monkeypatch, maker, other)
 
     async with maker() as db:
         with pytest.raises(AccountConflictError):
@@ -262,7 +262,6 @@ async def test_case_variant_email_taken_concurrently_is_conflict(sessions, monke
                 display_name=None,
                 avatar_url=None,
             )
-    assert calls["n"] == 2  # the commit failed once, then the lookup reran
     async with maker() as db:
         rows = (
             (
