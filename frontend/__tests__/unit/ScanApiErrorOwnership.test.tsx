@@ -74,6 +74,9 @@ beforeEach(() => {
   api.defaults.adapter = async (config) => {
     const { status, data } = replies((config.method ?? 'get').toLowerCase(), config.url ?? '');
     const response = { status, data, headers: {}, config, statusText: '' };
+    if (status === 0) {
+      throw Object.assign(new Error('Network Error'), { isAxiosError: true, config });
+    }
     if (status < 400) return response;
     throw Object.assign(new Error(`Request failed with status code ${status}`), {
       isAxiosError: true,
@@ -130,6 +133,43 @@ describe('one Sentry owner per API failure (#724)', () => {
       await hook.result.current.scan.startScan('image', 'file:///b.jpg');
     });
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
+  });
+
+  it('not lost: a no-response network error on POST /scan is still captured once by ScanJobContext', async () => {
+    replies = () => ({ status: 0, data: null });
+    const hook = await setup();
+    await act(async () => {
+      await hook.result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    await waitFor(() => expect(mockCaptureException).toHaveBeenCalledTimes(1));
+    const [captured, ctx] = mockCaptureException.mock.calls[0];
+    expect(captured).toBeInstanceOf(Error);
+    expect(ctx.tags).toMatchObject({ feature: 'scan', action: 'execute_scan' });
+    expect(JSON.stringify(mockCaptureException.mock.calls)).not.toContain('SECRET-ACCESS-TOKEN');
+  });
+
+  it('not lost: a 422 with another detail on POST /scan is still captured once by ScanJobContext', async () => {
+    replies = () => ({ status: 422, data: { detail: 'other' } });
+    const hook = await setup();
+    await act(async () => {
+      await hook.result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    await waitFor(() => expect(mockCaptureException).toHaveBeenCalledTimes(1));
+    expect(mockCaptureException.mock.calls[0][1].tags).toMatchObject({
+      feature: 'scan',
+      action: 'execute_scan',
+      'http.status': '422',
+    });
+  });
+
+  it('a handled 503 scan_disabled is not captured by anyone (as before)', async () => {
+    replies = () => ({ status: 503, data: { detail: 'scan_disabled' } });
+    const hook = await setup();
+    await act(async () => {
+      await hook.result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    await waitFor(() => expect(hook.result.current.scan.jobs[0]?.error).toBe('paused'));
+    expect(mockCaptureException).not.toHaveBeenCalled();
   });
 
   it('a 5xx on POST /wishlist is captured once, not again by ScanJobContext', async () => {

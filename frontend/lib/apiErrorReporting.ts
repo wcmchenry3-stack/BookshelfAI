@@ -61,10 +61,16 @@ export function pathTemplate(url: string | undefined): string {
   if (!url) return 'unknown';
   const noOrigin = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '');
   const path = noOrigin.split(/[?#]/)[0] || '/';
-  return path
-    .split('/')
-    .map((seg) => (/^\d+$/.test(seg) || UUID_RE.test(seg) ? ':id' : seg))
-    .join('/');
+  return (
+    path
+      .split('/')
+      // Safe by default: anything that could be an identifier (UUID, ISBN, hash,
+      // slug, any segment with a digit, or a long one) becomes `:id`. Static
+      // route words (user-books, scan, usage, wishlist, books, search, auth, me,
+      // unverified) have no digits and are short, so they stay.
+      .map((seg) => (UUID_RE.test(seg) || /\d/.test(seg) || seg.length > 24 ? ':id' : seg))
+      .join('/')
+  );
 }
 
 function statusOf(err: unknown): number | undefined {

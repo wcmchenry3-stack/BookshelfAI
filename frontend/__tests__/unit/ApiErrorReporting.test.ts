@@ -81,6 +81,28 @@ describe('API error reporting (#724)', () => {
     expect(mockCapture.mock.calls[0][1].tags['api.path']).toBe('/user-books/:id');
   });
 
+  it('templates ISBN-like, hash and long-slug segments, and keeps static route words', () => {
+    expect(pathTemplate('/books/isbn/9780441013593')).toBe('/books/isbn/:id');
+    expect(pathTemplate('/books/isbn/044101359X1')).toBe('/books/isbn/:id');
+    expect(pathTemplate('/catalog/deadbeefdeadbeefdeadbeefdeadbeef')).toBe('/catalog/:id');
+    expect(pathTemplate('/catalog/e3b0c44298fc1c149afbf4c8996fb924')).toBe('/catalog/:id');
+    expect(pathTemplate('/books/the-hitchhikers-guide-to-the-galaxy-by-douglas')).toBe(
+      '/books/:id'
+    );
+    for (const p of [
+      '/user-books',
+      '/scan',
+      '/scan/usage',
+      '/wishlist',
+      '/books/search',
+      '/auth/refresh',
+      '/auth/me',
+      '/user-books/unverified',
+    ]) {
+      expect(pathTemplate(p)).toBe(p);
+    }
+  });
+
   it.each([
     [403, 'enhanced_requires_premium'],
     [402, 'whatever'],
