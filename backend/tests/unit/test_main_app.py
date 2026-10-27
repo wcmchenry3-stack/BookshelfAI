@@ -146,7 +146,7 @@ class TestTestLoginSuccess:
         assert resp.status_code == 200
 
     def test_existing_user_is_reused(self):
-        existing = MagicMock(id=uuid.uuid4(), email="e2e@example.com")
+        existing = MagicMock(id=uuid.uuid4(), email="e2e@example.com", token_version=0)
         resp, db = self._login(existing_user=existing)
         assert resp.status_code == 200
         added = [type(c.args[0]).__name__ for c in db.add.call_args_list]

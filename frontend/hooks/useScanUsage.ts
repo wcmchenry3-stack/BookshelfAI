@@ -5,8 +5,8 @@ import { useNetworkStatus } from './useNetworkStatus';
 
 /**
  * Body of GET /scan/usage. Limits come from the server; never hardcode them.
- * There is no monthly limit (#582): the server still sends the old monthly
- * fields as null for one release; the app ignores them.
+ * There is no monthly limit (#582): the old monthly fields are gone from the
+ * body (#594).
  *
  * Two daily counters (#577): `found_*` (scans that used a scan; a scan is
  * refused when it is full) and `no_match_*` (photos the model answered but

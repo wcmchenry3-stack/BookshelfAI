@@ -264,7 +264,7 @@ class TestRateLimitKey:
         from app.auth.jwt import create_access_token
 
         proxy_mode("none")
-        token = create_access_token("user-1", "a@example.com")
+        token = create_access_token("user-1", "a@example.com", 0)
         req = _request([("Authorization", f"Bearer {token}")])
         assert _get_user_id_or_ip(req) == "user:user-1"
 
@@ -272,7 +272,7 @@ class TestRateLimitKey:
         from app.auth.jwt import create_refresh_token
 
         proxy_mode("none")
-        token, _ = create_refresh_token("user-1")
+        token, _ = create_refresh_token("user-1", 0)
         req = _request([("Authorization", f"Bearer {token}")])
         assert _get_user_id_or_ip(req) == PEER
 

@@ -323,11 +323,6 @@ class TestUsageEndpoint:
             "found_daily_limit": 5,
             "no_match_used_today": 0,
             "no_match_daily_limit": 0,
-            "used_month": None,
-            "monthly_limit": None,
-            "period_end": None,
-            "enhanced_used_month": None,
-            "enhanced_monthly_limit": None,
         }
         assert usage_for.await_args.kwargs["feature"] == quota.SCAN_QUOTA_FEATURE
         assert usage_for.await_args.kwargs["user"] is USER

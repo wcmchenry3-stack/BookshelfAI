@@ -36,7 +36,7 @@ def patch_settings(rsa_key_pair):
     with patch("app.auth.jwt.settings") as mock:
         mock.jwt_private_key = private_pem
         mock.jwt_public_key = public_pem
-        mock.jwt_expiry_hours = 24
+        mock.jwt_access_ttl_minutes = 15
         mock.refresh_token_expiry_days = 7
         yield mock
 
@@ -44,7 +44,7 @@ def patch_settings(rsa_key_pair):
 class TestCreateAccessToken:
     def test_contains_correct_claims(self, rsa_key_pair):
         _, public_pem = rsa_key_pair
-        token = create_access_token("user-abc", "user@example.com")
+        token = create_access_token("user-abc", "user@example.com", 0)
         payload = jwt.decode(token, public_pem, algorithms=["RS256"])
         assert payload["sub"] == "user-abc"
         assert payload["email"] == "user@example.com"
@@ -52,45 +52,45 @@ class TestCreateAccessToken:
 
     def test_uses_rs256_algorithm(self, rsa_key_pair):
         _, _public_pem = rsa_key_pair
-        token = create_access_token("user-abc", "user@example.com")
+        token = create_access_token("user-abc", "user@example.com", 0)
         header = jwt.get_unverified_header(token)
         assert header["alg"] == "RS256"
 
     def test_expiry_matches_settings(self, rsa_key_pair, patch_settings):
         _, public_pem = rsa_key_pair
-        patch_settings.jwt_expiry_hours = 2
-        token = create_access_token("u", "e@x.com")
+        patch_settings.jwt_access_ttl_minutes = 15
+        token = create_access_token("u", "e@x.com", 0)
         payload = jwt.decode(token, public_pem, algorithms=["RS256"])
         now = datetime.now(UTC)
         exp = datetime.fromtimestamp(payload["exp"], tz=UTC)
         delta = exp - now
-        assert 1.9 * 3600 < delta.total_seconds() < 2.1 * 3600
+        assert 14 * 60 < delta.total_seconds() <= 15 * 60
 
 
 class TestCreateRefreshToken:
     def test_contains_correct_claims(self, rsa_key_pair):
         _, public_pem = rsa_key_pair
-        token, jti = create_refresh_token("user-xyz")
+        token, jti = create_refresh_token("user-xyz", 0)
         payload = jwt.decode(token, public_pem, algorithms=["RS256"])
         assert payload["sub"] == "user-xyz"
         assert payload["type"] == "refresh"
         assert payload["jti"] == jti
 
     def test_returns_unique_jti_each_call(self, rsa_key_pair):
-        _, jti1 = create_refresh_token("u")
-        _, jti2 = create_refresh_token("u")
+        _, jti1 = create_refresh_token("u", 0)
+        _, jti2 = create_refresh_token("u", 0)
         assert jti1 != jti2
 
     def test_refresh_has_no_email_claim(self, rsa_key_pair):
         _, public_pem = rsa_key_pair
-        token, _ = create_refresh_token("user-xyz")
+        token, _ = create_refresh_token("user-xyz", 0)
         payload = jwt.decode(token, public_pem, algorithms=["RS256"])
         assert "email" not in payload
 
     def test_expiry_matches_settings(self, rsa_key_pair, patch_settings):
         _, public_pem = rsa_key_pair
         patch_settings.refresh_token_expiry_days = 3
-        token, _ = create_refresh_token("u")
+        token, _ = create_refresh_token("u", 0)
         payload = jwt.decode(token, public_pem, algorithms=["RS256"])
         now = datetime.now(UTC)
         exp = datetime.fromtimestamp(payload["exp"], tz=UTC)
@@ -100,13 +100,13 @@ class TestCreateRefreshToken:
 
 class TestDecodeToken:
     def test_decodes_valid_access_token(self, rsa_key_pair):
-        token = create_access_token("u1", "a@b.com")
+        token = create_access_token("u1", "a@b.com", 0)
         payload = decode_token(token)
         assert payload["sub"] == "u1"
         assert payload["type"] == "access"
 
     def test_decodes_valid_refresh_token(self):
-        token, _ = create_refresh_token("u2")
+        token, _ = create_refresh_token("u2", 0)
         payload = decode_token(token)
         assert payload["sub"] == "u2"
         assert payload["type"] == "refresh"
@@ -124,7 +124,7 @@ class TestDecodeToken:
             decode_token(expired_token)
 
     def test_raises_on_tampered_token(self, rsa_key_pair):
-        token = create_access_token("u", "e@x.com")
+        token = create_access_token("u", "e@x.com", 0)
         tampered = token[:-5] + "XXXXX"
         with pytest.raises(jwt.InvalidTokenError):
             decode_token(tampered)

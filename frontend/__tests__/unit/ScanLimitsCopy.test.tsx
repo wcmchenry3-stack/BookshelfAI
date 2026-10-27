@@ -48,11 +48,6 @@ jest.mock('../../hooks/useNetworkStatus', () => ({
 const USAGE = {
   used_today: 1,
   daily_limit: 9,
-  used_month: null,
-  monthly_limit: null,
-  period_end: null,
-  enhanced_used_month: null,
-  enhanced_monthly_limit: null,
 };
 
 function refusal(status: number, detail: string, extra = {}, headers = {}) {

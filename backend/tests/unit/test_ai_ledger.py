@@ -689,7 +689,7 @@ class TestCleanupTask:
         assert "rolled up 7 ai_usage row(s)" in caplog.text
 
     async def test_rollup_failure_does_not_skip_token_cleanup(self, caplog):
-        rollup = AsyncMock(side_effect=ConnectionError("db down"))
+        rollup = AsyncMock(side_effect=ValueError("db down"))
         session = await self._run_once(rollup_and_purge=rollup)
         assert "error during cleanup run (ai usage)" in caplog.text
         # The refresh-token delete still ran afterwards.

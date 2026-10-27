@@ -38,7 +38,7 @@ TURNSTILE_SECRET_KEY      (sync:false — set in dashboard)
 SENTRY_DSN                (sync:false — set in dashboard)
 ```
 
-**`ENVIRONMENT` values:** `development` | `test` | `staging` | `production`. Only `development` and `test` are treated as trusted/local (`settings.is_hardened == False`). Any other value — including `staging` — gets full production-grade hardening: `/docs` disabled, `TrustedHostMiddleware` enforced, HSTS sent, and the `/debug/sentry-test` + `/auth/test-login` routes not even registered. `staging` still reports as `staging` (not `production`) to Sentry so events are distinguishable. A public staging deploy must always use `ENVIRONMENT=staging`, never `development`.
+**`ENVIRONMENT` values:** `development` | `test` | `staging` | `production`. Only `development` and `test` are treated as trusted/local (`settings.is_hardened == False`). Any other value — including `staging` — gets full production-grade hardening: `/docs` disabled, `TrustedHostMiddleware` enforced, HSTS sent, and the `/debug/sentry-test` + `/auth/test-login` routes not even registered (and boot fails if `TEST_AUTH_SECRET` is set there). `staging` still reports as `staging` (not `production`) to Sentry so events are distinguishable. A public staging deploy must always use `ENVIRONMENT=staging`, never `development`.
 
 ### Env vars that live only in the Render dashboard
 
@@ -94,6 +94,8 @@ All settings are read from the environment by `Settings` in `backend/app/core/co
 |---|---|---|---|---|
 | `DATABASE_URL` | required | none | Postgres URL; port 6543 (Supabase transaction pooler) refused | error (no default) |
 | `JWT_PRIVATE_KEY` | required when `ENVIRONMENT` is not `development`/`test` | empty | non-empty secret (the catalog-token key derives from it) | blank = unset, then the hardened check fails |
+| `JWT_ACCESS_TTL_MINUTES` | optional | `15` | 1-60 (access-token lifetime, #689) | blank = default |
+| `JWT_EXPIRY_HOURS` | **retired**, remove it | unset | ignored; boot logs a warning while it is set. Still accepted for one release so a leftover value does not fail boot | blank = unset |
 | `ENVIRONMENT` | optional | `development` | any; anything but `development`/`test` is hardened | **boot error** (never silently development) |
 | `TRUSTED_HOSTS` | optional | `["*"]` | JSON list of hosts, e.g. `["api.example.com"]` | **boot error** |
 | `CORS_ORIGINS` | optional | none | JSON list; `*` refused | blank = default |

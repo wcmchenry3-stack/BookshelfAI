@@ -7,9 +7,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import TOKEN_REVOKED, get_current_user
 from app.auth.google import verify_google_id_token
-from app.auth.jwt import create_access_token, create_refresh_token, decode_token
+from app.auth.identity import (
+    ACCOUNT_CONFLICT,
+    AccountConflictError,
+    email_allowed,
+    resolve_and_commit_google_user,
+)
+from app.auth.jwt import (
+    access_token_ttl_seconds,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    token_version_claim,
+)
+from app.auth.sessions import revoke_all_sessions
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.limiter import limiter
@@ -52,33 +65,36 @@ async def google_auth(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Google email not verified"
         )
 
-    if settings.allowed_emails_list and email not in settings.allowed_emails_list:
+    if not email_allowed(email, settings.allowed_emails_list):
         logger.warning("Email not in allowlist")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Email not authorized"
         )
 
-    result = await db.execute(select(User).where(User.email == email))
-    user = result.scalar_one_or_none()
-    if user is None:
-        logger.info("Creating new user")
-        user = User(
+    google_id: str = claims.get("sub") or ""
+    if not google_id:
+        logger.warning("Google token has no subject")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google token"
+        )
+
+    # Identity is the Google subject, not the email (#688).
+    try:
+        user = await resolve_and_commit_google_user(
+            db,
+            google_id=google_id,
             email=email,
-            google_id=claims.get("sub", ""),
             display_name=claims.get("name"),
             avatar_url=claims.get("picture"),
         )
-        db.add(user)
-    else:
-        logger.info("Existing user found (id=%s)", user.id)
-        user.display_name = claims.get("name")
-        user.avatar_url = claims.get("picture")
+    except AccountConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=ACCOUNT_CONFLICT
+        )
+    logger.info("Signed-in user resolved (user_id=%s)", user.id)
 
-    await db.commit()
-    await db.refresh(user)
-
-    access_token = create_access_token(str(user.id), user.email)
-    refresh_token, jti = create_refresh_token(str(user.id))
+    access_token = create_access_token(str(user.id), user.email, user.token_version)
+    refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
     expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
     db.add(RefreshToken(jti=jti, user_id=user.id, expires_at=expires_at))
     await db.commit()
@@ -86,7 +102,7 @@ async def google_auth(
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=settings.jwt_expiry_hours * 3600,
+        expires_in=access_token_ttl_seconds(),
     )
 
 
@@ -125,23 +141,64 @@ async def refresh(
             detail="Refresh token revoked or not found",
         )
 
-    user = await db.get(User, uuid.UUID(payload["sub"]))
+    # FOR UPDATE on the user row: a concurrent revoke_all_sessions bumps
+    # token_version (taking this lock) before it revokes refresh rows, so it
+    # either commits first (we read the new token_version and reject below)
+    # or waits for this rotation to commit and then revokes the row we add.
+    # No unrevoked refresh row survives a logout-all (#689).
+    user = await db.get(
+        User,
+        uuid.UUID(payload["sub"]),
+        with_for_update=True,
+        populate_existing=True,
+    )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
         )
 
+    # Re-read the refresh row now that we hold the user lock: a concurrent
+    # refresh with the same token may have rotated it while we waited, and
+    # the check above saw the pre-lock state. Lock order is user -> refresh
+    # row, the same as revoke_all_sessions.
+    result = await db.execute(
+        select(RefreshToken)
+        .where(RefreshToken.jti == jti)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    stored = result.scalar_one_or_none()
+    if stored is None or stored.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token revoked or not found",
+        )
+
+    # A token_version bump revokes the user's refresh rows (sessions.py); the
+    # tv claim also catches a refresh token minted by a refresh that raced
+    # the bump (#689). Missing tv (issued before #689) is revoked too.
+    if token_version_claim(payload) != user.token_version:
+        logger.warning(
+            "Refresh rejected: token_version missing or stale (user_id=%s)",
+            user.id,
+        )
+        stored.revoked_at = datetime.now(UTC)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=TOKEN_REVOKED
+        )
+
     # Rotate: revoke old token, issue new one
     stored.revoked_at = datetime.now(UTC)
-    new_refresh, new_jti = create_refresh_token(str(user.id))
+    new_refresh, new_jti = create_refresh_token(str(user.id), user.token_version)
     expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
     db.add(RefreshToken(jti=new_jti, user_id=user.id, expires_at=expires_at))
-    access_token = create_access_token(str(user.id), user.email)
+    access_token = create_access_token(str(user.id), user.email, user.token_version)
     await db.commit()
     return TokenResponse(
         access_token=access_token,
         refresh_token=new_refresh,
-        expires_in=settings.jwt_expiry_hours * 3600,
+        expires_in=access_token_ttl_seconds(),
     )
 
 
@@ -168,6 +225,21 @@ async def logout(
     if stored is not None and stored.revoked_at is None:
         stored.revoked_at = datetime.now(UTC)
         await db.commit()
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(settings.rate_limit_auth)
+async def logout_all(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Sign out of every device (#689): every access token the user holds
+    fails its next request with 401 token_revoked, and no refresh token can
+    mint new ones. The caller's own tokens are revoked too."""
+    await revoke_all_sessions(db, current_user)
+    await db.commit()
+    logger.info("All sessions revoked (user_id=%s)", current_user.id)
 
 
 @router.get("/me", response_model=UserRead)

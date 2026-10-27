@@ -54,12 +54,20 @@ Storage, or the Data API.
   `postgresql+asyncpg://` itself (`Settings.async_database_url`) — paste the
   plain pooler URL, don't pre-convert it.
 - **Enforce SSL: on** (Supabase project settings).
-- **Data API: off**. Alembic's tables have no RLS policies — the Data API
-  would expose them to anyone with the anon key.
-- **No RLS, no Supabase Auth.** Alembic is the only schema tool; its
+- **Data API: off**. The app never uses it; the backend talks to Postgres
+  directly.
+- **RLS on for every table, with no policies** (migration 0020). If the Data
+  API were ever switched back on, `anon` and `authenticated` would still see
+  no rows. The app connects as `postgres` (table owner, `BYPASSRLS`), so it is
+  unaffected. A new table's migration must run
+  `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
+  `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
+- **No Supabase Auth.** Alembic is the only schema tool; its
   `alembic upgrade head` pre-deploy step is what keeps prod's schema current.
-- **Free plan pauses after ~1 week idle and has no backups.** Upgrade to Pro
-  (daily backups) before store submission.
+- **Pro plan**: daily backups, no idle pause. The point-in-time recovery
+  add-on is not bought. The nightly encrypted `pg_dump` to R2
+  (`.github/workflows/db-backup.yml`) is the independent copy.
+- **Dev** is the persistent Supabase branch `dev` of the same project.
 
 ## Secrets policy
 
@@ -74,7 +82,8 @@ Turnstile, and Sentry DSNs.
 
 `ENVIRONMENT` drives `Settings.is_hardened` (#448): everything except
 `development`/`test` is hardened (TrustedHost enforcement, `/docs` disabled,
-HSTS, `/auth/test-login` unregistered). Which client-IP header is trusted is a
+HSTS, `/auth/test-login` unregistered, and boot fails if `TEST_AUTH_SECRET`
+is set). Which client-IP header is trusted is a
 separate setting, `TRUSTED_PROXY_MODE` (see below).
 
 | Value         | Hardened? | Used by                                      |
@@ -116,6 +125,24 @@ Rollout, per service (dev first, then prod):
 To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
 `TRUSTED_PROXY_MODE=none`.
 
+## Email (Resend)
+
+Transactional email (account-deletion confirmation, data-export link, later
+purchase receipts and quota notices) is sent through [Resend](https://resend.com),
+server-side only. The app doesn't send any email yet; the Phase 2 account
+deletion and export stories add the code and its settings.
+
+| What | Value |
+|---|---|
+| Sending domain | `mail.buffingchi.com` (verified in Resend, region `us-east-1`) |
+| From address | any address on that domain, e.g. `noreply@mail.buffingchi.com`. Nothing to create: Resend sends as any address on a verified domain |
+| Reply-to | a real inbox via Cloudflare Email Routing on `buffingchi.com` (#678). Resend only sends |
+| `RESEND_API_KEY` | dashboard secret (`sync: false`) on both API services; one key per environment, **Sending access** only, restricted to `mail.buffingchi.com`. Set on dev and prod (2026-10-26) |
+
+Apple's "Hide My Email" relay drops mail from senders that aren't registered:
+the sending domain and from address must be listed under Apple Developer →
+Services → **Sign in with Apple for Email Communication** (#679).
+
 ## Health checks
 
 **Depends on PR #448 (health-check split).** This section describes the
@@ -152,6 +179,98 @@ touches the DB itself (no separate `/health/db` exists yet).
   runs `alembic upgrade head`, so web must never ship against a failed API
   deploy. Its `if:` still runs when `deploy-api` was merely *skipped* (blank
   service-ID var) — only an actual API deploy failure blocks it.
+
+## Resolving a sign-in `account_conflict` (409)
+
+`POST /auth/google` answers `409 account_conflict` when a Google account the
+API has never seen (new `sub`) presents an email, ignoring case, that already
+belongs to a user with a different `google_id` (#688). The app never merges
+the two; an operator does, by hand:
+
+1. Find the holder: the API log line `Sign-in rejected: email belongs to a
+   user with a different subject (holder_user_id=<old_id>)`. Logs never carry
+   the email.
+2. **Verify ownership out of band** before changing anything: the person must
+   show they control both the old account (sign in with the old Google
+   account, or confirm from that mailbox) and the new Google account. If in
+   doubt, do nothing — the 409 is the safe state.
+3. Choose one fix. The SQL below is **operator-only**, run in a transaction
+   in the database console (Supabase SQL editor / `psql`); application code
+   stays ORM-only.
+
+   **A. Move the existing library to the new Google account.** Free the email
+   (as in B), ask the person to sign in once with the new Google account
+   (this creates an empty user; its id is in the `Signed-in user resolved
+   (user_id=<new_id>)` log line), then hand its subject to the old row:
+
+   The guard runs inside the transaction: if the new account already holds
+   user content (`user_books`, `user_custom_books`, `scan_records`), the
+   block raises and nothing is deleted — stop and merge by hand. Its
+   `ai_quota`, `ai_inflight`, `ai_enhanced_zero_results` and `refresh_tokens`
+   rows are disposable for a just-created account and cascade with it
+   (`ai_usage` rows are kept with `user_id` set to NULL).
+
+   ```sql
+   -- OPERATOR ONLY. Replace every occurrence of <old_id> and <new_id>.
+   BEGIN;
+   SELECT id, google_id, email, created_at FROM users
+    WHERE id IN ('<old_id>', '<new_id>');
+   DO $$
+   DECLARE
+     old_id uuid := '<old_id>';
+     new_id uuid := '<new_id>';
+     moving_sub text;
+     moving_email text;
+   BEGIN
+     -- Lock both rows first: a concurrent insert for new_id then waits and
+     -- fails its FK check instead of being cascade-deleted below.
+     PERFORM 1 FROM users WHERE id IN (old_id, new_id) FOR UPDATE;
+     IF (SELECT count(*) FROM users WHERE id IN (old_id, new_id)) <> 2 THEN
+       RAISE EXCEPTION 'both users must exist; stop';
+     END IF;
+     IF (SELECT count(*) FROM user_books WHERE user_id = new_id)
+      + (SELECT count(*) FROM user_custom_books WHERE user_id = new_id)
+      + (SELECT count(*) FROM scan_records WHERE user_id = new_id) > 0 THEN
+       RAISE EXCEPTION 'new account has data; stop and merge manually';
+     END IF;
+     SELECT google_id, email INTO moving_sub, moving_email
+       FROM users WHERE id = new_id;
+     DELETE FROM users WHERE id = new_id;  -- cascades its disposable rows
+     UPDATE users SET google_id = moving_sub, email = moving_email
+      WHERE id = old_id;
+   END $$;
+   COMMIT;  -- after a RAISE this only rolls back
+   ```
+
+   Optional, recommended: sign out every existing session of the old row, so
+   devices still signed in through the old Google account lose access now
+   that the row belongs to the new one:
+
+   ```sql
+   -- OPERATOR ONLY.
+   DELETE FROM refresh_tokens WHERE user_id = '<old_id>';
+   UPDATE users SET token_version = token_version + 1 WHERE id = '<old_id>';
+   ```
+
+   The `token_version` bump (#689) also cuts off access tokens already
+   issued: their next request gets `401 token_revoked`. Without it they stay
+   valid until they expire (`JWT_ACCESS_TTL_MINUTES`, 15 minutes).
+
+   **B. Free the email only** (the old account keeps its library and stays
+   reachable through its own Google account; the new Google account gets a
+   fresh account on its next sign-in):
+
+   ```sql
+   -- OPERATOR ONLY. Replace <old_id>.
+   BEGIN;
+   UPDATE users SET email = 'released+' || id || '@invalid.example'
+    WHERE id = '<old_id>';
+   COMMIT;
+   ```
+
+   If the old Google account signs in later, its stored email is refreshed
+   from its token again (when no other user holds that address).
+4. Ask the person to sign in again and confirm it succeeds.
 
 ## First production deploy — cutover checklist
 

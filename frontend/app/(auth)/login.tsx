@@ -10,6 +10,14 @@ import { api } from '../../lib/api';
 
 WebBrowser.maybeCompleteAuthSession();
 
+/** 409 `account_conflict`: the Google account's email belongs to another
+ * Bookshelf account (#688). Retrying won't help, so it gets its own message. */
+function isAccountConflict(err: unknown): boolean {
+  const response = (err as { response?: { status?: number; data?: { detail?: unknown } } })
+    ?.response;
+  return response?.status === 409 && response?.data?.detail === 'account_conflict';
+}
+
 const showTestLogin = __DEV__ && process.env.EXPO_PUBLIC_ENVIRONMENT !== 'production';
 
 export default function LoginScreen() {
@@ -18,6 +26,7 @@ export default function LoginScreen() {
   const { t } = useTranslation('auth');
 
   const [testLoading, setTestLoading] = useState(false);
+  const [promptFailed, setPromptFailed] = useState(false);
 
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
@@ -25,14 +34,30 @@ export default function LoginScreen() {
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
   });
 
+  const googleError = promptFailed || response?.type === 'error';
+
   useEffect(() => {
     if (response?.type === 'success') {
       const { id_token } = response.params;
-      login(id_token).catch(() => {
-        Alert.alert(t('errorTitle', { ns: 'common' }), t('signInError'));
+      login(id_token).catch((err: unknown) => {
+        Alert.alert(
+          t('errorTitle', { ns: 'common' }),
+          isAccountConflict(err) ? t('signInAccountConflict') : t('signInError')
+        );
       });
     }
   }, [response, login, t]);
+
+  // promptAsync can reject (blocked popup, network failure); never let that
+  // escape as an unhandled rejection (#660).
+  const handleGoogleSignIn = async () => {
+    setPromptFailed(false);
+    try {
+      await promptAsync();
+    } catch {
+      setPromptFailed(true);
+    }
+  };
 
   const handleTestLogin = async () => {
     setTestLoading(true);
@@ -84,7 +109,7 @@ export default function LoginScreen() {
             opacity: request ? 1 : 0.6,
           },
         ]}
-        onPress={() => promptAsync()}
+        onPress={handleGoogleSignIn}
         disabled={!request}
         accessibilityLabel={t('signIn')}
         accessibilityRole="button"
@@ -96,6 +121,29 @@ export default function LoginScreen() {
           <Text style={[styles.buttonText, { color: theme.colors.surface }]}>{t('signIn')}</Text>
         )}
       </Pressable>
+
+      {googleError && (
+        <View style={styles.errorBox}>
+          <Text
+            style={[styles.errorText, { color: theme.colors.error }]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+          >
+            {t('signInUnavailable')}
+          </Text>
+          <Pressable
+            onPress={handleGoogleSignIn}
+            disabled={!request}
+            style={styles.retryButton}
+            accessibilityLabel={t('signInRetry')}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.retryText, { color: theme.colors.primary }]}>
+              {t('signInRetry')}
+            </Text>
+          </Pressable>
+        </View>
+      )}
 
       {showTestLogin && (
         <Pressable
@@ -158,6 +206,25 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  errorBox: {
+    alignItems: 'center',
+    marginTop: 16,
+    maxWidth: 320,
+  },
+  errorText: {
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  retryButton: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  retryText: {
+    fontWeight: '600',
+    fontSize: 16,
   },
   buttonText: {
     fontWeight: '600',

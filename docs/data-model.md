@@ -2,6 +2,8 @@
 
 PostgreSQL schema, entity reference, and the dedup strategy that makes the collection work at the work-level instead of per-edition. For the architectural rationale behind dedup see [`architecture.md`](architecture.md#adr-work-level-book-deduplication-open-library-work_id); for migration mechanics see the [Migration workflow](#migration-workflow) section below.
 
+> How long every table is kept, what grows and the expected size at 100, 1,000 and 10,000 users: [`storage-and-retention.md`](storage-and-retention.md).
+
 ## ER diagram
 
 ```mermaid
@@ -203,6 +205,7 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 | `google_id` | string, **unique**, not null | Google OAuth `sub` claim |
 | `display_name` | string, nullable | from Google profile |
 | `avatar_url` | string, nullable | from Google profile |
+| `token_version` | integer, not null, server default `0` | carried in every token as `tv`; bumping it revokes all the user's sessions (`app/auth/sessions.py`, #689, migration 0021) |
 | `created_at` / `updated_at` | timestamptz, server defaults | `updated_at` auto-bumps on row change |
 
 **Lockdown:** the backend enforces `ALLOWED_EMAILS` at the `/auth/google` endpoint — any Google account whose email isn't in that comma-separated env var is rejected *before* a User row is created. See [`architecture.md`](architecture.md#auth-architecture).
@@ -298,6 +301,8 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 | `revoked_at` | timestamptz, nullable | set on `/auth/refresh` (old jti) or `/auth/logout` |
 
 **Lifecycle:** `/auth/refresh` validates the presented refresh JWT → checks `jti` exists and `revoked_at IS NULL` → issues a new access+refresh pair, inserts a new row, and sets `revoked_at = now()` on the old row. The effect is that **refresh tokens are single-use** — a stolen copy is invalidated by the legitimate client's next refresh.
+
+**Volume and retention:** about 150 bytes per row, one row per refresh. Since #689 the access token lives 15 minutes, so a user refreshes about once per 15 minutes of use (a refresh happens only on a request after expiry): an hour of use a day is about 4 rows a day, about 30 live rows per user (about 5 KB); a heavy user (8 hours a day) about 220 rows (about 35 KB). A row is deleted by the daily cleanup task (`app/services/token_cleanup.py`) once `expires_at` has passed; revoked rows stay until they expire (at most 7 days). That purge is a single `DELETE`, not batched. Rows go with the user (cascade). **Phase 2 account deletion and data export must include this table.**
 
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 

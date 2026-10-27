@@ -794,11 +794,6 @@ class TestUsage:
             "found_daily_limit": 30,
             "no_match_used_today": 0,
             "no_match_daily_limit": 0,
-            "used_month": None,
-            "monthly_limit": None,
-            "period_end": None,
-            "enhanced_used_month": None,
-            "enhanced_monthly_limit": None,
         }
 
 
@@ -848,7 +843,7 @@ class TestCleanup:
 
         factory, session = _session_factory()
         with caplog.at_level(logging.ERROR, logger="app.services.token_cleanup"):
-            await self._run(AsyncMock(side_effect=ConnectionError("down")), factory)
+            await self._run(AsyncMock(side_effect=ValueError("down")), factory)
         assert "enhanced zero results" in caplog.text
         assert "refresh_tokens" in str(session.execute.call_args[0][0])
 

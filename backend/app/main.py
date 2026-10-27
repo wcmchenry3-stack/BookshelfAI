@@ -13,7 +13,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from slowapi import _rate_limit_exceeded_handler as _slowapi_429
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select, text
+from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
@@ -227,6 +227,8 @@ async def _validate_config() -> None:
     # The catalog-token key (#602) is derived from JWT_PRIVATE_KEY; a
     # hardened environment without it must not start.
     catalog_token.check_configured(settings)
+    for message in settings.deprecated_settings_warnings:
+        logger.warning(message)
 
 
 @asynccontextmanager
@@ -379,48 +381,76 @@ if not settings.is_hardened:
         """Dev-only login for E2E tests. Requires TEST_AUTH_SECRET.
 
         This endpoint is NOT registered when hardened — staging or production
-        (guarded by the ``if not settings.is_hardened`` block). Even in dev
+        (guarded by the ``if not settings.is_hardened`` block), and a hardened
+        process with TEST_AUTH_SECRET set refuses to boot. Even in dev
         it requires a shared secret and only issues tokens for emails
         already in the ALLOWED_EMAILS allowlist.
         """
-        from app.auth.jwt import create_access_token, create_refresh_token
+        from app.auth.identity import (
+            ACCOUNT_CONFLICT,
+            AccountConflictError,
+            email_allowed,
+            resolve_and_commit_google_user,
+        )
+        from app.auth.jwt import (
+            access_token_ttl_seconds,
+            create_access_token,
+            create_refresh_token,
+        )
         from app.core.database import get_db
         from app.models.refresh_token import RefreshToken as RefreshTokenModel
-        from app.models.user import User
 
-        if not settings.test_auth_secret:
+        # A whitespace-only secret counts as unset: the route stays disabled.
+        if not settings.test_auth_secret.strip():
             return JSONResponse(
                 status_code=403,
                 content={"detail": "TEST_AUTH_SECRET not configured"},
             )
 
-        body = await request.json()
+        try:
+            body = await request.json()
+        except ValueError:  # not JSON (json.JSONDecodeError / bad encoding)
+            return JSONResponse(status_code=422, content={"detail": "Invalid body"})
+        if not isinstance(body, dict):
+            return JSONResponse(status_code=422, content={"detail": "Invalid body"})
         provided_secret = body.get("secret", "")
         email = body.get("email", "")
+        if not isinstance(provided_secret, str) or not isinstance(email, str):
+            return JSONResponse(status_code=422, content={"detail": "Invalid body"})
 
-        if not hmac.compare_digest(provided_secret, settings.test_auth_secret):
+        if not hmac.compare_digest(
+            provided_secret.encode("utf-8", "surrogatepass"),
+            settings.test_auth_secret.encode("utf-8", "surrogatepass"),
+        ):
             return JSONResponse(status_code=403, content={"detail": "Invalid secret"})
 
-        if settings.allowed_emails_list and email not in settings.allowed_emails_list:
+        if not email_allowed(email, settings.allowed_emails_list):
             return JSONResponse(
                 status_code=403, content={"detail": "Email not in allowlist"}
             )
 
         async for db in get_db():
-            result = await db.execute(select(User).where(User.email == email))
-            user = result.scalar_one_or_none()
-            if user is None:
-                user = User(
+            # Same identity rule as /auth/google (#688): matched by a
+            # synthetic subject (test_<lowercased email>) that no real Google
+            # ``sub`` (all digits) can take, never by email. An email held by
+            # a real account is a 409.
+            try:
+                user = await resolve_and_commit_google_user(
+                    db,
+                    google_id=f"test_{email.lower()}",
                     email=email,
-                    google_id=f"test_{email}",
                     display_name="E2E Test User",
+                    avatar_url=None,
                 )
-                db.add(user)
-                await db.commit()
-                await db.refresh(user)
+            except AccountConflictError:
+                return JSONResponse(
+                    status_code=409, content={"detail": ACCOUNT_CONFLICT}
+                )
 
-            access_token = create_access_token(str(user.id), user.email)
-            refresh_token, jti = create_refresh_token(str(user.id))
+            access_token = create_access_token(
+                str(user.id), user.email, user.token_version
+            )
+            refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
             expires_at = datetime.now(UTC) + timedelta(
                 days=settings.refresh_token_expiry_days
             )
@@ -432,6 +462,6 @@ if not settings.is_hardened:
                 content={
                     "access_token": access_token,
                     "refresh_token": refresh_token,
-                    "expires_in": settings.jwt_expiry_hours * 3600,
+                    "expires_in": access_token_ttl_seconds(),
                 }
             )

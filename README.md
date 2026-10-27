@@ -62,6 +62,7 @@ npx expo start            # press i for iOS sim, a for Android, w for web
 | [`docs/data-model.md`](docs/data-model.md) | ER diagram, entity reference, book-dedup strategy |
 | [`docs/api.md`](docs/api.md) | REST endpoint reference with examples and error codes |
 | [`docs/integrations.md`](docs/integrations.md) | Google OAuth / Books / OpenAI / Open Library / Sentry / Cloudflare / Render |
+| [`docs/storage-and-retention.md`](docs/storage-and-retention.md) | What the phone and the database keep and for how long: caps, purges, growth at 100 / 1,000 / 10,000 users, open gaps |
 | [`docs/scan-limits.md`](docs/scan-limits.md) | Every scan limit and dial in one place: defaults, bounds, settings, what the user sees, where each is counted |
 | [`docs/deployment.md`](docs/deployment.md) | Render config, env vars, release process, rollback |
 | [`docs/backups.md`](docs/backups.md) | Nightly encrypted DB backup to R2, owner setup, restore drill |

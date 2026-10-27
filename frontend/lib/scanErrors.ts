@@ -59,14 +59,11 @@ export type ScanNotice =
   | { kind: 'paused' };
 
 /** `error` values a refused (re-queued) job carries. */
-// 'monthly_limit' stays for one release (#582): a job persisted by an older build
-// may still carry it, and it still counts as a refusal (#594 removes it).
 export const REFUSAL_ERRORS: readonly string[] = [
   'daily_limit',
   'requests_daily_limit',
   'paused',
   'in_progress',
-  'monthly_limit',
   // #604: waiting on the retry schedule (503 scan_unavailable).
   'unavailable',
 ];

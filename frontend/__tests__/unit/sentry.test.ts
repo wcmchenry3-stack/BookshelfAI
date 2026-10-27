@@ -39,6 +39,7 @@ describe('initSentry', () => {
       tracesSampleRate: 1.0,
       sendDefaultPii: false,
       enabled: true,
+      beforeSend: expect.any(Function),
     });
   });
 
@@ -114,6 +115,65 @@ describe('initSentry', () => {
       level: 'info',
       data: { environment: 'staging' },
     });
+  });
+});
+
+describe('beforeSend wiring', () => {
+  function getBeforeSend() {
+    process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://example@sentry.io/123';
+    require('../../lib/sentry');
+    const cfg = mockInit.mock.calls[0][0];
+    mockAddBreadcrumb.mockClear();
+    return cfg.beforeSend as (event: unknown, hint?: unknown) => unknown;
+  }
+
+  it('drops the J-shaped event and leaves a sentry.filter breadcrumb', () => {
+    const beforeSend = getBeforeSend();
+    const entry = 'app:///entry-03a2ceb1d37db6d6ec46839eeff72426.js';
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'Error',
+            value: '12000ms timeout exceeded',
+            mechanism: {
+              type: 'auto.browser.global_handlers.onunhandledrejection',
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                { filename: entry, lineno: 1133, colno: 869 },
+                { filename: entry, lineno: 1360, colno: 2980 },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event, {})).toBeNull();
+    expect(mockAddBreadcrumb).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'sentry.filter' })
+    );
+  });
+
+  it('returns a normal event unchanged with no sentry.filter breadcrumb', () => {
+    const beforeSend = getBeforeSend();
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'Error',
+            value: 'boom',
+            mechanism: { type: 'generic', handled: true },
+            stacktrace: { frames: [{ filename: 'app:///app/(auth)/login.tsx' }] },
+          },
+        ],
+      },
+    };
+    expect(beforeSend(event, {})).toBe(event);
+    expect(mockAddBreadcrumb).not.toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'sentry.filter' })
+    );
   });
 });
 

@@ -165,7 +165,16 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     jwt_private_key: str = ""
     jwt_public_key: str = ""
-    jwt_expiry_hours: int = 24
+    # Access-token lifetime in minutes (#689). Short because an access token
+    # is only revoked by users.token_version, which every request checks.
+    jwt_access_ttl_minutes: int = Field(default=15, ge=1, le=60)
+    # DEPRECATED (#689): the old 24 h access-token lifetime. Ignored; boot logs
+    # a warning when it is set (see deprecated_settings_warnings). Kept as a
+    # field for one release so a leftover JWT_EXPIRY_HOURS in a .env file does
+    # not fail boot. A string, so a leftover non-integer value (e.g. "24h")
+    # does not fail boot either. Remove it, and the env var on Render, in a
+    # later release.
+    jwt_expiry_hours: str | None = None
     refresh_token_expiry_days: int = 7
     allowed_emails: str = ""
 
@@ -281,7 +290,7 @@ class Settings(BaseSettings):
 
     # Testing (development/test only — the /auth/test-login route that consumes
     # this is not even registered when settings.is_hardened is True, i.e. in
-    # staging or production)
+    # staging or production, and setting it there fails boot)
     test_auth_secret: str = ""
 
     # Observability
@@ -414,6 +423,16 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _no_test_login_when_hardened(self) -> "Settings":
+        """TEST_AUTH_SECRET enables the dev-only /auth/test-login route, which
+        mints tokens without Google. Staging and production must not boot with
+        it set, even though the route is not registered there (#688). The
+        value is never echoed. Any non-empty value counts, whitespace too."""
+        if self.is_hardened and self.test_auth_secret:
+            raise ValueError("TEST_AUTH_SECRET must be unset in staging and production")
+        return self
+
+    @model_validator(mode="after")
     def _max_stale_not_below_ttl(self) -> "Settings":
         if self.ai_settings_max_stale_seconds < self.ai_settings_cache_ttl_seconds:
             raise ValueError(
@@ -453,6 +472,18 @@ class Settings(BaseSettings):
                 "port 5432 instead."
             )
         return v
+
+    @property
+    def deprecated_settings_warnings(self) -> list[str]:
+        """Warnings for settings that are still accepted but have no effect."""
+        warnings = []
+        if self.jwt_expiry_hours is not None:
+            warnings.append(
+                "JWT_EXPIRY_HOURS is set but ignored: access tokens now live "
+                f"JWT_ACCESS_TTL_MINUTES ({self.jwt_access_ttl_minutes}) minutes. "
+                "Remove JWT_EXPIRY_HOURS from the environment."
+            )
+        return warnings
 
     @property
     def is_hardened(self) -> bool:

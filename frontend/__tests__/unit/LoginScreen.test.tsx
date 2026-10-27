@@ -28,6 +28,7 @@ jest.mock('../../hooks/useTheme', () => ({
         primary: '#0f426f',
         onSurface: '#1b1c1a',
         onSurfaceVariant: '#42474f',
+        error: '#ba1a1a',
         secondaryContainer: '#c6e7dd',
         onSecondaryContainer: '#4b6861',
       },
@@ -135,5 +136,70 @@ describe('LoginScreen', () => {
       expect(alertSpy).toHaveBeenCalledWith('Error', 'Sign-in failed. Please try again.')
     );
     alertSpy.mockRestore();
+  });
+
+  it('shows a distinct message for 409 account_conflict (#688)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    setupGoogleAuth({
+      response: { type: 'success', params: { id_token: 'token' } },
+    });
+    mockLogin.mockRejectedValue({
+      response: { status: 409, data: { detail: 'account_conflict' } },
+    });
+    await render(<LoginScreen />);
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Error',
+        'This email is linked to a different Google account. Please contact support.'
+      )
+    );
+    alertSpy.mockRestore();
+  });
+
+  it('keeps the generic message for other 409s', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    setupGoogleAuth({
+      response: { type: 'success', params: { id_token: 'token' } },
+    });
+    mockLogin.mockRejectedValue({ response: { status: 409, data: { detail: 'other' } } });
+    await render(<LoginScreen />);
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith('Error', 'Sign-in failed. Please try again.')
+    );
+    alertSpy.mockRestore();
+  });
+
+  describe('Google sign-in failures (#660)', () => {
+    const errorText = "Couldn't start Google sign-in. Check your connection and try again.";
+
+    it('does not throw and shows a localized error when promptAsync rejects', async () => {
+      mockPromptAsync.mockRejectedValueOnce(new Error('NetworkError: A network error occurred.'));
+      const { getByLabelText, findByText } = await render(<LoginScreen />);
+      await fireEvent.press(getByLabelText('Sign in with Google'));
+      expect(await findByText(errorText)).toBeTruthy();
+    });
+
+    it('retries promptAsync from the error state and clears the error on success', async () => {
+      mockPromptAsync
+        .mockRejectedValueOnce(new Error('12000ms timeout exceeded'))
+        .mockResolvedValueOnce({ type: 'dismiss' });
+      const { getByLabelText, findByText, queryByText } = await render(<LoginScreen />);
+      await fireEvent.press(getByLabelText('Sign in with Google'));
+      await findByText(errorText);
+      await fireEvent.press(getByLabelText('Try again'));
+      await waitFor(() => expect(queryByText(errorText)).toBeNull());
+      expect(mockPromptAsync).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows the error when the Google response type is error', async () => {
+      setupGoogleAuth({ response: { type: 'error', error: new Error('boom') } });
+      const { findByText } = await render(<LoginScreen />);
+      expect(await findByText(errorText)).toBeTruthy();
+    });
+
+    it('shows no error by default', async () => {
+      const { queryByText } = await render(<LoginScreen />);
+      expect(queryByText(errorText)).toBeNull();
+    });
   });
 });
