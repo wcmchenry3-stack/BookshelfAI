@@ -105,13 +105,25 @@ async def test_empty_google_id_is_rejected():
     db.execute.assert_not_called()
 
 
-async def test_case_only_email_change_refreshes_without_holder_lookup():
+async def test_case_only_email_change_is_stored_when_no_other_holder():
     user = _user("alice@example.com", "111")
-    db = _db(user)
+    db = _db(user, None)
     got = await _resolve(db, google_id="111", email="Alice@Example.com")
     assert got is user
     assert user.email == "Alice@Example.com"  # stored as Google reports it
-    assert db.execute.await_count == 1
+    where = str(db.execute.await_args_list[1].args[0].whereclause)
+    assert "users.id != :id_1" in where  # the user itself is not a holder
+
+
+async def test_case_only_change_keeps_stored_email_when_another_row_holds_it():
+    # Codex on #702: rows differing only by case can exist; storing the other
+    # row's exact spelling would fail the unique constraint and 409 a known user.
+    user = _user("alice@example.com", "111")
+    other = _user("Alice@example.com", "222")
+    db = _db(user, other)
+    got = await _resolve(db, google_id="111", email="Alice@example.com")
+    assert got is user
+    assert user.email == "alice@example.com"
 
 
 async def test_case_variant_of_existing_email_is_a_conflict():

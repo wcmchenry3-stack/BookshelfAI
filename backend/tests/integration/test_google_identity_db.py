@@ -227,3 +227,17 @@ async def test_real_postgres_errors_are_classified(sessions):
         await db.rollback()
     assert is_unique_violation(dup.value)
     assert not is_unique_violation(not_null.value)
+
+
+async def test_case_only_change_to_another_rows_spelling_keeps_stored_email(db_session):
+    # Codex on #702: case-duplicate rows are allowed by the schema; a known
+    # subject reporting the other row's exact spelling must still sign in.
+    t = _tag()
+    a = await _add(db_session, f"alice-{t}@example.com", f"a-{t}")
+    await _add(db_session, f"Alice-{t}@example.com", f"b-{t}")
+
+    got = await _resolve(db_session, f"a-{t}", f"Alice-{t}@example.com")
+    await db_session.flush()  # would raise on the unique constraint before
+
+    assert got.id == a.id
+    assert got.email == f"alice-{t}@example.com"

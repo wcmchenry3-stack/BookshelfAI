@@ -33,15 +33,14 @@ def email_allowed(email: str, allowlist: list[str]) -> bool:
     return email.lower() in {e.lower() for e in allowlist}
 
 
-def _by_email(email: str):
-    """The oldest user holding ``email``, ignoring case. ``limit(1)`` so rows
-    that already differ only by case can never raise MultipleResultsFound."""
-    return (
-        select(User)
-        .where(func.lower(User.email) == email.lower())
-        .order_by(User.created_at, User.id)
-        .limit(1)
-    )
+def _by_email(email: str, exclude_id=None):
+    """The oldest user holding ``email``, ignoring case, other than
+    ``exclude_id``. ``limit(1)`` so rows that already differ only by case can
+    never raise MultipleResultsFound."""
+    query = select(User).where(func.lower(User.email) == email.lower())
+    if exclude_id is not None:
+        query = query.where(User.id != exclude_id)
+    return query.order_by(User.created_at, User.id).limit(1)
 
 
 _UNIQUE_VIOLATION = "23505"
@@ -79,8 +78,8 @@ async def resolve_google_user(
     """Return the user for ``google_id``, creating one when it is new.
 
     - Known ``google_id``: profile fields are refreshed. A changed email is
-      stored too (a case-only change always is), unless another user already
-      holds that address, ignoring case; then the old address is kept and the
+      stored too, unless another user already holds that address, ignoring
+      case (rows differing only by case can exist); then the old address is kept and the
       sign-in still succeeds, because the subject proves who this is.
     - Unknown ``google_id`` but the email (ignoring case) belongs to an
       existing user: that user necessarily has a different ``google_id`` (it
@@ -96,10 +95,11 @@ async def resolve_google_user(
         user.display_name = display_name
         user.avatar_url = avatar_url
         if email and user.email != email:
-            if user.email.lower() == email.lower():
-                holder = None  # case-only change: the address is this user's
-            else:
-                holder = (await db.execute(_by_email(email))).scalar_one_or_none()
+            # Also for a case-only change: another row may hold this exact
+            # spelling (only `email` is unique, case-sensitively).
+            holder = (
+                await db.execute(_by_email(email, exclude_id=user.id))
+            ).scalar_one_or_none()
             if holder is None:
                 user.email = email
                 logger.info("Sign-in email updated (user_id=%s)", user.id)
