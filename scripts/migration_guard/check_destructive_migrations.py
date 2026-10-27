@@ -5,8 +5,9 @@ Usage::
 
     python3 scripts/migration_guard/check_destructive_migrations.py [--approved] FILE...
 
-Only the body of ``upgrade()`` is inspected (with ``ast``, not regex over the
-file); ``downgrade()`` is ignored. Each finding is printed as
+The body of ``upgrade()`` and the module-level helpers it calls (transitively)
+are inspected with ``ast``, not regex over the file; ``downgrade()`` is ignored.
+Each finding is printed as
 ``file:line: operation`` and the exit code is 1 when there is any finding,
 unless ``--approved`` is given (the PR carries the
 ``destructive-migration-approved`` label), which prints them and exits 0.
@@ -17,13 +18,15 @@ Flagged (``op.`` and the ``batch_op.`` of ``with op.batch_alter_table(...)``):
 - ``alter_column`` with ``new_column_name`` (rename), ``type_`` (any type
   change; static narrowing detection is unreliable, so every change needs
   approval) or ``nullable=False`` (tightening)
-- ``execute`` whose string literals (``sa.text`` included) contain DROP TABLE,
-  DROP COLUMN, TRUNCATE, DELETE or ALTER ... TYPE (case-insensitive), or that
-  build a ``delete(...)`` construct
+- ``.execute(...)`` on any receiver, or a call to a followed helper, whose
+  strings (module constants, ``+`` and f-strings resolved) contain DROP
+  TABLE/COLUMN/SCHEMA/TYPE/VIEW, TRUNCATE, DELETE, ALTER TABLE ... RENAME or
+  ALTER ... TYPE (case-insensitive), or that build a ``delete(...)`` construct
+- a file with no top-level ``upgrade()`` (fails closed)
 
 Allowed on purpose: dropping an index or a constraint (no data is lost), and
-anything additive. Operations reached through a helper function called from
-``upgrade()`` are not followed; keep destructive steps inline.
+anything additive. SQL built at run time from values the file does not define
+is not seen.
 
 Stdlib only; runs on any Python 3.9+.
 """
@@ -37,13 +40,27 @@ import sys
 APPROVAL_LABEL = "destructive-migration-approved"
 
 _SQL = re.compile(
-    r"\bDROP\s+(TABLE|COLUMN)\b|\bTRUNCATE\b|\bDELETE\b|\bALTER\b.*?\bTYPE\b",
+    r"\bDROP\s+(TABLE|COLUMN|SCHEMA|TYPE|VIEW)\b"
+    r"|\bTRUNCATE\b"
+    r"|\bDELETE\b"
+    r"|\bALTER\s+TABLE\b[^;]*?\bRENAME\b"
+    r"|\bALTER\s+COLUMN\b[^;]*?\bTYPE\b"
+    r"|\bALTER\s+TABLE\b[^;]*?\bALTER\b[^;]*?\bTYPE\b",
     re.IGNORECASE | re.DOTALL,
 )
 _ALWAYS = {"drop_table", "drop_column", "rename_table"}
 
 
-def _batch_names(func: ast.FunctionDef) -> set[str]:
+def _op_names(tree: ast.Module) -> set[str]:
+    """``op`` plus any alias from ``from alembic import op as X``."""
+    names = {"op"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "alembic":
+            names |= {a.asname for a in node.names if a.name == "op" and a.asname}
+    return names
+
+
+def _batch_names(func: ast.FunctionDef, ops: set[str]) -> set[str]:
     """Names bound by ``with op.batch_alter_table(...) as name``."""
     names: set[str] = set()
     for node in ast.walk(func):
@@ -60,6 +77,50 @@ def _batch_names(func: ast.FunctionDef) -> set[str]:
     return names
 
 
+def _constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level ``NAME = "literal"`` (also ``+`` concatenations of them)."""
+    consts: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                text = _render(node.value, consts)
+                if text is not None:
+                    consts[target.id] = text
+    return consts
+
+
+def _render(node: ast.AST, consts: dict[str, str]) -> str | None:
+    """Static string value of a literal, constant name, ``+`` chain or f-string."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return consts.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _render(node.left, consts), _render(node.right, consts)
+        if left is not None and right is not None:
+            return left + right
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for v in node.values:
+            if isinstance(v, ast.FormattedValue):
+                parts.append(_render(v.value, consts) or "x")
+            else:
+                parts.append(_render(v, consts) or "")
+        return "".join(parts)
+    return None
+
+
+def _texts(node: ast.AST, consts: dict[str, str]):
+    """Every static string reachable in an expression."""
+    text = _render(node, consts)
+    if text is not None:
+        yield text
+    else:
+        for child in ast.iter_child_nodes(node):
+            yield from _texts(child, consts)
+
+
 def _is_delete_construct(node: ast.AST) -> bool:
     if not isinstance(node, ast.Call):
         return False
@@ -69,8 +130,21 @@ def _is_delete_construct(node: ast.AST) -> bool:
     )
 
 
+def _args(call: ast.Call) -> list[ast.AST]:
+    return [*call.args, *[k.value for k in call.keywords]]
+
+
+def _sql_hit(call: ast.Call, consts: dict[str, str]) -> str | None:
+    for arg in _args(call):
+        if any(_SQL.search(t) for t in _texts(arg, consts)):
+            return "destructive SQL"
+        if any(_is_delete_construct(n) for n in ast.walk(arg)):
+            return "deleting rows"
+    return None
+
+
 def _classify(call: ast.Call, method: str) -> str | None:
-    """Return a short description of the destructive operation, or None."""
+    """Description of a destructive ``op``/``batch_op`` schema call, or None."""
     if method in _ALWAYS:
         return method
     if method == "alter_column":
@@ -85,40 +159,49 @@ def _classify(call: ast.Call, method: str) -> str | None:
                 and kw.value.value is False
             ):
                 return "alter_column(nullable=False) tightens a column"
-        return None
-    if method == "execute":
-        values = [*call.args, *[k.value for k in call.keywords]]
-        for node in (n for v in values for n in ast.walk(v)):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if _SQL.search(node.value):
-                    return "execute() with destructive SQL"
-            if _is_delete_construct(node):
-                return "execute() deleting rows"
     return None
 
 
 def scan_source(source: str, path: str) -> list[str]:
-    """Return ``path:line: operation`` findings for the ``upgrade()`` body."""
+    """Return ``path:line: operation`` findings for ``upgrade()`` and its helpers."""
     try:
         tree = ast.parse(source, filename=path)
     except SyntaxError as exc:
         return [f"{path}:{exc.lineno or 1}: cannot parse migration ({exc.msg})"]
-    findings: list[tuple[int, str]] = []
-    for func in tree.body:
-        if not (isinstance(func, ast.FunctionDef) and func.name == "upgrade"):
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    if "upgrade" not in funcs:
+        return [f"{path}:1: no top-level upgrade() found (cannot check this migration)"]
+    consts = _constants(tree)
+    ops = _op_names(tree)
+    findings: set[tuple[int, str]] = set()
+    seen: set[str] = set()
+    queue = ["upgrade"]
+    while queue:
+        name = queue.pop()
+        if name in seen:
             continue
-        targets = {"op"} | _batch_names(func)
+        seen.add(name)
+        func = funcs[name]
+        targets = ops | _batch_names(func, ops)
         for node in ast.walk(func):
-            if not (
-                isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            ):
+            if not isinstance(node, ast.Call):
                 continue
-            base = node.func.value
-            if not (isinstance(base, ast.Name) and base.id in targets):
-                continue
-            what = _classify(node, node.func.attr)
-            if what:
-                findings.append((node.lineno, f"{base.id}.{what}"))
+            f = node.func
+            if isinstance(f, ast.Name) and f.id in funcs:
+                queue.append(f.id)  # follow module-level helpers, cycle-safe
+                what = _sql_hit(node, consts)
+                if what:
+                    findings.add((node.lineno, f"{f.id}(): {what}"))
+            elif isinstance(f, ast.Attribute):
+                base = f.value
+                if isinstance(base, ast.Name) and base.id in targets:
+                    what = _classify(node, f.attr)
+                    if what:
+                        findings.add((node.lineno, f"{base.id}.{what}"))
+                if f.attr == "execute":
+                    what = _sql_hit(node, consts)
+                    if what:
+                        findings.add((node.lineno, f"execute(): {what}"))
     return [f"{path}:{line}: {text}" for line, text in sorted(findings)]
 
 

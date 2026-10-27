@@ -8,6 +8,7 @@ name: Migration guard
 
 on:
   pull_request:
+    branches: [dev]
     # No paths filter: the job must always report, so it can be a required check.
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
@@ -25,9 +26,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Scan changed migrations
         run: |
-          files=$(git diff --name-only --diff-filter=AM "origin/${BASE_REF}...HEAD" -- backend/alembic/versions/)
+          files=$(git diff --name-only --no-renames --diff-filter=AM "origin/${BASE_REF}...HEAD" -- backend/alembic/versions/)
           flags=""
           if [ "$APPROVED" = "true" ]; then flags="--approved"; fi
           # shellcheck disable=SC2086

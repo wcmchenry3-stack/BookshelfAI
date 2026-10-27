@@ -160,12 +160,137 @@ def test_cli_passes_additive_and_empty_input(tmp_path):
 
 
 def test_existing_migrations_flagged_are_the_known_historical_ones():
-    flagged = set()
-    for path in sorted(VERSIONS.glob("*.py")):
-        if guard.scan_source(path.read_text(), path.name):
-            flagged.add(path.name[:4])
-    # 0018/0019 are the contract migrations of #594 and #540; CI scans changed files only.
-    assert {"0018", "0019"} <= flagged
+    flagged = {
+        path.name[:4]
+        for path in sorted(VERSIONS.glob("*.py"))
+        if guard.scan_source(path.read_text(), path.name)
+    }
+    # 0015 deletes duplicate rows via helpers; 0018/0019 are the contract steps of
+    # #594 and #540. CI scans changed files only, so history is not re-gated.
+    assert flagged == {"0015", "0018", "0019"}
+
+
+def test_fstring_sql_is_joined_before_matching():
+    both = '    op.execute(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE varchar(10)")'
+    assert len(scan(both)) == 1
+    table_only = (
+        '    op.execute(f"ALTER TABLE {table} ALTER COLUMN c TYPE varchar(10)")'
+    )
+    assert len(scan(table_only)) == 1
+
+
+@pytest.mark.parametrize(
+    "stmt",
+    [
+        "ALTER TABLE a RENAME TO b",
+        "ALTER TABLE a RENAME COLUMN x TO y",
+        "DROP SCHEMA s",
+        "DROP VIEW v",
+        "DROP TYPE t",
+        "ALTER TABLE a ALTER c TYPE text",
+    ],
+)
+def test_more_sql_patterns(stmt):
+    assert len(scan(f'    op.execute("{stmt}")')) == 1
+
+
+def test_alter_type_does_not_span_statements():
+    body = '    op.execute("ALTER TABLE a ADD COLUMN c text; SELECT 1 AS type")'
+    assert scan(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '    op.get_bind().execute(sa.text("DROP TABLE t"))',
+        '    conn = op.get_bind()\n    conn.execute(sa.text("TRUNCATE t"))',
+        '    connection.execute("DELETE FROM t")',
+    ],
+)
+def test_execute_on_any_receiver(body):
+    assert len(scan(body)) == 1
+
+
+def test_helpers_are_followed_transitively_and_cycle_safe():
+    source = (
+        HEAD
+        + "def _run(conn, sql):\n    conn.execute(sa.text(sql))\n\n\n"
+        + "def _a(conn):\n    _run(conn, 'DROP TABLE t')\n    _b(conn)\n\n\n"
+        + "def _b(conn):\n    _a(conn)\n    op.drop_column('u', 'c')\n\n\n"
+        + "def upgrade() -> None:\n    _a(op.get_bind())\n\n\n"
+        + "def downgrade() -> None:\n    pass\n"
+    )
+    findings = guard.scan_source(source, "m.py")
+    assert len(findings) == 2
+    assert any("op.drop_column" in f for f in findings)
+
+
+def test_unused_helper_is_not_scanned():
+    source = (
+        HEAD
+        + "def _unused():\n    op.drop_table('t')\n\n\n"
+        + "def upgrade() -> None:\n    pass\n\n\n"
+        + "def downgrade() -> None:\n    _unused()\n"
+    )
+    assert guard.scan_source(source, "m.py") == []
+
+
+def test_module_constants_and_concatenation_are_resolved():
+    source = (
+        HEAD
+        + 'SQL = "DROP TABLE t"\nPART = "TRUNCATE " + "t"\n\n\n'
+        + "def upgrade() -> None:\n    op.execute(SQL)\n    op.execute(sa.text(PART))\n"
+        + '    op.execute("DEL" + "ETE FROM t")\n\n\n'
+        + "def downgrade() -> None:\n    pass\n"
+    )
+    assert len(guard.scan_source(source, "m.py")) == 3
+
+
+def test_op_alias_is_tracked():
+    source = (
+        "import sqlalchemy as sa\nfrom alembic import op as alembic_op\n\n\n"
+        "def upgrade() -> None:\n    alembic_op.drop_column('u', 'c')\n\n\n"
+        "def downgrade() -> None:\n    pass\n"
+    )
+    assert len(guard.scan_source(source, "m.py")) == 1
+
+
+def test_missing_upgrade_fails_closed():
+    (finding,) = guard.scan_source("x = 1\n", "m.py")
+    assert "no top-level upgrade()" in finding
+
+
+def test_workflow_diff_selects_renamed_files(tmp_path):
+    text = WORKFLOW.read_text()
+    assert "--no-renames" in text
+    line = next(ln for ln in text.splitlines() if "git diff --name-only" in ln)
+    cmd = line.split("files=$(", 1)[1].rsplit(")", 1)[0]
+    cmd = cmd.replace("origin/${BASE_REF}", "base")
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q", "-b", "base")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    versions = tmp_path / "backend" / "alembic" / "versions"
+    versions.mkdir(parents=True)
+    body = "# filler line\n" * 40
+    (versions / "0020_a.py").write_text(body + "def upgrade():\n    pass\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("checkout", "-q", "-b", "pr")
+    git(
+        "mv", "backend/alembic/versions/0020_a.py", "backend/alembic/versions/0021_a.py"
+    )
+    renamed = versions / "0021_a.py"
+    renamed.write_text(renamed.read_text() + "    op.drop_column('u', 'c')\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "pr")
+    out = subprocess.run(
+        cmd, shell=True, cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout
+    assert out.split() == ["backend/alembic/versions/0021_a.py"]
 
 
 def test_workflow_runs_on_label_changes_and_checks_the_label():
@@ -176,4 +301,6 @@ def test_workflow_runs_on_label_changes_and_checks_the_label():
         in text
     )
     assert "fetch-depth: 0" in text
+    assert "persist-credentials: false" in text
+    assert "branches: [dev]" in text
     assert "git diff --name-only" in text and "backend/alembic/versions/" in text

@@ -19,5 +19,9 @@
 # CI/CD workflows — any change requires explicit review
 /.github/ @wcmchenry3
 
+# Migration guard (#687): the check that gates destructive migrations
+/.github/workflows/migration-guard.yml @wcmchenry3
+/scripts/migration_guard/ @wcmchenry3
+
 # Security policy
 /SECURITY.md @wcmchenry3

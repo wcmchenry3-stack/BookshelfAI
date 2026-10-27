@@ -62,12 +62,16 @@ Change the schema in two releases, never one:
 
 Render runs `alembic upgrade head` before the new code takes traffic, so old code is live while a migration runs; a destructive step in the same release as the code change breaks the overlap.
 
-**CI guard.** The `Migration guard` workflow (`.github/workflows/migration-guard.yml`, scanner `scripts/migration_guard/check_destructive_migrations.py`) runs on every pull request and again whenever a label is added or removed. It scans only the migration files the PR adds or changes under `backend/alembic/versions/`, and only the body of `upgrade()` (the `downgrade()` is ignored). It fails the PR on:
-- `drop_table`, `drop_column`, `rename_table`
-- `alter_column` with `new_column_name`, `type_=` (any type change counts; narrowing cannot be detected reliably) or `nullable=False`
-- `op.execute(...)` / `sa.text(...)` string literals containing DROP TABLE, DROP COLUMN, TRUNCATE, DELETE or ALTER ... TYPE (case-insensitive), and `delete(...)` constructs passed to `op.execute`
-- the same calls on `batch_op` inside `with op.batch_alter_table(...)`
+**CI guard.** The `Migration guard` workflow (`.github/workflows/migration-guard.yml`, scanner `scripts/migration_guard/check_destructive_migrations.py`) runs on every pull request to `dev` and again whenever a label is added or removed. It scans the migration files the PR adds, modifies or renames (`git diff --no-renames --diff-filter=AM`, so a renumbered file is scanned) under `backend/alembic/versions/`. It reads the code with `ast`: the body of `upgrade()` plus any module-level helper it calls, directly or through other helpers (the `downgrade()` is ignored).
 
-Dropping an index or a constraint is allowed (no data is lost). Steps hidden behind a helper function called from `upgrade()` are not followed, so keep destructive calls inline.
+Detected (fails the PR without the label):
+- `drop_table`, `drop_column`, `rename_table`, on `op` (also an alias from `from alembic import op as X`) and on the `batch_op` of `with op.batch_alter_table(...)`
+- `alter_column` with `new_column_name`, `type_=` (any type change counts; narrowing cannot be detected reliably) or `nullable=False`
+- `.execute(...)` on any receiver (`op`, `op.get_bind()`, `conn`), and calls to a followed helper, whose string arguments contain DROP TABLE/COLUMN/SCHEMA/TYPE/VIEW, TRUNCATE, DELETE, `ALTER TABLE ... RENAME` or `ALTER ... TYPE` within one statement (case-insensitive), or that build a `delete(...)` construct. Module-level string constants, `+` concatenation and f-strings (interpolated parts count as a placeholder) are resolved
+- a migration with no top-level `upgrade()` (fails closed, since it cannot be checked)
+
+Not detected: dropping an index or a constraint (allowed, no data is lost); SQL built at run time from values the file does not define (imports, function results, loops over data); destructive steps in code the file imports from another module; `SET NOT NULL` written as raw SQL; `.execute(...)` of a statement object built elsewhere. Review these by hand.
+
+The guard's own files (`.github/workflows/migration-guard.yml`, `scripts/migration_guard/`) are listed in `.github/CODEOWNERS`, so changing them needs the owner's review. The `migration-guard` check should also be set as a required status check, otherwise a failing guard does not block the merge.
 
 **Label process.** A PR that trips the guard needs the `destructive-migration-approved` label, which only the owner applies; contributors and agents must not add it. Until launch (the app is not live, decision 0) a destructive change may be a single migration with the label instead of a two-release expand/contract; after launch, use expand/contract. Run the scanner locally with `python3 scripts/migration_guard/check_destructive_migrations.py backend/alembic/versions/<file>.py`.
