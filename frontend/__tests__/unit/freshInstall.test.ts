@@ -6,6 +6,7 @@ import {
   MARKER_DONE,
   MARKER_PENDING,
   clearTokensIfFreshInstall,
+  markWipePending,
   resetInstallCheckForTests,
 } from '../../lib/freshInstall';
 
@@ -127,14 +128,43 @@ describe('clearTokensIfFreshInstall', () => {
     expect(mockKeychain.size).toBe(2);
   });
 
-  it('checks again on the next launch after a failed check, keeping an existing session', async () => {
-    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
+  it('after a failed check, the next launch wipes first even once the scan queue is written', async () => {
+    // Fresh install, but AsyncStorage could not be read.
     (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
     await expect(clearTokensIfFreshInstall()).resolves.toBe('check_failed');
+    expect(mockKeychain.size).toBe(2);
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe(MARKER_PENDING);
+
+    // ScanJobProvider persists its queue during that launch.
+    await AsyncStorage.setItem('scan_job_queue', '[]');
     nextLaunch();
 
-    await expect(clearTokensIfFreshInstall()).resolves.toBe('no_change');
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('cleared');
+    expect(mockKeychain.size).toBe(0);
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe(MARKER_DONE);
+  });
+
+  it('still reports check_failed when the pending marker cannot be written either', async () => {
+    (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+    (AsyncStorage.setItem as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('check_failed');
     expect(mockKeychain.size).toBe(2);
+  });
+
+  it('markWipePending makes the next launch wipe a known install', async () => {
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
+
+    await markWipePending();
+
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('cleared');
+    expect(mockKeychain.size).toBe(0);
+  });
+
+  it('markWipePending never rejects', async () => {
+    (AsyncStorage.setItem as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+
+    await expect(markWipePending()).resolves.toBeUndefined();
   });
 
   it('wipes when the marker holds an unknown value (fail closed)', async () => {

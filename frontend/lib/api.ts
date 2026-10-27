@@ -36,8 +36,18 @@ export function resumeStoredSession() {
 }
 
 // Responses from these never start a refresh: a rejected sign-in or refresh
-// is not an expired access token.
+// is not an expired access token. '/auth/refresh' is listed for safety only:
+// refreshAccessToken posts with bare axios, which bypasses these interceptors.
 const NO_REFRESH_PATHS = ['/auth/google', '/auth/refresh'];
+
+// The request's path without baseURL/origin, query, hash or trailing slash.
+function requestPath(url: string | undefined): string {
+  let path = url ?? '';
+  if (path.startsWith(BASE_URL)) path = path.slice(BASE_URL.length);
+  path = path.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '');
+  path = path.replace(/[?#].*$/, '').replace(/\/+$/, '');
+  return path.startsWith('/') ? path : `/${path}`;
+}
 
 export const api = axios.create({
   baseURL: BASE_URL,
@@ -70,6 +80,15 @@ async function signOut() {
   onAuthFailure?.();
 }
 
+async function dropWrittenTokens(access: string, refresh: string) {
+  if ((await storage.getItem(ACCESS_TOKEN_KEY)) === access) {
+    await storage.deleteItem(ACCESS_TOKEN_KEY);
+  }
+  if ((await storage.getItem(REFRESH_TOKEN_KEY)) === refresh) {
+    await storage.deleteItem(REFRESH_TOKEN_KEY);
+  }
+}
+
 // One refresh at a time. The refresh token is single-use (rotated on every
 // /auth/refresh), so concurrent 401s must share one refresh: a second POST
 // with the same token would be rejected and sign the user out, wiping the
@@ -93,6 +112,12 @@ function refreshAccessToken(): Promise<string | null> {
         if (epoch !== sessionEpoch) return null;
         await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
         await storage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+        // A sign-out (or new login) began during the writes: remove what this
+        // refresh wrote, unless a newer session has replaced it already.
+        if (epoch !== sessionEpoch) {
+          await dropWrittenTokens(data.access_token, data.refresh_token);
+          return null;
+        }
         return data.access_token as string;
       } catch (refreshError) {
         const status = (refreshError as { response?: { status?: number } })?.response?.status;
@@ -130,7 +155,7 @@ api.interceptors.response.use(
     if (error.response?.status !== 401) {
       return Promise.reject(error);
     }
-    if (NO_REFRESH_PATHS.includes(original?.url) || !(await storedSession)) {
+    if (NO_REFRESH_PATHS.includes(requestPath(original?.url)) || !(await storedSession)) {
       return Promise.reject(error);
     }
     const sent = sentAccessToken(original);

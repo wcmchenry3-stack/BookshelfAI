@@ -32,16 +32,22 @@ import * as storage from './storage';
 //
 // When the wipe fails (SecureStore throws), the result is 'wipe_failed'.
 // When getAllKeys or the marker read throws, a fresh install cannot be told
-// from an existing one, so nothing is deleted and the result is
-// 'check_failed'. For both, AuthProvider ends the launch signed out and gates
-// the request layer (lib/api.ts gateStoredSession), so the stored tokens are
-// neither sent nor refreshed (fail closed). The 'pending' marker makes the
-// next launch retry a failed wipe; after a failed check, the next launch
-// simply checks again, so an existing session survives.
+// from an existing one, so nothing is deleted, the marker is set to 'pending'
+// (best effort) and the result is 'check_failed'. For both, AuthProvider ends
+// the launch signed out and gates the request layer (lib/api.ts
+// gateStoredSession), so the stored tokens are neither sent nor refreshed
+// (fail closed). The 'pending' marker makes the next launch wipe before any
+// token is used, even though ScanJobProvider writes `scan_job_queue` in
+// between (which would otherwise make it look like an upgrade). An existing
+// user therefore signs in again after a launch where AsyncStorage failed.
+// A sign-out whose SecureStore delete fails sets 'pending' too
+// (markWipePending), so the next launch wipes what was left behind.
 //
-// Known gap, failing open and needing two AsyncStorage/SecureStore failures
-// in one launch: if writing 'pending' fails and the wipe then fails too, the
-// next launch sees the queue key and takes the upgrade path.
+// Known gaps, failing open and needing two storage failures in one launch:
+// - writing 'pending' fails and the wipe then fails too;
+// - the check fails and writing 'pending' fails too;
+// - a sign-out delete fails and writing 'pending' fails too.
+// In each, the next launch may treat the leftover tokens as this install's.
 // If writing '1' fails after a good wipe, the marker stays 'pending' and the
 // next launch wipes again (fail closed: at worst one more sign-in).
 //
@@ -118,6 +124,7 @@ async function runInstallCheck(): Promise<InstallCheckResult> {
       message: 'install check: storage unreadable',
       level: 'warning',
     });
+    await markWipePending();
     return 'check_failed';
   }
 
@@ -144,6 +151,20 @@ async function runInstallCheck(): Promise<InstallCheckResult> {
     // Wipe anyway; see the known gaps above.
   }
   return wipeTokens();
+}
+
+/**
+ * Best effort: makes the next launch wipe the stored tokens before using
+ * them. Used when this launch could not confirm or finish a wipe, or a
+ * sign-out could not delete the tokens. Never rejects.
+ */
+export async function markWipePending(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_PENDING);
+  } catch {
+    // See the known gaps above.
+  }
 }
 
 let installCheck: Promise<InstallCheckResult> | null = null;

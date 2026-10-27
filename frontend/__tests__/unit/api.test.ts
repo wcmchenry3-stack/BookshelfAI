@@ -652,4 +652,63 @@ describe('api session gate (#722)', () => {
     expect(mockDeleteItem).not.toHaveBeenCalled();
     expect(onAuthFailure).not.toHaveBeenCalled();
   });
+
+  it('removes the tokens a refresh wrote when logout starts during its writes', async () => {
+    const refresh = deferredRefresh();
+    const { err, adapter } = authed401WithAdapter();
+    mockSetItem.mockImplementation(async (key: string, value: string) => {
+      store[key] = value;
+      if (key === ACCESS_TOKEN_KEY) {
+        // logout() runs between the two writes: gate closed, both deleted.
+        gateStoredSession(Promise.resolve(false));
+        store[ACCESS_TOKEN_KEY] = null;
+        store[REFRESH_TOKEN_KEY] = null;
+      }
+    });
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(store[ACCESS_TOKEN_KEY]).toBeNull();
+    expect(store[REFRESH_TOKEN_KEY]).toBeNull();
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('keeps a newer login when an old refresh finishes writing late', async () => {
+    const refresh = deferredRefresh();
+    const { err } = authed401WithAdapter();
+    mockSetItem.mockImplementation(async (key: string, value: string) => {
+      store[key] = value;
+      if (key === REFRESH_TOKEN_KEY && value === 'late-refresh') {
+        // A new login stores its tokens right after.
+        store[ACCESS_TOKEN_KEY] = 'login-access';
+        store[REFRESH_TOKEN_KEY] = 'login-refresh';
+        resumeStoredSession();
+      }
+    });
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(store[ACCESS_TOKEN_KEY]).toBe('login-access');
+    expect(store[REFRESH_TOKEN_KEY]).toBe('login-refresh');
+  });
+
+  it.each([
+    '/auth/google/',
+    '/auth/google?x=1',
+    'auth/google',
+    `${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8001'}/auth/google`,
+    'https://api.example.com/auth/google#frag',
+  ])('never refreshes for a 401 from %s', async (url) => {
+    const err = authed401(url);
+
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+  });
 });

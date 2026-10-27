@@ -2,7 +2,12 @@ import React, { useContext } from 'react';
 import { Text } from 'react-native';
 import { act, render, waitFor } from '@testing-library/react-native';
 
-import { AuthContext, AuthProvider, SESSION_CHECK_TIMEOUT_MS } from '../../contexts/AuthContext';
+import {
+  AuthContext,
+  AuthProvider,
+  INSTALL_CHECK_TIMEOUT_MS,
+  SESSION_CHECK_TIMEOUT_MS,
+} from '../../contexts/AuthContext';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -372,8 +377,65 @@ describe('AuthProvider logout errors (#733 review)', () => {
       await ctx.logout();
     });
 
-    expect(mockGateStoredSession).toHaveBeenCalledTimes(1);
-    await expect(mockGateStoredSession.mock.calls[0][0]).resolves.toBe(false);
+    // Closed before the deletes (so a refresh landing meanwhile is dropped)
+    // and again at the end.
+    expect(mockGateStoredSession).toHaveBeenCalled();
+    for (const [gate] of mockGateStoredSession.mock.calls) {
+      await expect(gate).resolves.toBe(false);
+    }
+    expect(mockGateStoredSession.mock.invocationCallOrder[0]).toBeLessThan(
+      Math.min(...mockDeleteItem.mock.invocationCallOrder.slice(-2))
+    );
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe('1');
+  });
+
+  it('marks the next launch to wipe when a logout delete fails', async () => {
+    mockGetItem.mockResolvedValue('some-token');
+    let ctx!: React.ContextType<typeof AuthContext>;
+    function Capture() {
+      // eslint-disable-next-line react-hooks/globals
+      ctx = useContext(AuthContext);
+      return null;
+    }
+    const { getByTestId } = await render(
+      <AuthProvider>
+        <AuthDisplay />
+        <Capture />
+      </AuthProvider>
+    );
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    mockDeleteItem.mockRejectedValueOnce(new Error('keychain locked'));
+
+    await act(async () => {
+      await ctx.logout();
+    });
+
+    expect(getByTestId('state').props.children).toBe('guest');
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe('pending');
+  });
+});
+
+describe('AuthProvider install check timeout (#722 review round 3)', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it('treats a hung install check as signed out after the timeout', async () => {
+    jest.useFakeTimers();
+    useKeychain(BOTH_TOKENS);
+    (AsyncStorage.getAllKeys as jest.Mock).mockReturnValueOnce(new Promise(() => {}));
+
+    const { getByTestId } = await renderProvider();
+    expect(getByTestId('state').props.children).toBe('loading');
+    const gate = mockGateStoredSession.mock.calls[0][0] as Promise<boolean>;
+    let gateValue: boolean | undefined;
+    gate.then((v) => (gateValue = v));
+
+    await jest.advanceTimersByTimeAsync(INSTALL_CHECK_TIMEOUT_MS - 1);
+    expect(gateValue).toBeUndefined();
+    // waitFor advances the fake clock inside act, past the timeout.
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    expect(gateValue).toBe(false);
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
   });
 });
 

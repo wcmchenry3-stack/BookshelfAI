@@ -12,6 +12,7 @@ import {
 import {
   type InstallCheckResult,
   clearTokensIfFreshInstall,
+  markWipePending,
   storedTokensUsable,
 } from '../lib/freshInstall';
 import { Sentry } from '../lib/sentry';
@@ -58,21 +59,47 @@ async function checkSession(): Promise<SessionCheck> {
   }
 }
 
+// How long requests and the loading state wait for the install check. Past
+// it the launch is treated as signed out (fail closed); login reopens the
+// gate, so the user can still sign in.
+export const INSTALL_CHECK_TIMEOUT_MS = 5000;
+
+// Whether the stored tokens may be used, or false if the check takes longer
+// than INSTALL_CHECK_TIMEOUT_MS.
+function usableWithin(check: Promise<InstallCheckResult>): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      Sentry.addBreadcrumb({
+        category: 'auth',
+        message: 'install check timed out',
+        level: 'warning',
+      });
+      resolve(false);
+    }, INSTALL_CHECK_TIMEOUT_MS);
+    check
+      .then(storedTokensUsable, () => false)
+      .then((usable) => {
+        clearTimeout(timer);
+        resolve(usable);
+      });
+  });
+}
+
 // The install check the request layer was last gated on. The check is
 // memoised per launch, so a remount (or a StrictMode double render) must not
 // gate again on the same check after login has lifted the gate.
-let gatedCheck: Promise<InstallCheckResult> | null = null;
+let gated: { check: Promise<InstallCheckResult>; usable: Promise<boolean> } | null = null;
 
 // Starts the install check (lib/freshInstall.ts) and gates the request layer
 // on it, so no request sends or refreshes the stored tokens until the check
-// says they belong to this install.
-function startInstallCheck(): Promise<InstallCheckResult> {
+// says they belong to this install. Resolves to whether they may be used.
+function startInstallCheck(): Promise<boolean> {
   const check = clearTokensIfFreshInstall();
-  if (check !== gatedCheck) {
-    gatedCheck = check;
-    gateStoredSession(check.then(storedTokensUsable, () => false));
+  if (gated?.check !== check) {
+    gated = { check, usable: usableWithin(check) };
+    gateStoredSession(gated.usable);
   }
-  return check;
+  return gated.usable;
 }
 
 interface AuthContextValue {
@@ -99,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Started while rendering, before any child effect touches AsyncStorage or
   // makes a request (see lib/freshInstall.ts). Memoised, so a repeat render
   // reuses it.
-  const [installCheck] = useState(startInstallCheck);
+  const [tokensUsable] = useState(startInstallCheck);
 
   // On mount: clear tokens left in the Keychain by a previous install, then
   // confirm any stored session with the server before leaving the loading
@@ -113,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // A failed wipe may have left the previous install's tokens, and a
         // failed check cannot tell: this launch is signed out (the request
         // layer is gated too, so the tokens are neither sent nor refreshed).
-        if (!storedTokensUsable(await installCheck)) return;
+        if (!(await tokensUsable)) return;
         const token = await storage.getItem(ACCESS_TOKEN_KEY);
         if (!token) return;
         authed = true;
@@ -139,7 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [installCheck]);
+  }, [tokensUsable]);
 
   const login = useCallback(async (idToken: string) => {
     const { data } = await api.post('/auth/google', { id_token: idToken });
@@ -156,14 +183,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(true);
   }, []);
 
-  // Signs out even if SecureStore throws: both deletes are attempted, the
-  // request gate is closed and the state always becomes signed out.
+  // Signs out even if SecureStore throws: the request gate is closed first
+  // (so a refresh landing during the deletes is dropped), both deletes are
+  // attempted, and the state always becomes signed out. If a delete fails,
+  // the install marker is set to 'pending' so the next launch wipes the
+  // tokens before using them.
   const logout = useCallback(async () => {
+    gateStoredSession(Promise.resolve(false));
     try {
-      await Promise.allSettled([
+      const results = await Promise.allSettled([
         storage.deleteItem(ACCESS_TOKEN_KEY),
         storage.deleteItem(REFRESH_TOKEN_KEY),
       ]);
+      if (results.some((r) => r.status === 'rejected')) {
+        await markWipePending();
+      }
     } finally {
       // Close the request gate even if a delete failed, so any token left
       // behind is not sent, and a refresh already in flight is dropped.
