@@ -375,7 +375,7 @@ class TestCleanup:
 
     async def test_purge_failure_does_not_skip_token_cleanup(self, caplog):
         factory, session = _cleanup_db()
-        await _one_cleanup_run(factory, AsyncMock(side_effect=ConnectionError("x")))
+        await _one_cleanup_run(factory, AsyncMock(side_effect=ValueError("x")))
         assert "scan records" in caplog.text
         assert "refresh_tokens" in str(session.execute.call_args[0][0])
 

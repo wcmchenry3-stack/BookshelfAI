@@ -83,7 +83,7 @@ class TestCleanupExpiredTokens:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise ConnectionError("connection lost")
+                raise ValueError("connection lost")
             result = MagicMock()
             result.rowcount = 0
             return result
@@ -162,7 +162,7 @@ class TestAIQuotaPurge:
             patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
             patch(
                 "app.services.token_cleanup.purge_old_quota",
-                AsyncMock(side_effect=ConnectionError("db down")),
+                AsyncMock(side_effect=ValueError("db down")),
             ),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
@@ -225,7 +225,7 @@ class TestAISpendPurge:
             ),
             patch(
                 "app.services.token_cleanup.purge_old_spend",
-                AsyncMock(side_effect=ConnectionError("db down")),
+                AsyncMock(side_effect=ValueError("db down")),
             ),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
@@ -405,7 +405,36 @@ class TestTransientRetry:
             assert _is_transient(wrapped) is True
 
         assert _is_transient(ValueError("nope")) is False
-        assert _is_transient(ConnectionError("lost")) is False
+        assert _is_transient(RuntimeError("nope")) is False
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ConnectionError("lost"),
+            ConnectionRefusedError("refused"),
+            ConnectionResetError("reset"),
+            OSError("plain"),
+        ],
+    )
+    def test_is_transient_covers_oserror_family(self, exc) -> None:
+        from app.services.token_cleanup import _is_transient
+
+        assert _is_transient(exc) is True
+
+    @pytest.mark.asyncio
+    async def test_connection_reset_once_then_success_logs_no_error(
+        self, caplog
+    ) -> None:
+        import logging
+
+        quota = AsyncMock(side_effect=[ConnectionResetError("reset by peer"), 4])
+        mock_session, patches = self._patches(quota)
+        await self._run_once(patches, caplog)
+
+        assert quota.await_count == 2
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
+        assert "refresh_tokens" in str(mock_session.execute.call_args[0][0])
 
     @pytest.mark.asyncio
     async def test_warning_has_attempt_count_and_label(self, caplog) -> None:
