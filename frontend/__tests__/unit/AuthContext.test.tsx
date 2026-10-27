@@ -11,6 +11,8 @@ import { INSTALL_MARKER_KEY, resetInstallCheckForTests } from '../../lib/freshIn
 const mockPost = jest.fn();
 const mockGet = jest.fn();
 const mockSetAuthFailureCallback = jest.fn();
+const mockGateStoredSession = jest.fn();
+const mockResumeStoredSession = jest.fn();
 jest.mock('../../lib/api', () => ({
   api: {
     post: (...args: unknown[]) => mockPost(...args),
@@ -19,6 +21,8 @@ jest.mock('../../lib/api', () => ({
   ACCESS_TOKEN_KEY: 'bookshelf_access_token',
   REFRESH_TOKEN_KEY: 'bookshelf_refresh_token',
   setAuthFailureCallback: (...args: unknown[]) => mockSetAuthFailureCallback(...args),
+  gateStoredSession: (...args: unknown[]) => mockGateStoredSession(...args),
+  resumeStoredSession: (...args: unknown[]) => mockResumeStoredSession(...args),
 }));
 
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -209,15 +213,18 @@ describe('AuthProvider fresh install (#722)', () => {
     expect(mockReplace).not.toHaveBeenCalledWith('/(auth)/login');
   });
 
-  it('does not wipe tokens when AsyncStorage keys cannot be read', async () => {
+  it('ends the launch signed out, deleting nothing, when AsyncStorage keys cannot be read', async () => {
     await AsyncStorage.clear();
     (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
     const keychain = useKeychain(BOTH_TOKENS);
 
     const { getByTestId } = await renderProvider();
 
-    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
     expect(keychain.size).toBe(2);
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
+    await expect(mockGateStoredSession.mock.calls.at(-1)?.[0]).resolves.toBe(false);
   });
 
   it('keeps the session when an existing install upgrades to this build', async () => {
@@ -248,6 +255,97 @@ describe('AuthProvider fresh install wipe failure (#722 review)', () => {
     // The stale tokens may still be there; the marker makes the next launch retry.
     expect(keychain.get('bookshelf_access_token')).toBe('old-access');
     expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe('pending');
+  });
+});
+
+describe('AuthProvider request gate (#722 review round 2)', () => {
+  it('gates the request layer during render, before the check settles', async () => {
+    useKeychain(BOTH_TOKENS);
+
+    await renderProvider();
+
+    expect(mockGateStoredSession).toHaveBeenCalledTimes(1);
+    await expect(mockGateStoredSession.mock.calls[0][0]).resolves.toBe(true);
+  });
+
+  it('gates the stored tokens off when the fresh-install wipe fails', async () => {
+    await AsyncStorage.clear();
+    useKeychain(BOTH_TOKENS);
+    mockDeleteItem.mockRejectedValueOnce(new Error('keychain locked'));
+
+    const { getByTestId } = await renderProvider();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    await expect(mockGateStoredSession.mock.calls[0][0]).resolves.toBe(false);
+  });
+
+  it('lets the cleared tokens through the gate after a successful wipe', async () => {
+    await AsyncStorage.clear();
+    useKeychain(BOTH_TOKENS);
+
+    await renderProvider();
+
+    await expect(mockGateStoredSession.mock.calls[0][0]).resolves.toBe(true);
+  });
+
+  it.each(['login', 'testLogin'] as const)(
+    '%s lifts the gate after storing the new tokens',
+    async (method) => {
+      mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
+      let ctx!: React.ContextType<typeof AuthContext>;
+      function Capture() {
+        // eslint-disable-next-line react-hooks/globals
+        ctx = useContext(AuthContext);
+        return null;
+      }
+      const { getByTestId } = await render(
+        <AuthProvider>
+          <AuthDisplay />
+          <Capture />
+        </AuthProvider>
+      );
+      await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+
+      await act(async () => {
+        if (method === 'login') await ctx.login('google-id-token');
+        else await ctx.testLogin('acc', 'ref');
+      });
+
+      expect(mockResumeStoredSession).toHaveBeenCalledTimes(1);
+      const resumeOrder = mockResumeStoredSession.mock.invocationCallOrder[0];
+      mockSetItem.mock.invocationCallOrder.forEach((order) =>
+        expect(order).toBeLessThan(resumeOrder)
+      );
+      expect(getByTestId('state').props.children).toBe('authed');
+    }
+  );
+});
+
+describe('AuthProvider logout errors (#733 review)', () => {
+  it('signs out and attempts both deletes even when the first delete throws', async () => {
+    mockGetItem.mockResolvedValue('some-token');
+    let ctx!: React.ContextType<typeof AuthContext>;
+    function Capture() {
+      // eslint-disable-next-line react-hooks/globals
+      ctx = useContext(AuthContext);
+      return null;
+    }
+    const { getByTestId } = await render(
+      <AuthProvider>
+        <AuthDisplay />
+        <Capture />
+      </AuthProvider>
+    );
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    mockDeleteItem.mockRejectedValueOnce(new Error('keychain locked'));
+
+    await act(async () => {
+      await ctx.logout();
+    });
+
+    expect(mockDeleteItem).toHaveBeenCalledWith('bookshelf_access_token');
+    expect(mockDeleteItem).toHaveBeenCalledWith('bookshelf_refresh_token');
+    expect(getByTestId('state').props.children).toBe('guest');
   });
 });
 

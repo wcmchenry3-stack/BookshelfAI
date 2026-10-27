@@ -13,10 +13,11 @@ import * as storage from './storage';
 // A missing marker alone does not mean a fresh install: every install from
 // before this build has no marker either. So the decision uses all of
 // AsyncStorage's keys and the marker's value:
-// - marker 'pending': an earlier wipe did not finish. Wipe again. This is
-//   checked before the upgrade rule below, because by now the app has written
-//   other keys and the install would otherwise look like an upgrade.
 // - marker '1' (done): a known install; nothing to do.
+// - marker 'pending', or any other value: an earlier wipe did not finish (or
+//   the marker is corrupt). Wipe again (fail closed). This is checked before
+//   the upgrade rule below, because by now the app has written other keys and
+//   the install would otherwise look like an upgrade.
 // - no keys at all: a fresh install. Tokens in the Keychain belong to a
 //   previous install. The marker is set to 'pending', both tokens are
 //   deleted, and only then is the marker set to '1'.
@@ -29,15 +30,18 @@ import * as storage from './storage';
 // first launch, or the queue was never written) is signed out once. That is
 // acceptable and rare.
 //
-// When the wipe fails (SecureStore throws), the result is 'wipe_failed' and
-// AuthProvider treats the launch as signed out without reading the tokens
-// (fail closed); the 'pending' marker makes the next launch try again.
+// When the wipe fails (SecureStore throws), the result is 'wipe_failed'.
+// When getAllKeys or the marker read throws, a fresh install cannot be told
+// from an existing one, so nothing is deleted and the result is
+// 'check_failed'. For both, AuthProvider ends the launch signed out and gates
+// the request layer (lib/api.ts gateStoredSession), so the stored tokens are
+// neither sent nor refreshed (fail closed). The 'pending' marker makes the
+// next launch retry a failed wipe; after a failed check, the next launch
+// simply checks again, so an existing session survives.
 //
-// Known gaps. Both fail open, and both need AsyncStorage itself to fail:
-// - If getAllKeys (or reading the marker) throws, nothing is wiped, because a
-//   fresh install cannot be told from an existing one.
-// - If writing 'pending' fails and the wipe then fails too, the next launch
-//   sees the queue key and takes the upgrade path.
+// Known gap, failing open and needing two AsyncStorage/SecureStore failures
+// in one launch: if writing 'pending' fails and the wipe then fails too, the
+// next launch sees the queue key and takes the upgrade path.
 // If writing '1' fails after a good wipe, the marker stays 'pending' and the
 // next launch wipes again (fail closed: at worst one more sign-in).
 //
@@ -50,13 +54,20 @@ export const MARKER_PENDING = 'pending';
 export const MARKER_DONE = '1';
 
 /**
- * - `no_change`: nothing was deleted (known install, upgrade, web, fresh
- *   install with no tokens, or AsyncStorage unreadable).
+ * - `no_change`: nothing was deleted (known install, upgrade, web, or a fresh
+ *   install with no tokens). The stored tokens can be used.
  * - `cleared`: tokens left by a previous install were deleted.
  * - `wipe_failed`: a wipe was needed but SecureStore failed. The tokens may
  *   still be there, so this launch must be treated as signed out.
+ * - `check_failed`: AsyncStorage could not be read, so the install state is
+ *   unknown. Nothing was deleted; this launch must be treated as signed out.
  */
-export type InstallCheckResult = 'no_change' | 'cleared' | 'wipe_failed';
+export type InstallCheckResult = 'no_change' | 'cleared' | 'wipe_failed' | 'check_failed';
+
+/** Whether the stored tokens may be used after this install check. */
+export function storedTokensUsable(result: InstallCheckResult): boolean {
+  return result === 'no_change' || result === 'cleared';
+}
 
 async function wipeTokens(): Promise<InstallCheckResult> {
   let hadTokens: boolean;
@@ -102,11 +113,16 @@ async function runInstallCheck(): Promise<InstallCheckResult> {
       marker = await AsyncStorage.getItem(INSTALL_MARKER_KEY);
     }
   } catch {
-    return 'no_change';
+    Sentry.addBreadcrumb({
+      category: 'auth',
+      message: 'install check: storage unreadable',
+      level: 'warning',
+    });
+    return 'check_failed';
   }
 
-  if (marker === MARKER_PENDING) return wipeTokens();
-  if (marker !== null) return 'no_change';
+  if (marker === MARKER_DONE) return 'no_change';
+  if (keys.includes(INSTALL_MARKER_KEY)) return wipeTokens();
 
   if (keys.length > 0) {
     try {

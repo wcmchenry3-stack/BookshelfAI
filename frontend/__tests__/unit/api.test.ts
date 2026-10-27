@@ -51,7 +51,9 @@ jest.mock('axios', () => {
 import {
   ACCESS_TOKEN_KEY,
   api,
+  gateStoredSession,
   REFRESH_TOKEN_KEY,
+  resumeStoredSession,
   setAuthFailureCallback,
   TOKEN_REVOKED,
 } from '../../lib/api';
@@ -457,5 +459,123 @@ describe('api response interceptor — concurrent 401s share one refresh', () =>
     expect(mockDeleteItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY);
     expect(mockDeleteItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY);
     expect(onAuthFailure).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Session gate (#722) ──────────────────────────────────────────────────────
+
+describe('api session gate (#722)', () => {
+  let store: Record<string, string | null>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setAuthFailureCallback(jest.fn());
+    store = { [ACCESS_TOKEN_KEY]: 'old-access', [REFRESH_TOKEN_KEY]: 'old-refresh' };
+    mockGetItem.mockImplementation((key: string) => Promise.resolve(store[key] ?? null));
+    mockSetItem.mockImplementation((key: string, value: string) => {
+      store[key] = value;
+      return Promise.resolve();
+    });
+    mockDeleteItem.mockImplementation((key: string) => {
+      store[key] = null;
+      return Promise.resolve();
+    });
+    mockAxiosPost.mockResolvedValue({
+      data: { access_token: 'new-access', refresh_token: 'new-refresh' },
+    });
+  });
+
+  afterEach(() => resumeStoredSession());
+
+  function authed401(url = '/user-books') {
+    return {
+      response: { status: 401 },
+      config: { url, headers: { Authorization: 'Bearer old-access' } },
+    };
+  }
+
+  it('holds a request until the install check settles, then sends no stale token', async () => {
+    let finishCheck!: (usable: boolean) => void;
+    gateStoredSession(new Promise<boolean>((r) => (finishCheck = r)));
+
+    let settled = false;
+    const pending = runRequestInterceptor({ headers: {} }).then((c: any) => {
+      settled = true;
+      return c;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(settled).toBe(false);
+    expect(mockGetItem).not.toHaveBeenCalled();
+
+    // The fresh-install wipe deletes the tokens, then the check passes.
+    store[ACCESS_TOKEN_KEY] = null;
+    store[REFRESH_TOKEN_KEY] = null;
+    finishCheck(true);
+
+    const config = await pending;
+    expect(config.headers.Authorization).toBeUndefined();
+  });
+
+  it('attaches the stored token when the check confirms it (upgrade / known install)', async () => {
+    gateStoredSession(Promise.resolve(true));
+
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBe('Bearer old-access');
+  });
+
+  it('never sends the stored token when the check fails', async () => {
+    gateStoredSession(Promise.resolve(false));
+
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBeUndefined();
+    expect(mockGetItem).not.toHaveBeenCalled();
+  });
+
+  it('treats a rejected check as failed', async () => {
+    gateStoredSession(Promise.reject(new Error('boom')));
+
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBeUndefined();
+  });
+
+  it('never refreshes on a 401 when the check fails', async () => {
+    gateStoredSession(Promise.resolve(false));
+    const err = authed401();
+
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockSetItem).not.toHaveBeenCalled();
+  });
+
+  it('attaches the token again once a login resumes the session', async () => {
+    gateStoredSession(Promise.resolve(false));
+    store[ACCESS_TOKEN_KEY] = 'fresh-login';
+
+    resumeStoredSession();
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBe('Bearer fresh-login');
+  });
+
+  it.each(['/auth/google', '/auth/refresh'])('never refreshes for a 401 from %s', async (url) => {
+    const err = authed401(url);
+
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+  });
+
+  it('still refreshes a 401 from an ordinary endpoint', async () => {
+    const err = authed401();
+    (err.config as any).adapter = (config: any) =>
+      Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config });
+
+    await runResponseErrorInterceptor(err);
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
   });
 });

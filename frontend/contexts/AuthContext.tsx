@@ -1,8 +1,19 @@
 import React, { createContext, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSegments } from 'expo-router';
 
-import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, api, setAuthFailureCallback } from '../lib/api';
-import { clearTokensIfFreshInstall } from '../lib/freshInstall';
+import {
+  ACCESS_TOKEN_KEY,
+  REFRESH_TOKEN_KEY,
+  api,
+  gateStoredSession,
+  resumeStoredSession,
+  setAuthFailureCallback,
+} from '../lib/api';
+import {
+  type InstallCheckResult,
+  clearTokensIfFreshInstall,
+  storedTokensUsable,
+} from '../lib/freshInstall';
 import { Sentry } from '../lib/sentry';
 import * as storage from '../lib/storage';
 
@@ -47,6 +58,23 @@ async function checkSession(): Promise<SessionCheck> {
   }
 }
 
+// The install check the request layer was last gated on. The check is
+// memoised per launch, so a remount (or a StrictMode double render) must not
+// gate again on the same check after login has lifted the gate.
+let gatedCheck: Promise<InstallCheckResult> | null = null;
+
+// Starts the install check (lib/freshInstall.ts) and gates the request layer
+// on it, so no request sends or refreshes the stored tokens until the check
+// says they belong to this install.
+function startInstallCheck(): Promise<InstallCheckResult> {
+  const check = clearTokensIfFreshInstall();
+  if (check !== gatedCheck) {
+    gatedCheck = check;
+    gateStoredSession(check.then(storedTokensUsable, () => false));
+  }
+  return check;
+}
+
 interface AuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -68,9 +96,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const segments = useSegments();
   const router = useRouter();
-  // Started while rendering, before any child effect touches AsyncStorage
-  // (see lib/freshInstall.ts). Memoised, so a repeat render reuses it.
-  const [installCheck] = useState(clearTokensIfFreshInstall);
+  // Started while rendering, before any child effect touches AsyncStorage or
+  // makes a request (see lib/freshInstall.ts). Memoised, so a repeat render
+  // reuses it.
+  const [installCheck] = useState(startInstallCheck);
 
   // On mount: clear tokens left in the Keychain by a previous install, then
   // confirm any stored session with the server before leaving the loading
@@ -81,9 +110,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       let authed = false;
       try {
-        // A fresh install whose wipe failed may still hold the previous
-        // install's tokens: this launch is signed out without reading them.
-        if ((await installCheck) === 'wipe_failed') return;
+        // A failed wipe may have left the previous install's tokens, and a
+        // failed check cannot tell: this launch is signed out (the request
+        // layer is gated too, so the tokens are neither sent nor refreshed).
+        if (!storedTokensUsable(await installCheck)) return;
         const token = await storage.getItem(ACCESS_TOKEN_KEY);
         if (!token) return;
         authed = true;
@@ -115,19 +145,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data } = await api.post('/auth/google', { id_token: idToken });
     await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
     await storage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+    resumeStoredSession();
     setIsAuthenticated(true);
   }, []);
 
   const testLogin = useCallback(async (accessToken: string, refreshToken: string) => {
     await storage.setItem(ACCESS_TOKEN_KEY, accessToken);
     await storage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    resumeStoredSession();
     setIsAuthenticated(true);
   }, []);
 
+  // Signs out even if SecureStore throws: both deletes are attempted and the
+  // state always becomes signed out.
   const logout = useCallback(async () => {
-    await storage.deleteItem(ACCESS_TOKEN_KEY);
-    await storage.deleteItem(REFRESH_TOKEN_KEY);
-    setIsAuthenticated(false);
+    try {
+      await Promise.allSettled([
+        storage.deleteItem(ACCESS_TOKEN_KEY),
+        storage.deleteItem(REFRESH_TOKEN_KEY),
+      ]);
+    } finally {
+      setIsAuthenticated(false);
+    }
   }, []);
 
   // Register logout as the auth-failure callback so api.ts can signal session expiry

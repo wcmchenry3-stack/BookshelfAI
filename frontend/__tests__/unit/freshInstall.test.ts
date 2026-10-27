@@ -109,13 +109,41 @@ describe('clearTokensIfFreshInstall', () => {
     expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe(MARKER_DONE);
   });
 
-  it('does not wipe and does not throw when AsyncStorage keys cannot be read', async () => {
-    // Documented gap: a fresh install cannot be told from an existing one.
+  it('reports check_failed, deletes nothing and does not throw when AsyncStorage keys cannot be read', async () => {
+    // A fresh install cannot be told from an existing one; AuthProvider ends
+    // the launch signed out and gates the request layer.
     (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('check_failed');
+    expect(mockKeychain.size).toBe(2);
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+  });
+
+  it('reports check_failed when the marker cannot be read', async () => {
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
+    (AsyncStorage.getItem as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('check_failed');
+    expect(mockKeychain.size).toBe(2);
+  });
+
+  it('checks again on the next launch after a failed check, keeping an existing session', async () => {
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
+    (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('check_failed');
+    nextLaunch();
 
     await expect(clearTokensIfFreshInstall()).resolves.toBe('no_change');
     expect(mockKeychain.size).toBe(2);
-    expect(mockDeleteItem).not.toHaveBeenCalled();
+  });
+
+  it('wipes when the marker holds an unknown value (fail closed)', async () => {
+    await AsyncStorage.setItem('scan_job_queue', '[]');
+    await AsyncStorage.setItem(INSTALL_MARKER_KEY, 'corrupt');
+
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('cleared');
+    expect(mockKeychain.size).toBe(0);
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe(MARKER_DONE);
   });
 
   it('keeps tokens and sets the marker when upgrading an existing install', async () => {

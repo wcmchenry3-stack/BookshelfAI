@@ -15,6 +15,25 @@ export function setAuthFailureCallback(cb: () => void) {
   onAuthFailure = cb;
 }
 
+// Session gate (#722). Until AuthProvider's install check confirms that the
+// stored tokens belong to this install, requests wait for it. If it resolves
+// false (a fresh-install wipe failed, or the install state is unknown), the
+// stored tokens are never sent and never refreshed. login/testLogin lift the
+// gate once they have stored a new session.
+let storedSession: Promise<boolean> = Promise.resolve(true);
+
+export function gateStoredSession(check: Promise<boolean>) {
+  storedSession = check.catch(() => false);
+}
+
+export function resumeStoredSession() {
+  storedSession = Promise.resolve(true);
+}
+
+// Responses from these never start a refresh: a rejected sign-in or refresh
+// is not an expired access token.
+const NO_REFRESH_PATHS = ['/auth/google', '/auth/refresh'];
+
 export const api = axios.create({
   baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
@@ -27,9 +46,11 @@ api.interceptors.request.use(async (config) => {
     message: `${(config.method ?? 'GET').toUpperCase()} ${config.url}`,
     level: 'info',
   });
-  const token = await storage.getItem(ACCESS_TOKEN_KEY);
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  if (await storedSession) {
+    const token = await storage.getItem(ACCESS_TOKEN_KEY);
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
   return config;
 });
@@ -98,6 +119,9 @@ api.interceptors.response.use(
   async (error) => {
     const original = error.config;
     if (error.response?.status !== 401) {
+      return Promise.reject(error);
+    }
+    if (NO_REFRESH_PATHS.includes(original?.url) || !(await storedSession)) {
       return Promise.reject(error);
     }
     const sent = sentAccessToken(original);
