@@ -192,7 +192,7 @@ class TestCleanupIsolation:
 
         async def execute(stmt, *a, **k):
             if "refresh_tokens" in str(stmt):
-                raise ConnectionError("lost")
+                raise ValueError("lost")
             return result
 
         patches = [
