@@ -392,4 +392,70 @@ describe('api response interceptor — concurrent 401s share one refresh', () =>
     expect(mockAxiosPost).not.toHaveBeenCalled();
     expect(onAuthFailure).toHaveBeenCalledTimes(1);
   });
+
+  // A 401 that arrives after the shared refresh has settled, for a request
+  // sent with the access token the refresh replaced (#689 review).
+  it('retries a stale 401 with the stored token instead of refreshing again', async () => {
+    mockAxiosPost.mockResolvedValue({
+      data: { access_token: 'new-access', refresh_token: 'new-refresh' },
+    });
+    const first = make401WithAdapter('a');
+    first.error.config.headers = { Authorization: 'Bearer old-access' };
+    const late = make401WithAdapter('b');
+    late.error.config.headers = { Authorization: 'Bearer old-access' };
+
+    const firstResponse: any = await runResponseErrorInterceptor(first.error);
+    const lateResponse: any = await runResponseErrorInterceptor(late.error);
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(firstResponse.data).toEqual({ name: 'a', auth: 'Bearer new-access' });
+    expect(lateResponse.data).toEqual({ name: 'b', auth: 'Bearer new-access' });
+    expect(late.adapter).toHaveBeenCalledTimes(1);
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('refreshes when the 401 was for the stored access token', async () => {
+    mockAxiosPost.mockResolvedValue({
+      data: { access_token: 'new-access', refresh_token: 'new-refresh' },
+    });
+    const { error } = make401WithAdapter('a');
+    error.config.headers = { Authorization: 'Bearer old-access' };
+
+    const response: any = await runResponseErrorInterceptor(error);
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(response.data).toEqual({ name: 'a', auth: 'Bearer new-access' });
+  });
+
+  it('a token_revoked 401 for a replaced access token does not sign out', async () => {
+    mockAxiosPost.mockResolvedValue({
+      data: { access_token: 'new-access', refresh_token: 'new-refresh' },
+    });
+    // A refresh has already stored a new access token.
+    await runResponseErrorInterceptor(make401WithAdapter('a').error);
+    expect(mockSetItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY, 'new-access');
+
+    const err = {
+      response: { status: 401, data: { detail: TOKEN_REVOKED } },
+      config: { headers: { Authorization: 'Bearer old-access' } },
+    };
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('a token_revoked 401 for the stored access token signs out', async () => {
+    const err = {
+      response: { status: 401, data: { detail: TOKEN_REVOKED } },
+      config: { headers: { Authorization: 'Bearer old-access' } },
+    };
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockDeleteItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY);
+    expect(mockDeleteItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY);
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+  });
 });

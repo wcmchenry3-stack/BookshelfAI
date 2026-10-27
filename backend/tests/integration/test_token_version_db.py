@@ -8,6 +8,8 @@
   user's sessions are untouched.
 - A refresh that interleaves with logout-all leaves no token that works and
   no unrevoked refresh row.
+- Two concurrent refreshes with the same refresh token: one rotates, the
+  other gets 401, and only one session is left live.
 
 Needs DATABASE_URL pointing at a Postgres database.
 """
@@ -350,14 +352,74 @@ async def test_refresh_interleaved_with_logout_all_leaves_nothing_usable(env):
         # No orphan: every refresh row the user has is revoked.
         assert rows and all(r.revoked_at is not None for r in rows)
 
-    if resp.status_code == 200:
-        minted = resp.json()
-        me = await client.get("/auth/me", headers=_auth(minted["access_token"]))
-        assert me.status_code == 401
-        assert me.json()["detail"] == "token_revoked"
-        again = await client.post(
-            "/auth/refresh", json={"refresh_token": minted["refresh_token"]}
+    # A holds the user lock, so B waits for A to commit: A succeeds, and B
+    # then bumps and revokes what A minted.
+    assert resp.status_code == 200, resp.text
+    minted = resp.json()
+    me = await client.get("/auth/me", headers=_auth(minted["access_token"]))
+    assert me.status_code == 401
+    assert me.json()["detail"] == "token_revoked"
+    again = await client.post(
+        "/auth/refresh", json={"refresh_token": minted["refresh_token"]}
+    )
+    assert again.status_code == 401
+
+
+async def test_concurrent_refreshes_with_one_token_fork_no_session(env):
+    """A and B present the same refresh token. A has locked the user row; B
+    has already read the refresh row as live and waits for the lock. After A
+    rotates and commits, B must see the row is revoked: exactly one 200, one
+    401, and one live refresh row."""
+    import asyncio
+
+    factory, client, make_user, _statements = env
+    user, _access, refresh = await make_user()
+    paused = async_sessionmaker(
+        factory.kw["bind"], class_=_PausingSession, expire_on_commit=False
+    )
+    second: list[asyncio.Task] = []
+    b_waited: list[bool] = []
+
+    async def refresh_b():
+        return await client.post("/auth/refresh", json={"refresh_token": refresh})
+
+    async def interleave():
+        _PausingSession.after_user_load = None  # only A's load pauses
+        second.append(asyncio.create_task(refresh_b()))
+        # B reads the (still live) refresh row, then blocks on the user lock
+        # A holds; it cannot finish before A commits.
+        done, _ = await asyncio.wait(second, timeout=1)
+        b_waited.append(not done)
+
+    async def _paused_db():
+        async with paused() as session:
+            yield session
+
+    plain_db = app.dependency_overrides[get_db]
+    _PausingSession.after_user_load = interleave
+    app.dependency_overrides[get_db] = _paused_db
+    try:
+        resp_a = await client.post("/auth/refresh", json={"refresh_token": refresh})
+        assert len(second) == 1 and b_waited == [True]
+        resp_b = await asyncio.wait_for(second[0], timeout=10)
+    finally:
+        _PausingSession.after_user_load = None
+        app.dependency_overrides[get_db] = plain_db
+
+    assert sorted([resp_a.status_code, resp_b.status_code]) == [200, 401]
+    assert resp_a.status_code == 200, resp_a.text
+    assert resp_b.json()["detail"] == "Refresh token revoked or not found"
+
+    async with factory() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(RefreshToken).where(RefreshToken.user_id == user.id)
+                )
+            )
+            .scalars()
+            .all()
         )
-        assert again.status_code == 401
-    else:
-        assert resp.status_code == 401
+        live = [r for r in rows if r.revoked_at is None]
+        assert len(rows) == 2
+        assert len(live) == 1

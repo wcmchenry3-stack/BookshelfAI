@@ -78,20 +78,40 @@ function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight;
 }
 
+// The access token a request was sent with, or null if it carried none.
+function sentAccessToken(config: { headers?: Record<string, unknown> } | undefined) {
+  const auth = config?.headers?.Authorization;
+  return typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : null;
+}
+
 // On 401: refresh once (shared by every request that got a 401 meanwhile),
 // then retry with the new access token. A revoked session (401
 // token_revoked) signs the user out at once, without a refresh.
+//
+// A 401 for a request sent with an access token that is no longer the
+// stored one is stale: the session has moved on (a refresh has already
+// stored a new token, or the user signed out). Such a 401 neither signs out
+// nor starts another refresh; a plain 401 is retried once with the stored
+// token instead.
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config;
-    if (error.response?.status === 401 && error.response.data?.detail === TOKEN_REVOKED) {
-      await signOut();
+    if (error.response?.status !== 401) {
       return Promise.reject(error);
     }
-    if (error.response?.status === 401 && !original._retry) {
+    const sent = sentAccessToken(original);
+    const stored = await storage.getItem(ACCESS_TOKEN_KEY);
+    const stale = sent !== null && sent !== stored;
+    if (error.response.data?.detail === TOKEN_REVOKED) {
+      if (!stale) {
+        await signOut();
+      }
+      return Promise.reject(error);
+    }
+    if (!original._retry) {
       original._retry = true;
-      const accessToken = await refreshAccessToken();
+      const accessToken = stale ? stored : await refreshAccessToken();
       if (accessToken) {
         original.headers.Authorization = `Bearer ${accessToken}`;
         return api(original);

@@ -157,6 +157,23 @@ async def refresh(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
         )
 
+    # Re-read the refresh row now that we hold the user lock: a concurrent
+    # refresh with the same token may have rotated it while we waited, and
+    # the check above saw the pre-lock state. Lock order is user -> refresh
+    # row, the same as revoke_all_sessions.
+    result = await db.execute(
+        select(RefreshToken)
+        .where(RefreshToken.jti == jti)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    stored = result.scalar_one_or_none()
+    if stored is None or stored.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token revoked or not found",
+        )
+
     # A token_version bump revokes the user's refresh rows (sessions.py); the
     # tv claim also catches a refresh token minted by a refresh that raced
     # the bump (#689). Missing tv (issued before #689) is revoked too.
