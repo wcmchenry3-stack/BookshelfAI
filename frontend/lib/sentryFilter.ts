@@ -3,14 +3,18 @@
  * failures (#701, follow-up to #660 / #663).
  *
  * Drops only two signatures seen as web `onunhandledrejection` events:
- *  (a) the web font loader's `"<n>ms timeout exceeded"` (expo-font /
- *      fontfaceobserver) when no stack frame is first-party code;
+ *  (a) the web font loader's fixed `"12000ms timeout exceeded"` (expo-font /
+ *      fontfaceobserver). beforeSend runs before symbolication and all
+ *      first-party code is minified into the same `app:///entry-<hex>.js`
+ *      bundle, so this is effectively matched by message + mechanism; the
+ *      frame check only rejects events that carry a source-file frame;
  *  (b) a bare `NetworkError` DOMException (code 19, "A network error
  *      occurred.") with no stack frames at all.
  *
  * Everything else is kept: our API client's axios errors (`AxiosError`,
- * "Network Error" / "timeout of 30000ms exceeded"), errors with a first-party
- * frame, other timeouts, other network errors, malformed events.
+ * "Network Error" / "timeout of 30000ms exceeded"), events with a
+ * source-file frame, other timeouts, other network errors, multi-exception
+ * and malformed events.
  * To widen it, see docs/claude/frontend.md ("Sentry noise filter").
  */
 
@@ -24,11 +28,12 @@ type ExceptionValue = {
 type EventLike = { exception?: { values?: unknown } };
 type HintLike = { originalException?: unknown } | undefined;
 
-const FONT_TIMEOUT_RE = /^\d+ms timeout exceeded$/;
+const FONT_TIMEOUT_RE = /^12000ms timeout exceeded$/;
 const NETWORK_ERROR_TEXT = 'A network error occurred.';
 const UNHANDLED_REJECTION = 'auto.browser.global_handlers.onunhandledrejection';
-// The bundled web entry: the real event (BC_BOOKSHELF-J) has frames in
-// `app:///entry-<hex hash>.js`; also accept Expo's .../_expo/static/js/...js.
+// Bundle-entry filenames (not source files). The real event (BC_BOOKSHELF-J)
+// has frames in `app:///entry-<hex hash>.js`; also accept Expo's
+// .../_expo/static/js/...js. Minified first-party code lives in the same bundle.
 const BUNDLED_ENTRY_RES = [
   /^app:\/\/\/entry-[0-9a-f]+\.js(?:[?#].*)?$/,
   /\/_expo\/static\/js\/[^?#]*\.js(?:[?#].*)?$/,
@@ -47,8 +52,7 @@ function getFrames(ex: ExceptionValue): Frame[] | null {
 }
 
 function isUnhandledRejection(ex: ExceptionValue): boolean {
-  const t = ex.mechanism?.type;
-  return t === UNHANDLED_REJECTION || t === 'onunhandledrejection';
+  return ex.mechanism?.type === UNHANDLED_REJECTION;
 }
 
 function isNetworkErrorDomException(ex: ExceptionValue, hint: HintLike): boolean {
@@ -74,7 +78,7 @@ export function isExpectedClientNetworkNoise(event: unknown, hint?: unknown): bo
     const frames = getFrames(ex);
     if (frames === null) return false;
 
-    // (a) font loader timeout: every frame is bundled/anonymous, none first-party
+    // (a) font loader timeout: reject only if some frame is a source file
     if (typeof ex.value === 'string' && FONT_TIMEOUT_RE.test(ex.value)) {
       return frames.every(isBundledOrAnonymous);
     }

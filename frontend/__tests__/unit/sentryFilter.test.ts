@@ -2,7 +2,7 @@ import { AxiosError } from 'axios';
 import { filterExpectedNetworkNoise, isExpectedClientNetworkNoise } from '../../lib/sentryFilter';
 
 const MECH = { type: 'auto.browser.global_handlers.onunhandledrejection', handled: false };
-const BUNDLE = { filename: 'app:///_expo/static/js/web/entry-abc123.js' };
+const BUNDLE = { filename: 'app:///entry-03a2ceb1d37db6d6ec46839eeff72426.js' };
 const DOM_NETWORK_ERROR = { originalException: { name: 'NetworkError', code: 19 } };
 
 function ev(value: Record<string, unknown>) {
@@ -39,14 +39,15 @@ describe('isExpectedClientNetworkNoise', () => {
       expect(isExpectedClientNetworkNoise(realJ())).toBe(true);
     });
 
-    it.each(['app:///app/(auth)/login.tsx', 'app:///src/foo.ts', 'app:///entry-xyz.js'])(
-      'BC_BOOKSHELF-J plus a %s frame is kept',
-      (filename) => {
-        const e = realJ([{ filename }]);
-        expect(isExpectedClientNetworkNoise(e)).toBe(false);
-        expect(filterExpectedNetworkNoise(e)).toBe(e);
-      }
-    );
+    it.each([
+      'app:///app/(auth)/login.tsx',
+      'app:///src/foo.ts',
+      'app:///entry-notahash.js', // non-hex entry name is not a bundle entry
+    ])('BC_BOOKSHELF-J plus a %s frame is kept', (filename) => {
+      const e = realJ([{ filename }]);
+      expect(isExpectedClientNetworkNoise(e)).toBe(false);
+      expect(filterExpectedNetworkNoise(e)).toBe(e);
+    });
 
     it('BC_BOOKSHELF-H (type Error, no stacktrace) is dropped', () => {
       const e = ev({ type: 'Error', value: 'NetworkError: A network error occurred.' });
@@ -106,7 +107,36 @@ describe('isExpectedClientNetworkNoise', () => {
     expect(filterExpectedNetworkNoise(e)).toBe(e);
   });
 
+  it('keeps the native (non-web) unhandled-rejection mechanism', () => {
+    const native = { type: 'onunhandledrejection', handled: false };
+    const j = {
+      exception: {
+        values: [{ type: 'Error', value: '12000ms timeout exceeded', mechanism: native }],
+      },
+    };
+    const h = {
+      exception: {
+        values: [
+          { type: 'Error', value: 'NetworkError: A network error occurred.', mechanism: native },
+        ],
+      },
+    };
+    expect(isExpectedClientNetworkNoise(j)).toBe(false);
+    expect(isExpectedClientNetworkNoise(h)).toBe(false);
+  });
+
+  it('keeps events with more than one exception', () => {
+    const e = ev({ type: 'Error', value: '12000ms timeout exceeded' }) as {
+      exception: { values: unknown[] };
+    };
+    e.exception.values.push({ mechanism: MECH, type: 'Error', value: 'other' });
+    expect(isExpectedClientNetworkNoise(e)).toBe(false);
+  });
+
   it('keeps unrelated errors and other timeouts', () => {
+    expect(
+      isExpectedClientNetworkNoise(ev({ type: 'Error', value: '5000ms timeout exceeded' }))
+    ).toBe(false);
     expect(isExpectedClientNetworkNoise(ev({ type: 'TypeError', value: 'x is undefined' }))).toBe(
       false
     );
