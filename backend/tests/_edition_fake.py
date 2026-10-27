@@ -69,10 +69,12 @@ class EditionFakeSession:
         if entity is Book:
             return result(MagicMock())
         if entity is Edition:
-            params = list(stmt.compile().params.values())
-            for ed, book in EDITION_BOOK.items():
-                if ed in params and book in params:
-                    return result(ed)
+            # Read each condition by column, so a query that binds the ids
+            # to the wrong columns (or drops one) fails like on Postgres.
+            bound = {c.left.key: c.right.value for c in stmt.whereclause.clauses}
+            ed = bound.get("id")
+            if ed in EDITION_BOOK and EDITION_BOOK[ed] == bound.get("book_id"):
+                return result(ed)
             return result(None)
         # the user's existing entry (none) or the re-read for the response
         if not self.added:
