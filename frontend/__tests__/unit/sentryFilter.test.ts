@@ -20,6 +20,40 @@ describe('isExpectedClientNetworkNoise', () => {
     expect(filterExpectedNetworkNoise(e)).toBeNull();
   });
 
+  describe('real Sentry event shapes', () => {
+    const REAL = 'app:///entry-03a2ceb1d37db6d6ec46839eeff72426.js';
+    const realJ = (extra: Record<string, unknown>[] = []) =>
+      ev({
+        type: 'Error',
+        value: '12000ms timeout exceeded',
+        stacktrace: {
+          frames: [
+            { filename: REAL, lineno: 1133, colno: 869, function: 'c' },
+            { filename: REAL, lineno: 1360, colno: 2980 },
+            ...extra,
+          ],
+        },
+      });
+
+    it('BC_BOOKSHELF-J (only app:///entry-<hash>.js frames) is dropped', () => {
+      expect(isExpectedClientNetworkNoise(realJ())).toBe(true);
+    });
+
+    it.each(['app:///app/(auth)/login.tsx', 'app:///src/foo.ts', 'app:///entry-xyz.js'])(
+      'BC_BOOKSHELF-J plus a %s frame is kept',
+      (filename) => {
+        const e = realJ([{ filename }]);
+        expect(isExpectedClientNetworkNoise(e)).toBe(false);
+        expect(filterExpectedNetworkNoise(e)).toBe(e);
+      }
+    );
+
+    it('BC_BOOKSHELF-H (type Error, no stacktrace) is dropped', () => {
+      const e = ev({ type: 'Error', value: 'NetworkError: A network error occurred.' });
+      expect(isExpectedClientNetworkNoise(e)).toBe(true);
+    });
+  });
+
   it('drops the font-load timeout with no stacktrace', () => {
     expect(
       isExpectedClientNetworkNoise(ev({ type: 'Error', value: '12000ms timeout exceeded' }))

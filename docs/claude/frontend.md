@@ -144,7 +144,7 @@ Layout mirroring (`I18nManager.forceRTL()` + app restart) is a follow-up task.
 
 `lib/sentry.ts` passes `beforeSend` = `filterExpectedNetworkNoise` from `lib/sentryFilter.ts`. It drops (returns `null`, after leaving a `sentry.filter` info breadcrumb) only two web `onunhandledrejection` signatures that come from the user's network or an ad-blocker, not from a bug we can fix:
 
-- the font loader's `"<n>ms timeout exceeded"` (expo-font / fontfaceobserver) when every stack frame is the bundled `/_expo/static/js/...` entry or anonymous (no first-party source file);
+- the font loader's `"<n>ms timeout exceeded"` (expo-font / fontfaceobserver) when every stack frame is the bundled entry (`app:///entry-<hex hash>.js`, as in the real BC_BOOKSHELF-J event, or an Expo `/_expo/static/js/...js` path) or anonymous (no first-party source file);
 - a bare `NetworkError` DOMException (`A network error occurred.`, code 19) with no stack frames.
 
 Kept: our API client's axios errors (`Network Error`, `timeout of 30000ms exceeded`), any event with a first-party frame, other timeouts and network errors, and any malformed event (the filter never throws; unknown shape means keep). The matcher is `isExpectedClientNetworkNoise(event, hint)`. To widen it, add a signature there plus a "dropped" and a "kept" case in `__tests__/unit/sentryFilter.test.ts`; keep it narrow, and if these errors show up with real first-party frames treat that as a bug (reopen #660), not as something to filter. The exact event shape was taken from the issue descriptions, not a captured payload: check a real event in Sentry when changing it.

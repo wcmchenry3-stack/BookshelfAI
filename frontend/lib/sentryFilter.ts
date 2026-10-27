@@ -27,13 +27,17 @@ type HintLike = { originalException?: unknown } | undefined;
 const FONT_TIMEOUT_RE = /^\d+ms timeout exceeded$/;
 const NETWORK_ERROR_TEXT = 'A network error occurred.';
 const UNHANDLED_REJECTION = 'auto.browser.global_handlers.onunhandledrejection';
-// The bundled web entry (Expo): .../_expo/static/js/web/entry-<hash>.js
-const BUNDLED_ENTRY_RE = /\/_expo\/static\/js\/[^?#]*\.js(?:[?#].*)?$/;
+// The bundled web entry: the real event (BC_BOOKSHELF-J) has frames in
+// `app:///entry-<hex hash>.js`; also accept Expo's .../_expo/static/js/...js.
+const BUNDLED_ENTRY_RES = [
+  /^app:\/\/\/entry-[0-9a-f]+\.js(?:[?#].*)?$/,
+  /\/_expo\/static\/js\/[^?#]*\.js(?:[?#].*)?$/,
+];
 
 function isBundledOrAnonymous(frame: Frame): boolean {
   const f = frame?.filename;
   if (f === undefined || f === null || f === '' || f === '<anonymous>') return true;
-  return typeof f === 'string' && BUNDLED_ENTRY_RE.test(f);
+  return typeof f === 'string' && BUNDLED_ENTRY_RES.some((re) => re.test(f));
 }
 
 function getFrames(ex: ExceptionValue): Frame[] | null {
