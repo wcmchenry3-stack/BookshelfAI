@@ -272,6 +272,23 @@ the two; an operator does, by hand:
    from its token again (when no other user holds that address).
 4. Ask the person to sign in again and confirm it succeeds.
 
+### Migration 0022 refuses: case-duplicate emails
+
+Migration 0022 (#705) adds a unique index on `lower(users.email)`. If two
+`users` rows hold the same address differing only in case, the upgrade (the
+Render `preDeployCommand`) fails with `0022: <n> email address(es) are held
+by more than one users row` and changes nothing. Check before deploying with
+this read-only query (prints ids only, no emails):
+
+```sql
+SELECT count(*) AS user_rows, array_agg(id ORDER BY created_at) AS user_ids
+  FROM users GROUP BY lower(email) HAVING count(*) > 1;
+```
+
+No rows means the migration will run. Otherwise treat each group like an
+`account_conflict` above: verify who owns the mailbox, then move the library
+(A) or release the address on the other rows (B), and redeploy.
+
 ## First production deploy — cutover checklist
 
 **Requires #448 (health split) merged and deployed before cutover** — until
