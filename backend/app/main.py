@@ -413,7 +413,8 @@ if not settings.is_hardened:
             return JSONResponse(status_code=422, content={"detail": "Invalid body"})
 
         if not hmac.compare_digest(
-            provided_secret.encode(), settings.test_auth_secret.encode()
+            provided_secret.encode("utf-8", "surrogatepass"),
+            settings.test_auth_secret.encode("utf-8", "surrogatepass"),
         ):
             return JSONResponse(status_code=403, content={"detail": "Invalid secret"})
 

@@ -404,6 +404,15 @@ class TestTestLoginIdentity:
         assert resp.json() == {"detail": "Invalid secret"}
         db.execute.assert_not_awaited()
 
+    def test_lone_surrogate_secret_is_403(self):
+        # JSON can carry an unpaired surrogate ("\\ud800"); it must not 500.
+        db = _fake_session()
+        raw = b'{"secret": "\\ud800", "email": "e2e@example.com"}'
+        resp = self._post(db, None, raw=raw)
+        assert resp.status_code == 403
+        assert resp.json() == {"detail": "Invalid secret"}
+        db.execute.assert_not_awaited()
+
     def test_non_ascii_configured_secret_matches(self):
         db = _fake_session(None, None)
         resp = self._post(

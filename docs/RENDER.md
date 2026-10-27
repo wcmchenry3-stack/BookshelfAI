@@ -185,7 +185,7 @@ the two; an operator does, by hand:
    (`ai_usage` rows are kept with `user_id` set to NULL).
 
    ```sql
-   -- OPERATOR ONLY. Replace <old_id> and <new_id> (both lines).
+   -- OPERATOR ONLY. Replace every occurrence of <old_id> and <new_id>.
    BEGIN;
    SELECT id, google_id, email, created_at FROM users
     WHERE id IN ('<old_id>', '<new_id>');
@@ -196,6 +196,9 @@ the two; an operator does, by hand:
      moving_sub text;
      moving_email text;
    BEGIN
+     -- Lock both rows first: a concurrent insert for new_id then waits and
+     -- fails its FK check instead of being cascade-deleted below.
+     PERFORM 1 FROM users WHERE id IN (old_id, new_id) FOR UPDATE;
      IF (SELECT count(*) FROM users WHERE id IN (old_id, new_id)) <> 2 THEN
        RAISE EXCEPTION 'both users must exist; stop';
      END IF;

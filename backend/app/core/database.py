@@ -25,7 +25,14 @@ _engine_kwargs = (
     }
 )
 
-engine = create_async_engine(settings.async_database_url, echo=False, **_engine_kwargs)
+# hide_parameters: a DB error's message must not carry the bound values
+# (google_id, names, emails) into logs or Sentry (#688 review).
+engine = create_async_engine(
+    settings.async_database_url,
+    echo=False,
+    hide_parameters=True,
+    **_engine_kwargs,
+)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
