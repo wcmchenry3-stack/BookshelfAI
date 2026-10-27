@@ -578,4 +578,78 @@ describe('api session gate (#722)', () => {
 
     expect(mockAxiosPost).toHaveBeenCalledTimes(1);
   });
+
+  function deferredRefresh() {
+    let resolve!: (v: object) => void;
+    let reject!: (e: unknown) => void;
+    mockAxiosPost.mockReturnValue(
+      new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+      })
+    );
+    return { resolve, reject };
+  }
+
+  function authed401WithAdapter() {
+    const adapter = jest.fn((config: any) =>
+      Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config })
+    );
+    const err = authed401();
+    (err.config as any).adapter = adapter;
+    return { err, adapter };
+  }
+
+  it('drops a refresh that settles after logout closed the gate', async () => {
+    const refresh = deferredRefresh();
+    const { err, adapter } = authed401WithAdapter();
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+
+    // logout(): tokens deleted, gate closed.
+    store[ACCESS_TOKEN_KEY] = null;
+    store[REFRESH_TOKEN_KEY] = null;
+    gateStoredSession(Promise.resolve(false));
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(store[ACCESS_TOKEN_KEY]).toBeNull();
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('drops a refresh that settles after a new login', async () => {
+    const refresh = deferredRefresh();
+    const { err, adapter } = authed401WithAdapter();
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    store[ACCESS_TOKEN_KEY] = 'new-login-access';
+    resumeStoredSession(); // login stored a new session
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(store[ACCESS_TOKEN_KEY]).toBe('new-login-access');
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('does not sign out a new session when an old refresh is rejected late', async () => {
+    const onAuthFailure = jest.fn();
+    setAuthFailureCallback(onAuthFailure);
+    const refresh = deferredRefresh();
+    const { err } = authed401WithAdapter();
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    store[ACCESS_TOKEN_KEY] = 'new-login-access';
+    resumeStoredSession();
+    refresh.reject({ response: { status: 401 } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
 });

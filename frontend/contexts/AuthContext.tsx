@@ -156,8 +156,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(true);
   }, []);
 
-  // Signs out even if SecureStore throws: both deletes are attempted and the
-  // state always becomes signed out.
+  // Signs out even if SecureStore throws: both deletes are attempted, the
+  // request gate is closed and the state always becomes signed out.
   const logout = useCallback(async () => {
     try {
       await Promise.allSettled([
@@ -165,6 +165,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         storage.deleteItem(REFRESH_TOKEN_KEY),
       ]);
     } finally {
+      // Close the request gate even if a delete failed, so any token left
+      // behind is not sent, and a refresh already in flight is dropped.
+      gateStoredSession(Promise.resolve(false));
       setIsAuthenticated(false);
     }
   }, []);

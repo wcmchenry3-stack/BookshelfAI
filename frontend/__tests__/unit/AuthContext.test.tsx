@@ -346,6 +346,34 @@ describe('AuthProvider logout errors (#733 review)', () => {
     expect(mockDeleteItem).toHaveBeenCalledWith('bookshelf_access_token');
     expect(mockDeleteItem).toHaveBeenCalledWith('bookshelf_refresh_token');
     expect(getByTestId('state').props.children).toBe('guest');
+    // The request gate is closed, so a token a failed delete left behind is
+    // not attached to later requests.
+    await expect(mockGateStoredSession.mock.calls.at(-1)?.[0]).resolves.toBe(false);
+  });
+
+  it('closes the request gate on a normal logout', async () => {
+    mockGetItem.mockResolvedValue('some-token');
+    let ctx!: React.ContextType<typeof AuthContext>;
+    function Capture() {
+      // eslint-disable-next-line react-hooks/globals
+      ctx = useContext(AuthContext);
+      return null;
+    }
+    const { getByTestId } = await render(
+      <AuthProvider>
+        <AuthDisplay />
+        <Capture />
+      </AuthProvider>
+    );
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    mockGateStoredSession.mockClear();
+
+    await act(async () => {
+      await ctx.logout();
+    });
+
+    expect(mockGateStoredSession).toHaveBeenCalledTimes(1);
+    await expect(mockGateStoredSession.mock.calls[0][0]).resolves.toBe(false);
   });
 });
 

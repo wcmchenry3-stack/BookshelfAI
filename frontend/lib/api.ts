@@ -18,15 +18,20 @@ export function setAuthFailureCallback(cb: () => void) {
 // Session gate (#722). Until AuthProvider's install check confirms that the
 // stored tokens belong to this install, requests wait for it. If it resolves
 // false (a fresh-install wipe failed, or the install state is unknown), the
-// stored tokens are never sent and never refreshed. login/testLogin lift the
-// gate once they have stored a new session.
+// stored tokens are never sent and never refreshed. logout closes the gate;
+// login/testLogin lift it once they have stored a new session. Every change
+// bumps the session epoch, so a refresh that started before it drops its
+// result instead of storing tokens for a session that has ended.
 let storedSession: Promise<boolean> = Promise.resolve(true);
+let sessionEpoch = 0;
 
 export function gateStoredSession(check: Promise<boolean>) {
+  sessionEpoch += 1;
   storedSession = check.catch(() => false);
 }
 
 export function resumeStoredSession() {
+  sessionEpoch += 1;
   storedSession = Promise.resolve(true);
 }
 
@@ -77,17 +82,21 @@ let refreshInFlight: Promise<string | null> | null = null;
 function refreshAccessToken(): Promise<string | null> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
+      const epoch = sessionEpoch;
       const refreshToken = await storage.getItem(REFRESH_TOKEN_KEY);
       if (!refreshToken) return null;
       try {
         const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
           refresh_token: refreshToken,
         });
+        // Signed out (or into a new session) meanwhile: drop the result.
+        if (epoch !== sessionEpoch) return null;
         await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
         await storage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
         return data.access_token as string;
       } catch (refreshError) {
-        if ((refreshError as { response?: { status?: number } })?.response?.status === 401) {
+        const status = (refreshError as { response?: { status?: number } })?.response?.status;
+        if (status === 401 && epoch === sessionEpoch) {
           await signOut();
         }
         return null;
