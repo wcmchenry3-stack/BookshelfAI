@@ -17,13 +17,25 @@ PATH_TO_CHECK="${SMOKE_PATH:-/health/db}"
 URLS=("$@")
 [ ${#URLS[@]} -eq 0 ] && URLS=("https://bookshelfapi.buffingchi.com")
 
+usage() {
+  echo "usage: $0 [http(s)://host ...]   (SMOKE_PATH must start with /)" >&2
+  exit 2
+}
+
+case "$PATH_TO_CHECK" in /*) ;; *) usage ;; esac
+for base in "${URLS[@]}"; do
+  [[ "$base" =~ ^https?:// ]] || usage
+done
+
 rc=0
 for base in "${URLS[@]}"; do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 20 "${base%/}${PATH_TO_CHECK}") || code="000"
+  # Never print URL userinfo (user:pass@).
+  shown=$(printf '%s' "${base%/}" | sed -E 's#^(https?://)[^/@]*@#\1#')
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --proto '=http,https' --connect-timeout 10 --max-time 20 -- "${base%/}${PATH_TO_CHECK}") || code="000"
   case "$code" in
-    200) echo "OK   ${base}${PATH_TO_CHECK} -> 200" ;;
-    403) echo "FAIL ${base}${PATH_TO_CHECK} -> 403: origin lockdown rejects edge traffic (edge not sending the origin header, or wrong value)"; rc=1 ;;
-    *)   echo "FAIL ${base}${PATH_TO_CHECK} -> ${code}: unexpected status"; rc=1 ;;
+    200) echo "OK   ${shown}${PATH_TO_CHECK} -> 200" ;;
+    403) echo "FAIL ${shown}${PATH_TO_CHECK} -> 403: origin lockdown rejects edge traffic (edge not sending the origin header, or wrong value)"; rc=1 ;;
+    *)   echo "FAIL ${shown}${PATH_TO_CHECK} -> ${code}: unexpected status"; rc=1 ;;
   esac
 done
 exit $rc

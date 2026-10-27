@@ -46,6 +46,7 @@ ORIGIN_AUTH_EXEMPT_PATHS = frozenset({"/health"})
 ALERT_MESSAGE = "origin_auth_rejected_authenticated"
 ALERT_THROTTLE_SECONDS = 300.0
 _MAX_TAG_PATH = 200
+_MAX_METHOD = 16
 # Numeric and UUID path segments become ":id" (the middleware runs before
 # routing, so there is no route template) to keep tag cardinality low.
 _ID_SEGMENT = re.compile(
@@ -71,18 +72,22 @@ class OriginAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if _has_bearer(scope):
+        method = _clean(scope.get("method"), _MAX_METHOD)
+        path = _clean(scope.get("path"), _MAX_TAG_PATH)
+        fired = _alert_authenticated_rejection(scope) if _has_bearer(scope) else None
+        if fired is not None:
             logger.warning(
-                "origin_auth_rejected_authenticated method=%s path=%s",
-                scope.get("method"),
-                scope.get("path"),
+                "origin_auth_rejected_authenticated method=%s path=%s count=%d",
+                method,
+                path,
+                fired,
             )
-            _alert_authenticated_rejection(scope)
         else:
             logger.info(
-                "origin_auth_rejected method=%s path=%s",
-                scope.get("method"),
-                scope.get("path"),
+                "origin_auth_rejected method=%s path=%s%s",
+                method,
+                path,
+                " bearer=1" if _has_bearer(scope) else "",
             )
         await send(
             {
@@ -112,32 +117,49 @@ def _is_allowed(scope: Scope) -> bool:
     return hmac.compare_digest(values[0], secret.encode("utf-8"))
 
 
+# Three non-empty base64url segments; the token is never decoded.
+_JWT_SHAPE = re.compile(rb"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
 def _has_bearer(scope: Scope) -> bool:
+    """True if any Authorization header is ``Bearer <JWT-shaped value>``."""
     return any(
-        k.lower() == b"authorization" and v[:7].lower() == b"bearer "
+        k.lower() == b"authorization"
+        and v[:7].lower() == b"bearer "
+        and _JWT_SHAPE.fullmatch(v[7:].strip()) is not None
         for k, v in scope.get("headers", [])
     )
 
 
+def _clean(value: object, limit: int) -> str:
+    """Printable, bounded text for logs and tags (control chars become ``?``)."""
+    return _CONTROL.sub("?", str(value))[:limit]
+
+
 def _path_tag(path: object) -> str:
-    return _ID_SEGMENT.sub(":id", str(path))[:_MAX_TAG_PATH]
+    return _ID_SEGMENT.sub(":id", _clean(path, _MAX_TAG_PATH))
 
 
-def _alert_authenticated_rejection(scope: Scope) -> None:
-    """Send a throttled Sentry message; never raises into the request path."""
+def _alert_authenticated_rejection(scope: Scope) -> int | None:
+    """Send a throttled Sentry message; never raises into the request path.
+
+    Returns the rejection count if an event was sent, else None (throttled).
+    """
     global _last_alert_at, _rejected_since_alert
     _rejected_since_alert += 1
     now = _clock()
     if _last_alert_at is not None and now - _last_alert_at < ALERT_THROTTLE_SECONDS:
-        return
+        return None
     count = _rejected_since_alert
     _last_alert_at = now
     _rejected_since_alert = 0
     try:
         with sentry_sdk.isolation_scope() as sentry_scope:
-            sentry_scope.set_tag("method", str(scope.get("method")))
+            sentry_scope.set_tag("method", _clean(scope.get("method"), _MAX_METHOD))
             sentry_scope.set_tag("path", _path_tag(scope.get("path")))
             sentry_scope.set_extra("rejected_since_last", count)
             sentry_sdk.capture_message(ALERT_MESSAGE, level="error")
     except Exception:  # pragma: no cover - alerting must not break the 403
         logger.exception("origin_auth_alert_failed")
+    return count

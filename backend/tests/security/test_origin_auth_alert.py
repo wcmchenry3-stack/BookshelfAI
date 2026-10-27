@@ -107,7 +107,7 @@ def test_second_authorization_header_bearer_counts(alerts):
         "path": "/x",
         "headers": [
             (b"authorization", b"Basic abc"),
-            (b"authorization", b"Bearer tok"),
+            (b"authorization", b"Bearer a.b.c"),
         ],
     }
     assert origin_auth._has_bearer(scope)
@@ -198,26 +198,35 @@ def test_real_sentry_event_has_no_secret_token_or_header_value(monkeypatch):
     transport = MemoryTransport()
     scope = sentry_sdk.get_global_scope()
     previous_client = scope.client
-    with sentry_sdk.isolation_scope(), sentry_sdk.new_scope():
-        sentry_sdk.init(
-            dsn="https://public@example.invalid/1",
-            transport=transport,
-            integrations=[
-                StarletteIntegration(transaction_style="endpoint"),
-                FastApiIntegration(transaction_style="endpoint"),
-            ],
-            traces_sample_rate=0.0,
-            send_default_pii=False,
-            **sentry_privacy_options(),
-        )
-        try:
-            client = TestClient(app)
-            headers = {**_bearer(), settings.origin_auth_header: "wrong-origin-value"}
-            assert client.get("/api/books/42", headers=headers).status_code == 403
-            assert client.get("/api/books/43", headers=headers).status_code == 403
-        finally:
-            sentry_sdk.get_client().close()
-    scope.set_client(previous_client)
+    try:
+        with sentry_sdk.isolation_scope(), sentry_sdk.new_scope():
+            sentry_sdk.init(
+                dsn="https://public@example.invalid/1",
+                transport=transport,
+                integrations=[
+                    StarletteIntegration(transaction_style="endpoint"),
+                    FastApiIntegration(transaction_style="endpoint"),
+                ],
+                traces_sample_rate=0.0,
+                send_default_pii=False,
+                **sentry_privacy_options(),
+            )
+            try:
+                headers = {
+                    **_bearer(),
+                    settings.origin_auth_header: "wrong-origin-value",
+                }
+                with TestClient(app) as client:
+                    assert (
+                        client.get("/api/books/42", headers=headers).status_code == 403
+                    )
+                    assert (
+                        client.get("/api/books/43", headers=headers).status_code == 403
+                    )
+            finally:
+                sentry_sdk.get_client().close()
+    finally:
+        scope.set_client(previous_client)
 
     assert len(transport.events) == 1
     event = transport.events[0]
@@ -227,3 +236,47 @@ def test_real_sentry_event_has_no_secret_token_or_header_value(monkeypatch):
     blob = json.dumps(event).lower()
     for forbidden in (SECRET, TOKEN, "wrong-origin-value"):
         assert forbidden.lower() not in blob
+
+
+def test_throttled_bearer_rejection_logs_info_not_warning(alerts, client, caplog):
+    with caplog.at_level(logging.DEBUG):
+        client.get("/x", headers=_bearer())
+        client.get("/x", headers=_bearer())
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "count=1" in warnings[0].getMessage()
+    infos = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.INFO and r.name == origin_auth.__name__
+    ]
+    assert len(infos) == 1
+    assert "bearer=1" in infos[0].getMessage()
+
+
+@pytest.mark.parametrize("value", ["Bearer x", "Bearer a.b", "Bearer a..c", "Bearer "])
+def test_non_jwt_shaped_bearer_does_not_alert(alerts, client, value):
+    events, _ = alerts
+    assert client.get("/x", headers={"Authorization": value}).status_code == 403
+    assert events == []
+
+
+def test_jwt_shaped_bearer_alerts(alerts, client):
+    events, _ = alerts
+    client.get("/x", headers={"Authorization": "Bearer aa.bb-_.cc"})
+    assert len(events) == 1
+
+
+def test_control_chars_sanitized_in_tag_and_log(alerts, client, caplog):
+    events, _ = alerts
+    with caplog.at_level(logging.DEBUG):
+        client.get("/x%0Afake%0Dline", headers=_bearer())
+    assert events[0]["tags"]["path"] == "/x?fake?line"
+    for r in caplog.records:
+        assert "\n" not in r.getMessage()
+        assert "\r" not in r.getMessage()
+
+
+def test_method_capped():
+    scope = {"type": "http", "method": "M" * 50, "path": "/x", "headers": []}
+    assert origin_auth._clean(scope["method"], origin_auth._MAX_METHOD) == "M" * 16

@@ -147,15 +147,21 @@ committed.
    alert). The script cannot run in GitHub-hosted CI because Cloudflare Bot
    Fight Mode blocks those runners, so it is a manual step.
 
-**Misconfiguration alert (#721):** a rejected request that carries an
-`Authorization: Bearer ...` header (our app, not a scanner) is logged at
-WARNING and sent to Sentry as `origin_auth_rejected_authenticated` (level
-`error`, tags `method` and `path`, extra `rejected_since_last`). It is throttled
-to one event per 300 s per process (at most 12 events/hour/process); the
-extra counts the rejections since the previous event. Numeric and UUID path segments are collapsed to `:id` in the `path` tag.
-Header values (the token, the origin secret) and the origin header never
-reach the event: it carries only the message, tags and the count. Rejections without a bearer token stay at INFO
-and send nothing. Alert on this message in Sentry.
+**Misconfiguration alert (#721):** a rejected request that carries
+`Authorization: Bearer <JWT-shaped value>` (three base64url segments; the token
+is never decoded) is almost certainly our app, not a scanner. It is sent to
+Sentry as `origin_auth_rejected_authenticated` (level `error`, tags `method`
+and `path`, extra `rejected_since_last`), throttled to one event per 300 s per
+process (at most 12 events/hour/process); the extra counts the rejections since
+the previous event. The WARNING log line of the same name is emitted only when
+an event is sent; throttled bearer rejections log at INFO with `bearer=1`, and
+rejections without a JWT-shaped bearer log at INFO and send nothing. Header
+values (the token, the origin secret) and the origin header never reach the
+event: it carries only the message, tags and the count. Control characters in
+the method and path are replaced with `?` before logging and tagging. Numeric
+and UUID path segments are collapsed to `:id` in the `path` tag for tag
+cardinality only; it is not a privacy measure (the raw path already appears in
+other Sentry fields for every event). Alert on this message in Sentry.
 
 To roll back the lockdown, clear `ORIGIN_AUTH_SECRET`. To stop trusting
 `CF-Connecting-IP`, set `TRUSTED_PROXY_MODE=none`.
