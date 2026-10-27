@@ -136,14 +136,26 @@ def _texts(node: ast.AST, consts: dict[str, str]):
 
 
 def _with_locals(func: ast.FunctionDef, consts: dict[str, str]) -> dict[str, str]:
-    """Module constants plus simple ``name = <static string>`` inside ``func``."""
+    """Module constants plus simple ``name = <static string>`` inside ``func``.
+
+    A name assigned more than once keeps every value it is given (joined with
+    ``;`` so patterns don't span them): resolving each call against only the
+    last value would let ``sql = "DROP …"; op.execute(sql); sql = "SELECT 1"``
+    through. This over-approximates, which fails safe (the label clears it).
+    """
     merged = dict(consts)
+    seen: set[str] = set()
     assigns = [n for n in ast.walk(func) if isinstance(n, ast.Assign)]
     for node in sorted(assigns, key=lambda n: n.lineno):
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
             text = _render(node.value, merged)
-            if text is not None:
-                merged[node.targets[0].id] = text
+            if text is None:
+                continue
+            if name in seen:
+                text = f"{merged[name]}\n;\n{text}"
+            merged[name] = text
+            seen.add(name)
     return merged
 
 

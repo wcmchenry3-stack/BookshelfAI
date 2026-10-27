@@ -320,6 +320,20 @@ def test_local_variables_are_resolved(body):
     assert len(scan(body)) == 1
 
 
+def test_reused_local_variable_keeps_earlier_values():
+    # Codex on #699: the last assignment must not hide an earlier DROP.
+    body = (
+        '    sql = "DROP TABLE users"\n    op.execute(sql)\n'
+        '    sql = "SELECT 1"\n    op.execute(sql)'
+    )
+    assert scan(body)
+
+
+def test_reused_local_variable_stays_clean_when_all_values_are():
+    body = '    sql = "SELECT 1"\n    op.execute(sql)\n    sql = "SELECT 2"\n    op.execute(sql)'
+    assert scan(body) == []
+
+
 def test_local_variables_in_followed_helper():
     source = (
         HEAD
