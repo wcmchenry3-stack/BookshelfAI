@@ -15,6 +15,7 @@ import type { EnrichedBook } from '../../components/BookCandidatePicker';
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/api', () => ({
   api: {
     get: (...a: unknown[]) => mockGet(...a),

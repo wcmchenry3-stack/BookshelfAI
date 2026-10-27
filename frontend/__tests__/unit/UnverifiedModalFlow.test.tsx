@@ -12,6 +12,7 @@ import { useScanJobs } from '../../hooks/useScanJobs';
 // mixed add outcome must keep the refused book reachable, and the picker and
 // the form must never be presented at the same moment.
 
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/sentry', () => ({
   Sentry: {
     wrap: (c: unknown) => c,

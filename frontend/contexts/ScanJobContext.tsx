@@ -5,6 +5,7 @@ import * as Crypto from 'expo-crypto';
 import { useTranslation } from 'react-i18next';
 
 import type { EnrichedBook } from '../components/BookCandidatePicker';
+import { useAuth } from '../hooks/useAuth';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
@@ -34,7 +35,13 @@ import {
   type ScanJobType,
   type ScanResponse,
 } from '../lib/scanJob';
-import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../lib/scanJobStorage';
+import {
+  clearJobs,
+  deleteScanImage,
+  loadJobs,
+  saveJobs,
+  sweepOrphanedScanFiles,
+} from '../lib/scanJobStorage';
 import { draftFromBook, withScanRecord, type UnverifiedDraft } from '../lib/unverified';
 
 /** An "Add it yourself" form waiting to be shown, with its own id (#616). */
@@ -198,6 +205,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const skipNextPersistRef = useRef(false);
   const { showBanner } = useBanner();
   const { t, i18n } = useTranslation('scan');
+  const { isAuthenticated } = useAuth();
+  // Bumped on sign-out. A send started under an earlier generation drops its
+  // result instead of writing it into the next account's queue.
+  const generationRef = useRef(0);
+  const wasAuthenticatedRef = useRef(false);
 
   const dismissScanNotice = useCallback(() => setScanNotice(null), []);
   const bumpUsage = useCallback(() => setUsageRefreshKey((k) => k + 1), []);
@@ -211,6 +223,34 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     }
     saveJobs(jobs);
   }, [jobs, loaded]);
+
+  // Sign-out (the Settings button or a revoked session): the queue belongs to
+  // the account that made it, so drop it before another account signs in.
+  // Only a true -> false change counts; the launch state never clears.
+  useEffect(() => {
+    const wasAuthenticated = wasAuthenticatedRef.current;
+    wasAuthenticatedRef.current = isAuthenticated;
+    if (!wasAuthenticated || isAuthenticated) return;
+    generationRef.current += 1;
+    drainAgainRef.current = false;
+    const dropped = jobsRef.current;
+    // Emptying the list also disarms the retry timer and starves any drain.
+    setJobsAndRef(() => []);
+    setReviewingJobId(null);
+    reviewingJobIdRef.current = null;
+    setScanNotice(null);
+    setUnverifiedDrafts([]);
+    setEnhancedScansRemaining(null);
+    void (async () => {
+      try {
+        await clearJobs();
+      } catch {
+        // Best-effort; the next sign-in's load would otherwise see the old queue.
+      }
+      for (const j of dropped) if (j.imageUri) await deleteScanImage(j.imageUri);
+      await sweepOrphanedScanFiles([], Date.now());
+    })();
+  }, [isAuthenticated, setJobsAndRef]);
 
   // Load persisted jobs on mount. Reset interrupted searches to pending, then
   // remove scan-queue files that no persisted job refers to (crashed captures).
@@ -1098,6 +1138,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     };
 
     async function runScan(job: ScanJob) {
+      const generation = generationRef.current;
+      const signedOutSince = () => generationRef.current !== generation;
       updateJob(job.id, { status: 'searching' });
       // Enhanced scans left as reported by this response (the state update
       // lands next render).
@@ -1212,6 +1254,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        // Signed out while this was in flight: drop the result.
+        if (signedOutSince()) return;
+
         if (results.length === 0) {
           // An enhanced scan that found nothing leaves the earlier results intact.
           if (job.enhanced && job.results?.length) {
@@ -1286,6 +1331,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           ],
         });
       } catch (err) {
+        if (signedOutSince()) return;
         // A status-0 / no-response error almost always means the OS suspended
         // the upload mid-flight (app backgrounded). Auto-queue so it drains
         // on return instead of asking the user to manually retry. (#213)

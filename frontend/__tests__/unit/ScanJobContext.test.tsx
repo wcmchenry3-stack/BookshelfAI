@@ -65,6 +65,9 @@ jest.mock('../../hooks/useTheme', () => ({
   }),
 }));
 
+let mockAuthed = true;
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: mockAuthed }) }));
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -89,6 +92,7 @@ async function renderScanJobs() {
 beforeEach(() => {
   jest.resetAllMocks();
   mockUuidCounter = 0;
+  mockAuthed = true;
   mockLoadJobs.mockResolvedValue([]);
   mockNetInfoFetch.mockResolvedValue({ isConnected: true });
   mockNetInfoAddEventListener.mockReturnValue(() => {});
@@ -782,5 +786,72 @@ describe('ScanJobContext — enhanced scan', () => {
     });
 
     expect(mockPost).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScanJobContext — sign-out clears the queue (#723)', () => {
+  async function signOut(hook: Awaited<ReturnType<typeof renderScanJobs>>) {
+    mockAuthed = false;
+    await act(async () => {
+      hook.rerender({});
+    });
+  }
+
+  it('empties the list, clears storage and deletes the photos', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1), queuedJob(2)]);
+    mockPost.mockResolvedValue(scanResponse([{ title: 'Dune', author: 'Herbert' }]));
+    const hook = await renderScanJobs();
+    await act(async () => {
+      await hook.result.current.startScan('text', undefined, 'Dune');
+    });
+    expect(hook.result.current.jobs.length).toBeGreaterThan(0);
+
+    await signOut(hook);
+
+    expect(hook.result.current.jobs).toEqual([]);
+    await waitFor(() => expect(mockClearJobs).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockSweep).toHaveBeenLastCalledWith([], expect.any(Number)));
+    expect(mockDeleteScanImage).toHaveBeenCalledWith(queuedJob(1).imageUri);
+    expect(mockDeleteScanImage).toHaveBeenCalledWith(queuedJob(2).imageUri);
+  });
+
+  it('a send resolving after sign-out does not repopulate the queue', async () => {
+    let finish: (v: unknown) => void = () => {};
+    mockGet.mockReturnValue(new Promise((r) => (finish = r)));
+    const hook = await renderScanJobs();
+    await act(async () => {
+      void hook.result.current.startScan('text', undefined, 'Dune');
+    });
+    expect(hook.result.current.jobs).toHaveLength(1);
+
+    await signOut(hook);
+    expect(hook.result.current.jobs).toEqual([]);
+
+    await act(async () => {
+      finish({ data: [{ title: 'Dune', author: 'Herbert' }] });
+      await Promise.resolve();
+    });
+    expect(hook.result.current.jobs).toEqual([]);
+    expect(hook.result.current.scanNotice).toBeNull();
+  });
+
+  it('a normal launch keeps the persisted queue', async () => {
+    mockLoadJobs.mockResolvedValue([queuedJob(1)]);
+    mockNetInfoFetch.mockResolvedValue({ isConnected: false });
+    const hook = await renderScanJobs();
+    expect(hook.result.current.jobs.map((j) => j.id)).toEqual(['queued-1']);
+    expect(mockClearJobs).not.toHaveBeenCalled();
+    expect(mockDeleteScanImage).not.toHaveBeenCalled();
+  });
+
+  it('does not clear when the user was never signed in', async () => {
+    mockAuthed = false;
+    mockLoadJobs.mockResolvedValue([queuedJob(1)]);
+    const hook = await renderScanJobs();
+    await act(async () => {
+      hook.rerender({});
+    });
+    expect(hook.result.current.jobs.map((j) => j.id)).toEqual(['queued-1']);
+    expect(mockClearJobs).not.toHaveBeenCalled();
   });
 });

@@ -65,6 +65,7 @@ sequenceDiagram
 ```
 
 **Key implementation notes:**
+- The scan queue (jobs, results and photos) is cleared on sign-out, so another account never sees or uploads it; a send in flight at that moment drops its result (#723; remaining bounding work in #669).
 - Images are persisted to `scan-queue/` (expo-file-system) on native so the job survives app backgrounding. Web doesn't persist — blob URLs die on navigation.
 - `ScanJobContext.startScan()` is wrapped in try/catch with Sentry capture; any sync throw (like a crypto/uuid failure) becomes a handled banner, not a crash.
 - Scan job IDs are minted with `Crypto.randomUUID()` from `expo-crypto` (native-backed, Hermes-safe — see the uuid regression in `frontend/.eslintrc.js`).
