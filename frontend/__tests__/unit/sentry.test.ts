@@ -39,6 +39,7 @@ describe('initSentry', () => {
       tracesSampleRate: 1.0,
       sendDefaultPii: false,
       enabled: true,
+      beforeSend: expect.any(Function),
     });
   });
 
