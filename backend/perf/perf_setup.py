@@ -169,8 +169,17 @@ async def _reset_and_create_users(count: int) -> list[str]:
         for _ in range(count):
             user_id = uuid.uuid4()
             email = f"perf-{user_id.hex[:12]}@{EMAIL_DOMAIN}"
-            db.add(User(id=user_id, email=email, google_id=f"perf-{user_id.hex}"))
-            tokens.append(create_access_token(str(user_id), email))
+            # A new user starts at token_version 0; set it explicitly so the
+            # token's tv claim matches the row (#689).
+            db.add(
+                User(
+                    id=user_id,
+                    email=email,
+                    google_id=f"perf-{user_id.hex}",
+                    token_version=0,
+                )
+            )
+            tokens.append(create_access_token(str(user_id), email, 0))
         await db.commit()
     return tokens
 

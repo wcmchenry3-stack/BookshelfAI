@@ -126,6 +126,7 @@ async def resolve_google_user(
         google_id=google_id,
         display_name=display_name,
         avatar_url=avatar_url,
+        token_version=0,
     )
     db.add(user)
     return user

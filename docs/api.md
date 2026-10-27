@@ -15,7 +15,9 @@ Every endpoint except `/auth/google`, `/auth/refresh`, `/health`, and `/health/d
 Authorization: Bearer <access_token>
 ```
 
-Access tokens are JWT RS256, 24h lifetime (`JWT_EXPIRY_HOURS`). On expiry, the client calls `/auth/refresh` with its refresh token to get a new pair (old refresh token is revoked in the process — see [architecture.md](architecture.md#auth-architecture)).
+Access tokens are JWT RS256 with a **15-minute** lifetime (`JWT_ACCESS_TTL_MINUTES`, default 15, 1-60; `expires_in` in the token response is in seconds). On expiry, the client calls `/auth/refresh` with its refresh token to get a new pair (old refresh token is revoked in the process — see [architecture.md](architecture.md#auth-architecture)).
+
+Every access and refresh token carries the user's `token_version` as the `tv` claim, and every authenticated request compares it with `users.token_version`, read from the user row the request already loads (#689). `POST /auth/logout-all` bumps that version, so a token issued before the bump gets **401 `{"detail": "token_revoked"}`**, as does a token without `tv`. Clients sign out on `token_revoked` instead of refreshing. `JWT_EXPIRY_HOURS` (the old 24 h setting) is ignored, with a warning at boot.
 
 ### Error response format
 
@@ -29,7 +31,7 @@ Common status codes:
 | Code | Meaning | Typical causes |
 |---|---|---|
 | 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware) |
-| 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token |
+| 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token, session revoked by sign out of all devices (`token_revoked`) |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), and other per-endpoint conflicts |
@@ -46,7 +48,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 
 | Bucket | Default | Applied to |
 |---|---|---|
-| `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout` |
+| `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all` |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
 | `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*` |
@@ -80,7 +82,7 @@ The ID token's `aud` claim must match one of `GOOGLE_CLIENT_ID`, `GOOGLE_IOS_CLI
   "access_token": "eyJhbGciOiJSUzI1NiIs...",
   "refresh_token": "eyJhbGciOiJSUzI1NiIs...",
   "token_type": "bearer",
-  "expires_in": 86400
+  "expires_in": 900
 }
 ```
 
@@ -100,7 +102,7 @@ curl -X POST https://bookshelfapi.buffingchi.com/auth/google \
 
 ### `POST /auth/refresh` — rotate refresh token + issue new access token
 
-Validates the refresh JWT, checks the `jti` exists + is not revoked, then **revokes the old `jti` and issues a new pair**. Refresh tokens are single-use.
+Validates the refresh JWT, checks the `jti` exists + is not revoked and that its `tv` claim equals `users.token_version`, then **revokes the old `jti` and issues a new pair**. Refresh tokens are single-use.
 
 **Auth:** none (the refresh token in the body is the credential)
 **Rate limit:** `rate_limit_auth`
@@ -115,6 +117,7 @@ Validates the refresh JWT, checks the `jti` exists + is not revoked, then **revo
 
 **Errors:**
 - `401` — token expired / invalid signature / wrong type / `jti` revoked or not found / user not found
+- `401` `token_revoked` — the token's `tv` is missing or older than `users.token_version` (a sign out of all devices happened after it was issued); the presented `jti` is revoked too
 
 **Example:**
 ```bash
@@ -145,6 +148,27 @@ Revokes the `jti` embedded in the presented refresh token. Idempotent — unknow
 curl -X POST https://bookshelfapi.buffingchi.com/auth/logout \
   -H "Content-Type: application/json" \
   -d '{"refresh_token":"eyJhbGci..."}'
+```
+
+---
+
+### `POST /auth/logout-all` — sign out of all devices
+
+Bumps `users.token_version` and revokes every refresh token the user holds (`app/auth/sessions.py:revoke_all_sessions`). Every access token issued before, the caller's own included, then gets `401 token_revoked` on its next request, and no refresh token issued before can mint new tokens. Signing in again issues tokens at the new version. No request body is read.
+
+**Auth:** required (Bearer access token)
+**Rate limit:** `rate_limit_auth`
+**Source:** `backend/app/api/auth.py:logout_all`
+
+**Response `204`:** empty body.
+
+**Errors:**
+- `401` — missing, invalid, expired or already revoked (`token_revoked`) access token
+
+**Example:**
+```bash
+curl -X POST https://bookshelfapi.buffingchi.com/auth/logout-all \
+  -H "Authorization: Bearer $ACCESS"
 ```
 
 ---
@@ -563,12 +587,12 @@ Never touches the database — always `200`. Render restarts a service on a fail
 
 ```
 1. Client: POST /auth/google {id_token}
-   → {access_token (24h), refresh_token (7d)}
+   → {access_token (15 min), refresh_token (7d)}
 
 2. Client: POST /auth/me with Authorization: Bearer <access>
    → 200
 
-3. ... 24h later, access expires ...
+3. ... 15 minutes later, access expires ...
 
 4. Client: GET /user-books with expired access → 401
 
@@ -579,6 +603,10 @@ Never touches the database — always `200`. Render restarts a service on a fail
 
 7. User logs out: POST /auth/logout {refresh_token}
    → 204 (refresh jti revoked)
+
+8. Or signs out everywhere: POST /auth/logout-all (Bearer access)
+   → 204; every older access token now gets 401 token_revoked, and the
+   client signs out instead of refreshing
 ```
 
 ### Making an authenticated request from curl

@@ -39,6 +39,7 @@ def _mock_user(uid=FAKE_USER_ID, email="test@example.com"):
     u.email = email
     u.display_name = "Test User"
     u.avatar_url = "https://example.com/avatar.jpg"
+    u.token_version = 0
     return u
 
 
@@ -127,7 +128,7 @@ class TestGoogleAuth:
         data = resp.json()
         assert data["access_token"] == FAKE_ACCESS
         assert data["refresh_token"] == FAKE_REFRESH
-        assert data["expires_in"] == 24 * 3600
+        assert data["expires_in"] == 15 * 60
 
     def test_returns_200_and_tokens_for_existing_user(self):
         from app.core.database import get_db
@@ -345,6 +346,7 @@ class TestRefresh:
                     "sub": str(FAKE_USER_ID),
                     "type": "refresh",
                     "jti": FAKE_JTI,
+                    "tv": 0,
                 },
             ),
             patch("app.api.auth.create_access_token", return_value=FAKE_ACCESS),
@@ -390,6 +392,7 @@ class TestRefresh:
                     "sub": str(FAKE_USER_ID),
                     "type": "refresh",
                     "jti": FAKE_JTI,
+                    "tv": 0,
                 },
             ),
             patch("app.api.auth.create_access_token", return_value=FAKE_ACCESS),
