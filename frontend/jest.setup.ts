@@ -19,3 +19,11 @@ jest.mock('@react-native-community/netinfo', () =>
 // en translations are bundled as static imports and available synchronously;
 // components calling useTranslation() will get the correct English strings.
 import './src/i18n/i18n';
+
+// expo-router ships untranspiled ESM, so anything importing AuthContext (via
+// useAuth) would fail to load under Jest. Minimal default; tests needing specific
+// router behaviour override it with their own jest.mock('expo-router', ...).
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  useSegments: () => [],
+}));
