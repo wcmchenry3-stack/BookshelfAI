@@ -34,9 +34,31 @@ def email_allowed(email: str, allowlist: list[str]) -> bool:
 
 
 def _by_email(email: str):
-    """Users holding ``email``, ignoring case. ``limit(1)`` so rows that
-    already differ only by case can never raise MultipleResultsFound."""
-    return select(User).where(func.lower(User.email) == email.lower()).limit(1)
+    """The oldest user holding ``email``, ignoring case. ``limit(1)`` so rows
+    that already differ only by case can never raise MultipleResultsFound."""
+    return (
+        select(User)
+        .where(func.lower(User.email) == email.lower())
+        .order_by(User.created_at, User.id)
+        .limit(1)
+    )
+
+
+_UNIQUE_VIOLATION = "23505"
+
+
+def is_unique_violation(exc: IntegrityError) -> bool:
+    """True only for SQLSTATE 23505. SQLAlchemy's asyncpg adapter exposes
+    ``sqlstate``/``pgcode`` on ``exc.orig``; the raw asyncpg error is its
+    ``__cause__``. NOT NULL, FK and check violations are not races."""
+    orig = exc.orig
+    for err in (orig, getattr(orig, "__cause__", None)):
+        if err is None:
+            continue
+        for attr in ("sqlstate", "pgcode"):
+            if getattr(err, attr, None) == _UNIQUE_VIOLATION:
+                return True
+    return False
 
 
 class AccountConflictError(Exception):
@@ -124,7 +146,8 @@ async def resolve_and_commit_google_user(
     email first). The session is rolled back and the lookup runs once more,
     which then finds the winner's row: the same subject signs in, a
     different one gets :class:`AccountConflictError`. A second violation is
-    also reported as a conflict.
+    also reported as a conflict. Any other integrity error (NOT NULL, FK)
+    is a bug, not a race: it is rolled back and re-raised.
     """
     for attempt in (1, 2):
         user = await resolve_google_user(
@@ -136,8 +159,10 @@ async def resolve_and_commit_google_user(
         )
         try:
             await db.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             await db.rollback()
+            if not is_unique_violation(exc):
+                raise
             logger.warning("Sign-in hit a unique constraint (attempt %d of 2)", attempt)
             continue
         await db.refresh(user)

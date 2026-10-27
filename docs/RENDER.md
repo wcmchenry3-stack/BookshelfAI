@@ -177,22 +177,53 @@ the two; an operator does, by hand:
    (this creates an empty user; its id is in the `Signed-in user resolved
    (user_id=<new_id>)` log line), then hand its subject to the old row:
 
+   The guard runs inside the transaction: if the new account already holds
+   user content (`user_books`, `user_custom_books`, `scan_records`), the
+   block raises and nothing is deleted — stop and merge by hand. Its
+   `ai_quota`, `ai_inflight`, `ai_enhanced_zero_results` and `refresh_tokens`
+   rows are disposable for a just-created account and cascade with it
+   (`ai_usage` rows are kept with `user_id` set to NULL).
+
    ```sql
-   -- OPERATOR ONLY. Replace <old_id> and <new_id>.
+   -- OPERATOR ONLY. Replace <old_id> and <new_id> (both lines).
    BEGIN;
    SELECT id, google_id, email, created_at FROM users
     WHERE id IN ('<old_id>', '<new_id>');
-   -- The new row must be empty before it is deleted (expect 0):
-   SELECT count(*) FROM user_books WHERE user_id = '<new_id>';
-   CREATE TEMP TABLE moving ON COMMIT DROP AS
-     SELECT google_id, email FROM users WHERE id = '<new_id>';
-   DELETE FROM users WHERE id = '<new_id>';  -- cascades its tokens / quota rows
-   UPDATE users
-      SET google_id = (SELECT google_id FROM moving),
-          email     = (SELECT email FROM moving)
-    WHERE id = '<old_id>';
-   COMMIT;
+   DO $$
+   DECLARE
+     old_id uuid := '<old_id>';
+     new_id uuid := '<new_id>';
+     moving_sub text;
+     moving_email text;
+   BEGIN
+     IF (SELECT count(*) FROM users WHERE id IN (old_id, new_id)) <> 2 THEN
+       RAISE EXCEPTION 'both users must exist; stop';
+     END IF;
+     IF (SELECT count(*) FROM user_books WHERE user_id = new_id)
+      + (SELECT count(*) FROM user_custom_books WHERE user_id = new_id)
+      + (SELECT count(*) FROM scan_records WHERE user_id = new_id) > 0 THEN
+       RAISE EXCEPTION 'new account has data; stop and merge manually';
+     END IF;
+     SELECT google_id, email INTO moving_sub, moving_email
+       FROM users WHERE id = new_id;
+     DELETE FROM users WHERE id = new_id;  -- cascades its disposable rows
+     UPDATE users SET google_id = moving_sub, email = moving_email
+      WHERE id = old_id;
+   END $$;
+   COMMIT;  -- after a RAISE this only rolls back
    ```
+
+   Optional, recommended: sign out every existing session of the old row, so
+   devices still signed in through the old Google account lose access now
+   that the row belongs to the new one:
+
+   ```sql
+   -- OPERATOR ONLY.
+   DELETE FROM refresh_tokens WHERE user_id = '<old_id>';
+   ```
+
+   Access tokens already issued stay valid until they expire
+   (`JWT_EXPIRY_HOURS`).
 
    **B. Free the email only** (the old account keeps its library and stays
    reachable through its own Google account; the new Google account gets a

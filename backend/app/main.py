@@ -412,7 +412,9 @@ if not settings.is_hardened:
         if not isinstance(provided_secret, str) or not isinstance(email, str):
             return JSONResponse(status_code=422, content={"detail": "Invalid body"})
 
-        if not hmac.compare_digest(provided_secret, settings.test_auth_secret):
+        if not hmac.compare_digest(
+            provided_secret.encode(), settings.test_auth_secret.encode()
+        ):
             return JSONResponse(status_code=403, content={"detail": "Invalid secret"})
 
         if not email_allowed(email, settings.allowed_emails_list):
@@ -422,12 +424,13 @@ if not settings.is_hardened:
 
         async for db in get_db():
             # Same identity rule as /auth/google (#688): matched by a
-            # synthetic subject that no real Google ``sub`` (all digits) can
-            # take, never by email. An email held by a real account is a 409.
+            # synthetic subject (test_<lowercased email>) that no real Google
+            # ``sub`` (all digits) can take, never by email. An email held by
+            # a real account is a 409.
             try:
                 user = await resolve_and_commit_google_user(
                     db,
-                    google_id=f"test_{email}",
+                    google_id=f"test_{email.lower()}",
                     email=email,
                     display_name="E2E Test User",
                     avatar_url=None,

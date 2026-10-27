@@ -59,8 +59,14 @@ def _fake_session(*lookups, commit_error=None):
     return db
 
 
+class _PgError(Exception):
+    def __init__(self, sqlstate):
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
 def _unique_violation() -> IntegrityError:
-    return IntegrityError("INSERT", {}, Exception("duplicate key"))
+    return IntegrityError("INSERT", {}, _PgError("23505"))
 
 
 def _post_google(db, claims=CLAIMS):
@@ -161,6 +167,16 @@ class TestEmailReuseTakeover:
         assert resp.status_code == 409
         assert db.rollback.await_count == 2
         access.assert_not_called()
+
+    def test_non_unique_integrity_error_propagates_not_409(self):
+        """A NOT NULL / FK violation is a bug: 500 + Sentry, never a 409."""
+        db = _fake_session(
+            None, None, commit_error=[IntegrityError("I", {}, _PgError("23503"))]
+        )
+        with pytest.raises(IntegrityError):
+            _post_google(db)
+        db.rollback.assert_awaited_once()
+        assert db.execute.await_count == 2  # no retry
 
     def test_case_variant_of_victim_email_is_409(self):
         """``VICTIM@Example.com`` is the victim's address too (lower(email))."""
@@ -364,3 +380,33 @@ class TestTestLoginIdentity:
         resp = self._post(db, {"secret": "sekrit", "email": "e2e@example.com"})
         assert resp.status_code == 200
         db.rollback.assert_awaited_once()
+
+    def test_non_unique_integrity_error_is_not_a_409(self):
+        db = _fake_session(
+            None, None, commit_error=[IntegrityError("I", {}, _PgError("23502"))]
+        )
+        with pytest.raises(IntegrityError):
+            self._post(db, {"secret": "sekrit", "email": "e2e@example.com"})
+
+    def test_synthetic_subject_is_lowercased(self):
+        db = _fake_session(None, None)
+        resp = self._post(db, {"secret": "sekrit", "email": "E2E@Example.com"})
+        assert resp.status_code == 200
+        created = db.add.call_args_list[0].args[0]
+        assert created.google_id == "test_e2e@example.com"
+        assert created.email == "E2E@Example.com"
+
+    @pytest.mark.parametrize("provided", ["sékrit", "\u79d8\u5bc6"])
+    def test_non_ascii_secret_is_403(self, provided):
+        db = _fake_session()
+        resp = self._post(db, {"secret": provided, "email": "e2e@example.com"})
+        assert resp.status_code == 403
+        assert resp.json() == {"detail": "Invalid secret"}
+        db.execute.assert_not_awaited()
+
+    def test_non_ascii_configured_secret_matches(self):
+        db = _fake_session(None, None)
+        resp = self._post(
+            db, {"secret": "sékrit", "email": "e2e@example.com"}, secret="sékrit"
+        )
+        assert resp.status_code == 200

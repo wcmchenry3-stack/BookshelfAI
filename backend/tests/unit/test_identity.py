@@ -153,8 +153,16 @@ def _committing_db(*lookups, commits):
     return db
 
 
+class _PgError(Exception):
+    """Shaped like SQLAlchemy's asyncpg adapter error (``exc.orig``)."""
+
+    def __init__(self, sqlstate):
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
 def _dup():
-    return IntegrityError("INSERT", {}, Exception("duplicate key"))
+    return IntegrityError("INSERT", {}, _PgError("23505"))
 
 
 async def test_resolve_and_commit_retries_once_and_finds_the_winner():
@@ -197,3 +205,45 @@ async def test_resolve_and_commit_gives_up_after_two_violations():
             avatar_url=None,
         )
     assert db.rollback.await_count == 2
+
+
+@pytest.mark.parametrize("sqlstate", ["23502", "23503"])  # NOT NULL, FK
+async def test_resolve_and_commit_reraises_non_unique_integrity_errors(sqlstate):
+    db = _committing_db(
+        None, None, commits=[IntegrityError("I", {}, _PgError(sqlstate))]
+    )
+    with pytest.raises(IntegrityError):
+        await resolve_and_commit_google_user(
+            db,
+            google_id="111",
+            email="new@example.com",
+            display_name=None,
+            avatar_url=None,
+        )
+    db.rollback.assert_awaited_once()
+    assert db.execute.await_count == 2  # no retry
+
+
+def test_is_unique_violation_reads_sqlstate_pgcode_and_cause():
+    from app.auth.identity import is_unique_violation
+
+    class _PgCode(Exception):
+        pgcode = "23505"
+
+    cause_only = Exception("wrapped")
+    cause_only.__cause__ = _PgError("23505")
+
+    assert is_unique_violation(IntegrityError("I", {}, _PgError("23505")))
+    assert is_unique_violation(IntegrityError("I", {}, _PgCode()))
+    assert is_unique_violation(IntegrityError("I", {}, cause_only))
+    assert not is_unique_violation(IntegrityError("I", {}, _PgError("23502")))
+    assert not is_unique_violation(IntegrityError("I", {}, Exception("x")))
+
+
+async def test_email_lookup_takes_the_oldest_holder():
+    db = _db(None, _user("victim@example.com", "999"))
+    with pytest.raises(AccountConflictError):
+        await _resolve(db, google_id="attacker", email="victim@example.com")
+    sql = str(db.execute.await_args_list[1].args[0])
+    assert "ORDER BY users.created_at, users.id" in sql
+    assert "LIMIT" in sql

@@ -7,11 +7,13 @@ import uuid
 
 import pytest
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth import identity
 from app.auth.identity import (
     AccountConflictError,
+    is_unique_violation,
     resolve_and_commit_google_user,
     resolve_google_user,
 )
@@ -207,3 +209,21 @@ async def test_email_taken_concurrently_by_other_subject_is_conflict(
             await db.execute(select(User).where(User.google_id == f"mine-{t}"))
         ).scalar_one_or_none()
     assert mine is None
+
+
+async def test_real_postgres_errors_are_classified(sessions):
+    """The asyncpg-wrapped unique violation is retried; NOT NULL is not."""
+    maker, t = sessions
+    async with maker() as db:
+        db.add(User(email=f"cls-{t}@example.com", google_id=f"cls-{t}"))
+        await db.commit()
+        db.add(User(email=f"cls-{t}@example.com", google_id=f"cls2-{t}"))
+        with pytest.raises(IntegrityError) as dup:
+            await db.commit()
+        await db.rollback()
+        db.add(User(email=None, google_id=f"cls3-{t}"))
+        with pytest.raises(IntegrityError) as not_null:
+            await db.commit()
+        await db.rollback()
+    assert is_unique_violation(dup.value)
+    assert not is_unique_violation(not_null.value)

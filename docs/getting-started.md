@@ -237,6 +237,7 @@ First-time Android build also needs a debug keystore — see [android-ci.md](cla
 | `alembic.util.exc.CommandError: Can't locate revision` | wrong alembic version | `alembic upgrade head` from `backend/` with venv active |
 | Backend starts but `/health/db` returns `db: error` | `DATABASE_URL` wrong or Postgres down | Check `brew services list`, verify username + DB name |
 | Sign-in fails with 401 | email not in `ALLOWED_EMAILS` | add to `.env`, restart uvicorn |
+| Sign-in fails with 409 `account_conflict` | the email belongs to an account with a different Google subject | see "Resolving a sign-in `account_conflict` (409)" in [`RENDER.md`](RENDER.md#resolving-a-sign-in-account_conflict-409) |
 | Sign-in fails with `Invalid audience` | frontend client ID doesn't match backend's list | ensure all three `GOOGLE_*_CLIENT_ID` vars match between `.env` files |
 | `/scan` returns 500 | `OPENAI_API_KEY` missing or invalid | Check OpenAI dashboard; key needs Vision access |
 | Scanned book has no cover | Google Books / Open Library rate-limited or offline | Retry; both APIs have rolling limits |
