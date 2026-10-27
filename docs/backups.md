@@ -35,7 +35,7 @@ Secrets of the **`backup` environment**, used by `db-backup.yml`:
 
 | Secret | Purpose |
 | --- | --- |
-| `BACKUP_DATABASE_URL` | Postgres connection string for the production database (a read-only role is preferred). Use the Supabase **session pooler** URL (GitHub runners are IPv4-only), append `?sslmode=require`, and percent-encode special characters in the password (for example `@` as `%40`, `/` as `%2F`) |
+| `BACKUP_DATABASE_URL` | Postgres connection string for the production database (a read-only role is preferred; any dedicated backup role needs `BYPASSRLS`, since RLS is on for every table (#677) and `pg_dump` refuses tables it can't read in full). Use the Supabase **session pooler** URL (GitHub runners are IPv4-only), append `?sslmode=require`, and percent-encode special characters in the password (for example `@` as `%40`, `/` as `%2F`) |
 | `R2_ACCOUNT_ID` | Cloudflare account id (used to build the S3 endpoint) |
 | `R2_ACCESS_KEY_ID` | R2 API token access key (Object Read & Write, scoped to the one bucket) |
 | `R2_SECRET_ACCESS_KEY` | R2 API token secret |

@@ -41,6 +41,10 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 - Allowlist check via `ALLOWED_EMAILS` env var after Google auth
 - Users are matched by Google `sub` (`users.google_id`) via `app/auth/identity.py:resolve_google_user`, never by email; an email owned by another subject (compared with `lower()`) → 409 `account_conflict`; `ALLOWED_EMAILS` also ignores case
 - `/auth/test-login` exists only in development/test; hardened settings with `TEST_AUTH_SECRET` set fail boot
+- Logs and Sentry: log user IDs, never emails, allowlist entries, tokens (access, refresh, ID tokens), Google/Apple `sub` values or `Authorization` headers. `tests/security/test_log_hygiene_flows.py` (helpers in `tests/_log_hygiene.py`) drives the real auth, library, scan and error flows and fails on any such value in a log record or Sentry event. A story that adds a flow handling user data (e.g. account deletion) must add it there.
+
+### Database
+- Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as the table owner and bypasses it; it only locks out Supabase's `anon`/`authenticated` roles. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
 
 ## Commands
 

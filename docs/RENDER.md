@@ -54,12 +54,20 @@ Storage, or the Data API.
   `postgresql+asyncpg://` itself (`Settings.async_database_url`) — paste the
   plain pooler URL, don't pre-convert it.
 - **Enforce SSL: on** (Supabase project settings).
-- **Data API: off**. Alembic's tables have no RLS policies — the Data API
-  would expose them to anyone with the anon key.
-- **No RLS, no Supabase Auth.** Alembic is the only schema tool; its
+- **Data API: off**. The app never uses it; the backend talks to Postgres
+  directly.
+- **RLS on for every table, with no policies** (migration 0020). If the Data
+  API were ever switched back on, `anon` and `authenticated` would still see
+  no rows. The app connects as `postgres` (table owner, `BYPASSRLS`), so it is
+  unaffected. A new table's migration must run
+  `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
+  `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
+- **No Supabase Auth.** Alembic is the only schema tool; its
   `alembic upgrade head` pre-deploy step is what keeps prod's schema current.
-- **Free plan pauses after ~1 week idle and has no backups.** Upgrade to Pro
-  (daily backups) before store submission.
+- **Pro plan**: daily backups, no idle pause. The point-in-time recovery
+  add-on is not bought. The nightly encrypted `pg_dump` to R2
+  (`.github/workflows/db-backup.yml`) is the independent copy.
+- **Dev** is the persistent Supabase branch `dev` of the same project.
 
 ## Secrets policy
 
@@ -116,6 +124,24 @@ Rollout, per service (dev first, then prod):
 
 To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
 `TRUSTED_PROXY_MODE=none`.
+
+## Email (Resend)
+
+Transactional email (account-deletion confirmation, data-export link, later
+purchase receipts and quota notices) is sent through [Resend](https://resend.com),
+server-side only. The app doesn't send any email yet; the Phase 2 account
+deletion and export stories add the code and its settings.
+
+| What | Value |
+|---|---|
+| Sending domain | `mail.buffingchi.com` (verified in Resend, region `us-east-1`) |
+| From address | any address on that domain, e.g. `noreply@mail.buffingchi.com`. Nothing to create: Resend sends as any address on a verified domain |
+| Reply-to | a real inbox via Cloudflare Email Routing on `buffingchi.com` (#678). Resend only sends |
+| `RESEND_API_KEY` | dashboard secret (`sync: false`) on both API services; one key per environment, **Sending access** only, restricted to `mail.buffingchi.com`. Set on dev and prod (2026-10-26) |
+
+Apple's "Hide My Email" relay drops mail from senders that aren't registered:
+the sending domain and from address must be listed under Apple Developer →
+Services → **Sign in with Apple for Email Communication** (#679).
 
 ## Health checks
 

@@ -11,3 +11,7 @@ d05251dc4483705959f55bcc066407bd885dbce9:backend/tests/security/test_origin_auth
 d05251dc4483705959f55bcc066407bd885dbce9:backend/tests/security/test_origin_auth.py:generic-api-key:54
 d05251dc4483705959f55bcc066407bd885dbce9:backend/tests/security/test_origin_auth.py:generic-api-key:65
 d05251dc4483705959f55bcc066407bd885dbce9:backend/tests/security/test_origin_auth.py:generic-api-key:78
+# 6f6b197 (#692): test_log_hygiene_checker.py held a fake, unsigned JWT-shaped
+# fixture literal (the checker must flag JWT-shaped values). The next commit
+# builds it at runtime; this silences the historic hit in the PR commit range.
+6f6b19747c01ce8b27486ed39e0fcda77bfc190e:backend/tests/unit/test_log_hygiene_checker.py:jwt:10
