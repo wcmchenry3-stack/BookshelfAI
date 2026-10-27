@@ -141,7 +141,10 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Init:** `frontend/lib/sentry.ts`. Imported as the **first import in `app/_layout.tsx`** (rule #13) — the module self-initializes so the native crash reporter is up before any other module can throw.
 
+**Filtering (#701):** `beforeSend` drops two narrow, user-environment web network signatures (font-loader `<n>ms timeout exceeded`, stackless `NetworkError` DOMException); see `docs/claude/frontend.md` ("Sentry noise filter").
+
 **Breadcrumb categories:**
+- `sentry.filter` — an event was dropped by the noise filter
 - `app.lifecycle` — Sentry init completed, root layout evaluated, foreground/background transitions
 - `scan` — camera capture started, photo saved, scan started, retry attempts
 - `ui.lifecycle` — screen mounts (from Sentry's auto-instrumentation)

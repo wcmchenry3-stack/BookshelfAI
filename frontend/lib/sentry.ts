@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react-native';
+import { filterExpectedNetworkNoise } from './sentryFilter';
 
 const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 
@@ -26,6 +27,16 @@ export function initSentry(): void {
       tracesSampleRate: process.env.EXPO_PUBLIC_ENVIRONMENT === 'production' ? 0.2 : 1.0,
       sendDefaultPii: false,
       enabled: !!DSN,
+      // #701: drop only known-benign user-environment network noise (narrow
+      // matcher in sentryFilter.ts); leave a breadcrumb so an outage is visible.
+      beforeSend: (event, hint) =>
+        filterExpectedNetworkNoise(event, hint, () =>
+          Sentry.addBreadcrumb({
+            category: 'sentry.filter',
+            message: 'Dropped expected client network error',
+            level: 'info',
+          })
+        ),
     });
 
     Sentry.addBreadcrumb({
