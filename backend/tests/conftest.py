@@ -55,6 +55,15 @@ def _reset_rate_limits():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_jwks_caches():
+    """Empty the in-process Google JWKS cache so tests never share keys (#691)."""
+    from app.auth.google import google_jwks_cache
+
+    google_jwks_cache.reset()
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _block_real_ai_providers():
     """Cost guard (#584): any request to a real Anthropic or OpenAI API host
