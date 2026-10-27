@@ -1,0 +1,40 @@
+name: Migration guard
+
+# Fails a PR that adds or changes a destructive Alembic migration (drop, rename,
+# type change, tightening, destructive SQL in upgrade()) unless the owner has
+# applied the `destructive-migration-approved` label. Its own workflow so a
+# label change re-runs only this check, not every job in ci.yml.
+# See "Migrations: expand/contract" in docs/claude/backend.md (#687).
+
+on:
+  pull_request:
+    branches: [dev, main]
+    # No paths filter: the job must always report, so it can be a required check.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  migration-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_REF: ${{ github.base_ref }}
+      APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'destructive-migration-approved') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan changed migrations
+        run: |
+          if [ "$BASE_REF" = "main" ]; then
+            echo "Release PR: migrations were already scanned on their feature PRs into dev"
+            exit 0
+          fi
+          files=$(git diff --name-only --no-renames --diff-filter=AM "origin/${BASE_REF}...HEAD" -- backend/alembic/versions/)
+          flags=""
+          if [ "$APPROVED" = "true" ]; then flags="--approved"; fi
+          # shellcheck disable=SC2086
+          python3 scripts/migration_guard/check_destructive_migrations.py $flags $files
