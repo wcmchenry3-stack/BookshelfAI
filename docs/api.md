@@ -17,7 +17,9 @@ Authorization: Bearer <access_token>
 
 Access tokens are JWT RS256 with a **15-minute** lifetime (`JWT_ACCESS_TTL_MINUTES`, default 15, 1-60; `expires_in` in the token response is in seconds). On expiry, the client calls `/auth/refresh` with its refresh token to get a new pair (old refresh token is revoked in the process — see [architecture.md](architecture.md#auth-architecture)).
 
-Every access and refresh token carries the user's `token_version` as the `tv` claim, and every authenticated request compares it with `users.token_version`, read from the user row the request already loads (#689). `POST /auth/logout-all` bumps that version, so a token issued before the bump gets **401 `{"detail": "token_revoked"}`**, as does a token without `tv`. Clients sign out on `token_revoked` instead of refreshing. `JWT_EXPIRY_HOURS` (the old 24 h setting) is ignored, with a warning at boot.
+Every access and refresh token carries the user's `token_version` as the `tv` claim, and every authenticated request compares it with `users.token_version`, read from the user row the request already loads (#689). `POST /auth/logout-all` bumps that version, so a token issued before the bump gets **401 `{"detail": "token_revoked"}`**, as does a token whose `tv` is malformed. Clients sign out on `token_revoked` instead of refreshing.
+
+**Legacy tokens (release upgrade, #725):** tokens issued before #689 have no `tv`. So the release that ships #689 does not sign everyone out, a legacy access token gets **401 `{"detail": "token_outdated"}`** (not `token_revoked`), which the app treats as any other 401: it refreshes and retries. A legacy refresh token is read as `tv = 0` and is accepted only while the user's `token_version` is still 0 (no sign out of all devices since); it passes the usual `jti`, revoked and expiry checks and is rotated into a `tv`-bearing pair, so legacy tokens are gone after one refresh. Each accepted legacy refresh is logged at INFO (`refresh accepted legacy token without tv (user_id=...)`, no token values) so we can see the count reach zero. This window is temporary: the legacy path is to be removed after **2026-12-15** (`REFRESH_TOKEN_EXPIRY_DAYS` = 7 plus margin after the release reaches production); after that a token without `tv` is rejected again. `JWT_EXPIRY_HOURS` (the old 24 h setting) is ignored, with a warning at boot.
 
 ### Error response format
 
@@ -31,7 +33,7 @@ Common status codes:
 | Code | Meaning | Typical causes |
 |---|---|---|
 | 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware) |
-| 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token, session revoked by sign out of all devices (`token_revoked`) |
+| 401 | Unauthorized | missing / invalid / expired access token, access token issued before #689 (`token_outdated`, refresh and retry), invalid refresh token, session revoked by sign out of all devices (`token_revoked`) |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), and other per-endpoint conflicts |
@@ -102,7 +104,7 @@ curl -X POST https://bookshelfapi.buffingchi.com/auth/google \
 
 ### `POST /auth/refresh` — rotate refresh token + issue new access token
 
-Validates the refresh JWT, checks the `jti` exists + is not revoked and that its `tv` claim equals `users.token_version`, then **revokes the old `jti` and issues a new pair**. Refresh tokens are single-use.
+Validates the refresh JWT, checks the `jti` exists + is not revoked and that its `tv` claim equals `users.token_version`, then **revokes the old `jti` and issues a new pair**. Refresh tokens are single-use. A refresh token without `tv` (issued before #689) counts as `tv = 0` until the legacy path is removed after 2026-12-15 (#725; see Legacy tokens above).
 
 **Auth:** none (the refresh token in the body is the credential)
 **Rate limit:** `rate_limit_auth`
@@ -117,7 +119,7 @@ Validates the refresh JWT, checks the `jti` exists + is not revoked and that its
 
 **Errors:**
 - `401` — token expired / invalid signature / wrong type / `jti` revoked or not found / user not found
-- `401` `token_revoked` — the token's `tv` is missing or older than `users.token_version` (a sign out of all devices happened after it was issued); the presented `jti` is revoked too
+- `401` `token_revoked` — the token's `tv` is malformed or older than `users.token_version` (a sign out of all devices happened after it was issued), or the token has no `tv` and `users.token_version` is no longer 0; the presented `jti` is revoked too
 
 **Example:**
 ```bash

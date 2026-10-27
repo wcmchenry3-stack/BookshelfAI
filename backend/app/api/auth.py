@@ -16,10 +16,12 @@ from app.auth.identity import (
     resolve_and_commit_google_user,
 )
 from app.auth.jwt import (
+    LEGACY_TOKEN_VERSION,
     access_token_ttl_seconds,
     create_access_token,
     create_refresh_token,
     decode_token,
+    has_token_version_claim,
     token_version_claim,
 )
 from app.auth.sessions import revoke_all_sessions
@@ -176,8 +178,14 @@ async def refresh(
 
     # A token_version bump revokes the user's refresh rows (sessions.py); the
     # tv claim also catches a refresh token minted by a refresh that raced
-    # the bump (#689). Missing tv (issued before #689) is revoked too.
-    if token_version_claim(payload) != user.token_version:
+    # the bump (#689). A token without tv was issued before #689 and is read
+    # as tv=0, so it works only while the user has never bumped (#725); it
+    # has passed the same jti, revoked_at and expiry checks above. A present
+    # but malformed tv is rejected.
+    # TODO(#725): remove the legacy branch after 2026-12-15.
+    legacy = not has_token_version_claim(payload)
+    token_version = LEGACY_TOKEN_VERSION if legacy else token_version_claim(payload)
+    if token_version != user.token_version:
         logger.warning(
             "Refresh rejected: token_version missing or stale (user_id=%s)",
             user.id,
@@ -187,6 +195,9 @@ async def refresh(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=TOKEN_REVOKED
         )
+
+    if legacy:
+        logger.info("refresh accepted legacy token without tv (user_id=%s)", user.id)
 
     # Rotate: revoke old token, issue new one
     stored.revoked_at = datetime.now(UTC)
