@@ -843,7 +843,7 @@ class TestCleanup:
 
         factory, session = _session_factory()
         with caplog.at_level(logging.ERROR, logger="app.services.token_cleanup"):
-            await self._run(AsyncMock(side_effect=ConnectionError("down")), factory)
+            await self._run(AsyncMock(side_effect=ValueError("down")), factory)
         assert "enhanced zero results" in caplog.text
         assert "refresh_tokens" in str(session.execute.call_args[0][0])
 
