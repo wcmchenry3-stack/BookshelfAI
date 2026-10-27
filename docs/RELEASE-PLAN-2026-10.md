@@ -12,7 +12,7 @@ paywall, notes + tags UI) are a **second plan** that starts once workstreams 1�
 ### Decisions (owner, 2026-09-20)
 
 1. **Production database = Supabase; dev database stays on Render; local + CI stay on SQLite.** Supabase is
-   Postgres only — no Supabase Auth, Storage, Data API, RLS, CLI or branching. Google sign-in + RS256 JWTs are
+   Postgres only — no Supabase Auth, Storage, Data API, RLS, CLI or branching. *(Later: RLS was turned on for every table with no policies, as defence in depth (#677).)* Google sign-in + RS256 JWTs are
    unchanged. **Alembic is the only schema path.** Prod is a **fresh database**, not a migration.
 2. **Two environments on Render.** The existing API + web services already own the production hostnames, so
    they **become prod**: they move to `main`, auto-deploy off, deploying only through `deploy.yml` after CI is
