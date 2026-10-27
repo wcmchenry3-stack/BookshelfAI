@@ -31,6 +31,10 @@ retry() {
   done
 }
 
+# Fail fast if Xcode Cloud rolled onto an Xcode this Expo SDK can't build (#708).
+"$CI_PRIMARY_REPOSITORY_PATH/frontend/ios/ci_scripts/check_xcode_compat.sh" \
+  "$CI_PRIMARY_REPOSITORY_PATH/frontend/package-lock.json"
+
 # Install Node.js 22 LTS — pinned away from latest (25.x) because npm 11.x
 # (which ships with Node 25) has a known crash: "Exit handler never called!"
 # that fires on our package-lock.json tree. Node 22 LTS ships npm 10.x and
