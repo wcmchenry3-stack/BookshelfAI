@@ -17,7 +17,7 @@ Every third-party service Bookshelf talks to, what role it plays, and where to l
 **Verification flow** (`backend/app/auth/google.py`):
 1. Frontend obtains an ID token from the Google SDK on-device.
 2. Frontend calls `POST /auth/google` with that token in the body.
-3. Backend fetches Google's JWKS from `https://www.googleapis.com/oauth2/v3/certs` (5s timeout).
+3. Backend gets Google's JWKS from `https://www.googleapis.com/oauth2/v3/certs` via the in-process `JwksCache` (`backend/app/auth/jwks_cache.py`, reusable for other providers): fetched with a 5s timeout, cached for the response's `Cache-Control: max-age` (1 h fallback, 24 h cap, 60 s floor). A token with an unknown `kid` forces one refresh (throttled to once per 60 s) to pick up key rotation; concurrent sign-ins share a single in-flight fetch. If a refresh fails, cached keys keep being used until 24 h past expiry (`MAX_STALE_SECONDS`), with a warning logged; after that sign-in fails (401).
 4. `authlib.jose.jwt.decode()` validates the token: signature via JWKS, `iss == "https://accounts.google.com"`, `aud ∈ [all three configured client IDs]`, expiry.
 5. `email_verified` claim must be `True`.
 6. Email must be in `ALLOWED_EMAILS` (comma-separated env var) — the single-user lockdown.
