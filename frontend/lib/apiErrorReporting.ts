@@ -12,8 +12,9 @@
  *  - Only 403 and 5xx are "unexpected". Network errors (no response, #701),
  *    401 (refresh flow), 402/409/429 and the other 4xx the screens handle are
  *    not reported, nor are handled business codes (HANDLED_DETAILS).
- *  - POST /scan is skipped: ScanJobContext already captures it, carrying the
- *    same tags via `apiErrorTags`.
+ *  - This is the single owner of every failure it reports, POST /scan
+ *    included. Callers that also capture (ScanJobContext) skip errors for
+ *    which `isReportedCentrally` is true, so there is never a second event.
  *  - A fresh sanitized Error is captured, never the AxiosError: that carries
  *    `config.headers.Authorization` and request/response bodies.
  */
@@ -25,39 +26,21 @@ export const FORBIDDEN = 'forbidden';
 /** Short machine codes safe to send as the `api.detail` tag. */
 const KNOWN_DETAILS: ReadonlySet<string> = new Set([
   FORBIDDEN,
-  'token_revoked',
+  // 403 the app handles (premium-only enhanced scan): recognised, not reported.
   'enhanced_requires_premium',
-  'daily_scan_limit',
-  'scan_requests_daily_limit',
-  'scan_in_progress',
-  'enhanced_throttled',
+  // 503 scan pause/outage codes (scanErrors.ts): recognised, not reported.
   'scan_disabled',
   'enhanced_scan_disabled',
   'scan_capacity',
   'ai_budget_reached',
   'ai_unavailable',
   'scan_unavailable',
-  'account_conflict',
-  'catalog_token_invalid',
-  'book_not_in_catalog',
-  'unverified_duplicate',
-  'unverified_limit_reached',
 ]);
 
 /** Codes the app handles on purpose; never reported. */
-const HANDLED_DETAILS: ReadonlySet<string> = new Set([
-  'enhanced_requires_premium',
-  'daily_scan_limit',
-  'scan_requests_daily_limit',
-  'scan_in_progress',
-  'enhanced_throttled',
-  'scan_disabled',
-  'enhanced_scan_disabled',
-  'scan_capacity',
-  'ai_budget_reached',
-  'ai_unavailable',
-  'scan_unavailable',
-]);
+const HANDLED_DETAILS: ReadonlySet<string> = new Set(
+  [...KNOWN_DETAILS].filter((d) => d !== FORBIDDEN)
+);
 
 type ApiErrorLike = {
   config?: { method?: string; url?: string };
@@ -119,13 +102,39 @@ function isUnexpected(err: unknown): boolean {
   return !(detail && HANDLED_DETAILS.has(detail));
 }
 
+/**
+ * True when the response interceptor reports (or already reported, or
+ * deduped) this failure, so a caller must not capture it again. False for
+ * errors with no response (network, non-API) and for statuses the central
+ * reporter does not cover (e.g. 400/404/422), which callers keep capturing.
+ */
+export function isReportedCentrally(err: unknown): boolean {
+  return isUnexpected(err);
+}
+
+/**
+ * A capture-safe stand-in for an axios error: name, method, path template and
+ * status only. The AxiosError itself carries `config.headers.Authorization`
+ * and bodies. Non-axios errors are returned unchanged.
+ */
+export function sanitizeApiError(err: unknown): unknown {
+  const e = err as (ApiErrorLike & { isAxiosError?: boolean }) | null;
+  if (!e || typeof e !== 'object' || !(e.isAxiosError || e.config || e.response)) return err;
+  const method = (e.config?.method ?? 'get').toUpperCase();
+  const status = statusOf(err);
+  const out = new Error(
+    `API ${method} ${pathTemplate(e.config?.url)} ${status ?? 'no response'}`.trim()
+  );
+  out.name = 'ApiError';
+  return out;
+}
+
 /** Report an unexpected API failure once per session. Never throws. */
 export function reportApiError(err: unknown): void {
   try {
     if (!isUnexpected(err)) return;
     const tags = apiErrorTags(err);
     const path = tags['api.path'];
-    if (path === '/scan') return; // captured by ScanJobContext with the same tags
     const method = ((err as ApiErrorLike).config?.method ?? 'get').toUpperCase();
     const detail = tags['api.detail'] ?? '';
     const key = [method, path, tags['http.status'], detail].join(' ').trim();

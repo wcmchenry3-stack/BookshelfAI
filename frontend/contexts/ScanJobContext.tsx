@@ -9,7 +9,12 @@ import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
-import { apiErrorTags, isServiceUnavailable } from '../lib/apiErrorReporting';
+import {
+  apiErrorTags,
+  isReportedCentrally,
+  isServiceUnavailable,
+  sanitizeApiError,
+} from '../lib/apiErrorReporting';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
@@ -504,7 +509,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
         await executeScanRef.current(job);
       } catch (err) {
-        Sentry.captureException(err);
+        if (!isReportedCentrally(err)) {
+          Sentry.captureException(sanitizeApiError(err));
+        }
         showBanner({
           message: t('scanFailedMessage'),
           type: 'error',
@@ -829,10 +836,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         if (
           outcome.status === 'rejected' &&
           !alreadyOwned(outcome) &&
-          catalogRefusal(outcome.reason) === null
+          catalogRefusal(outcome.reason) === null &&
+          !isReportedCentrally(outcome.reason)
         ) {
-          Sentry.captureException(outcome.reason, {
-            tags: { feature: 'scan', action: 'add_books' },
+          Sentry.captureException(sanitizeApiError(outcome.reason), {
+            tags: { feature: 'scan', action: 'add_books', ...apiErrorTags(outcome.reason) },
           });
         }
       }
@@ -1368,16 +1376,18 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        Sentry.captureException(err, {
-          tags: {
-            feature: 'scan',
-            action: 'execute_scan',
-            jobType: job.type,
-            // #724: same status/path/detail tags as the central API hook
-            // (which skips POST /scan to avoid double reporting).
-            ...apiErrorTags(err),
-          },
-        });
+        // #724: the central API reporter (lib/api.ts) owns 403/5xx responses;
+        // capture only what it does not (no response, other statuses).
+        if (!isReportedCentrally(err)) {
+          Sentry.captureException(sanitizeApiError(err), {
+            tags: {
+              feature: 'scan',
+              action: 'execute_scan',
+              jobType: job.type,
+              ...apiErrorTags(err),
+            },
+          });
+        }
 
         // A failed enhanced re-scan must not strand the books the standard scan
         // already found — a failed job has no review sheet.

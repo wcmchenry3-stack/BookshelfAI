@@ -93,14 +93,42 @@ describe('API error reporting (#724)', () => {
     expect(mockCapture).not.toHaveBeenCalled();
   });
 
-  it('does not capture network errors (no response) or POST /scan', async () => {
+  it('does not capture network errors (no response)', async () => {
     api.defaults.adapter = async () => {
       throw Object.assign(new Error('Network Error'), { isAxiosError: true });
     };
     await expect(api.get('/user-books')).rejects.toBeTruthy();
+    expect(mockCapture).not.toHaveBeenCalled();
+  });
+
+  it('captures POST /scan like any other path, deduped', async () => {
     respondWith(500, 'x');
     await expect(api.post('/scan', {})).rejects.toBeTruthy();
-    expect(mockCapture).not.toHaveBeenCalled();
+    await expect(api.post('/scan', {})).rejects.toBeTruthy();
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(mockCapture.mock.calls[0][1].tags['api.path']).toBe('/scan');
+  });
+
+  it('captures a 5xx with a known detail tagged with it, and an unlisted one without', async () => {
+    respondWith(503, 'some_unlisted_code');
+    await expect(api.get('/user-books')).rejects.toBeTruthy();
+    expect(mockCapture.mock.calls[0][1].tags['api.detail']).toBeUndefined();
+    respondWith(500, 'forbidden');
+    await expect(api.get('/books/search')).rejects.toBeTruthy();
+    expect(mockCapture.mock.calls[1][1].tags).toMatchObject({
+      'http.status': '500',
+      'api.detail': 'forbidden',
+    });
+  });
+
+  it('a 403 with an unknown detail is captured without api.detail and is not service-unavailable', async () => {
+    respondWith(403, 'Some other refusal');
+    await expect(api.get('/user-books')).rejects.toMatchObject({ response: { status: 403 } });
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(mockCapture.mock.calls[0][1].tags['api.detail']).toBeUndefined();
+    expect(
+      isServiceUnavailable({ response: { status: 403, data: { detail: 'Some other refusal' } } })
+    ).toBe(false);
   });
 
   it('omits unknown detail text from tags', async () => {
