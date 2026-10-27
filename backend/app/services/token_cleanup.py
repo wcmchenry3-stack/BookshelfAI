@@ -25,8 +25,9 @@ The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
 
 Each step is isolated (one failing never skips the others) and runs through
-``_run_step``, which retries transient connection errors (DNS failure,
-connect timeout, SQLAlchemy ``OperationalError`` / ``InterfaceError``) a
+``_run_step``, which retries transient connection errors (any ``OSError``: DNS failure,
+connection refused/reset, connect timeout; SQLAlchemy ``OperationalError`` /
+``InterfaceError``) a
 bounded number of times with exponential backoff (#661).  A blip that recovers
 logs only a warning; a step that exhausts its retries, or fails with any other
 error, logs one ``logger.exception`` so a persistent outage still reaches
@@ -58,7 +59,12 @@ _INITIAL_DELAY_SECONDS = 60  # wait a minute after startup before first run
 _RETRY_ATTEMPTS = 3  # total tries per step (first try + 2 retries)
 _RETRY_BASE_DELAY_SECONDS = 5.0  # backoff: 5s, then 10s
 
+# OSError covers ConnectionError (refused/reset/aborted), socket.gaierror and
+# TimeoutError; the subclasses are listed for readability.  CancelledError is
+# not an OSError, so cancellation still propagates.
 _TRANSIENT_ERRORS = (
+    OSError,
+    ConnectionError,
     socket.gaierror,
     TimeoutError,
     OperationalError,
