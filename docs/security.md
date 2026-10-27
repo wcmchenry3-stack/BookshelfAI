@@ -139,6 +139,22 @@ committed.
 4. Set `ORIGIN_AUTH_SECRET` on the Render service to the same value. From then
    on only requests that came through the edge (plus `/health`) are served,
    which is what makes `CF-Connecting-IP` trustworthy.
+   **Verify** straight away: run `scripts/smoke_origin_lockdown.sh` (defaults
+   to `https://bookshelfapi.buffingchi.com`; pass the dev hostname too). It
+   calls `GET /health/db` through the public hostname and fails on 403.
+   `/health` is exempt, so CI's `backend-health` job and Render's health check
+   stay green even when the edge sends no header (#720: ~9 h of 403s, no
+   alert). The script cannot run in GitHub-hosted CI because Cloudflare Bot
+   Fight Mode blocks those runners, so it is a manual step.
+
+**Misconfiguration alert (#721):** a rejected request that carries an
+`Authorization: Bearer ...` header (our app, not a scanner) is logged at
+WARNING and sent to Sentry as `origin_auth_rejected_authenticated` (level
+`error`, tags `method` and `path`, extra `rejected_since_last`). It is throttled
+to one event per 300 s per process (at most 12 events/hour/process); the
+extra counts the rejections since the previous event. The token, header name
+and secret are never included. Rejections without a bearer token stay at INFO
+and send nothing. Alert on this message in Sentry.
 
 To roll back the lockdown, clear `ORIGIN_AUTH_SECRET`. To stop trusting
 `CF-Connecting-IP`, set `TRUSTED_PROXY_MODE=none`.
