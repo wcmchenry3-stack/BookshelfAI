@@ -2,7 +2,45 @@ import React, { createContext, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSegments } from 'expo-router';
 
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, api, setAuthFailureCallback } from '../lib/api';
+import { clearTokensIfFreshInstall } from '../lib/freshInstall';
 import * as storage from '../lib/storage';
+
+// How long launch waits for GET /auth/me before carrying on signed in (#722).
+export const SESSION_CHECK_TIMEOUT_MS = 8000;
+
+type SessionCheck = 'valid' | 'dead' | 'unknown';
+
+// Confirms a stored session with GET /auth/me. The api interceptor refreshes
+// on 401 and signs out (deleting both tokens) when the refresh is rejected.
+// The session is 'dead' only when that happened, or when a 401 cannot be
+// refreshed because there is no refresh token. A network error, timeout,
+// 5xx or 403 is 'unknown', and the app stays signed in so offline use works.
+async function checkSession(): Promise<SessionCheck> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<SessionCheck>((resolve) => {
+    timer = setTimeout(() => resolve('unknown'), SESSION_CHECK_TIMEOUT_MS);
+  });
+  const request = (async (): Promise<SessionCheck> => {
+    try {
+      await api.get('/auth/me', { timeout: SESSION_CHECK_TIMEOUT_MS });
+      return 'valid';
+    } catch (error) {
+      if ((error as { response?: { status?: number } })?.response?.status !== 401) {
+        return 'unknown';
+      }
+      const [access, refresh] = await Promise.all([
+        storage.getItem(ACCESS_TOKEN_KEY),
+        storage.getItem(REFRESH_TOKEN_KEY),
+      ]);
+      return access && refresh ? 'unknown' : 'dead';
+    }
+  })();
+  try {
+    return await Promise.race([request, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 interface AuthContextValue {
   isAuthenticated: boolean;
@@ -26,12 +64,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router = useRouter();
 
-  // Check for stored token on mount
+  // On mount: clear tokens left in the Keychain by a previous install, then
+  // confirm any stored session with the server before leaving the loading
+  // state (#722).
   useEffect(() => {
-    storage.getItem(ACCESS_TOKEN_KEY).then((token) => {
-      setIsAuthenticated(!!token);
-      setIsLoading(false);
-    });
+    let cancelled = false;
+    (async () => {
+      await clearTokensIfFreshInstall();
+      const token = await storage.getItem(ACCESS_TOKEN_KEY);
+      if (!token) {
+        if (!cancelled) {
+          setIsAuthenticated(false);
+          setIsLoading(false);
+        }
+        return;
+      }
+      const session = await checkSession();
+      if (session === 'dead') {
+        await storage.deleteItem(ACCESS_TOKEN_KEY);
+        await storage.deleteItem(REFRESH_TOKEN_KEY);
+      }
+      if (!cancelled) {
+        setIsAuthenticated(session !== 'dead');
+        setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (idToken: string) => {
