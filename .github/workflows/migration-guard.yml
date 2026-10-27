@@ -8,7 +8,7 @@ name: Migration guard
 
 on:
   pull_request:
-    branches: [dev]
+    branches: [dev, main]
     # No paths filter: the job must always report, so it can be a required check.
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
@@ -29,6 +29,10 @@ jobs:
           persist-credentials: false
       - name: Scan changed migrations
         run: |
+          if [ "$BASE_REF" = "main" ]; then
+            echo "Release PR: migrations were already scanned on their feature PRs into dev"
+            exit 0
+          fi
           files=$(git diff --name-only --no-renames --diff-filter=AM "origin/${BASE_REF}...HEAD" -- backend/alembic/versions/)
           flags=""
           if [ "$APPROVED" = "true" ]; then flags="--approved"; fi

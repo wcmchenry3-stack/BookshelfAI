@@ -50,7 +50,8 @@
           { "context": "ios-build-check" },
           { "context": "expo-compat" },
           { "context": "local-path-check" },
-          { "context": "podfile-lock-check" }
+          { "context": "podfile-lock-check" },
+          { "context": "migration-guard" }
         ]
       }
     }

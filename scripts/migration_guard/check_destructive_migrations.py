@@ -20,13 +20,17 @@ Flagged (``op.`` and the ``batch_op.`` of ``with op.batch_alter_table(...)``):
   approval) or ``nullable=False`` (tightening)
 - ``.execute(...)`` on any receiver, or a call to a followed helper, whose
   strings (module constants, ``+`` and f-strings resolved) contain DROP
-  TABLE/COLUMN/SCHEMA/TYPE/VIEW, TRUNCATE, DELETE, ALTER TABLE ... RENAME or
+  TABLE/COLUMN/SCHEMA/TYPE/VIEW, TRUNCATE, DELETE FROM, ALTER TABLE ... RENAME or
   ALTER ... TYPE (case-insensitive), or that build a ``delete(...)`` construct
 - a file with no top-level ``upgrade()`` (fails closed)
 
 Allowed on purpose: dropping an index or a constraint (no data is lost), and
 anything additive. SQL built at run time from values the file does not define
 is not seen.
+
+Not understood (not flagged): ``import alembic; alembic.op.X(...)``,
+``from alembic.op import X``, and SQL assembled with calls such as
+``" ".join([...])``.
 
 Stdlib only; runs on any Python 3.9+.
 """
@@ -42,7 +46,7 @@ APPROVAL_LABEL = "destructive-migration-approved"
 _SQL = re.compile(
     r"\bDROP\s+(TABLE|COLUMN|SCHEMA|TYPE|VIEW)\b"
     r"|\bTRUNCATE\b"
-    r"|\bDELETE\b"
+    r"|\bDELETE\s+FROM\b"
     r"|\bALTER\s+TABLE\b[^;]*?\bRENAME\b"
     r"|\bALTER\s+COLUMN\b[^;]*?\bTYPE\b"
     r"|\bALTER\s+TABLE\b[^;]*?\bALTER\b[^;]*?\bTYPE\b",
@@ -100,6 +104,16 @@ def _render(node: ast.AST, consts: dict[str, str]) -> str | None:
         left, right = _render(node.left, consts), _render(node.right, consts)
         if left is not None and right is not None:
             return left + right
+    if (
+        isinstance(node, ast.Call)
+        and len(node.args) == 1
+        and not node.keywords
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == "text")
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == "text")
+        )
+    ):
+        return _render(node.args[0], consts)  # sa.text("...") is its SQL
     if isinstance(node, ast.JoinedStr):
         parts = []
         for v in node.values:
@@ -119,6 +133,18 @@ def _texts(node: ast.AST, consts: dict[str, str]):
     else:
         for child in ast.iter_child_nodes(node):
             yield from _texts(child, consts)
+
+
+def _with_locals(func: ast.FunctionDef, consts: dict[str, str]) -> dict[str, str]:
+    """Module constants plus simple ``name = <static string>`` inside ``func``."""
+    merged = dict(consts)
+    assigns = [n for n in ast.walk(func) if isinstance(n, ast.Assign)]
+    for node in sorted(assigns, key=lambda n: n.lineno):
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            text = _render(node.value, merged)
+            if text is not None:
+                merged[node.targets[0].id] = text
+    return merged
 
 
 def _is_delete_construct(node: ast.AST) -> bool:
@@ -183,13 +209,14 @@ def scan_source(source: str, path: str) -> list[str]:
         seen.add(name)
         func = funcs[name]
         targets = ops | _batch_names(func, ops)
+        scope = _with_locals(func, consts)
         for node in ast.walk(func):
             if not isinstance(node, ast.Call):
                 continue
             f = node.func
             if isinstance(f, ast.Name) and f.id in funcs:
                 queue.append(f.id)  # follow module-level helpers, cycle-safe
-                what = _sql_hit(node, consts)
+                what = _sql_hit(node, scope)
                 if what:
                     findings.add((node.lineno, f"{f.id}(): {what}"))
             elif isinstance(f, ast.Attribute):
@@ -199,7 +226,7 @@ def scan_source(source: str, path: str) -> list[str]:
                     if what:
                         findings.add((node.lineno, f"{base.id}.{what}"))
                 if f.attr == "execute":
-                    what = _sql_hit(node, consts)
+                    what = _sql_hit(node, scope)
                     if what:
                         findings.add((node.lineno, f"execute(): {what}"))
     return [f"{path}:{line}: {text}" for line, text in sorted(findings)]

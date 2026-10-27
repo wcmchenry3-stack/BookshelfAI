@@ -302,5 +302,51 @@ def test_workflow_runs_on_label_changes_and_checks_the_label():
     )
     assert "fetch-depth: 0" in text
     assert "persist-credentials: false" in text
-    assert "branches: [dev]" in text
+    assert "branches: [dev, main]" in text
+    assert '"$BASE_REF" = "main"' in text
+    assert "Release PR: migrations were already scanned" in text
     assert "git diff --name-only" in text and "backend/alembic/versions/" in text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '    stmt = "DROP TABLE x"\n    op.execute(stmt)',
+        '    stmt = sa.text("DELETE FROM x")\n    op.execute(stmt)',
+        '    base = "DROP "\n    stmt = base + "TABLE x"\n    op.get_bind().execute(sa.text(stmt))',
+    ],
+)
+def test_local_variables_are_resolved(body):
+    assert len(scan(body)) == 1
+
+
+def test_local_variables_in_followed_helper():
+    source = (
+        HEAD
+        + "def _helper():\n    stmt = 'TRUNCATE t'\n    op.execute(stmt)\n\n\n"
+        + "def upgrade() -> None:\n    _helper()\n\n\n"
+        + "def downgrade() -> None:\n    pass\n"
+    )
+    assert len(guard.scan_source(source, "m.py")) == 1
+
+
+@pytest.mark.parametrize(
+    "stmt",
+    [
+        "ALTER TABLE a ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES c (id) ON DELETE CASCADE",
+        "ALTER TABLE a ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES c (id) ON DELETE SET NULL",
+        "UPDATE t SET note = 'delete me'",
+    ],
+)
+def test_on_delete_and_delete_in_text_are_not_flagged(stmt):
+    assert scan(f'    op.execute("{stmt}")') == []
+
+
+@pytest.mark.parametrize("stmt", ["DELETE FROM t", "delete from t", "DELETE\n  FROM t"])
+def test_delete_from_is_flagged(stmt):
+    assert len(scan(f'    op.execute("{stmt}")')) == 1
+
+
+def test_ruleset_requires_migration_guard():
+    ruleset = REPO / ".github" / "rulesets" / "protect-main-dev.json"
+    assert '"context": "migration-guard"' in ruleset.read_text()
