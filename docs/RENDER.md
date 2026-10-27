@@ -82,7 +82,8 @@ Turnstile, and Sentry DSNs.
 
 `ENVIRONMENT` drives `Settings.is_hardened` (#448): everything except
 `development`/`test` is hardened (TrustedHost enforcement, `/docs` disabled,
-HSTS, `/auth/test-login` unregistered). Which client-IP header is trusted is a
+HSTS, `/auth/test-login` unregistered, and boot fails if `TEST_AUTH_SECRET`
+is set). Which client-IP header is trusted is a
 separate setting, `TRUSTED_PROXY_MODE` (see below).
 
 | Value         | Hardened? | Used by                                      |
@@ -178,6 +179,96 @@ touches the DB itself (no separate `/health/db` exists yet).
   runs `alembic upgrade head`, so web must never ship against a failed API
   deploy. Its `if:` still runs when `deploy-api` was merely *skipped* (blank
   service-ID var) — only an actual API deploy failure blocks it.
+
+## Resolving a sign-in `account_conflict` (409)
+
+`POST /auth/google` answers `409 account_conflict` when a Google account the
+API has never seen (new `sub`) presents an email, ignoring case, that already
+belongs to a user with a different `google_id` (#688). The app never merges
+the two; an operator does, by hand:
+
+1. Find the holder: the API log line `Sign-in rejected: email belongs to a
+   user with a different subject (holder_user_id=<old_id>)`. Logs never carry
+   the email.
+2. **Verify ownership out of band** before changing anything: the person must
+   show they control both the old account (sign in with the old Google
+   account, or confirm from that mailbox) and the new Google account. If in
+   doubt, do nothing — the 409 is the safe state.
+3. Choose one fix. The SQL below is **operator-only**, run in a transaction
+   in the database console (Supabase SQL editor / `psql`); application code
+   stays ORM-only.
+
+   **A. Move the existing library to the new Google account.** Free the email
+   (as in B), ask the person to sign in once with the new Google account
+   (this creates an empty user; its id is in the `Signed-in user resolved
+   (user_id=<new_id>)` log line), then hand its subject to the old row:
+
+   The guard runs inside the transaction: if the new account already holds
+   user content (`user_books`, `user_custom_books`, `scan_records`), the
+   block raises and nothing is deleted — stop and merge by hand. Its
+   `ai_quota`, `ai_inflight`, `ai_enhanced_zero_results` and `refresh_tokens`
+   rows are disposable for a just-created account and cascade with it
+   (`ai_usage` rows are kept with `user_id` set to NULL).
+
+   ```sql
+   -- OPERATOR ONLY. Replace every occurrence of <old_id> and <new_id>.
+   BEGIN;
+   SELECT id, google_id, email, created_at FROM users
+    WHERE id IN ('<old_id>', '<new_id>');
+   DO $$
+   DECLARE
+     old_id uuid := '<old_id>';
+     new_id uuid := '<new_id>';
+     moving_sub text;
+     moving_email text;
+   BEGIN
+     -- Lock both rows first: a concurrent insert for new_id then waits and
+     -- fails its FK check instead of being cascade-deleted below.
+     PERFORM 1 FROM users WHERE id IN (old_id, new_id) FOR UPDATE;
+     IF (SELECT count(*) FROM users WHERE id IN (old_id, new_id)) <> 2 THEN
+       RAISE EXCEPTION 'both users must exist; stop';
+     END IF;
+     IF (SELECT count(*) FROM user_books WHERE user_id = new_id)
+      + (SELECT count(*) FROM user_custom_books WHERE user_id = new_id)
+      + (SELECT count(*) FROM scan_records WHERE user_id = new_id) > 0 THEN
+       RAISE EXCEPTION 'new account has data; stop and merge manually';
+     END IF;
+     SELECT google_id, email INTO moving_sub, moving_email
+       FROM users WHERE id = new_id;
+     DELETE FROM users WHERE id = new_id;  -- cascades its disposable rows
+     UPDATE users SET google_id = moving_sub, email = moving_email
+      WHERE id = old_id;
+   END $$;
+   COMMIT;  -- after a RAISE this only rolls back
+   ```
+
+   Optional, recommended: sign out every existing session of the old row, so
+   devices still signed in through the old Google account lose access now
+   that the row belongs to the new one:
+
+   ```sql
+   -- OPERATOR ONLY.
+   DELETE FROM refresh_tokens WHERE user_id = '<old_id>';
+   ```
+
+   Access tokens already issued stay valid until they expire
+   (`JWT_EXPIRY_HOURS`).
+
+   **B. Free the email only** (the old account keeps its library and stays
+   reachable through its own Google account; the new Google account gets a
+   fresh account on its next sign-in):
+
+   ```sql
+   -- OPERATOR ONLY. Replace <old_id>.
+   BEGIN;
+   UPDATE users SET email = 'released+' || id || '@invalid.example'
+    WHERE id = '<old_id>';
+   COMMIT;
+   ```
+
+   If the old Google account signs in later, its stored email is refreshed
+   from its token again (when no other user holds that address).
+4. Ask the person to sign in again and confirm it succeeds.
 
 ## First production deploy — cutover checklist
 

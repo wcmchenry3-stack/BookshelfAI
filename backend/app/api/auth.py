@@ -9,6 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.auth.google import verify_google_id_token
+from app.auth.identity import (
+    ACCOUNT_CONFLICT,
+    AccountConflictError,
+    email_allowed,
+    resolve_and_commit_google_user,
+)
 from app.auth.jwt import create_access_token, create_refresh_token, decode_token
 from app.core.config import settings
 from app.core.database import get_db
@@ -52,30 +58,33 @@ async def google_auth(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Google email not verified"
         )
 
-    if settings.allowed_emails_list and email not in settings.allowed_emails_list:
+    if not email_allowed(email, settings.allowed_emails_list):
         logger.warning("Email not in allowlist")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Email not authorized"
         )
 
-    result = await db.execute(select(User).where(User.email == email))
-    user = result.scalar_one_or_none()
-    if user is None:
-        logger.info("Creating new user")
-        user = User(
+    google_id: str = claims.get("sub") or ""
+    if not google_id:
+        logger.warning("Google token has no subject")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google token"
+        )
+
+    # Identity is the Google subject, not the email (#688).
+    try:
+        user = await resolve_and_commit_google_user(
+            db,
+            google_id=google_id,
             email=email,
-            google_id=claims.get("sub", ""),
             display_name=claims.get("name"),
             avatar_url=claims.get("picture"),
         )
-        db.add(user)
-    else:
-        logger.info("Existing user found (id=%s)", user.id)
-        user.display_name = claims.get("name")
-        user.avatar_url = claims.get("picture")
-
-    await db.commit()
-    await db.refresh(user)
+    except AccountConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=ACCOUNT_CONFLICT
+        )
+    logger.info("Signed-in user resolved (user_id=%s)", user.id)
 
     access_token = create_access_token(str(user.id), user.email)
     refresh_token, jti = create_refresh_token(str(user.id))

@@ -20,6 +20,12 @@
     "tone": "reassuring",
     "characterLimit": 60
   },
+  "signInAccountConflict": {
+    "description": "Alert message shown when sign-in is refused because the Google account's email already belongs to a different account (HTTP 409 account_conflict)",
+    "tone": "reassuring",
+    "characterLimit": 100,
+    "notes": "'Google' must not be translated"
+  },
   "signInPrompt": {
     "description": "Tagline on the sign-in screen",
     "tone": "friendly",

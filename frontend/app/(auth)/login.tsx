@@ -10,6 +10,14 @@ import { api } from '../../lib/api';
 
 WebBrowser.maybeCompleteAuthSession();
 
+/** 409 `account_conflict`: the Google account's email belongs to another
+ * Bookshelf account (#688). Retrying won't help, so it gets its own message. */
+function isAccountConflict(err: unknown): boolean {
+  const response = (err as { response?: { status?: number; data?: { detail?: unknown } } })
+    ?.response;
+  return response?.status === 409 && response?.data?.detail === 'account_conflict';
+}
+
 const showTestLogin = __DEV__ && process.env.EXPO_PUBLIC_ENVIRONMENT !== 'production';
 
 export default function LoginScreen() {
@@ -31,8 +39,11 @@ export default function LoginScreen() {
   useEffect(() => {
     if (response?.type === 'success') {
       const { id_token } = response.params;
-      login(id_token).catch(() => {
-        Alert.alert(t('errorTitle', { ns: 'common' }), t('signInError'));
+      login(id_token).catch((err: unknown) => {
+        Alert.alert(
+          t('errorTitle', { ns: 'common' }),
+          isAccountConflict(err) ? t('signInAccountConflict') : t('signInError')
+        );
       });
     }
   }, [response, login, t]);

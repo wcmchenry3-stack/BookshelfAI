@@ -13,6 +13,9 @@ tags:
 #   - App is running in dev mode (Expo Go or dev build)
 #   - Backend has TEST_AUTH_SECRET, ALLOWED_EMAILS, and valid OpenAI API key
 #   - Frontend .env has EXPO_PUBLIC_TEST_AUTH_SECRET and EXPO_PUBLIC_TEST_EMAIL
+#   - EXPO_PUBLIC_TEST_EMAIL is a dedicated test address, never one that a real
+#     Google account has signed in with on that database (test-login matches
+#     by the synthetic subject test_<email>, so a real user's email gets 409)
 #   - A physical book cover visible to the simulator camera
 #
 # This flow is NON-DETERMINISTIC — results depend on what the Vision API
