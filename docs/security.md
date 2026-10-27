@@ -152,8 +152,9 @@ committed.
 WARNING and sent to Sentry as `origin_auth_rejected_authenticated` (level
 `error`, tags `method` and `path`, extra `rejected_since_last`). It is throttled
 to one event per 300 s per process (at most 12 events/hour/process); the
-extra counts the rejections since the previous event. The token, header name
-and secret are never included. Rejections without a bearer token stay at INFO
+extra counts the rejections since the previous event. Numeric and UUID path segments are collapsed to `:id` in the `path` tag.
+Header values (the token, the origin secret) and the origin header never
+reach the event: it carries only the message, tags and the count. Rejections without a bearer token stay at INFO
 and send nothing. Alert on this message in Sentry.
 
 To roll back the lockdown, clear `ORIGIN_AUTH_SECRET`. To stop trusting

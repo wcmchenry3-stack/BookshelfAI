@@ -99,6 +99,41 @@ def test_authenticated_rejection_captured_once_per_window(alerts, client):
     assert events[1]["extras"]["rejected_since_last"] == 3
 
 
+def test_second_authorization_header_bearer_counts(alerts):
+    _ = alerts
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/x",
+        "headers": [
+            (b"authorization", b"Basic abc"),
+            (b"authorization", b"Bearer tok"),
+        ],
+    }
+    assert origin_auth._has_bearer(scope)
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("/api/books/123", "/api/books/:id"),
+        ("/api/books/123/notes/7", "/api/books/:id/notes/:id"),
+        (
+            "/api/x/123e4567-e89b-12d3-a456-426614174000/y",
+            "/api/x/:id/y",
+        ),
+        ("/api/v2/books", "/api/v2/books"),
+        ("/" + "a" * 500, ("/" + "a" * 500)[:200]),
+    ],
+)
+def test_path_tag_collapses_ids(alerts, path, expected):
+    events, _ = alerts
+    app = FastAPI()
+    c = TestClient(OriginAuthMiddleware(app))
+    c.get(path, headers=_bearer())
+    assert events[0]["tags"]["path"] == expected
+
+
 def test_unauthenticated_rejection_not_captured(alerts, client, caplog):
     events, _ = alerts
     with caplog.at_level(logging.DEBUG):
@@ -129,3 +164,66 @@ def test_allowed_request_unchanged_and_no_alert(alerts, client):
     r = client.get("/x", headers={**_bearer(), "X-Origin-Auth": SECRET})
     assert r.status_code == 200
     assert events == []
+
+
+# ---------------------------------------------------------------------------
+# Real Sentry client through the full app.main stack
+# ---------------------------------------------------------------------------
+
+
+def test_real_sentry_event_has_no_secret_token_or_header_value(monkeypatch):
+    import json
+
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+    from sentry_sdk.transport import Transport
+
+    from app.core.sentry_context import sentry_privacy_options
+    from app.main import app
+
+    class MemoryTransport(Transport):
+        def __init__(self, options=None):
+            super().__init__(options)
+            self.events: list[dict] = []
+
+        def capture_envelope(self, envelope):
+            for item in envelope.items:
+                if item.headers.get("type") == "event":
+                    self.events.append(item.payload.json)
+
+    monkeypatch.setattr(settings, "origin_auth_secret", SECRET)
+    monkeypatch.setattr(origin_auth, "_last_alert_at", None)
+    monkeypatch.setattr(origin_auth, "_rejected_since_alert", 0)
+    transport = MemoryTransport()
+    scope = sentry_sdk.get_global_scope()
+    previous_client = scope.client
+    with sentry_sdk.isolation_scope(), sentry_sdk.new_scope():
+        sentry_sdk.init(
+            dsn="https://public@example.invalid/1",
+            transport=transport,
+            integrations=[
+                StarletteIntegration(transaction_style="endpoint"),
+                FastApiIntegration(transaction_style="endpoint"),
+            ],
+            traces_sample_rate=0.0,
+            send_default_pii=False,
+            **sentry_privacy_options(),
+        )
+        try:
+            client = TestClient(app)
+            headers = {**_bearer(), settings.origin_auth_header: "wrong-origin-value"}
+            assert client.get("/api/books/42", headers=headers).status_code == 403
+            assert client.get("/api/books/43", headers=headers).status_code == 403
+        finally:
+            sentry_sdk.get_client().close()
+    scope.set_client(previous_client)
+
+    assert len(transport.events) == 1
+    event = transport.events[0]
+    assert event["message"] == ALERT
+    assert event["level"] == "error"
+    assert event["tags"]["path"] == "/api/books/:id"
+    blob = json.dumps(event).lower()
+    for forbidden in (SECRET, TOKEN, "wrong-origin-value"):
+        assert forbidden.lower() not in blob

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 import time
 from collections.abc import Callable
 
@@ -45,6 +46,11 @@ ORIGIN_AUTH_EXEMPT_PATHS = frozenset({"/health"})
 ALERT_MESSAGE = "origin_auth_rejected_authenticated"
 ALERT_THROTTLE_SECONDS = 300.0
 _MAX_TAG_PATH = 200
+# Numeric and UUID path segments become ":id" (the middleware runs before
+# routing, so there is no route template) to keep tag cardinality low.
+_ID_SEGMENT = re.compile(
+    r"(?<=/)(?:\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?=/|$)"
+)
 
 # Monotonic clock; tests replace it.
 _clock: Callable[[], float] = time.monotonic
@@ -107,10 +113,14 @@ def _is_allowed(scope: Scope) -> bool:
 
 
 def _has_bearer(scope: Scope) -> bool:
-    for k, v in scope.get("headers", []):
-        if k.lower() == b"authorization":
-            return v[:7].lower() == b"bearer "
-    return False
+    return any(
+        k.lower() == b"authorization" and v[:7].lower() == b"bearer "
+        for k, v in scope.get("headers", [])
+    )
+
+
+def _path_tag(path: object) -> str:
+    return _ID_SEGMENT.sub(":id", str(path))[:_MAX_TAG_PATH]
 
 
 def _alert_authenticated_rejection(scope: Scope) -> None:
@@ -126,7 +136,7 @@ def _alert_authenticated_rejection(scope: Scope) -> None:
     try:
         with sentry_sdk.isolation_scope() as sentry_scope:
             sentry_scope.set_tag("method", str(scope.get("method")))
-            sentry_scope.set_tag("path", str(scope.get("path"))[:_MAX_TAG_PATH])
+            sentry_scope.set_tag("path", _path_tag(scope.get("path")))
             sentry_scope.set_extra("rejected_since_last", count)
             sentry_sdk.capture_message(ALERT_MESSAGE, level="error")
     except Exception:  # pragma: no cover - alerting must not break the 403

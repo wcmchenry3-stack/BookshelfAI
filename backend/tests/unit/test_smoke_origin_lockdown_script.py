@@ -39,3 +39,19 @@ def test_smoke_script_exit_code(status, expected_rc):
         server.shutdown()
     assert result.returncode == expected_rc, result.stdout + result.stderr
     assert str(status) in result.stdout
+
+
+def test_smoke_script_connection_refused_fails():
+    server = _serve(200)
+    port = server.server_port
+    server.shutdown()
+    server.server_close()
+    result = subprocess.run(
+        [str(SCRIPT), f"http://127.0.0.1:{port}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "000" in result.stdout

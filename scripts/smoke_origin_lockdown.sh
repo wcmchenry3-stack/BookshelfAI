@@ -19,7 +19,7 @@ URLS=("$@")
 
 rc=0
 for base in "${URLS[@]}"; do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${base%/}${PATH_TO_CHECK}") || code="000"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 20 "${base%/}${PATH_TO_CHECK}") || code="000"
   case "$code" in
     200) echo "OK   ${base}${PATH_TO_CHECK} -> 200" ;;
     403) echo "FAIL ${base}${PATH_TO_CHECK} -> 403: origin lockdown rejects edge traffic (edge not sending the origin header, or wrong value)"; rc=1 ;;
