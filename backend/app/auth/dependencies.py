@@ -19,7 +19,8 @@ TOKEN_REVOKED = "token_revoked"
 # 401 detail for an access token issued before #689 (no tv claim). Not
 # token_revoked, so the client refreshes (the legacy refresh token is still
 # accepted while token_version is 0) instead of signing out (#725).
-# TODO(#725): remove with the legacy path after 2026-12-15.
+# TODO(#735): remove with the legacy path after 2026-12-15 (re-anchor the
+# date to the actual production release; see app/auth/jwt.py).
 TOKEN_OUTDATED = "token_outdated"
 
 
