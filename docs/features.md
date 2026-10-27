@@ -148,7 +148,7 @@ sequenceDiagram
 - Refresh tokens are **single-use**: the old `jti` is revoked the instant a refresh happens. A stolen refresh token is invalidated by the legitimate client's next refresh.
 - `ALLOWED_EMAILS` lockdown rejects any authenticated email not in the allowlist (single-user app by default).
 - Token storage: `expo-secure-store` only, never `AsyncStorage` (rule #6).
-- Launch (#722): a fresh install clears tokens the iOS Keychain kept from a previous install (first-run marker in AsyncStorage, `frontend/lib/freshInstall.ts`). A stored session is then confirmed with `GET /auth/me` while the app shows its loading state. A 401 that cannot be refreshed sends the user to sign-in; a network error, timeout (8 s), 5xx or 403 keeps them signed in so the app works offline.
+- Launch (#722): a fresh install (AsyncStorage empty) clears tokens the iOS Keychain kept from a previous install; an upgrade (other AsyncStorage keys, no first-run marker yet) only writes the marker and keeps the session (`frontend/lib/freshInstall.ts`). A stored session is then confirmed with `GET /auth/me` while the app shows its loading state. A 401 that cannot be refreshed sends the user to sign-in; a network error, timeout (8 s), 5xx or 403 keeps them signed in so the app works offline.
 
 ## Reading-state transitions
 

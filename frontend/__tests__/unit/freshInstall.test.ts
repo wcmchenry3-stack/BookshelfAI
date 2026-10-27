@@ -1,7 +1,11 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { INSTALL_MARKER_KEY, clearTokensIfFreshInstall } from '../../lib/freshInstall';
+import {
+  INSTALL_MARKER_KEY,
+  clearTokensIfFreshInstall,
+  resetInstallCheckForTests,
+} from '../../lib/freshInstall';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock')
@@ -33,6 +37,7 @@ const originalOS = Platform.OS;
 
 beforeEach(async () => {
   jest.clearAllMocks();
+  resetInstallCheckForTests();
   Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
   mockKeychain.clear();
   mockKeychain.set('bookshelf_access_token', 'old-access');
@@ -62,6 +67,7 @@ describe('clearTokensIfFreshInstall', () => {
   it('only wipes once: the second launch keeps new tokens', async () => {
     await clearTokensIfFreshInstall();
     mockKeychain.set('bookshelf_access_token', 'new-access');
+    resetInstallCheckForTests(); // next launch
 
     await expect(clearTokensIfFreshInstall()).resolves.toBe(false);
     expect(mockKeychain.get('bookshelf_access_token')).toBe('new-access');
@@ -83,12 +89,35 @@ describe('clearTokensIfFreshInstall', () => {
     expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).not.toBeNull();
   });
 
-  it('does not wipe and does not throw when AsyncStorage cannot be read', async () => {
-    jest.spyOn(AsyncStorage, 'getItem').mockRejectedValueOnce(new Error('disk'));
+  it('does not wipe and does not throw when AsyncStorage keys cannot be read', async () => {
+    (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
 
     await expect(clearTokensIfFreshInstall()).resolves.toBe(false);
     expect(mockKeychain.size).toBe(2);
     expect(mockDeleteItem).not.toHaveBeenCalled();
+  });
+
+  it('keeps tokens and sets the marker when upgrading an existing install', async () => {
+    // An install from before #722: it has app data but no marker.
+    await AsyncStorage.setItem('scan_job_queue', '[]');
+
+    await expect(clearTokensIfFreshInstall()).resolves.toBe(false);
+    expect(mockKeychain.get('bookshelf_access_token')).toBe('old-access');
+    expect(mockKeychain.get('bookshelf_refresh_token')).toBe('old-refresh');
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).not.toBeNull();
+    expect(mockAddBreadcrumb).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'fresh install: cleared stale tokens' })
+    );
+  });
+
+  it('checks once per launch: repeat calls share the first result', async () => {
+    const first = clearTokensIfFreshInstall();
+    const second = clearTokensIfFreshInstall();
+
+    expect(second).toBe(first);
+    await expect(second).resolves.toBe(true);
+    expect(mockDeleteItem).toHaveBeenCalledTimes(2); // one call per token
   });
 
   it('leaves the marker unset when SecureStore delete fails, so it retries next launch', async () => {
@@ -99,7 +128,7 @@ describe('clearTokensIfFreshInstall', () => {
   });
 
   it('does not throw when the marker cannot be written', async () => {
-    jest.spyOn(AsyncStorage, 'setItem').mockRejectedValueOnce(new Error('disk full'));
+    (AsyncStorage.setItem as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
 
     await expect(clearTokensIfFreshInstall()).resolves.toBe(true);
     expect(mockKeychain.size).toBe(0);

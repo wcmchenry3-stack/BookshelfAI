@@ -6,7 +6,7 @@ import { AuthContext, AuthProvider, SESSION_CHECK_TIMEOUT_MS } from '../../conte
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { INSTALL_MARKER_KEY } from '../../lib/freshInstall';
+import { INSTALL_MARKER_KEY, resetInstallCheckForTests } from '../../lib/freshInstall';
 
 const mockPost = jest.fn();
 const mockGet = jest.fn();
@@ -56,6 +56,7 @@ beforeEach(async () => {
   mockSetItem.mockResolvedValue(undefined);
   mockDeleteItem.mockResolvedValue(undefined);
   mockGet.mockResolvedValue({ data: {} });
+  resetInstallCheckForTests();
   // Not a fresh install unless a test says so.
   await AsyncStorage.clear();
   await AsyncStorage.setItem(INSTALL_MARKER_KEY, '1');
@@ -208,16 +209,28 @@ describe('AuthProvider fresh install (#722)', () => {
     expect(mockReplace).not.toHaveBeenCalledWith('/(auth)/login');
   });
 
-  it('does not wipe tokens when AsyncStorage cannot be read', async () => {
+  it('does not wipe tokens when AsyncStorage keys cannot be read', async () => {
     await AsyncStorage.clear();
-    const spy = jest.spyOn(AsyncStorage, 'getItem').mockRejectedValueOnce(new Error('disk'));
+    (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
     const keychain = useKeychain(BOTH_TOKENS);
 
     const { getByTestId } = await renderProvider();
 
     await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
     expect(keychain.size).toBe(2);
-    spy.mockRestore();
+  });
+
+  it('keeps the session when an existing install upgrades to this build', async () => {
+    await AsyncStorage.clear();
+    await AsyncStorage.setItem('scan_job_queue', '[]');
+    const keychain = useKeychain(BOTH_TOKENS);
+
+    const { getByTestId } = await renderProvider();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    expect(keychain.size).toBe(2);
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).not.toBeNull();
+    expect(mockReplace).not.toHaveBeenCalledWith('/(auth)/login');
   });
 });
 

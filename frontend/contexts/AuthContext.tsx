@@ -63,6 +63,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const segments = useSegments();
   const router = useRouter();
+  // Started while rendering, before any child effect touches AsyncStorage
+  // (see lib/freshInstall.ts). Memoised, so a repeat render reuses it.
+  const [installCheck] = useState(clearTokensIfFreshInstall);
 
   // On mount: clear tokens left in the Keychain by a previous install, then
   // confirm any stored session with the server before leaving the loading
@@ -70,7 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await clearTokensIfFreshInstall();
+      await installCheck;
       const token = await storage.getItem(ACCESS_TOKEN_KEY);
       if (!token) {
         if (!cancelled) {
@@ -92,7 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [installCheck]);
 
   const login = useCallback(async (idToken: string) => {
     const { data } = await api.post('/auth/google', { id_token: idToken });
