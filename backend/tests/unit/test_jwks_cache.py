@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -16,6 +17,7 @@ from app.auth.jwks_cache import (
     MAX_TTL_SECONDS,
     MIN_REFRESH_INTERVAL_SECONDS,
     JwksCache,
+    JwksUnavailable,
     parse_max_age,
 )
 
@@ -57,7 +59,10 @@ class FakeHttp:
             if outer.fail:
                 raise httpx.ConnectError("down")
             resp = MagicMock()
-            resp.json.return_value = outer.jwks
+            if isinstance(outer.jwks, Exception):
+                resp.json.side_effect = outer.jwks
+            else:
+                resp.json.return_value = outer.jwks
             resp.headers = {"cache-control": outer.cache_control}
             resp.raise_for_status = MagicMock()
             return resp
@@ -272,25 +277,103 @@ class TestGoogleIntegration:
         assert http.calls == 1
 
     async def test_warm_cache_survives_google_outage(self, http):
-        from authlib.jose import JsonWebKey, jwt
-
-        key = JsonWebKey.generate_key(
-            "RSA", 2048, is_private=True, options={"kid": "k1"}
-        )
+        key, token = _signed("k1")
         http.jwks = {"keys": [key.as_dict(is_private=False)]}
-        token = jwt.encode(
-            {"alg": "RS256", "kid": "k1"},
-            {
-                "iss": "https://accounts.google.com",
-                "aud": "c",
-                "sub": "1",
-                "exp": 9999999999,
-            },
-            key,
-        ).decode()
-        with patch("app.auth.google.settings") as s:
-            s.google_client_ids = ["c"]
-            assert (await google_mod.verify_google_id_token(token))["sub"] == "1"
-            http.fail = True
-            assert (await google_mod.verify_google_id_token(token))["sub"] == "1"
+        http.cache_control = "max-age=60"
+        clock = FakeClock()
+        google_mod.google_jwks_cache._clock = clock
+        try:
+            with patch("app.auth.google.settings") as s:
+                s.google_client_ids = ["c"]
+                assert (await google_mod.verify_google_id_token(token))["sub"] == "1"
+                http.fail = True
+                clock.advance(61)
+                assert (await google_mod.verify_google_id_token(token))["sub"] == "1"
+            assert http.calls == 2  # the outage fetch was attempted and failed
+        finally:
+            google_mod.google_jwks_cache._clock = time.monotonic
+
+    async def test_rotated_key_accepted_after_one_refresh(self, http):
+        k1, _ = _signed("k1")
+        k2, token2 = _signed("k2")
+        http.jwks = {"keys": [k1.as_dict(is_private=False)]}
+        clock = FakeClock()
+        google_mod.google_jwks_cache._clock = clock
+        try:
+            with patch("app.auth.google.settings") as s:
+                s.google_client_ids = ["c"]
+                await google_mod.google_jwks_cache.get_jwks("k1")
+                http.jwks = {
+                    "keys": [k1.as_dict(is_private=False), k2.as_dict(is_private=False)]
+                }
+                clock.advance(MIN_REFRESH_INTERVAL_SECONDS + 1)
+                assert (await google_mod.verify_google_id_token(token2))["sub"] == "1"
+                assert (await google_mod.verify_google_id_token(token2))["sub"] == "1"
+            assert http.calls == 2
+        finally:
+            google_mod.google_jwks_cache._clock = time.monotonic
+
+
+def _signed(kid):
+    from authlib.jose import JsonWebKey, jwt
+
+    key = JsonWebKey.generate_key("RSA", 2048, is_private=True, options={"kid": kid})
+    token = jwt.encode(
+        {"alg": "RS256", "kid": kid},
+        {
+            "iss": "https://accounts.google.com",
+            "aud": "c",
+            "sub": "1",
+            "exp": 9999999999,
+        },
+        key,
+    ).decode()
+    return key, token
+
+
+class TestMalformedResponses:
+    @pytest.mark.parametrize(
+        "bad",
+        [[1, 2], "str", {"keys": None}, {"keys": 5}, {}],
+    )
+    async def test_bad_body_keeps_previous_cache(self, cache, http, clock, bad):
+        await cache.get_jwks("k1")
+        http.jwks = bad
+        clock.advance(601)
+        assert await cache.get_jwks("k1") == _jwks("k1")
+        assert cache._kids == {"k1"}
+
+    async def test_json_raising_keeps_previous_cache(self, cache, http, clock):
+        await cache.get_jwks("k1")
+        http.jwks = ValueError("not json")
+        clock.advance(601)
+        assert await cache.get_jwks("k1") == _jwks("k1")
+
+    async def test_absurd_max_age_is_capped_not_fatal(self, cache, http, clock):
+        http.cache_control = "max-age=" + "9" * 5000
+        await cache.get_jwks()
+        clock.advance(MAX_TTL_SECONDS - 1)
+        await cache.get_jwks()
         assert http.calls == 1
+
+    async def test_unhashable_and_non_dict_keys_ignored(self, cache, http):
+        http.jwks = {"keys": [{"kid": ["x"]}, "junk", {"kid": "ok"}]}
+        await cache.get_jwks("ok")
+        assert cache._kids == {"ok"}
+
+
+class TestNegativeCaching:
+    async def test_cold_failure_fails_fast_in_window(self, cache, http, clock):
+        http.fail = True
+        http.delay = True
+        with pytest.raises(httpx.ConnectError):
+            await cache.get_jwks("k1")
+        results = await asyncio.gather(
+            *(cache.get_jwks("k1") for _ in range(6)), return_exceptions=True
+        )
+        assert http.calls == 1
+        assert all(isinstance(r, JwksUnavailable) for r in results)
+        clock.advance(MIN_REFRESH_INTERVAL_SECONDS + 1)
+        with pytest.raises(httpx.ConnectError):
+            await cache.get_jwks("k1")
+        assert http.calls == 2

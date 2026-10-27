@@ -40,8 +40,14 @@ def parse_max_age(cache_control: object) -> int:
     if isinstance(cache_control, str):
         match = _MAX_AGE_RE.search(cache_control)
         if match:
-            ttl = int(match.group(1))
+            digits = match.group(1)
+            # Absurdly long digit strings are capped without int() parsing.
+            ttl = int(digits) if len(digits) <= 9 else MAX_TTL_SECONDS
     return max(MIN_REFRESH_INTERVAL_SECONDS, min(ttl, MAX_TTL_SECONDS))
+
+
+class JwksUnavailable(Exception):
+    """Raised without fetching while a recent fetch failed and nothing is cached."""
 
 
 class JwksCache:
@@ -56,6 +62,7 @@ class JwksCache:
         self._kids: set[str] = set()
         self._expires_at = 0.0
         self._last_attempt: float | None = None
+        self._last_failure: float | None = None
 
     def _can_serve(self, kid: str | None, now: float) -> bool:
         """True when the cache is unexpired and (if given) holds ``kid``."""
@@ -81,9 +88,18 @@ class JwksCache:
             if throttled and self._jwks is not None and self._within_stale_limit(now):
                 return self._jwks
 
+            usable = self._jwks is not None and self._within_stale_limit(now)
+            if (
+                not usable
+                and self._last_failure is not None
+                and now - self._last_failure < MIN_REFRESH_INTERVAL_SECONDS
+            ):
+                raise JwksUnavailable("recent JWKS fetch failed; not retrying yet")
+
             try:
                 await self._fetch(now)
             except Exception:
+                self._last_failure = now
                 if self._jwks is not None and self._within_stale_limit(now):
                     logger.warning(
                         "JWKS refresh failed for %s; serving cached keys", self._url
@@ -101,10 +117,17 @@ class JwksCache:
             resp = await client.get(self._url)
             resp.raise_for_status()
             jwks = resp.json()
-        keys = jwks.get("keys", [])
-        self._jwks = jwks
-        self._kids = {k["kid"] for k in keys if isinstance(k, dict) and "kid" in k}
-        self._expires_at = self._clock() + parse_max_age(
-            resp.headers.get("cache-control")
-        )
+        if not isinstance(jwks, dict) or not isinstance(jwks.get("keys"), list):
+            raise TypeError("malformed JWKS response")
+        keys = jwks["keys"]
+        kids = {
+            k["kid"]
+            for k in keys
+            if isinstance(k, dict) and isinstance(k.get("kid"), str)
+        }
+        ttl = parse_max_age(resp.headers.get("cache-control"))
+        # Assign together only after everything validated.
+        self._jwks, self._kids = jwks, kids
+        self._expires_at = self._clock() + ttl
+        self._last_failure = None
         logger.info("JWKS fetched — %d keys", len(keys))
