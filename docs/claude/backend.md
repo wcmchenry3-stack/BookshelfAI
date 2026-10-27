@@ -39,6 +39,8 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 ### Auth
 - JWT RS256 only — reject all other algorithms including `none`
 - Allowlist check via `ALLOWED_EMAILS` env var after Google auth
+- Users are matched by Google `sub` (`users.google_id`) via `app/auth/identity.py:resolve_google_user`, never by email; an email owned by another subject → 409 `account_conflict`
+- `/auth/test-login` exists only in development/test; hardened settings with `TEST_AUTH_SECRET` set fail boot
 
 ## Commands
 

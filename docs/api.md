@@ -32,6 +32,7 @@ Common status codes:
 | 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
+| 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), and other per-endpoint conflicts |
 | 413 | Payload Too Large | request body > 6 MB on `POST /scan` or > 10 MB elsewhere, with or without `Content-Length` (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload, or an image that cannot be decoded (`image_undecodable`) |
 | 402 | Payment Required | not returned by `/scan` since #582 (there is no monthly limit; older servers sent `scan_limit_reached` / `enhanced_limit_reached`) |
@@ -60,7 +61,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 
 ### `POST /auth/google` — exchange Google ID token for Bookshelf tokens
 
-Verifies the ID token against Google's JWKS, checks the email against `ALLOWED_EMAILS`, creates or updates the User row, issues fresh access + refresh tokens.
+Verifies the ID token against Google's JWKS, checks the email against `ALLOWED_EMAILS`, finds the User by the token's `sub` (stored as `users.google_id`; never by email) or creates one, refreshes its name, avatar and email from the token, and issues fresh access + refresh tokens. If Google reports a new email that another user already holds, the stored email is kept.
 
 **Auth:** none
 **Rate limit:** `rate_limit_auth`
@@ -86,6 +87,7 @@ The ID token's `aud` claim must match one of `GOOGLE_CLIENT_ID`, `GOOGLE_IOS_CLI
 **Errors:**
 - `401` — token verification failed / email not verified
 - `403` — email not in `ALLOWED_EMAILS`
+- `409` `account_conflict` — no user has this `sub`, but the verified email belongs to a user with a different Google subject (never merged); also returned if a concurrent sign-in claimed the same subject or email first
 
 **Example:**
 ```bash

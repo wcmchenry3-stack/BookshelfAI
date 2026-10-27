@@ -74,7 +74,8 @@ Turnstile, and Sentry DSNs.
 
 `ENVIRONMENT` drives `Settings.is_hardened` (#448): everything except
 `development`/`test` is hardened (TrustedHost enforcement, `/docs` disabled,
-HSTS, `/auth/test-login` unregistered). Which client-IP header is trusted is a
+HSTS, `/auth/test-login` unregistered, and boot fails if `TEST_AUTH_SECRET`
+is set). Which client-IP header is trusted is a
 separate setting, `TRUSTED_PROXY_MODE` (see below).
 
 | Value         | Hardened? | Used by                                      |

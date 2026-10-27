@@ -281,7 +281,7 @@ class Settings(BaseSettings):
 
     # Testing (development/test only — the /auth/test-login route that consumes
     # this is not even registered when settings.is_hardened is True, i.e. in
-    # staging or production)
+    # staging or production, and setting it there fails boot)
     test_auth_secret: str = ""
 
     # Observability
@@ -411,6 +411,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AI_ANTHROPIC_BASE_URL must be localhost, 127.0.0.1 or ::1"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _no_test_login_when_hardened(self) -> "Settings":
+        """TEST_AUTH_SECRET enables the dev-only /auth/test-login route, which
+        mints tokens without Google. Staging and production must not boot with
+        it set, even though the route is not registered there (#688). The
+        value is never echoed."""
+        if self.is_hardened and self.test_auth_secret.strip():
+            raise ValueError("TEST_AUTH_SECRET must be unset in staging and production")
         return self
 
     @model_validator(mode="after")
