@@ -63,12 +63,23 @@ async def test_every_public_table_has_rls():
             if not has_alembic:
                 pytest.skip("database not built by alembic upgrade head")
             flags = await conn.run_sync(_rls_flags)
+            policies = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT tablename, policyname FROM pg_policies "
+                        "WHERE schemaname = 'public'"
+                    )
+                )
+            ).all()
     finally:
         await engine.dispose()
 
     assert flags, "no tables in the public schema"
     missing = sorted(name for name, on in flags.items() if not on)
     assert missing == [], f"tables without row level security: {missing}"
+    # The guarantee is "RLS on, no policies": a policy (e.g. one granting
+    # anon access) has to be added on purpose, together with this test.
+    assert policies == [], f"unexpected RLS policies: {policies}"
 
 
 def _migration_cycle(connection) -> None:
@@ -77,17 +88,18 @@ def _migration_cycle(connection) -> None:
 
     migration = _load_migration()
     assert (migration.revision, migration.down_revision) == ("0020", "0019")
-    # The list covers every table the models define, plus alembic's own.
-    assert set(migration.TABLES) == set(Base.metadata.tables) | {"alembic_version"}
+    # 0020's list is frozen at revision 0019, so it only has to name tables the
+    # models still define; tables added later enable RLS in their own migration
+    # (checked by test_every_public_table_has_rls). If a later migration drops
+    # or renames one of these tables, prune it from this test's view, never
+    # from the migration.
+    assert set(migration.TABLES) <= set(Base.metadata.tables) | {"alembic_version"}
 
     def probe_count() -> int:
         connection.execute(sa.text(f"SET LOCAL ROLE {PROBE_ROLE}"))
-        try:
-            return connection.execute(
-                sa.text("SELECT count(*) FROM users")
-            ).scalar_one()
-        finally:
-            connection.execute(sa.text("RESET ROLE"))
+        count = connection.execute(sa.text("SELECT count(*) FROM users")).scalar_one()
+        connection.execute(sa.text("RESET ROLE"))
+        return count
 
     uid = uuid.uuid4()
     connection.execute(
@@ -133,8 +145,7 @@ def _migration_cycle(connection) -> None:
 async def test_migration_0020_upgrade_downgrade_cycle():
     engine = create_async_engine(settings.async_database_url)
     try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        async with engine.connect() as conn:
             if not await conn.run_sync(
                 lambda c: inspect(c).has_table("alembic_version")
             ):
