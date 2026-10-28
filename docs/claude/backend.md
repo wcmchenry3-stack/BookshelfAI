@@ -31,8 +31,8 @@ Every endpoint is rate-limited via slowapi. The `limiter` instance lives in `app
 | `POST /auth/google`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all` | 5/min | `rate_limit_auth` |
 | `POST /scan` | 10/min | `rate_limit_scan` |
 | `GET /books/search` | 30/min | `rate_limit_books_search` |
-| `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH`, `DELETE /user-books/*` | 60/min | `rate_limit_writes` |
-| `GET /user-books`, `GET /auth/me` | 120/min | `rate_limit_reads` |
+| `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH`, `DELETE /user-books/*`, `POST /user-books/{id}/restore` | 60/min | `rate_limit_writes` |
+| `GET /user-books`, `GET /user-books/trash`, `GET /auth/me` | 120/min | `rate_limit_reads` |
 
 All limits are env-var overridable via `Settings` in `app/core/config.py`.
 
@@ -50,6 +50,12 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 - Anything a user wants to change about *their* copy goes in their own row: `user_books.title_override`, `author_override`, `cover_url_override`, set or cleared (`null`) through `PATCH /user-books/{id}`. Library reads (`UserBookRead`) show the override in `book.title` / `book.author` / `book.cover_url` and the catalog value otherwise, and report the user's values in `overrides` so the app can offer "reset to catalog". Overrides use the catalog's limits (500 / 500 / 2048), refuse control characters and Unicode format characters (the cover also whitespace), and the cover goes through `validate_safe_url(..., resolve=False)` (https; no `localhost` or private/reserved IP-literal host; no DNS lookup, since the server never fetches it). An unverified entry (#616) takes none (422 `overrides_not_supported`; check constraint `ck_user_books_overrides_catalog_only`).
 - Every new catalog row records provenance: `books.source` (`google_books` when a Google Books volume matched, else `open_library`, else `scan` for rows from before #602; `app/services/catalog.py:source_of`) and `books.fetched_at`. A new catalog write path must set both.
 - Merged duplicates keep their row with `books.merged_into_id` pointing at the survivor (self-FK, `ON DELETE RESTRICT`, always one hop). Reads follow it (`_user_book_query` loads `Book.merged_into`, `catalog.effective_book`; `held_entries` counts an entry on any row of a merged work as the survivor's and matches it on any of the work's IDs, so scan / search and `POST /wishlist` agree). Entries on merged rows can exist: `POST /purchased` promotes one (looking up `book_id IN (survivor, rows merged into it)`) rather than add a second entry, and the #686 edition check runs against the survivor. Writes never target a merged row: `POST /wishlist` and `POST /purchased` redirect to the survivor (`catalog.resolve_survivor`), so a stale `book_id` or provider ID still adds the same work once. There is no runtime merge code; the only merge so far (migration 0015) deleted its duplicates. A future merge sets `merged_into_id` (re-pointing earlier merges into the duplicate) and moves the duplicate's `user_books` / `editions` to the survivor. See `app/services/catalog.py`.
+
+### Soft delete and the trash (#683)
+- Deleting a library entry sets `user_books.deleted_at` (and `user_custom_books.deleted_at` for an unverified entry); nothing is hard-deleted except by the daily trash purge (`app/services/trash.py`) after `TRASH_RETENTION_DAYS` (30) and by account deletion.
+- **Every query on `UserBook` or `UserCustomBook` must exclude trashed rows** with `UserBook.live()` / `UserCustomBook.live()` (`deleted_at IS NULL`), unless it is the trash list, restore or the purge. Library reads go through `_user_book_query` in `app/api/user_books.py`, which applies it (`trashed=True` for the trash). This includes counts, caps, duplicate checks (`held_entries`, `UnverifiedBookService`), lookups before a write (`POST /purchased`) and any future stats or export path. `tests/unit/test_soft_delete_trash.py` checks the existing queries; a new query needs its own test that a trashed entry is invisible.
+- Uniqueness of `(user_id, book_id)` holds among live rows only (`uq_user_books_user_book_live`, partial). A restore that would make a second live entry of a work is `409 restore_conflict`.
+- Account deletion (#291) must delete trashed rows at once, not leave them to the purge.
 
 ### Database
 - Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as the table owner and bypasses it; it only locks out Supabase's `anon`/`authenticated` roles. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
