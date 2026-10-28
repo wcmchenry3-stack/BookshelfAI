@@ -46,6 +46,7 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 
 ### Database
 - Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as the table owner and bypasses it; it only locks out Supabase's `anon`/`authenticated` roles. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
+- Never `GRANT` anything to `anon` or `authenticated`. Migration 0023 revoked their table and sequence privileges, including the migrating role's default privileges, so a new table needs no extra step (#704)
 
 ## Commands
 
