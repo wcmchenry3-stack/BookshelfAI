@@ -430,7 +430,8 @@ def reading_match_score(
     - with the author confirmed, the record's title is the reading's title
       followed only by dates or an edition note after a comma or subtitle
       separator ("The Impending Crisis" fits "The impending crisis,
-      1848-1861");
+      1848-1861"), unless the reading's own subtitle names something else
+      ("Saga: Book Two" never fits "Saga: Deluxe Edition");
     - lowest, with the author confirmed, the same main title where only one
       side has a subtitle and it is not a volume marker ("Sapiens" fits
       "Sapiens: A Brief History of Humankind"; "Saga" never fits "Saga: Book
@@ -451,7 +452,7 @@ def reading_match_score(
     still comes from the record (#602). It cannot prove the record is the
     book in the photo: a wrong reading can still fit another real book."""
     reading_title, title = _fold(candidate.title), _fold(title)
-    reading_main, _ = _split_title(reading_title)
+    reading_main, reading_sub = _split_title(reading_title)
     record_main, _ = _split_title(title)
     if not reading_main or not record_main:
         return 0
@@ -470,7 +471,18 @@ def reading_match_score(
     if not author_confirmed:
         return 0
     head, rest = _head_and_rest(title)
-    if head == reading_main and (_DATES.match(rest) or _EDITION_NOTE.match(rest)):
+    # The reading's own subtitle must not name something else: "Saga: Book
+    # Two" never fits "Saga: Deluxe Edition" (the unnumbered work).
+    reading_sub_ok = (
+        not reading_sub
+        or bool(_DATES.match(reading_sub))
+        or bool(_EDITION_NOTE.match(reading_sub))
+    )
+    if (
+        reading_sub_ok
+        and head == reading_main
+        and (_DATES.match(rest) or _EDITION_NOTE.match(rest))
+    ):
         return 3
     if _one_sided_subtitle(reading_title, title):
         return 2

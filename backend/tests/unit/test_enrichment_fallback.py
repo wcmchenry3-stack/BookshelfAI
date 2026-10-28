@@ -1209,6 +1209,37 @@ class TestRound5SubtitlesThatAreNotVolumes:
         assert not enrichment._is_volume_marker(enrichment._normalise(phrase))
 
 
+class TestDateEditionTierKeepsTheReadingsVolume:
+    """Codex on 0e862fb: the date/edition tier compared only main titles, so
+    a reading naming a volume fitted the unnumbered work's edition (score 3,
+    which also makes an ISBN keyword hit final)."""
+
+    @pytest.mark.parametrize(
+        "record_title",
+        ["Saga: Deluxe Edition", "Saga, 2012", "Saga: Collector's Edition"],
+    )
+    def test_a_volume_never_fits_the_unnumbered_works_edition(self, record_title):
+        reading = BookCandidate(title="Saga: Book Two", author="Vaughan", confidence=1)
+        assert reading_match_score(reading, record_title, ["Brian K. Vaughan"]) == 0
+
+    @pytest.mark.parametrize(
+        ("reading_title", "record_title", "score"),
+        [
+            ("The Impending Crisis", "The impending crisis, 1848-1861", 3),
+            ("Dune: Deluxe Edition", "Dune, 1965", 3),
+            ("Dune: 1965", "Dune: Deluxe Edition", 3),
+        ],
+    )
+    def test_readings_without_a_distinguishing_subtitle_still_fit(
+        self, reading_title, record_title, score
+    ):
+        author = "David M. Potter" if "Crisis" in reading_title else "Frank Herbert"
+        reading = BookCandidate(
+            title=reading_title, author=author.split()[-1], confidence=1
+        )
+        assert reading_match_score(reading, record_title, [author]) == score
+
+
 class TestRound5Names:
     @pytest.mark.parametrize(
         "reading_author, record_author",
