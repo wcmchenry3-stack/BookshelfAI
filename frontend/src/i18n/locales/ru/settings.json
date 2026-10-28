@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "Выйти?",
   "signOutConfirmBody": "Чтобы пользоваться Bookshelf, нужно будет войти снова.",
   "signOutConfirm": "Выйти",
-  "signOutCancel": "Отмена"
+  "signOutCancel": "Отмена",
+  "trash": "Корзина",
+  "trashA11y": "Открыть корзину",
+  "trashHint": "Восстановите книги, удалённые за последние 30 дней"
 }

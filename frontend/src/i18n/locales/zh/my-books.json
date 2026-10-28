@@ -32,5 +32,25 @@
   "sectionTitle": "我的书库",
   "bookCount": "你的收藏中有 {{count}} 本书。",
   "heroSubtitle": "您的阅读生活，尽在一处",
-  "archiveSummary": "本书已记录"
+  "archiveSummary": "本书已记录",
+  "movedToTrash": "已移到回收站。30 天内可以恢复。",
+  "viewTrash": "查看回收站",
+  "trash": {
+    "title": "回收站",
+    "back": "返回",
+    "loading": "正在加载回收站…",
+    "intro": "删除的书会保留 30 天，之后将被永久删除。再次删除同一本书时，没有笔记或评分的旧副本会被替换。仅保留最新的 1,000 本。",
+    "emptyTitle": "回收站是空的",
+    "emptyBody": "从书库中移除的书会在这里保留 30 天，期间可以恢复。",
+    "dates": "删除于 {{deleted}} · 永久删除于 {{purge}}",
+    "restore": "恢复",
+    "restoreA11y": "恢复《{{title}}》",
+    "restored": "已将《{{title}}》恢复到你的书库。",
+    "restoreConflict": "这本书已在你的书库中。",
+    "restoreNotFound": "这本书已不在回收站中。",
+    "restoreFailed": "无法恢复这本书，请重试。",
+    "errorLoad": "无法加载回收站。",
+    "retry": "重试",
+    "errorRefresh": "无法刷新回收站。"
+  }
 }

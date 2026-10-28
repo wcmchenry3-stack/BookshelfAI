@@ -33,5 +33,18 @@
     "description": "Cancel button in the sign-out prompt",
     "tone": "neutral",
     "characterLimit": 20
+  },
+  "trash": {
+    "description": "Settings row label that opens the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "trashA11y": {
+    "description": "Screen-reader label for the Trash settings row",
+    "tone": "neutral"
+  },
+  "trashHint": {
+    "description": "Settings row subtitle for the Trash row",
+    "tone": "neutral"
   }
 }

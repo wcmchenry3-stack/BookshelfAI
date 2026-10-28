@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "להתנתק?",
   "signOutConfirmBody": "תצטרך להתחבר שוב כדי להשתמש ב-Bookshelf.",
   "signOutConfirm": "התנתקות",
-  "signOutCancel": "ביטול"
+  "signOutCancel": "ביטול",
+  "trash": "פח",
+  "trashA11y": "פתיחת הפח",
+  "trashHint": "שחזור ספרים שהוסרו ב-30 הימים האחרונים"
 }

@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "¿Cerrar sesión?",
   "signOutConfirmBody": "Tendrás que volver a iniciar sesión para usar Bookshelf.",
   "signOutConfirm": "Cerrar sesión",
-  "signOutCancel": "Cancelar"
+  "signOutCancel": "Cancelar",
+  "trash": "Papelera",
+  "trashA11y": "Abrir la papelera",
+  "trashHint": "Restaura los libros eliminados en los últimos 30 días"
 }

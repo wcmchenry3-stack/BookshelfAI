@@ -32,5 +32,25 @@
   "sectionTitle": "내 서재",
   "bookCount": "컬렉션에 {{count}}권이 있습니다.",
   "heroSubtitle": "나의 독서 생활 한눈에",
-  "archiveSummary": "권 등록됨"
+  "archiveSummary": "권 등록됨",
+  "movedToTrash": "휴지통으로 이동했습니다. 30일 이내에 복원할 수 있습니다.",
+  "viewTrash": "휴지통 보기",
+  "trash": {
+    "title": "휴지통",
+    "back": "뒤로",
+    "loading": "휴지통 불러오는 중…",
+    "intro": "삭제한 책은 30일 동안 보관된 후 완전히 삭제됩니다. 같은 책을 다시 삭제하면 메모나 평점이 없는 이전 사본이 대체됩니다. 최신 1,000개만 보관됩니다.",
+    "emptyTitle": "휴지통이 비어 있습니다",
+    "emptyBody": "내 서재에서 삭제한 책이 30일 동안 여기에 표시됩니다. 그때까지 복원할 수 있습니다.",
+    "dates": "삭제일 {{deleted}} · 완전 삭제일 {{purge}}",
+    "restore": "복원",
+    "restoreA11y": "{{title}} 복원",
+    "restored": "{{title}}을(를) 서재에 복원했습니다.",
+    "restoreConflict": "이 책은 이미 서재에 있습니다.",
+    "restoreNotFound": "이 책은 더 이상 휴지통에 없습니다.",
+    "restoreFailed": "이 책을 복원하지 못했습니다. 다시 시도하세요.",
+    "errorLoad": "휴지통을 불러오지 못했습니다.",
+    "retry": "다시 시도",
+    "errorRefresh": "휴지통을 새로 고치지 못했습니다."
+  }
 }

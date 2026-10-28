@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "退出登录?",
   "signOutConfirmBody": "您需要重新登录才能使用 Bookshelf。",
   "signOutConfirm": "退出登录",
-  "signOutCancel": "取消"
+  "signOutCancel": "取消",
+  "trash": "回收站",
+  "trashA11y": "打开回收站",
+  "trashHint": "恢复最近 30 天内删除的书"
 }

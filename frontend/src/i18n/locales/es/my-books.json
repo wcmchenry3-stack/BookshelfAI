@@ -32,5 +32,25 @@
   "sectionTitle": "Mi biblioteca",
   "bookCount": "{{count}} volúmenes en tu colección.",
   "heroSubtitle": "Tu vida lectora en un lugar",
-  "archiveSummary": "libros registrados"
+  "archiveSummary": "libros registrados",
+  "movedToTrash": "Movido a la papelera. Puedes restaurarlo durante 30 días.",
+  "viewTrash": "Ver papelera",
+  "trash": {
+    "title": "Papelera",
+    "back": "Atrás",
+    "loading": "Cargando papelera…",
+    "intro": "Los libros eliminados se conservan 30 días y después se borran para siempre. Si eliminas un libro otra vez, se sustituyen las copias antiguas sin notas ni valoración. Solo se conservan las 1.000 más recientes.",
+    "emptyTitle": "La papelera está vacía",
+    "emptyBody": "Los libros que quitas de tu biblioteca aparecen aquí durante 30 días. Puedes restaurarlos hasta entonces.",
+    "dates": "Eliminado {{deleted}} · se borrará definitivamente el {{purge}}",
+    "restore": "Restaurar",
+    "restoreA11y": "Restaurar {{title}}",
+    "restored": "Se restauró {{title}} en tu biblioteca.",
+    "restoreConflict": "Este libro ya está en tu biblioteca.",
+    "restoreNotFound": "Este libro ya no está en la papelera.",
+    "restoreFailed": "No se pudo restaurar este libro. Inténtalo de nuevo.",
+    "errorLoad": "No se pudo cargar la papelera.",
+    "retry": "Reintentar",
+    "errorRefresh": "No se pudo actualizar la papelera."
+  }
 }

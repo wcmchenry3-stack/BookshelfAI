@@ -32,5 +32,25 @@
   "sectionTitle": "My Library",
   "bookCount": "{{count}} volumes in your collection.",
   "heroSubtitle": "Your reading life in one place",
-  "archiveSummary": "books tracked"
+  "archiveSummary": "books tracked",
+  "movedToTrash": "Moved to Trash. You can restore it within 30 days.",
+  "viewTrash": "View trash",
+  "trash": {
+    "title": "Trash",
+    "back": "Back",
+    "loading": "Loading trash…",
+    "intro": "Removed books are kept for 30 days, then deleted for good. Removing a book again replaces older copies that have no notes or rating. Only the newest 1,000 are kept.",
+    "emptyTitle": "Trash is empty",
+    "emptyBody": "Books you remove from your library appear here for 30 days. You can restore them until then.",
+    "dates": "Deleted {{deleted}} · permanently removed on {{purge}}",
+    "restore": "Restore",
+    "restoreA11y": "Restore {{title}}",
+    "restored": "Restored {{title}} to your library.",
+    "restoreConflict": "This book is already in your library.",
+    "restoreNotFound": "This book is no longer in the trash.",
+    "restoreFailed": "Couldn't restore this book. Try again.",
+    "errorLoad": "Could not load the trash.",
+    "retry": "Try again",
+    "errorRefresh": "Couldn't refresh the trash."
+  }
 }

@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "Se déconnecter?",
   "signOutConfirmBody": "Vous devrez vous reconnecter pour utiliser Bookshelf.",
   "signOutConfirm": "Se déconnecter",
-  "signOutCancel": "Annuler"
+  "signOutCancel": "Annuler",
+  "trash": "Corbeille",
+  "trashA11y": "Ouvrir la corbeille",
+  "trashHint": "Restaurez les livres supprimés au cours des 30 derniers jours"
 }
