@@ -355,13 +355,15 @@ class TestProviderFieldsOnly:
     """What a scan signs, and so what POST /wishlist stores, is the
     provider's record, never the photo's reading (#602 review, finding 1)."""
 
-    DOCTORED = "Dune — FREE CRYPTO at evil.example"
+    # A doctored cover that still fits Dune by Frank Herbert: since #743 a
+    # reading that fits no provider record is never paired with one.
+    DOCTORED = "DUNE!!! — Special Collectors Edition"
 
     async def test_doctored_cover_stores_the_provider_title(self, env):
         factory, make_user, ids, provider = env
         candidate = BookCandidate(
             title=self.DOCTORED,
-            author="Not Herbert",
+            author="Totally Frank Herbert",
             confidence=0.9,
             isbn_13=ids["isbn"],
         )

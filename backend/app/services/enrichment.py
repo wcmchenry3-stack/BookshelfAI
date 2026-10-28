@@ -3,13 +3,14 @@
 The candidate (the vision model's reading of the photo, or a search hit) is
 only a search key. Which records are looked at (#743): with an ISBN-13, each
 provider is first looked up by it, and a record found that way is used only
-when it fits the reading (:func:`reading_match_score`: the title, and the
-author's surname when both name one), since the model's ISBN is often
+when it fits the reading (:func:`reading_match_score`: agreeing titles, and
+a compatible author when both name one), since the model's ISBN is often
 misread or invented. For each provider that has no such record (and for a
 candidate without an ISBN-13) the provider is searched by title and author
 surname, and the best fitting of up to ``TITLE_SEARCH_RESULTS`` records is
 used; a record that fits nothing is never used. At most four provider
-requests per candidate.
+requests per candidate, each cut off after ``PROVIDER_CALL_TIMEOUT_S``, and
+the whole call stops at ``ENRICHMENT_DEADLINE_S``.
 
 Whenever a provider matched, every catalog field of the
 result comes from the provider records (#602), because a signed result may
@@ -65,6 +66,16 @@ _MAX_TEXT = 500
 MAX_CONCURRENT_ENRICHMENTS = 5
 # How many records one title search considers (#743).
 TITLE_SEARCH_RESULTS = 5
+# Time limits (#743 review): one provider request may take at most
+# PROVIDER_CALL_TIMEOUT_S (the HTTP client's own 10 s applies per phase, so
+# a request could otherwise run longer), so a candidate's ISBN lookup plus
+# title search fit in 16 s. The whole ``enrich`` call stops at
+# ENRICHMENT_DEADLINE_S: candidates still running then come back as their
+# unsigned reading and the enrichment counts as incomplete. With the vision
+# call's 45 s (SCAN_TIMEOUT_SECONDS) a scan stays well under Cloudflare's
+# 100 s origin timeout.
+PROVIDER_CALL_TIMEOUT_S = 8.0
+ENRICHMENT_DEADLINE_S = 20.0
 # What ``_lookup`` returns for a call that raised.
 _FAILED = object()
 
@@ -208,34 +219,51 @@ def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
 
 
 # Where a title's head ends when a reading is matched against a record: the
-# subtitle separators above plus a comma or semicolon, so the spine's "The
-# Impending Crisis" fits the catalog's "The impending crisis, 1848-1861",
-# while "Dune" never fits "Dune Messiah".
+# subtitle separators above plus a comma or semicolon.
 _HEAD = re.compile(r"\s*[,;:(\[–—]|\s+-\s+")
+# A rest of a record's title that only dates the book: "1848-1861", "1990".
+_DATES = re.compile(r"^\d{4}(?: \d{4})*$")
 # Name suffixes skipped when taking a surname ("Martin Luther King Jr.").
 _NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "phd", "md"})
 
 
-def _title_head(value: object) -> str:
+def _head_and_rest(value: object) -> tuple[str, str]:
+    """(normalised title before the first comma or subtitle separator,
+    normalised rest or "")."""
     if not isinstance(value, str):
-        return ""
-    return normalise_title(_HEAD.split(value, maxsplit=1)[0])
+        return "", ""
+    parts = _HEAD.split(value, maxsplit=1)
+    rest = _normalise(parts[1]) if len(parts) > 1 else ""
+    return normalise_title(parts[0]), rest
 
 
-def _name_surname(name: object) -> str:
-    """The normalised surname of one name: its last word that is not a
-    suffix; "" for none (or the model's "Unknown")."""
+def _name_parts(name: object) -> tuple[list[str], str]:
+    """(initials of the given names, surname) of one name, normalised and
+    without suffixes: "David M. Potter" is (["d", "m"], "potter")."""
     words = [w for w in _normalise(name).split() if w not in _NAME_SUFFIXES]
     if not words or words == ["unknown"]:
-        return ""
-    return words[-1]
+        return [], ""
+    return [w[0] for w in words[:-1]], words[-1]
+
+
+def _names_agree(a: tuple[list[str], str], b: tuple[list[str], str]) -> bool:
+    """The same surname and, when both give a first name or initial, the
+    first initial of one among the other's initials ("David Potter" and
+    "David Morris Potter", "M. L. King" and "Martin Luther King Jr.", but
+    not "Frank Herbert" and "Brian Herbert")."""
+    (a_initials, a_surname), (b_initials, b_surname) = a, b
+    if not a_surname or a_surname != b_surname:
+        return False
+    if not a_initials or not b_initials:
+        return True
+    return a_initials[0] in b_initials or b_initials[0] in a_initials
 
 
 def reading_surname(candidate: BookCandidate) -> str:
     """The surname of the author the model read ("David M. Potter",
     "David Potter" and "Potter" all give "potter"): the author key of a
     title search (#743)."""
-    return _name_surname(candidate.author)
+    return _name_parts(candidate.author)[1]
 
 
 def reading_match_score(
@@ -244,38 +272,55 @@ def reading_match_score(
     """How well a provider record (its title and author list) fits the
     model's reading of the photo (#743); 0 means it is not that book.
 
-    The record's title must fit the reading: titles that agree
-    (:func:`titles_agree`) score highest, then the same main title before
-    any subtitle, then, only with the author confirmed, the same head before
-    a comma or subtitle ("The Impending Crisis" vs "The impending crisis,
-    1848-1861"). When both name an author, the reading's surname must be
-    one of the record's authors' surnames; a confirmed author adds 1. A
-    reading without a title fits nothing.
+    Title, one of:
+
+    - the titles agree (:func:`titles_agree`: the same main title, any
+      differing subtitle only an edition note), so "Dune" never fits "Dune:
+      Messiah" and "Saga" never fits "Saga: Book Two";
+    - with the author confirmed, the record's title is the reading's title
+      followed only by dates or an edition note after a comma or subtitle
+      separator ("The Impending Crisis" fits "The impending crisis,
+      1848-1861").
+
+    Author: when the reading and a record author share the surname and both
+    give a first name or initial, the first initials must agree as well
+    (:func:`_names_agree`), so "Frank Herbert" never fits "Brian Herbert".
+    When the reading names an author, the record must name that author; when
+    it names none, any author passes. A record that names no author fits only
+    on agreeing titles. A confirmed author adds 1 to the score. A reading
+    without a title fits nothing.
 
     This only chooses which record is used: every catalog field of a match
-    still comes from the record (#602)."""
+    still comes from the record (#602). It cannot prove the record is the
+    book in the photo: a wrong reading can still fit another real book."""
     reading_main, _ = _split_title(candidate.title)
     record_main, _ = _split_title(title)
     if not reading_main or not record_main:
         return 0
-    surname = reading_surname(candidate)
-    record_surnames = (
-        {_name_surname(a) for a in authors} - {""}
+    reading_name = _name_parts(candidate.author)
+    record_names = (
+        [n for n in (_name_parts(a) for a in authors) if n[1]]
         if isinstance(authors, list)
-        else set()
+        else []
     )
-    if surname and record_surnames and surname not in record_surnames:
+    agree = titles_agree(candidate.title, title)
+    if not record_names:
+        return 6 if agree else 0
+    author_confirmed = bool(reading_name[1]) and any(
+        _names_agree(reading_name, n) for n in record_names
+    )
+    if reading_name[1] and not author_confirmed:
         return 0
-    author_confirmed = bool(surname) and surname in record_surnames
-    if titles_agree(candidate.title, title):
-        level = 3
-    elif reading_main == record_main:
-        level = 2
-    elif author_confirmed and _title_head(candidate.title) == _title_head(title):
-        level = 1
-    else:
-        return 0
-    return level * 2 + int(author_confirmed)
+    if agree:
+        return 6 + int(author_confirmed)
+    head, rest = _head_and_rest(title)
+    if (
+        author_confirmed
+        and head == reading_main
+        and (_DATES.match(rest) or _EDITION_NOTE.match(rest))
+    ):
+        return 3
+    return 0
 
 
 def _ol_score(candidate: BookCandidate) -> Callable[[dict], int]:
@@ -364,29 +409,49 @@ _SOURCE_NAMES = {"open_library": "Open Library", "google_books": "Google Books"}
 
 async def _lookup(call: Awaitable[object], source: str) -> object:
     """The call's result, or ``_FAILED`` (logged and noted as a lookup
-    failure) when it raised."""
+    failure) when it raised or took longer than ``PROVIDER_CALL_TIMEOUT_S``."""
     try:
-        return await call
+        return await asyncio.wait_for(call, PROVIDER_CALL_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("%s error: timed out", _SOURCE_NAMES[source])
+        _note_failure(source)
+        return _FAILED
     except Exception as exc:  # noqa: BLE001 - a provider error never fails the scan
         logger.warning("%s error: %s", _SOURCE_NAMES[source], exc)
         _note_failure(source)
         return _FAILED
 
 
+def _ol_title(doc: dict) -> str | None:
+    return _provider_text(doc.get("title"))
+
+
+def _gb_title(volume: dict) -> str | None:
+    info = volume.get("volumeInfo")
+    return _provider_text(info.get("title")) if isinstance(info, dict) else None
+
+
 def _isbn_record(
     candidate: BookCandidate,
     found: object,
     score: Callable[[dict], int],
+    title_of: Callable[[dict], str | None],
     isbns: Callable[[dict], set[str]],
 ) -> dict | None:
     """The record an ISBN lookup found, when it may be used (#743): it fits
-    the reading, or, for a reading without a title, it lists the ISBN.
-    Otherwise None (the provider is then searched by title)."""
+    the reading, or, for a reading without a title, it has a usable title
+    (``title_of``, the provider's own shape) and lists the ISBN. Otherwise
+    None (the provider is then searched by title).
+
+    A record that lists the ISBN but does not fit a reading that has a title
+    (a translated or paraphrased reading, say) is deliberately not used: the
+    model's ISBN is often invented, and an invented ISBN that happens to
+    exist would otherwise attach another book to the reading."""
     if not isinstance(found, dict):
         return None
     if score(found) > 0:
         return found
-    if not _split_title(candidate.title)[0] and _provider_text(found.get("title")):
+    if not _split_title(candidate.title)[0] and title_of(found):
         return found if candidate.isbn_13 in isbns(found) else None
     logger.info("enrichment: ISBN lookup found another book; ignored")
     return None
@@ -425,8 +490,36 @@ class EnrichmentService:
             async with semaphore:
                 return await self._enrich_one(candidate)
 
-        tasks = [_bounded(c) for c in candidates[:limit]]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        chosen = candidates[:limit]
+        tasks = [asyncio.ensure_future(_bounded(c)) for c in chosen]
+        results: list[object] = []
+        if tasks:
+            try:
+                _, pending = await asyncio.wait(tasks, timeout=ENRICHMENT_DEADLINE_S)
+            except BaseException:
+                # The request itself was cancelled: never leave lookups behind.
+                for task in tasks:
+                    task.cancel()
+                raise
+            if pending:
+                # Past the deadline: stop what is still running and show
+                # those candidates unmatched (no provider data, unsigned).
+                logger.warning(
+                    "enrichment: deadline reached; %d of %d candidates unmatched",
+                    len(pending),
+                    len(tasks),
+                )
+                _note_failure("deadline")
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+            for candidate, task in zip(chosen, tasks, strict=True):
+                if task in pending:
+                    results.append(self._build(candidate, None, None))
+                elif task.exception() is not None:
+                    results.append(task.exception())
+                else:
+                    results.append(task.result())
         enriched = []
         for index, r in enumerate(results):
             if isinstance(r, EnrichedBook):
@@ -463,8 +556,10 @@ class EnrichmentService:
                 _lookup(self.ol.search_by_isbn(candidate.isbn_13), "open_library"),
                 _lookup(self.gb.search_by_isbn(candidate.isbn_13), "google_books"),
             )
-            ol_doc = _isbn_record(candidate, ol_found, ol_score, _ol_isbns)
-            gb_volume = _isbn_record(candidate, gb_found, gb_score, _gb_isbns)
+            ol_doc = _isbn_record(candidate, ol_found, ol_score, _ol_title, _ol_isbns)
+            gb_volume = _isbn_record(
+                candidate, gb_found, gb_score, _gb_title, _gb_isbns
+            )
             search_ol = has_title and ol_doc is None and ol_found is not _FAILED
             search_gb = has_title and gb_volume is None and gb_found is not _FAILED
 
@@ -509,7 +604,13 @@ class EnrichmentService:
 
     async def _enrich_one(self, candidate: BookCandidate) -> EnrichedBook:
         ol_doc, gb_volume = await self._find_records(candidate)
+        return self._build(candidate, ol_doc, gb_volume)
 
+    def _build(
+        self, candidate: BookCandidate, ol_doc: dict | None, gb_volume: dict | None
+    ) -> EnrichedBook:
+        """The result for a candidate from the records found for it (both
+        None: nothing matched, the unsigned reading)."""
         # A record without a usable title is not a match: nothing from it
         # (ID, cover, subjects) may be paired with the candidate's reading.
         ol_title = _provider_text(ol_doc.get("title")) if ol_doc else None
