@@ -38,7 +38,7 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 
 ### Auth
 - JWT RS256 only — reject all other algorithms including `none`
-- Access tokens live 15 minutes (`jwt_access_ttl_minutes`). Every access and refresh token carries `tv` = `users.token_version`; `get_current_user` compares it with the row it already loads (no cache, no extra query) → 401 `token_revoked`. To revoke a user's sessions, call `app/auth/sessions.py:revoke_all_sessions(db, user)` (bumps the version and revokes all refresh rows; the caller commits) — never bump or delete tokens by hand. Issue tokens with `create_access_token(id, email, user.token_version)` / `create_refresh_token(id, user.token_version)` (#689)
+- Access tokens live 15 minutes (`jwt_access_ttl_minutes`). Every access and refresh token carries `tv` = `users.token_version`; `get_current_user` compares it with the row it already loads (no cache, no extra query) → 401 `token_revoked`. Until the legacy path is removed (#735; it accepts nothing after 2026-11-03) a token with no `tv` (pre-#689) is legacy: access → 401 `token_outdated`, refresh → read as `tv = 0` (#725, `LEGACY_TOKEN_VERSION`; removal tracked in #735). To revoke a user's sessions, call `app/auth/sessions.py:revoke_all_sessions(db, user)` (bumps the version and revokes all refresh rows; the caller commits) — never bump or delete tokens by hand. Issue tokens with `create_access_token(id, email, user.token_version)` / `create_refresh_token(id, user.token_version)` (#689)
 - Allowlist check via `ALLOWED_EMAILS` env var after Google auth
 - Users are matched by Google `sub` (`users.google_id`) via `app/auth/identity.py:resolve_google_user`, never by email; an email owned by another subject (compared with `lower()`) → 409 `account_conflict`; `ALLOWED_EMAILS` also ignores case
 - `/auth/test-login` exists only in development/test; hardened settings with `TEST_AUTH_SECRET` set fail boot
@@ -46,6 +46,7 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 
 ### Database
 - Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as the table owner and bypasses it; it only locks out Supabase's `anon`/`authenticated` roles. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
+- Never `GRANT` anything to `anon` or `authenticated`. Migration 0023 revoked their table and sequence privileges, including the migrating role's default privileges, so a new table needs no extra step (#704)
 
 ## Commands
 

@@ -1,4 +1,9 @@
 {
   "heading": "Settings",
-  "scanUsageLabel": "Scan usage"
+  "scanUsageLabel": "Scan usage",
+  "signOut": "Sign out",
+  "signOutConfirmTitle": "Sign out?",
+  "signOutConfirmBody": "You will need to sign in again to use Bookshelf.",
+  "signOutConfirm": "Sign out",
+  "signOutCancel": "Cancel"
 }

@@ -131,7 +131,8 @@ class UnverifiedBookCreate(BaseModel):
 
 
 class UserBookCreate(BaseModel):
-    """Body for POST /wishlist — book already exists in DB."""
+    """Unused by any route today. A route that adopts it must call
+    ``require_edition_of_book`` (#686) before writing ``edition_id``."""
 
     book_id: uuid.UUID
     edition_id: uuid.UUID | None = None

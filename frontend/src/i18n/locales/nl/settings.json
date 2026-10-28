@@ -1,4 +1,9 @@
 {
   "heading": "Instellingen",
-  "scanUsageLabel": "Scangebruik"
+  "scanUsageLabel": "Scangebruik",
+  "signOut": "Uitloggen",
+  "signOutConfirmTitle": "Uitloggen?",
+  "signOutConfirmBody": "Je moet opnieuw inloggen om Bookshelf te gebruiken.",
+  "signOutConfirm": "Uitloggen",
+  "signOutCancel": "Annuleren"
 }

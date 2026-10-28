@@ -14,6 +14,7 @@ import { catalogRefusal } from '../../lib/ownership';
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/api', () => ({
   api: {
     get: (...a: unknown[]) => mockGet(...a),
@@ -170,7 +171,8 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
       'Ulysses',
     ]);
     // Only the 500 is reported.
-    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    // #724: the central API reporter (lib/api.ts, mocked here) owns the 500.
+    expect(mockCaptureException).not.toHaveBeenCalled();
   });
 
   it('mixed: added next to a stale result needs no retry hint and closes the review', async () => {
@@ -245,7 +247,8 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
       'Dune',
       'Ulysses',
     ]);
-    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    // #724: the central API reporter (lib/api.ts, mocked here) owns the 500.
+    expect(mockCaptureException).not.toHaveBeenCalled();
   });
 
   it('shows the whole banner, not two lines', async () => {

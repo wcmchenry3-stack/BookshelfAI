@@ -56,7 +56,7 @@ export async function loadJobs(): Promise<ScanJob[] | null> {
 
 export async function clearJobs(): Promise<void> {
   const storage = await getStorage();
-  storage.removeItem(STORAGE_KEY);
+  await storage.removeItem(STORAGE_KEY);
 }
 
 function fileNameOf(uri: string): string {

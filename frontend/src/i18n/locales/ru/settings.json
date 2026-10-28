@@ -1,4 +1,9 @@
 {
   "heading": "Настройки",
-  "scanUsageLabel": "Расход сканирований"
+  "scanUsageLabel": "Расход сканирований",
+  "signOut": "Выйти",
+  "signOutConfirmTitle": "Выйти?",
+  "signOutConfirmBody": "Чтобы пользоваться Bookshelf, нужно будет войти снова.",
+  "signOutConfirm": "Выйти",
+  "signOutCancel": "Отмена"
 }

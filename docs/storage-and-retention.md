@@ -74,7 +74,7 @@ Missing:
 - **No deletion on low storage**, and no way to know storage is low.
 - **No deletion after N days for `queued` / `pending` photos.** A photo that never reaches the server (the user stays offline or blocked by a limit) stays on the phone until it eventually fails or is dismissed. After 5 attempts it becomes `failed` and the 7-day clock starts, but a photo refused by a limit stays `queued` (`hasRefusedJobs`, `scanErrors.ts:93-96`) with no age limit.
 - **No deletion of the camera original** in the cache directory.
-- **No deletion on sign-out** (`AuthContext` does not touch `scan-queue/`), so the next account on the device would upload the previous account's queued photos.
+- **Cleared on sign-out (#723):** when the user signs out (Settings button or a revoked session), `ScanJobContext` empties the in-memory queue, removes `scan_job_queue`, deletes the queued photos and sweeps `scan-queue/`, and a send still in flight drops its result. The next account therefore starts with an empty queue. Remaining bounding work (caps, sizes) is tracked in #669.
 - **No per-photo size check** before queueing (a 5 MB+ photo is queued, then fails on every attempt).
 - **No count cap on failed jobs.**
 - **No cap on completed but unreviewed photos.** A successful scan keeps its image so the review sheet can offer an enhanced re-scan (`ScanJobContext.tsx:1261-1263`); it is deleted only when the user dismisses the review or on the next app launch. `isPendingUpload` (`scanJob.ts:60`) excludes completed jobs, so they do not count toward the 50-photo cap (`ScanJobContext.tsx:459`). A user who keeps scanning without opening results accumulates them without limit until the app restarts.

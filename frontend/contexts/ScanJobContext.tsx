@@ -5,10 +5,17 @@ import * as Crypto from 'expo-crypto';
 import { useTranslation } from 'react-i18next';
 
 import type { EnrichedBook } from '../components/BookCandidatePicker';
+import { useAuth } from '../hooks/useAuth';
 import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
+import {
+  apiErrorTags,
+  isReportedCentrally,
+  isServiceUnavailable,
+  sanitizeApiError,
+} from '../lib/apiErrorReporting';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
@@ -34,7 +41,13 @@ import {
   type ScanJobType,
   type ScanResponse,
 } from '../lib/scanJob';
-import { deleteScanImage, loadJobs, saveJobs, sweepOrphanedScanFiles } from '../lib/scanJobStorage';
+import {
+  clearJobs,
+  deleteScanImage,
+  loadJobs,
+  saveJobs,
+  sweepOrphanedScanFiles,
+} from '../lib/scanJobStorage';
 import { draftFromBook, withScanRecord, type UnverifiedDraft } from '../lib/unverified';
 
 /** An "Add it yourself" form waiting to be shown, with its own id (#616). */
@@ -198,6 +211,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const skipNextPersistRef = useRef(false);
   const { showBanner } = useBanner();
   const { t, i18n } = useTranslation('scan');
+  const { isAuthenticated } = useAuth();
+  // Bumped on sign-out. A send started under an earlier generation drops its
+  // result instead of writing it into the next account's queue.
+  const generationRef = useRef(0);
+  const wasAuthenticatedRef = useRef(false);
+  // Requests in flight (scans, searches, wishlist adds); aborted on sign-out.
+  const abortersRef = useRef(new Set<AbortController>());
 
   const dismissScanNotice = useCallback(() => setScanNotice(null), []);
   const bumpUsage = useCallback(() => setUsageRefreshKey((k) => k + 1), []);
@@ -212,12 +232,64 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     saveJobs(jobs);
   }, [jobs, loaded]);
 
+  // Sign-out (the Settings button or a revoked session): the queue belongs to
+  // the account that made it, so drop it before another account signs in.
+  // Only a true -> false change counts; the launch state never clears.
+  useEffect(() => {
+    const wasAuthenticated = wasAuthenticatedRef.current;
+    wasAuthenticatedRef.current = isAuthenticated;
+    if (!wasAuthenticated || isAuthenticated) return;
+    // Taken now, so a photo captured after the next sign-in is not swept.
+    const signedOutAt = Date.now();
+    generationRef.current += 1;
+    drainAgainRef.current = false;
+    for (const c of abortersRef.current) c.abort();
+    abortersRef.current.clear();
+    draftSourcesRef.current.clear();
+    reopenReviewJobIdRef.current = null;
+    const dropped = jobsRef.current;
+    // Emptying the list also disarms the retry timer and starves any drain.
+    setJobsAndRef(() => []);
+    setReviewingJobId(null);
+    reviewingJobIdRef.current = null;
+    setScanNotice(null);
+    setUnverifiedDrafts([]);
+    setEnhancedScansRemaining(null);
+    void (async () => {
+      try {
+        await clearJobs();
+      } catch {
+        // Best-effort; the next sign-in's load would otherwise see the old queue.
+      }
+      for (const j of dropped) {
+        if (!j.imageUri) continue;
+        // Web photos are blob URLs held in memory.
+        if (Platform.OS === 'web' && j.imageUri.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(j.imageUri);
+          } catch {
+            // Best-effort.
+          }
+        }
+        await deleteScanImage(j.imageUri);
+      }
+      await sweepOrphanedScanFiles([], signedOutAt);
+    })();
+  }, [isAuthenticated, setJobsAndRef]);
+
   // Load persisted jobs on mount. Reset interrupted searches to pending, then
   // remove scan-queue files that no persisted job refers to (crashed captures).
   useEffect(() => {
     (async () => {
       const launchedAt = Date.now();
+      const loadGeneration = generationRef.current;
       const persisted = await loadJobs();
+      // Signed out while the read was pending: it belongs to the old account.
+      if (generationRef.current !== loadGeneration) {
+        skipNextPersistRef.current = false;
+        setLoaded(true);
+        return;
+      }
       if (persisted === null) {
         // Storage read/parse failed — we can't tell which images in
         // scan-queue/ are still owned by a job, so don't guess: skip the
@@ -453,6 +525,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const startScan = useCallback(
     async (type: ScanJobType, imageUri?: string, query?: string) => {
       let startedId: string | null = null;
+      const generation = generationRef.current;
       try {
         // Backstop for the cap — the scan screen checks isQueueFull before
         // persisting a capture, but a stale render could still get here.
@@ -491,6 +564,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         inFlightRef.current.add(job.id);
 
         const netState = await NetInfo.fetch();
+        // Signed out during the connectivity check: the job was dropped with
+        // the queue, so nothing is sent or announced.
+        if (generationRef.current !== generation) return;
         if (!netState.isConnected) {
           updateJob(job.id, { status: 'queued' });
           showBanner({
@@ -503,7 +579,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
         await executeScanRef.current(job);
       } catch (err) {
-        Sentry.captureException(err);
+        if (!isReportedCentrally(err)) {
+          Sentry.captureException(sanitizeApiError(err));
+        }
         showBanner({
           message: t('scanFailedMessage'),
           type: 'error',
@@ -753,6 +831,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     async (books: EnrichedBook[]) => {
       if (books.length === 0) return;
       const jobId = reviewingJobId;
+      const generation = generationRef.current;
+      const signedOutSince = () => generationRef.current !== generation;
+      const controller = new AbortController();
+      abortersRef.current.add(controller);
 
       Sentry.addBreadcrumb({
         category: 'scan',
@@ -766,7 +848,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       // null/undefined ("unknown", e.g. an unusual connection type) is
       // treated as connected, matching useNetworkStatus elsewhere.
       const netState = await NetInfo.fetch();
+      if (signedOutSince()) {
+        abortersRef.current.delete(controller);
+        return;
+      }
       if (netState.isConnected === false) {
+        abortersRef.current.delete(controller);
         showBanner({
           message: t('requiresConnection', { ns: 'common' }),
           type: 'error',
@@ -775,7 +862,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const outcomes = await Promise.allSettled(books.map((book) => api.post('/wishlist', book)));
+      const outcomes = await Promise.allSettled(
+        books.map((book) => api.post('/wishlist', book, { signal: controller.signal }))
+      );
+      abortersRef.current.delete(controller);
+      // Signed out meanwhile: no banner, review change or Sentry event.
+      if (signedOutSince()) return;
       // A 409 with an ownership code means the book is already in the
       // library (#587): nothing to retry and not a failure.
       const alreadyOwned = (o: PromiseSettledResult<unknown>) =>
@@ -828,10 +920,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         if (
           outcome.status === 'rejected' &&
           !alreadyOwned(outcome) &&
-          catalogRefusal(outcome.reason) === null
+          catalogRefusal(outcome.reason) === null &&
+          !isReportedCentrally(outcome.reason)
         ) {
-          Sentry.captureException(outcome.reason, {
-            tags: { feature: 'scan', action: 'add_books' },
+          Sentry.captureException(sanitizeApiError(outcome.reason), {
+            tags: { feature: 'scan', action: 'add_books', ...apiErrorTags(outcome.reason) },
           });
         }
       }
@@ -1083,9 +1176,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     executeScanRef.current = async function executeScan(job: ScanJob) {
       // Synchronous (before any await) so a drain can't start the same job.
       inFlightRef.current.add(job.id);
+      const controller = new AbortController();
+      abortersRef.current.add(controller);
       try {
-        await runScan(job);
+        await runScan(job, controller.signal);
       } finally {
+        abortersRef.current.delete(controller);
         inFlightRef.current.delete(job.id);
         // A retry queued behind this send (outside a drain; a drain handles
         // it when it ends). Left for a photo still being sent, so a text
@@ -1097,7 +1193,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    async function runScan(job: ScanJob) {
+    async function runScan(job: ScanJob, signal: AbortSignal) {
+      const generation = generationRef.current;
+      const signedOutSince = () => generationRef.current !== generation;
       updateJob(job.id, { status: 'searching' });
       // Enhanced scans left as reported by this response (the state update
       // lands next render).
@@ -1119,7 +1217,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         if (job.type === 'text') {
           const response = await api.get<EnrichedBook[]>('/books/search', {
             params: { q: job.query },
+            signal,
           });
+          if (signedOutSince()) return;
           results = response.data ?? [];
         } else {
           const formData = new FormData();
@@ -1137,6 +1237,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           }
           const postScan = () =>
             api.post<ScanResponse>('/scan', formData, {
+              signal,
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               transformRequest: [
                 (data: FormData, headers: any) => {
@@ -1155,10 +1256,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           // shows the neutral "Still processing" notice.
           let response!: Awaited<ReturnType<typeof postScan>>;
           for (let attempt = 0, done = false; !done; attempt++) {
+            // Checked before every post, retries included.
+            if (signedOutSince()) return;
             try {
               response = await postScan();
               done = true;
             } catch (postErr) {
+              if (signedOutSince()) return;
               const state = classifyScanError(postErr);
               if (state.kind !== 'in_progress' || attempt >= MAX_IN_PROGRESS_RETRIES) {
                 throw postErr;
@@ -1166,6 +1270,8 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               await sleep(state.retryAfterSeconds * 1000);
             }
           }
+          // Before any state update: the answer belongs to the old account.
+          if (signedOutSince()) return;
           // The server answered: any retry schedule is over.
           if (job.attempts != null || job.nextAttemptAt != null) {
             updateJob(job.id, { attempts: undefined, nextAttemptAt: undefined });
@@ -1286,6 +1392,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           ],
         });
       } catch (err) {
+        if (signedOutSince()) return;
         // A status-0 / no-response error almost always means the OS suspended
         // the upload mid-flight (app backgrounded). Auto-queue so it drains
         // on return instead of asking the user to manually retry. (#213)
@@ -1367,9 +1474,18 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        Sentry.captureException(err, {
-          tags: { feature: 'scan', action: 'execute_scan', jobType: job.type },
-        });
+        // #724: the central API reporter (lib/api.ts) owns 403/5xx responses;
+        // capture only what it does not (no response, other statuses).
+        if (!isReportedCentrally(err)) {
+          Sentry.captureException(sanitizeApiError(err), {
+            tags: {
+              feature: 'scan',
+              action: 'execute_scan',
+              jobType: job.type,
+              ...apiErrorTags(err),
+            },
+          });
+        }
 
         // A failed enhanced re-scan must not strand the books the standard scan
         // already found — a failed job has no review sheet.
@@ -1384,7 +1500,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           nextAttemptAt: undefined,
         });
         showBanner({
-          message: t('scanFailedTitle'),
+          message: isServiceUnavailable(err)
+            ? t('serviceUnavailable', { ns: 'common' })
+            : t('scanFailedTitle'),
           type: 'error',
           actions: [
             { label: t('retryNow'), onPress: () => retryScan(job.id) },

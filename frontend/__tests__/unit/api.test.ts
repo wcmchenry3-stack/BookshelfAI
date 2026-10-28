@@ -56,6 +56,7 @@ import {
   resumeStoredSession,
   setAuthFailureCallback,
   TOKEN_REVOKED,
+  waitForPendingRefresh,
 } from '../../lib/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -770,5 +771,74 @@ describe('api session gate (#722)', () => {
 
     expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     expect(response.data.auth).toBe('Bearer new-access');
+  });
+});
+
+// ─── waitForPendingRefresh (#723) ────────────────────────────────────────────
+
+describe('waitForPendingRefresh', () => {
+  let store: Record<string, string | null>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setAuthFailureCallback(jest.fn());
+    store = { [ACCESS_TOKEN_KEY]: 'old-access', [REFRESH_TOKEN_KEY]: 'old-refresh' };
+    mockGetItem.mockImplementation((key: string) => Promise.resolve(store[key] ?? null));
+    mockSetItem.mockImplementation((key: string, value: string) => {
+      store[key] = value;
+      return Promise.resolve();
+    });
+    mockDeleteItem.mockImplementation((key: string) => {
+      store[key] = null;
+      return Promise.resolve();
+    });
+  });
+
+  function startRefresh() {
+    let resolve!: (v: object) => void;
+    let reject!: (e: unknown) => void;
+    mockAxiosPost.mockReturnValue(
+      new Promise<object>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      })
+    );
+    const request = runResponseErrorInterceptor(
+      make401Error({
+        adapter: (config: object) => Promise.resolve({ data: {}, status: 200, config }),
+      })
+    ).catch(() => {});
+    return { resolve, reject, request };
+  }
+
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it('resolves immediately when nothing is in flight', async () => {
+    await expect(waitForPendingRefresh()).resolves.toBeUndefined();
+  });
+
+  it('stays pending during a refresh and resolves after the rotated token is stored', async () => {
+    const refresh = startRefresh();
+    await tick();
+    let settled = false;
+    const waiting = waitForPendingRefresh().then(() => {
+      settled = true;
+    });
+    await tick();
+    expect(settled).toBe(false);
+
+    refresh.resolve({ data: { access_token: 'new-access', refresh_token: 'new-refresh' } });
+    await waiting;
+    expect(store[REFRESH_TOKEN_KEY]).toBe('new-refresh');
+    await refresh.request;
+  });
+
+  it('resolves when the refresh is rejected', async () => {
+    const refresh = startRefresh();
+    await tick();
+    const waiting = waitForPendingRefresh();
+    refresh.reject({ response: { status: 500 } });
+    await expect(waiting).resolves.toBeUndefined();
+    await refresh.request;
   });
 });

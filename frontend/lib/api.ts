@@ -1,5 +1,6 @@
 import axios from 'axios';
 
+import { reportApiError } from './apiErrorReporting';
 import { Sentry } from './sentry';
 import * as storage from './storage';
 
@@ -100,6 +101,16 @@ async function dropWrittenTokens(access: string, refresh: string) {
 // tokens the first one just stored. Cleared when it settles.
 let refreshInFlight: Promise<string | null> | null = null;
 
+// Resolves once any in-flight refresh has settled (errors swallowed), so a
+// caller can read the freshly rotated tokens, or know none will be written.
+export async function waitForPendingRefresh(): Promise<void> {
+  try {
+    await refreshInFlight;
+  } catch {
+    // Ignored: only settling matters.
+  }
+}
+
 // Resolves to the new access token, or null when there is none to retry
 // with. Signs out only when the server rejects the refresh (401, including
 // token_revoked); a 429, 5xx or network error keeps the stored tokens.
@@ -158,6 +169,9 @@ api.interceptors.response.use(
   async (error) => {
     const original = error.config;
     if (error.response?.status !== 401) {
+      // #724: a 403 (incl. `forbidden`) is not an auth failure; it never
+      // signs the user out. Report unexpected failures once per session.
+      reportApiError(error);
       return Promise.reject(error);
     }
     if (NO_REFRESH_PATHS.includes(requestPath(original?.url)) || !(await storedSession)) {

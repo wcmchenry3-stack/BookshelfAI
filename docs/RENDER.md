@@ -62,6 +62,61 @@ Storage, or the Data API.
   unaffected. A new table's migration must run
   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
   `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
+- **No table or sequence privileges for `anon` / `authenticated`** (migration
+  0023, #704). Supabase grants both roles up to `ALL` (stock Supabase grants `ALL`; the
+  dev branch had fewer) on every table and sequence in `public`. RLS hides rows, but it doesn't govern `TRUNCATE`, `REFERENCES`,
+  `TRIGGER` or sequences, so 0023 revokes all of it, plus the default
+  privileges of the migrating role (`postgres`), so tables created later
+  aren't granted either. Limits:
+  - Supabase also keeps default privileges `FOR ROLE supabase_admin`, which
+    `postgres` can't change. They only apply to objects `supabase_admin`
+    creates in `public`; the app never does, and RLS still covers those rows.
+  - Function `EXECUTE` and schema `USAGE` are left as they are (`EXECUTE` is
+    granted to `PUBLIC` anyway; see the migration's docstring).
+  - On plain Postgres (CI, local) the roles don't exist and 0023 does nothing.
+
+  0023 checks itself: it raises, and the deploy fails, if either role still
+  holds anything after the revoke (for example a grant made by another
+  grantor, which `REVOKE` leaves in place).
+
+  **Verify after each deploy that runs 0023** (Supabase SQL editor, prod and
+  the `dev` branch). Both queries must return 0 rows. First, every privilege
+  either role holds on a relation in `public`:
+
+  ```sql
+  SELECT c.relname, a.grantee::regrole, a.privilege_type
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) a
+  WHERE n.nspname = 'public' AND a.grantee::regrole::text IN ('anon', 'authenticated');
+  ```
+
+  Second, the table (`r`) and sequence (`S`) default privileges of `postgres`
+  in `public` that still name either role. Function defaults (`f`, `EXECUTE`)
+  are deliberately left as Supabase sets them, since 0023 doesn't touch
+  functions and the app defines none in `public`:
+
+  ```sql
+  SELECT d.defaclobjtype, a.grantee::regrole, a.privilege_type
+  FROM pg_default_acl d, aclexplode(d.defaclacl) a
+  WHERE d.defaclrole = 'postgres'::regrole AND d.defaclnamespace = 'public'::regnamespace
+    AND d.defaclobjtype IN ('r', 'S')
+    AND a.grantee::regrole::text IN ('anon', 'authenticated');
+  ```
+
+  `alembic downgrade` past 0023 does nothing to the grants; they stay revoked.
+  If Supabase's stock grants are ever needed back, run as `postgres`:
+
+  ```sql
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated;
+  ```
+
+- **Owner check: the `service_role` key.** `service_role` bypasses RLS and
+  keeps its grants, so its API key (and the `sb_secret_...` secret keys) must
+  not be stored anywhere the app or CI can read: not in Render env vars,
+  GitHub secrets, `.env*` files or this repo. The app has no use for it.
+  Confirm this once, and again whenever someone adds a Supabase secret.
 - **No Supabase Auth.** Alembic is the only schema tool; its
   `alembic upgrade head` pre-deploy step is what keeps prod's schema current.
 - **Pro plan**: daily backups, no idle pause. The point-in-time recovery
@@ -120,7 +175,12 @@ Rollout, per service (dev first, then prod):
    the API hostname.
 4. Set `ORIGIN_AUTH_SECRET` in the dashboard to the same value. Check that the
    public hostname still works and that `/health` still passes Render's health
-   check.
+   check. Run `scripts/smoke_origin_lockdown.sh` (add the dev hostname as an
+   argument): it requests `/health/db` through the public hostname and fails on
+   403, which `/health` (exempt) cannot reveal. A wrongly configured edge also
+   raises the Sentry message `origin_auth_rejected_authenticated` (at most one
+   per 5 minutes per process) as soon as a signed-in client is rejected; see
+   [`security.md`](security.md#client-ip-and-origin-lockdown).
 
 To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
 `TRUSTED_PROXY_MODE=none`.
@@ -271,6 +331,23 @@ the two; an operator does, by hand:
    If the old Google account signs in later, its stored email is refreshed
    from its token again (when no other user holds that address).
 4. Ask the person to sign in again and confirm it succeeds.
+
+### Migration 0022 refuses: case-duplicate emails
+
+Migration 0022 (#705) adds a unique index on `lower(users.email)`. If two
+`users` rows hold the same address differing only in case, the upgrade (the
+Render `preDeployCommand`) fails with `0022: <n> email address(es) are held
+by more than one users row` and changes nothing. Check before deploying with
+this read-only query (prints ids only, no emails):
+
+```sql
+SELECT count(*) AS user_rows, array_agg(id ORDER BY created_at) AS user_ids
+  FROM users GROUP BY lower(email) HAVING count(*) > 1;
+```
+
+No rows means the migration will run. Otherwise treat each group like an
+`account_conflict` above: verify who owns the mailbox, then move the library
+(A) or release the address on the other rows (B), and redeploy.
 
 ## First production deploy — cutover checklist
 

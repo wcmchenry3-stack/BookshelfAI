@@ -1,4 +1,9 @@
 {
   "heading": "设置",
-  "scanUsageLabel": "扫描用量"
+  "scanUsageLabel": "扫描用量",
+  "signOut": "退出登录",
+  "signOutConfirmTitle": "退出登录?",
+  "signOutConfirmBody": "您需要重新登录才能使用 Bookshelf。",
+  "signOutConfirm": "退出登录",
+  "signOutCancel": "取消"
 }

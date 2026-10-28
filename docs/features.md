@@ -13,7 +13,11 @@ Navigation is file-based via `expo-router`. Two route groups:
 - **Scan** (`scan.tsx`) — camera viewfinder (native) or file picker (web). Primary path into the app.
 - **My Books** (`my-books.tsx`) — the user's full library with a status filter (All / Wishlisted / Purchased / Reading / Read). Tapping a book opens its detail modal for notes, rating, status transitions, or delete.
 - **Wishlist** (`wishlist.tsx`) — filtered view showing only `wishlisted` entries. One-tap "I bought this" transitions to `purchased`.
-- **Settings** (`settings.tsx`) — account info, language picker, theme toggle, sign-out.
+- **Settings** (`settings.tsx`) — account info, language picker, theme toggle, scan usage,
+  sign-out (confirm prompt; best-effort `POST /auth/logout` with the refresh token, then local
+  sign-out and redirect to login). Server-side revocation is best-effort: if it times out (5 s)
+  or the device is offline, the refresh token stays valid server-side until it expires
+  (7 days). "Sign out of all devices" is the remedy and does not exist yet.
 
 ## Core flows
 
@@ -61,6 +65,7 @@ sequenceDiagram
 ```
 
 **Key implementation notes:**
+- The scan queue (jobs, results and photos) is cleared on sign-out, so another account never sees or uploads it; in-flight scans, searches and wishlist adds are aborted and their results dropped (#723; remaining bounding work in #669).
 - Images are persisted to `scan-queue/` (expo-file-system) on native so the job survives app backgrounding. Web doesn't persist — blob URLs die on navigation.
 - `ScanJobContext.startScan()` is wrapped in try/catch with Sentry capture; any sync throw (like a crypto/uuid failure) becomes a handled banner, not a crash.
 - Scan job IDs are minted with `Crypto.randomUUID()` from `expo-crypto` (native-backed, Hermes-safe — see the uuid regression in `frontend/.eslintrc.js`).
