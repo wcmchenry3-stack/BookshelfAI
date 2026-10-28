@@ -269,6 +269,33 @@ describe('api response interceptor — revoked session', () => {
     expect(mockAxiosPost).toHaveBeenCalledTimes(1);
     expect(onAuthFailure).not.toHaveBeenCalled();
   });
+
+  // #725: an access token issued before #689 (no tv claim) gets 401
+  // token_outdated. The app must refresh and retry, not sign out, so the
+  // release that ships #689 does not sign everyone out.
+  it('refreshes and retries on 401 token_outdated (legacy access token)', async () => {
+    mockGetItem.mockImplementation((key: string) =>
+      key === REFRESH_TOKEN_KEY ? Promise.resolve('legacy-refresh') : Promise.resolve(null)
+    );
+    mockAxiosPost.mockResolvedValue({
+      data: { access_token: 'new-access', refresh_token: 'new-refresh' },
+    });
+    const config: { headers: Record<string, string> } = { headers: {} };
+
+    await runResponseErrorInterceptor({
+      response: { status: 401, data: { detail: 'token_outdated' } },
+      config,
+    }).catch(() => {});
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockAxiosPost.mock.calls[0][1]).toEqual({ refresh_token: 'legacy-refresh' });
+    expect(mockSetItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY, 'new-access');
+    expect(mockSetItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY, 'new-refresh');
+    // Retried with the new access token.
+    expect(config.headers.Authorization).toBe('Bearer new-access');
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Response interceptor — shared refresh (#689) ────────────────────────────

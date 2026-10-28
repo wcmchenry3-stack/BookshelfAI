@@ -11,6 +11,9 @@
 - Two concurrent refreshes with the same refresh token: one rotates, the
   other gets a replacement pair that displaces the first one's (#690, #734
   review S1), and only one session is left live.
+- Release upgrade (#725): a refresh token without tv (issued before #689)
+  rotates into a tv pair while token_version is 0, cannot be replayed, and is
+  rejected after logout-all; an access token without tv is a plain 401.
 
 Needs DATABASE_URL pointing at a Postgres database.
 """
@@ -21,6 +24,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import jwt
 import pytest
 import sqlalchemy as sa
 from alembic.autogenerate import compare_metadata
@@ -427,3 +431,104 @@ async def test_concurrent_refreshes_with_one_token_fork_no_session(env):
         assert len(live) == 1
         displaced = [r for r in rows if r.displaced_at is not None]
         assert len(displaced) == 1
+
+
+async def _legacy_session(factory, user: User) -> tuple[str, str, str]:
+    """A session as issued before #689: access and refresh tokens without tv,
+    and the refresh row. Returns (access, refresh, jti)."""
+    now = datetime.now(UTC)
+    jti = str(uuid.uuid4())
+    refresh = jwt.encode(
+        {
+            "sub": str(user.id),
+            "iat": now,
+            "exp": now + timedelta(days=7),
+            "type": "refresh",
+            "jti": jti,
+        },
+        settings.jwt_private_key,
+        algorithm="RS256",
+    )
+    access = jwt.encode(
+        {
+            "sub": str(user.id),
+            "email": user.email,
+            "iat": now,
+            "exp": now + timedelta(minutes=15),
+            "type": "access",
+        },
+        settings.jwt_private_key,
+        algorithm="RS256",
+    )
+    async with factory() as db:
+        db.add(
+            RefreshToken(jti=jti, user_id=user.id, expires_at=now + timedelta(days=7))
+        )
+        await db.commit()
+    return access, refresh, jti
+
+
+async def test_legacy_session_upgrades_through_one_refresh(env):
+    factory, client, make_user, _statements = env
+    user, _access, _refresh = await make_user()
+    access, refresh, jti = await _legacy_session(factory, user)
+
+    me = await client.get("/auth/me", headers=_auth(access))
+    assert me.status_code == 401
+    assert me.json()["detail"] == "token_outdated"
+
+    resp = await client.post("/auth/refresh", json={"refresh_token": refresh})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    for token in (body["access_token"], body["refresh_token"]):
+        claims = jwt.decode(token, settings.jwt_public_key, algorithms=["RS256"])
+        assert claims["tv"] == 0
+    me = await client.get("/auth/me", headers=_auth(body["access_token"]))
+    assert me.status_code == 200, me.text
+
+    async with factory() as db:
+        row = (
+            await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
+        ).scalar_one()
+        assert row.revoked_at is not None
+
+    replay = await client.post("/auth/refresh", json={"refresh_token": refresh})
+    assert replay.status_code == 401
+    assert replay.json()["detail"] == "Refresh token revoked or not found"
+
+
+async def test_legacy_refresh_after_logout_all_is_rejected(env):
+    factory, client, make_user, _statements = env
+    user, access, _refresh = await make_user()
+    _legacy_access, legacy_refresh, jti = await _legacy_session(factory, user)
+
+    out = await client.post("/auth/logout-all", headers=_auth(access))
+    assert out.status_code == 204, out.text
+
+    resp = await client.post("/auth/refresh", json={"refresh_token": legacy_refresh})
+    assert resp.status_code == 401
+
+    # Even if the row had survived (a race), tv=0 no longer matches.
+    async with factory() as db:
+        row = (
+            await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
+        ).scalar_one()
+        row.revoked_at = None
+        await db.commit()
+    resp = await client.post("/auth/refresh", json={"refresh_token": legacy_refresh})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "token_revoked"
+    async with factory() as db:
+        live = (
+            (
+                await db.execute(
+                    select(RefreshToken).where(
+                        RefreshToken.user_id == user.id,
+                        RefreshToken.revoked_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert live == []
