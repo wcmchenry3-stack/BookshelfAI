@@ -57,7 +57,7 @@ def source_of(open_library_work_id: str | None, google_books_id: str | None) -> 
     """``books.source`` for a row with these provider IDs: Google Books when
     a volume matched (it supplies the description, cover and edition
     details), else Open Library, else ``scan`` (no provider matched; only
-    rows from before #602). The same rule as migration 0022's backfill."""
+    rows from before #602). The same rule as migration 0024's backfill."""
     if google_books_id:
         return GOOGLE_BOOKS
     if open_library_work_id:
