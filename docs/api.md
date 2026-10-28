@@ -492,6 +492,8 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 
 **Response `200`:** array of `UserBookRead`, ordered by `created_at DESC`, with `Book` + `editions` + optional `Edition` eager-loaded. Every row has `unverified` (#616): `false` for a catalog book; `true` for the user's own unverified entry, which is shaped as in `POST /wishlist/unverified` (`book` holds only its `id`, `title` and `author`; `unverified_isbn_13`). `PATCH` and `DELETE /user-books/{id}` work on both kinds; deleting an unverified entry also deletes its `user_custom_books` row. `POST /purchased` takes only catalog books (an unverified entry's `book.id` is `404`); use `PATCH` to change an unverified entry's status.
 
+Since #682 every row also has `overrides` (`{"title", "author", "cover_url"}`, each the user's own value or `null`), and `book.title` / `book.author` / `book.cover_url` show the user's override when set. A row whose catalog book was merged into another (`books.merged_into_id`) shows the surviving book (its `id`, fields and editions). Both are additive: older clients that ignore `overrides` keep working.
+
 **Example:**
 ```bash
 curl "https://bookshelfapi.buffingchi.com/user-books?status=reading" \
@@ -526,11 +528,15 @@ Either `isbn_13` or `edition_id` may be provided (or neither). If `isbn_13` is p
 - `404` — `book_id` not found
 - `422 edition_book_mismatch` — `edition_id` is not an edition of `book_id` (another book's edition, or no such edition: both get the same answer). Nothing is written. The app does not send `edition_id` today, so it has no message for this code.
 
+A `book_id` whose catalog row was merged into another (#682, `books.merged_into_id`) adds or promotes the surviving book instead: no library entry is created on a merged row. An existing entry of the same work is promoted whichever row it is on (the survivor or one merged into it; the survivor's own entry first), so the user never gets a second entry of the work. `edition_id` must then be an edition of the surviving book (a merge moves editions there); one still on the merged row is `422 edition_book_mismatch`.
+
 ---
 
-### `PATCH /user-books/{user_book_id}` — update status / notes / rating
+### `PATCH /user-books/{user_book_id}` — update status / notes / rating / overrides
 
 Partial update. When `status` transitions, the corresponding timestamp column is set automatically if not already set (`purchased_at` / `started_at` / `finished_at`).
+
+**Overrides (#682).** `title_override`, `author_override` and `cover_url_override` are the user's own values for this library entry. They are stored on the user's `user_books` row only; the shared `books` row is never changed. Left out: unchanged. `null`: cleared, so the catalog value shows again ("reset to catalog"). A string: set. The response's `book.title` / `book.author` / `book.cover_url` show the override when set and the catalog value otherwise; `overrides` holds the user's values (`null` where the catalog value shows). Other fields in the body (`title`, `book`, `book_id`, ...) are ignored.
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -541,19 +547,24 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 {
   "status": "reading",
   "notes": "Deep first chapter",
-  "rating": 5
+  "rating": 5,
+  "title_override": "Dune (annotated edition)",
+  "cover_url_override": null
 }
 ```
 
 **Validation:**
 - `status`: one of `wishlisted` / `purchased` / `reading` / `read`
 - `rating`: 1..5
+- `title_override`, `author_override`: 1–500 characters after trimming, no control characters and no Unicode format characters (bidi controls such as U+202E, zero-width characters)
+- `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, with a host that is not `localhost` or an IP address in a private or reserved range. The host is not resolved: the server never fetches the override (only the owner's app shows it), so the DNS step of `POST /wishlist`'s `cover_url` check would only block the server
 
 **Response `200`:** the updated `UserBookRead`.
 
 **Errors:**
 - `404` — `user_book_id` not found or belongs to another user
-- `422` — `rating` out of range
+- `422` — `rating` out of range, or an invalid override (too long, blank, control characters, an unsafe `cover_url_override`)
+- `422 overrides_not_supported` — overrides sent for an unverified entry (#616), which is already the user's own data and never has a cover; nothing is written
 
 ---
 

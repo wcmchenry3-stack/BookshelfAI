@@ -31,6 +31,7 @@ def _make_user_book(**overrides):
     book.created_at = NOW
     book.updated_at = NOW
     book.editions = []
+    book.merged_into_id = None  # not merged (#682)
 
     ub = MagicMock()
     ub.id = USER_BOOK_ID
@@ -46,6 +47,8 @@ def _make_user_book(**overrides):
     # mock here, which UserBookRead reads as "this is an unverified entry".
     ub.custom_book_id = None
     ub.edition = None
+    # No user overrides (#682).
+    ub.title_override = ub.author_override = ub.cover_url_override = None
     ub.created_at = NOW
     ub.updated_at = NOW
     for k, v in overrides.items():
@@ -414,6 +417,7 @@ class TestAddPurchasedSuccess:
     def test_creates_new_user_book_when_none_exists(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         ub = _make_user_book(status="purchased")
 
         async def _fake_db():
@@ -439,6 +443,7 @@ class TestAddPurchasedSuccess:
     def test_updates_existing_user_book_on_upsert(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         ub = _make_user_book(status="wishlisted")
 
         async def _fake_db():
@@ -465,6 +470,7 @@ class TestAddPurchasedSuccess:
     def test_resolves_edition_when_isbn_13_provided_and_edition_found(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         edition = MagicMock()
         edition_id = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
         edition.id = edition_id
@@ -497,6 +503,7 @@ class TestAddPurchasedSuccess:
     def test_skips_edition_lookup_when_isbn_not_provided(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         ub = _make_user_book(status="purchased")
 
         execute_calls = []

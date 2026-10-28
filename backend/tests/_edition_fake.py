@@ -39,6 +39,7 @@ def user_book_row():
     book.created_at = NOW
     book.updated_at = NOW
     book.editions = []
+    book.merged_into_id = None  # not merged (#682)
     ub = MagicMock()
     ub.id = uuid.uuid4()
     ub.status = "purchased"
@@ -51,6 +52,8 @@ def user_book_row():
     ub.book = book
     ub.custom_book_id = None
     ub.edition = None
+    # No user overrides (#682).
+    ub.title_override = ub.author_override = ub.cover_url_override = None
     ub.created_at = NOW
     ub.updated_at = NOW
     return ub
@@ -67,7 +70,10 @@ class EditionFakeSession:
     async def execute(self, stmt):
         entity = stmt.column_descriptions[0]["entity"]
         if entity is Book:
-            return result(MagicMock())
+            # The requested book, not merged (#682). Relies on the lookup's
+            # single ``Book.id == x`` WHERE clause.
+            book_id = stmt.whereclause.right.value
+            return result(MagicMock(id=book_id, merged_into_id=None))
         if entity is Edition:
             # Read each condition by column, so a query that binds the ids
             # to the wrong columns (or drops one) fails like on Postgres.

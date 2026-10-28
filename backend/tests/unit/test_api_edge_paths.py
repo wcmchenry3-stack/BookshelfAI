@@ -21,6 +21,10 @@ def _clear_overrides():
     app.dependency_overrides.clear()
 
 
+# The requested catalog book, not merged (#682).
+_BOOK = MagicMock(id=BOOK_ID, merged_into_id=None)
+
+
 def _result(value):
     res = MagicMock()
     res.scalar_one_or_none.return_value = value
@@ -101,7 +105,7 @@ class TestAddPurchased:
         db.add = MagicMock()
         db.execute = AsyncMock(
             side_effect=[
-                _result(MagicMock()),  # the book exists
+                _result(_BOOK),  # the book exists
                 _result(MagicMock(id=edition_id)),  # edition for the ISBN
                 _result(existing),  # the user's wishlist entry
                 _result(returned),  # the re-read for the response
@@ -124,7 +128,7 @@ class TestAddPurchased:
         db.add = MagicMock()
         db.execute = AsyncMock(
             side_effect=[
-                _result(MagicMock()),
+                _result(_BOOK),
                 _result(None),  # no edition for that ISBN
                 _result(existing),
                 _result(_make_user_book(status="purchased")),
@@ -143,7 +147,7 @@ class TestAddPurchased:
         db.add = MagicMock()
         db.execute = AsyncMock(
             side_effect=[
-                _result(MagicMock()),  # the book exists (no ISBN: no edition lookup)
+                _result(_BOOK),  # the book exists (no ISBN: no edition lookup)
                 _result(None),  # nothing on the user's shelf
                 _result(_make_user_book(status="purchased")),
             ]

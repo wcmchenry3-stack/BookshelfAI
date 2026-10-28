@@ -44,13 +44,19 @@ def _row(
     """A row of the library query: an entry, its Book's IDs, its edition's
     ISBNs (none: no edition)."""
     has_edition = bool(isbn_13 or isbn_10) or edition_id is not None
+    book_id = book_id or uuid.uuid4()
     return SimpleNamespace(
-        book_id=book_id or uuid.uuid4(),
+        book_id=book_id,
         edition_id=edition_id or (uuid.uuid4() if has_edition else None),
         open_library_work_id=ol,
         google_books_id=gb,
         isbn_13=isbn_13,
         isbn_10=isbn_10,
+        # Not merged (#682): the book is its own survivor and whole work.
+        survivor_id=book_id,
+        family_book_ids=[book_id],
+        family_work_ids=[ol],
+        family_volume_ids=[gb],
     )
 
 

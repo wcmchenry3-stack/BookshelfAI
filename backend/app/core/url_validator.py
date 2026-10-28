@@ -44,11 +44,15 @@ def _is_private_ip(ip_str: str) -> bool:
         return True  # unparseable — treat as unsafe
 
 
-def validate_safe_url(url: str | None) -> str | None:
+def validate_safe_url(url: str | None, *, resolve: bool = True) -> str | None:
     """Validate a user-supplied URL is https and resolves to a public IP.
 
     Returns the URL unchanged if valid; raises ValueError if not.
     Intended for use as a Pydantic field_validator.
+
+    ``resolve=False`` skips the DNS lookup (a blocking call on the event
+    loop) for URLs the server never fetches (#682): only an IP-literal host
+    in a blocked range, or ``localhost``, is refused.
     """
     if url is None:
         return url
@@ -61,6 +65,19 @@ def validate_safe_url(url: str | None) -> str | None:
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("URL must include a valid hostname")
+
+    if not resolve:
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            if hostname == "localhost" or hostname.endswith(".localhost"):
+                raise ValueError("URL must not point at localhost")
+            return url
+        if _is_private_ip(hostname):
+            raise ValueError(
+                "URL points at a private or reserved IP address and is not allowed"
+            )
+        return url
 
     try:
         results = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)

@@ -51,6 +51,7 @@ from app.models.edition import Edition
 from app.models.user_book import UserBook
 from app.schemas.book import NOT_OWNED, Ownership
 from app.schemas.user_book import WishlistRequest
+from app.services import catalog
 from app.services.deduplication import (
     candidate_key,
     held_entries,
@@ -142,6 +143,10 @@ class WishlistService:
             description=req.description,
             cover_url=req.cover_url,
             subjects=req.subjects or [],
+            # Provenance (#682): signed provider data, fetched by the server
+            # for the scan or search this token came from.
+            source=catalog.source_of(req.open_library_work_id, req.google_books_id),
+            fetched_at=datetime.now(UTC),
         )
         try:
             async with db.begin_nested():
@@ -159,7 +164,16 @@ class WishlistService:
 
     async def _find_book(self, db: AsyncSession, req: WishlistRequest) -> Book | None:
         """The Book with ``req``'s Open Library work ID, else its Google
-        Books ID, else None."""
+        Books ID, else None. A merged row is redirected to the row it was
+        merged into (#682): no new library entry targets a merged row."""
+        book = await self._find_book_row(db, req)
+        if book is None:
+            return None
+        return await catalog.resolve_survivor(db, book)
+
+    async def _find_book_row(
+        self, db: AsyncSession, req: WishlistRequest
+    ) -> Book | None:
         if req.open_library_work_id:
             result = await db.execute(
                 select(Book).where(

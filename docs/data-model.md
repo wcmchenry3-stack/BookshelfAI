@@ -20,6 +20,7 @@ erDiagram
   USER_CUSTOM_BOOKS ||--o| USER_BOOKS : "held by (cascade)"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
+  BOOKS |o--o{ BOOKS : "merged into (#682)"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
 
   USERS {
@@ -41,6 +42,9 @@ erDiagram
     string cover_url
     string_array subjects
     string language "default 'en'"
+    string source "provenance, check constraint (#682)"
+    timestamptz fetched_at "provenance (#682)"
+    uuid merged_into_id FK "self, restrict delete, indexed (#682)"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -69,6 +73,9 @@ erDiagram
     timestamptz finished_at
     string notes
     int rating "1..5"
+    string title_override "user's own, nullable (#682)"
+    string author_override "user's own, nullable (#682)"
+    string cover_url_override "user's own, nullable (#682)"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -191,6 +198,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
+| `books.merged_into_id` → `books.id` | `RESTRICT` | A book that other rows were merged into cannot be deleted (#682). |
 | `user_books.edition_id` → `editions.id` | none (`NO ACTION`) | An edition referenced by a `UserBook` cannot be deleted. |
 
 An unreferenced book can be deleted. The ORM relationships `Book.editions` and `Book.user_books` have no delete cascade and use `passive_deletes="all"`, so the ORM never deletes or nulls out children (even when they are loaded in the session) and the `ON DELETE RESTRICT` FKs reject the delete (migration `0004`).
@@ -228,11 +236,21 @@ Represents the **conceptual work** — the thing a user would say "I own Dune" a
 | `cover_url` | string, nullable | Google Books cover URL (typically) |
 | `subjects` | text[], nullable | Open Library subject tags |
 | `language` | string, default `'en'`, not null | ISO 639-1 code |
+| `source` | string, nullable, check `ck_books_source`: `google_books`, `open_library`, `scan` | provenance (#682, migration 0025): `google_books` when a Google Books volume matched (it supplies the description, cover and edition details), else `open_library`, else `scan` (no provider matched; only rows from before #602). Set on every new row (`app/services/catalog.py:source_of`); 0025 backfilled existing rows with the same rule. Nullable only so the previous release can insert during a deploy; a later contract migration backfills those and sets NOT NULL |
+| `fetched_at` | timestamptz, nullable | when the server fetched the row's provider data (#682); `created_at` for rows backfilled by 0025 |
+| `merged_into_id` | UUID FK → `books.id`, `ON DELETE RESTRICT`, nullable, indexed (`ix_books_merged_into_id`) | set when this row was merged into another (#682); check `ck_books_merged_into_other` (never itself). Always points at a row that is not merged. See [the catalog/user boundary](#the-cataloguser-boundary-682) |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
 **Relationships:**
 - `editions` → `Edition[]` (no cascade — a Book with Editions cannot be deleted)
 - `user_books` → `UserBook[]` (no cascade — a Book in any user's library cannot be deleted)
+- `merged_into` → `Book` (the survivor; `lazy="raise"`, loaded explicitly)
+
+#### The catalog/user boundary (#682)
+
+`books` / `editions` hold what the providers say about a work and are shared by every user; nothing a client sends is written to them (#602, #611). What a user says about *their* copy lives on their `user_books` row: status, dates, notes, rating and the overrides `title_override`, `author_override`, `cover_url_override`. Library reads show an override in place of the catalog value and list the user's values under `overrides`; another user's read of the same book is unaffected.
+
+Merges: a duplicate catalog row is kept with `merged_into_id` set rather than deleted. A merged row and its survivor are one work. Library entries on a merged row can exist (a merge moves them, but nothing relies on it) and count as entries of the survivor everywhere: library reads follow `merged_into_id` to the survivor; the library check (`held_entries`, used by scan, search and `POST /wishlist` alike) matches an entry when the candidate carries any ID of the work (the survivor's or any merged row's `id`, Open Library work ID or Google Books ID), whichever row the entry is on, so scan says owned exactly when `POST /wishlist` answers 409; `POST /purchased` with either row's `book_id` promotes the user's existing entry of the work (the survivor's own entry first, else the oldest) instead of adding a second one. `POST /wishlist` / `POST /purchased` redirect a merged row to the survivor, so no new library entry ever targets a merged row (redirect rather than reject: a client holding a stale `book_id` still adds the work it meant, and only once). The edition check (#686) runs against the survivor: since a merge moves editions to the survivor, an `edition_id` still on the merged row is refused (`422 edition_book_mismatch`). There is no runtime merge code: the only merge so far is migration 0015 (#613), which deleted its duplicates before this column existed. A future merge must set `merged_into_id` (re-pointing rows already merged into the duplicate, so one hop always reaches the survivor) and move the duplicate's `user_books` and `editions` to the survivor as 0015 did.
 
 ### `editions` (`backend/app/models/edition.py`)
 
@@ -269,7 +287,12 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `finished_at` | timestamptz, nullable | set on reading→read transition |
 | `notes` | string, nullable | user notes |
 | `rating` | int, nullable | check constraint: 1..5 |
+| `title_override` | string, nullable | the user's own title for this copy (#682, migration 0025); check: 1–500 characters. Never written to `books` |
+| `author_override` | string, nullable | the user's own author (#682); check: 1–500 characters |
+| `cover_url_override` | string, nullable | the user's own cover URL (#682), validated like every user-supplied URL (https, public IP); check: 1–2048 characters |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
+
+Overrides are NULL for an unverified entry (`ck_user_books_overrides_catalog_only`): that entry is already the user's own data and never carries a cover (#616). Storage: at most ~3 KB more per row, typically none.
 
 **Uniqueness:** `(user_id, book_id)` is a unique constraint (`uq_user_books_user_book`). A user can have at most one tracking row per work — this is what dedup is enforcing. Different editions of the same work still share one `UserBook`; changing edition updates `edition_id` in place. (Unverified rows have `book_id` NULL, which the constraint does not compare; their duplicates are refused by `UnverifiedBookService`.)
 
@@ -586,6 +609,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0022_users_email_lower_unique.py` — adds the unique index `uq_users_email_lower` on `users (lower(email))` (#705), so two concurrent first sign-ins whose emails differ only in case cannot both create a user (the loser gets `409 account_conflict`); expand only, the case-sensitive `uq_users_email` stays. Before building, it takes `LOCK TABLE users IN SHARE MODE` (writes wait, reads run; 5 s `lock_timeout`, reset at the end) and counts case-duplicate addresses; if there are any, the upgrade fails with the count only (no emails) and changes nothing; they are resolved by hand (see [`RENDER.md`](RENDER.md#resolving-a-sign-in-account_conflict-409)), not merged. Offline `--sql` is refused. The downgrade drops the index
 - `0023_revoke_supabase_grants.py` — revokes every table and sequence privilege, and the migrating role's default privileges in `public`, from Supabase's `anon` and `authenticated` roles (#704); a no-op where those roles don't exist (CI, local). It raises if either role still holds a privilege afterwards. Privileges only, no schema or data change; the downgrade deliberately leaves the grants revoked (see [`RENDER.md`](RENDER.md#connecting-to-supabase-production-only))
 - `0024_refresh_token_families.py` — refresh-token families (#690): adds the nullable columns `refresh_tokens.family_id` (UUID), `used_at` (timestamptz), `replaced_by_id` (UUID, self-FK `refresh_tokens_replaced_by_id_fkey`, `ON DELETE SET NULL`, index `ix_refresh_tokens_replaced_by_id`) and `displaced_at` (timestamptz); additive (expand only). Backfills `family_id = id` for every existing row (each its own family) in one UPDATE written with SQLAlchemy Core (the migration's transaction already holds ACCESS EXCLUSIVE on the table, so batching would not shorten any lock). `family_id` stays nullable so the previous release can keep inserting rows during the deploy; a later contract migration may make it NOT NULL. The downgrade drops the index, the FK and the four columns
+- `0025_catalog_user_split.py` — catalog/user split (#682): adds `user_books.title_override`, `author_override`, `cover_url_override` (nullable; checks for 1–500 / 1–500 / 1–2048 characters and none on unverified entries), `books.source` (nullable, check `google_books` / `open_library` / `scan`), `books.fetched_at` (nullable) and `books.merged_into_id` (self-FK `ON DELETE RESTRICT`, index `ix_books_merged_into_id`, never itself); expand only. Backfills `source` (by `source_of`'s rule) and `fetched_at = created_at` for existing books in one UPDATE. The downgrade drops the columns, constraints and index (user overrides and provenance are lost; `books` values are untouched)
 
 ### Writing a new migration
 
