@@ -989,6 +989,10 @@ class TestRound4VolumeMarkers:
             "Dune Chronicles #1",
             "Episode IV - A New Hope",
             "Part I",
+            # Round 5 review.
+            "Volume Thirteen",
+            "Book the First",
+            "Book the Twentieth",
         ],
     )
     def test_volume_markers_do_not_fit(self, subtitle):
@@ -1277,6 +1281,31 @@ class TestRound5CancelAndTies:
         with pytest.raises(asyncio.CancelledError):
             await task
 
+    async def test_a_stray_cancel_stops_the_other_providers_lookup(self):
+        service = _service()
+        gb_started = asyncio.Event()
+        gb_cancelled = asyncio.Event()
+
+        async def cancelled(*_args, **_kwargs):
+            await gb_started.wait()
+            raise asyncio.CancelledError
+
+        async def slow(*_args, **_kwargs):
+            gb_started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                gb_cancelled.set()
+                raise
+
+        service.ol.search = AsyncMock(side_effect=cancelled)
+        service.gb.search = AsyncMock(side_effect=slow)
+        books = await service.enrich([_reading(isbn_13=None)])
+        assert len(books) == 1 and books[0].google_books_id is None
+        # The Google Books lookup did not outlive the candidate.
+        assert gb_cancelled.is_set()
+        assert service.last_complete is False
+
     @staticmethod
     def _graphic(isbns=()):
         return {
@@ -1325,3 +1354,18 @@ class TestRound5CancelAndTies:
         book = await _enrich_one(service, candidate)
         assert book.google_books_id == "gb_graphic"
         assert book.editions[0].isbn_10 == "0062316095"
+
+    async def test_tie_matches_a_hyphenated_isbn_10(self):
+        service = _service(
+            gb_isbn=self._graphic(isbns=["0062316095"]),
+            gb_title=self._other_graphic(),
+        )
+        candidate = BookCandidate(
+            title="Sapiens",
+            author="Harari",
+            confidence=0.9,
+            isbn_13=SAPIENS_ISBN,
+            isbn_10="0-06-231609-5",
+        )
+        book = await _enrich_one(service, candidate)
+        assert book.google_books_id == "gb_graphic"

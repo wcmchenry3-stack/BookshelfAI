@@ -263,14 +263,18 @@ def _head_and_rest(value: object) -> tuple[str, str]:
 # 4-digit year ("Since 1945") or an ordinal ("14th Century") is not one.
 _ROMAN = r"(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})"
 _NUM_WORDS = (
-    r"two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|first|second"
-    r"|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth"
-    r"|final|last"
+    r"two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen"
+    r"|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|first"
+    r"|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh"
+    r"|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth"
+    r"|eighteenth|nineteenth|twentieth|final|last"
 )
 _NUM = rf"(?:\d{{1,3}}|{_ROMAN}|{_NUM_WORDS}|one)"
 _NUM_NOT_ONE = rf"(?:\d{{1,3}}|{_ROMAN}|{_NUM_WORDS})"
 _VOLUME_MARKER = re.compile(
-    rf"(?:^|\s)(?:books?|volumes?|vols?|parts?|tomes?|episodes?|pt|bk)\s+{_NUM}(?=\s|$)"
+    # "Book the First" as well as "Book One".
+    rf"(?:^|\s)(?:books?|volumes?|vols?|parts?|tomes?|episodes?|pt|bk)\s+"
+    rf"(?:the\s+)?{_NUM}(?=\s|$)"
     rf"|(?:^|\s)(?:no|number)\s+{_NUM_NOT_ONE}(?=\s|$)"
     rf"|^{_NUM}$"
     r"|\s\d{1,3}$"
@@ -754,14 +758,28 @@ class EnrichmentService:
         if isbn_13 and not valid_isbn_13(isbn_13):
             logger.info("enrichment: ISBN check digit invalid; not looked up")
             isbn_13 = None
-        return await asyncio.gather(
-            self._provider_chain(
-                candidate, isbn_13, self.ol, "open_library", _ol_parts, _ol_isbns
+        chains = [
+            asyncio.ensure_future(
+                self._provider_chain(
+                    candidate, isbn_13, self.ol, "open_library", _ol_parts, _ol_isbns
+                )
             ),
-            self._provider_chain(
-                candidate, isbn_13, self.gb, "google_books", _gb_parts, _gb_isbns
+            asyncio.ensure_future(
+                self._provider_chain(
+                    candidate, isbn_13, self.gb, "google_books", _gb_parts, _gb_isbns
+                )
             ),
-        )
+        ]
+        try:
+            ol_doc, gb_volume = await asyncio.gather(*chains)
+        except BaseException:
+            # A cancel (stray or real) of one chain: stop the other too, so no
+            # lookup outlives this candidate.
+            for chain in chains:
+                chain.cancel()
+            await asyncio.gather(*chains, return_exceptions=True)
+            raise
+        return ol_doc, gb_volume
 
     @staticmethod
     async def _provider_chain(
@@ -839,7 +857,8 @@ class EnrichmentService:
             return weak if score(weak) > score(best) else best
         # A tie: the record that lists one of the candidate's ISBNs, else the
         # title-search record over a keyword ISBN hit that lists none.
-        wanted = {isbn_13, (candidate.isbn_10 or "").upper()} - {None, ""}
+        isbn_10 = str(_isbn_digits(candidate.isbn_10 or "")).upper()
+        wanted = {isbn_13, isbn_10} - {None, ""}
 
         def lists(record: dict) -> bool:
             return bool(wanted & {i.upper() for i in isbns(record)})
