@@ -17,6 +17,11 @@
   of a merged work, an unverified duplicate, the unverified cap) are 409s
   that change nothing; another user's entry or a live one is a 404; an
   entry past the window that is not purged yet can still be restored.
+- Eviction on ``DELETE``: only the newest trashed copy of a book is kept
+  (catalog, merged work, unverified by the duplicate key); the backstop cap
+  keeps the newest N (default 1,000: a mass delete of 150 books is all
+  restorable); it never touches another user's rows; the trash list shows
+  exactly the rows eviction keeps, ties included.
 - The purge: deletes only rows past the window, with their
   ``user_custom_books``, in bounded batches with a commit each; is
   idempotent; does nothing while another connection holds its advisory
@@ -485,15 +490,18 @@ async def test_unverified_cap_and_duplicates_ignore_the_trash(env):
         assert again.id != first.id
         # Restoring the trashed one would now be both; the duplicate wins.
         await _expect(_restore(env, alice, first.id), 409, "restore_conflict")
+        # Trashing the same book again replaces the older trashed copy.
         await _delete(env, alice, again.id)
+        await _expect(_restore(env, alice, first.id), 404)
         other = await _add_unverified(env, alice, title=f"Other {env.tag}")
         # The cap is full with a different book: unverified_limit_reached.
-        await _expect(_restore(env, alice, first.id), 409, "unverified_limit_reached")
+        await _expect(_restore(env, alice, again.id), 409, "unverified_limit_reached")
         await _delete(env, alice, other.id)
-        restored = await _restore(env, alice, first.id)
+        restored = await _restore(env, alice, again.id)
     assert restored.unverified is True and restored.book.title == f"Pond {env.tag}"
     async with env.factory() as db:
-        custom = await db.get(UserCustomBook, first.book.id)
+        custom = await db.get(UserCustomBook, again.book.id)
+        assert await db.get(UserCustomBook, first.book.id) is None
     assert custom.deleted_at is None
 
 
@@ -707,7 +715,9 @@ async def _counts(env, user) -> tuple[int, int, int]:
     return live, len(rows) - live, custom
 
 
-async def test_unverified_add_delete_loop_is_bounded_by_the_trash_cap(env):
+async def test_unverified_loops_are_bounded_by_the_backstop_cap(env):
+    """Different titles each time: same-book eviction never applies, so the
+    backstop cap bounds the trash (newest kept)."""
     alice = await env.make_user()
     deleted = []
     with (
@@ -715,13 +725,11 @@ async def test_unverified_add_delete_loop_is_bounded_by_the_trash_cap(env):
         patch.object(settings, "unverified_books_per_user_max", 2),
     ):
         keep = await _add_unverified(env, alice, title=f"Keep {env.tag}")
-        for _ in range(8):
-            # The same book again and again: the trash never blocks it.
-            added = await _add_unverified(env, alice)
+        for i in range(8):
+            added = await _add_unverified(env, alice, title=f"Pond {i} {env.tag}")
             await _delete(env, alice, added.id)
             deleted.append(added.id)
             live, trashed, custom = await _counts(env, alice)
-            # At most cap live + N trashed rows, never more.
             assert live == 1 and trashed <= 3 and custom == live + trashed
     assert await _counts(env, alice) == (1, 3, 4)
     # The oldest went first: the newest three deletions are kept.
@@ -729,18 +737,181 @@ async def test_unverified_add_delete_loop_is_bounded_by_the_trash_cap(env):
     assert [e.id for e in await _list(env, alice)] == [keep.id]
 
 
-async def test_wishlist_delete_loop_on_one_book_is_bounded(env):
+# ── Review round 2: one trashed copy per book, the backstop cap ──────────────
+
+
+async def test_wishlist_delete_loop_on_one_book_keeps_one_trashed_copy(env):
     alice = await env.make_user()
     book = await env.make_book()
+    other = await _entry(env, alice, await env.make_book())
+    await _delete(env, alice, other)
     deleted = []
-    with patch.object(settings, "trash_max_entries_per_user", 3):
-        for _ in range(6):
-            added = await _wishlist(env, alice, book)
+    for _ in range(5):
+        added = await _wishlist(env, alice, book)
+        await _delete(env, alice, added.id)
+        deleted.append(added.id)
+        # This book's trashed copy plus the other book's.
+        assert (await _counts(env, alice))[1] == 2
+    # The newest copy of the book, and the other book's entry untouched.
+    assert [t.id for t in await _trash(env, alice)] == [deleted[-1], other]
+    restored = await _restore(env, alice, deleted[-1])
+    assert restored.id == deleted[-1]
+
+
+async def test_same_book_eviction_covers_a_merged_work(env):
+    alice = await env.make_user()
+    survivor = await env.make_book()
+    merged = await env.make_book(
+        title=f"Dune duplicate {env.tag}", merged_into_id=survivor.id
+    )
+    unrelated = await _entry(env, alice, await env.make_book())
+    await _delete(env, alice, unrelated)
+    on_merged = await _entry(env, alice, merged)
+    await _delete(env, alice, on_merged)
+    on_survivor = await _wishlist(env, alice, survivor)
+    await _delete(env, alice, on_survivor.id)
+    assert [t.id for t in await _trash(env, alice)] == [on_survivor.id, unrelated]
+    # And the other way round: a trashed survivor entry, then the merged row.
+    bob = await env.make_user()
+    first = await _entry(env, bob, survivor)
+    await _delete(env, bob, first)
+    second = await _entry(env, bob, merged)
+    await _delete(env, bob, second)
+    assert [t.id for t in await _trash(env, bob)] == [second]
+
+
+async def test_unverified_same_book_loop_keeps_one_trashed_copy(env):
+    alice = await env.make_user()
+    with patch.object(settings, "unverified_books_per_user_max", 2):
+        keep = await _add_unverified(env, alice, title=f"Keep {env.tag}")
+        others = []
+        for i in range(2):  # different titles: each kept
+            o = await _add_unverified(env, alice, title=f"Other {i} {env.tag}")
+            await _delete(env, alice, o.id)
+            others.append(o.id)
+        isbn = "9780306406157"
+        # The same book each time, matching the previous copy by the
+        # normalised title and author or by the ISBN.
+        variants = [
+            {},
+            {"title": f"POND, {env.tag}!"},  # casefolded, punctuation
+            {"isbn": isbn},
+            {"title": f"Renamed {env.tag}", "isbn": isbn},  # same ISBN
+            {"title": f"Renamed again {env.tag}", "isbn": isbn},
+        ]
+        deleted = []
+        for fields in variants:
+            added = await _add_unverified(env, alice, **fields)
             await _delete(env, alice, added.id)
             deleted.append(added.id)
-            assert (await _counts(env, alice))[1] <= 3
-        assert await _counts(env, alice) == (0, 3, 0)
-        assert [t.id for t in await _trash(env, alice)] == deleted[::-1][:3]
+            live, trashed, custom = await _counts(env, alice)
+            assert (live, trashed, custom) == (1, 3, 4)
+    assert [t.id for t in await _trash(env, alice)] == [deleted[-1], *others[::-1]]
+    assert [e.id for e in await _list(env, alice)] == [keep.id]
+
+
+async def test_mass_delete_of_150_books_is_all_restorable_at_the_default_cap(env):
+    from app.core.config import Settings
+
+    default_cap = Settings.model_fields["trash_max_entries_per_user"].default
+    assert default_cap == 1000
+    alice = await env.make_user()
+    entries = []
+    async with env.factory() as db:
+        for i in range(150):
+            book = Book(
+                title=f"Mass {i} {env.tag}",
+                author="A",
+                open_library_work_id=f"OL{env.tag}m{i}W",
+            )
+            db.add(book)
+            await db.flush()
+            ub = UserBook(user_id=alice.id, book_id=book.id, status="read")
+            db.add(ub)
+            await db.flush()
+            entries.append(ub.id)
+        await db.commit()
+    with patch.object(settings, "trash_max_entries_per_user", default_cap):
+        for e in entries:
+            await _delete(env, alice, e)
+        trashed = await _trash(env, alice)
+        assert len(trashed) == 150
+        assert {t.id for t in trashed} == set(entries)
+        for e in entries:
+            await _restore(env, alice, e)
+    assert await _counts(env, alice) == (150, 0, 0)
+
+
+async def test_backstop_cap_keeps_the_newest_entries(env):
+    alice = await env.make_user()
+    entries = [await _entry(env, alice, await env.make_book()) for _ in range(12)]
+    with patch.object(settings, "trash_max_entries_per_user", 10):
+        for e in entries:
+            await _delete(env, alice, e)
+        listed = await _trash(env, alice)
+    assert [t.id for t in listed] == entries[::-1][:10]
+    assert await _counts(env, alice) == (0, 10, 0)
+
+
+async def test_eviction_never_touches_another_users_rows(env):
+    """R2-2: Bob's trashed rows are older than Alice's and include the same
+    book (catalog and unverified). Alice's deletes trigger both same-book
+    and cap eviction; Bob's rows and every live row stay."""
+    alice, bob = await env.make_user(), await env.make_user()
+    book = await env.make_book()
+    long_ago = datetime.now(UTC) - timedelta(days=5)
+
+    async def trash_for(user, book_row):
+        e = await _entry(env, user, book_row)
+        await _delete(env, user, e)
+        await _set_deleted_at(env, e, long_ago)
+        return e
+
+    bob_same = await trash_for(bob, book)
+    bob_unverified = (await _add_unverified(env, bob)).id
+    await _delete(env, bob, bob_unverified)
+    await _set_deleted_at(env, bob_unverified, long_ago)
+    bob_others = [await trash_for(bob, await env.make_book()) for _ in range(3)]
+    bob_live = await _entry(env, bob, await env.make_book())
+    alice_live = await _entry(env, alice, await env.make_book())
+    bob_before = await _ids(env, UserBook, bob)
+    bob_custom_before = await _ids(env, UserCustomBook, bob)
+
+    with patch.object(settings, "trash_max_entries_per_user", 2):
+        # Same-book eviction (catalog): Alice trashes the same book twice.
+        for _ in range(2):
+            await _delete(env, alice, (await _wishlist(env, alice, book)).id)
+        # Same-book eviction (unverified): the same title as Bob's, twice.
+        for _ in range(2):
+            await _delete(env, alice, (await _add_unverified(env, alice)).id)
+        # Cap eviction: more distinct books than the cap.
+        for _ in range(3):
+            await _delete(env, alice, await _entry(env, alice, await env.make_book()))
+
+    assert await _ids(env, UserBook, bob) == bob_before
+    assert await _ids(env, UserCustomBook, bob) == bob_custom_before
+    assert {bob_same, bob_unverified, *bob_others, bob_live} == bob_before
+    async with env.factory() as db:
+        assert (await db.get(UserBook, bob_live)).deleted_at is None
+        assert (await db.get(UserBook, alice_live)).deleted_at is None
+    assert await _counts(env, alice) == (1, 2, 0)
+
+
+async def test_trash_list_shows_exactly_the_rows_eviction_keeps_on_ties(env):
+    """R2-3: rows trashed at the same instant are ordered by id, highest
+    first, in the list and in eviction alike."""
+    alice = await env.make_user()
+    entries = [await _entry(env, alice, await env.make_book()) for _ in range(5)]
+    same = datetime.now(UTC) - timedelta(hours=1)
+    for e in entries:
+        await _set_deleted_at(env, e, same)
+    with patch.object(settings, "trash_max_entries_per_user", 3):
+        listed = [t.id for t in await _trash(env, alice)]
+        assert listed == sorted(entries, reverse=True)[:3]
+        async with env.factory() as db:
+            assert await trash.evict_over_cap(db, alice.id) == 2
+            await db.commit()
+    assert await _ids(env, UserBook, alice) == set(listed)
 
 
 async def test_trash_list_never_returns_more_than_the_cap(env):

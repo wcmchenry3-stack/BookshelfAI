@@ -182,7 +182,7 @@ class TestDelete:
         assert row.deleted_at is not None
         db.delete.assert_not_awaited()
         db.commit.assert_awaited_once()
-        lock, stmt, evict = [c.args[0] for c in db.execute.await_args_list]
+        lock, stmt, same, evict = [c.args[0] for c in db.execute.await_args_list]
         # The user is locked first (lock order users -> user_books).
         assert lock._for_update_arg is not None
         assert "FROM users" in _sql(lock)
@@ -191,12 +191,21 @@ class TestDelete:
         assert _live_filter_in(stmt)
         assert "user_books.user_id" in _sql(stmt)
         assert "FOR UPDATE OF user_books" in _sql(stmt)
-        # Then the user's trash beyond the cap, oldest last, is selected for
-        # eviction in the same transaction.
+        # Then, in the same transaction, the user's other trashed entries of
+        # the same work (survivor or merged rows) ...
+        same_sql = _sql(same)
+        assert "user_books.user_id" in same_sql
+        assert "user_books.deleted_at IS NOT NULL" in same_sql
+        assert "user_books.id !=" in same_sql
+        assert "books.merged_into_id" in same_sql
+        assert "FOR UPDATE SKIP LOCKED" in same_sql
+        # ... and the user's trash beyond the cap, oldest last.
         evict_sql = _sql(evict)
+        assert "user_books.user_id" in evict_sql
         assert "user_books.deleted_at IS NOT NULL" in evict_sql
-        assert "ORDER BY user_books.deleted_at DESC" in evict_sql
+        assert "ORDER BY user_books.deleted_at DESC, user_books.id DESC" in evict_sql
         assert "OFFSET" in evict_sql
+        assert "FOR UPDATE SKIP LOCKED" in evict_sql
 
     def test_missing_or_already_trashed_is_404(self, client):
         db = AsyncMock()
@@ -216,7 +225,8 @@ class TestLiveFilter:
     def test_trash_query_reads_trashed_entries_only(self):
         sql = _sql(user_books_api._user_book_query(FAKE_USER.id, trashed=True))
         assert "user_books.deleted_at IS NOT NULL" in sql
-        assert "ORDER BY user_books.deleted_at DESC" in sql
+        # Ties as eviction keeps them (R2-3).
+        assert "ORDER BY user_books.deleted_at DESC, user_books.id DESC" in sql
 
     def test_list_and_patch_use_the_live_query(self, client):
         db = AsyncMock()
@@ -481,7 +491,10 @@ def test_documented_trash_numbers_match_the_code():
     from app.core.config import Settings
 
     assert Settings.model_fields["trash_retention_days"].default == 30
-    assert Settings.model_fields["trash_max_entries_per_user"].default == 100
+    assert Settings.model_fields["trash_max_entries_per_user"].default == 1000
+    meta = Settings.model_fields["trash_max_entries_per_user"].metadata
+    bounds = {k: getattr(m, k) for m in meta for k in ("ge", "le") if hasattr(m, k)}
+    assert bounds == {"ge": 100, "le": 5000}
     assert trash.PURGE_BATCH_SIZE == 500
     assert trash.PURGE_MAX_BATCHES == 20
     doc = (
@@ -493,6 +506,42 @@ def test_documented_trash_numbers_match_the_code():
         "at most 20 per run",
         "pg_try_advisory_xact_lock",
         "TRASH_MAX_ENTRIES_PER_USER",
-        "newest 100 per user",
+        "newest 1,000 per user",
+        "100–5,000",
+        "one trashed copy per book",
     ):
         assert phrase in doc, phrase
+
+
+# ── Same-book eviction (review round 2) ──────────────────────────────────────
+
+
+async def test_same_book_eviction_of_an_unverified_entry_matches_the_duplicate_key():
+    """Only the user's trashed unverified entries with the same normalised
+    title and author, or the same ISBN, are deleted; the select is the
+    user's own trash, other rows only, ``FOR UPDATE OF user_books SKIP
+    LOCKED``."""
+    custom = SimpleNamespace(title="Pond", author="A. Local", isbn_13="9780306406157")
+    entry = _catalog_row(book=None, book_id=None, custom_book=custom)
+    same_key, same_isbn, other = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rows = [
+        SimpleNamespace(id=same_key, title="POND!", author="a local", isbn_13=None),
+        SimpleNamespace(
+            id=same_isbn, title="Other", author="B", isbn_13="9780306406157"
+        ),
+        SimpleNamespace(id=other, title="Other", author="A. Local", isbn_13=None),
+    ]
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_Result(rows=rows))
+    deleted = AsyncMock(return_value=2)
+    with patch.object(trash, "_delete_entries", deleted):
+        assert await trash.evict_same_book(db, FAKE_USER.id, entry) == 2
+    (select_stmt,) = [c.args[0] for c in db.execute.await_args_list]
+    sql = _sql(select_stmt)
+    assert "JOIN user_custom_books" in sql
+    assert "user_books.user_id" in sql and "user_books.id !=" in sql
+    assert "user_books.deleted_at IS NOT NULL" in sql
+    assert "FOR UPDATE OF user_books SKIP LOCKED" in sql
+    _, ids, scope = deleted.await_args.args
+    assert ids == [same_key, same_isbn]
+    assert "user_books.user_id" in str(scope)

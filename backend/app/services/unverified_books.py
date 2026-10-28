@@ -70,6 +70,16 @@ def _key(title: str, author: str) -> tuple[str, str]:
     return _part(title), _part(author)
 
 
+def same_book(row, title: str, author: str, isbn: str | None) -> bool:
+    """Whether ``row`` (anything with ``title``, ``author`` and ``isbn_13``)
+    is the same unverified book as ``title`` / ``author`` / ``isbn``: the
+    same normalised title and author, or the same ISBN-13. The duplicate
+    check here and the trash's same-book eviction (#683) both use it."""
+    return _key(row.title, row.author) == _key(title, author) or (
+        isbn is not None and row.isbn_13 == isbn
+    )
+
+
 async def lock_user(db: AsyncSession, user_id: uuid.UUID) -> None:
     """Serialise this user's unverified adds and restores (#683): the cap
     and the duplicate check read the user's entries, and two concurrent
@@ -98,11 +108,7 @@ async def refuse_if_cannot_hold(
     )
     existing = result.all()
 
-    key = _key(title, author)
-    if any(
-        _key(row.title, row.author) == key or (isbn is not None and row.isbn_13 == isbn)
-        for row in existing
-    ):
+    if any(same_book(row, title, author, isbn) for row in existing):
         raise UnverifiedDuplicateError
     if len(existing) >= settings.unverified_books_per_user_max:
         raise UnverifiedLimitError

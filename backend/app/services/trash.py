@@ -2,13 +2,21 @@
 
 ``DELETE /user-books/{id}`` only sets ``deleted_at`` (on the ``user_books``
 row and, for an unverified entry, its ``user_custom_books`` row). The trash
-is bounded two ways, whichever comes first:
+is bounded three ways:
 
-- **Count.** At most ``settings.trash_max_entries_per_user`` (100) entries
-  per user. ``DELETE`` calls :func:`evict_over_cap` in its own transaction,
-  under the user's row lock, which hard-deletes the user's oldest trashed
-  entries beyond the cap. So a delete loop (add, delete, add again) never
-  grows the table past live rows + the cap.
+- **One copy per book.** ``DELETE`` calls :func:`evict_same_book` in the
+  transaction that trashes the entry, under the user's row lock, which hard-deletes the user's
+  other (older) trashed entries of the same book: for a catalog entry any
+  row of the same work (``catalog.of_work``, merged rows included, #682);
+  for an unverified entry the same title and author or ISBN
+  (``unverified_books.same_book``, the duplicate check's key). Only the
+  newest trashed copy of a book survives, so an add / delete loop on one
+  book never grows the trash (owner decision, 2026-10-28).
+- **Count (backstop).** At most ``settings.trash_max_entries_per_user``
+  (1,000) entries per user. ``DELETE`` then calls :func:`evict_over_cap`,
+  which hard-deletes the user's oldest trashed entries beyond the cap. A
+  mass delete of up to 1,000 distinct books stays fully recoverable; beyond
+  that the oldest are lost.
 - **Age.** The daily cleanup (``app/services/token_cleanup.py``) calls
   :func:`purge_trash`, which deletes entries trashed more than
   ``settings.trash_retention_days`` (30) days ago:
@@ -27,7 +35,7 @@ is bounded two ways, whichever comes first:
   - idempotently: it deletes only rows that are still trashed and past the
     cutoff.
 
-Both delete a library row's ``user_custom_books`` row in the same
+All three delete a library row's ``user_custom_books`` row in the same
 transaction, and only for library rows actually deleted
 (:func:`_delete_entries`). ``user_books.custom_book_id`` references
 ``user_custom_books`` (``ON DELETE CASCADE`` from the custom book to the
@@ -47,6 +55,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.user_book import UserBook
 from app.models.user_custom_book import UserCustomBook
+from app.services.catalog import of_work
+from app.services.unverified_books import same_book
 
 logger = logging.getLogger(__name__)
 
@@ -92,19 +102,75 @@ async def _delete_entries(db: AsyncSession, ids: list[uuid.UUID], *conditions) -
     return len(deleted)
 
 
+async def evict_same_book(db: AsyncSession, user_id: uuid.UUID, entry: UserBook) -> int:
+    """Hard-delete ``user_id``'s other trashed entries of ``entry``'s book,
+    so only ``entry`` (just trashed, the newest) stays in the trash: for a
+    catalog entry every trashed entry on a row of the same work (``entry``
+    needs ``book`` loaded), for an unverified entry every trashed one with
+    the same title and author or ISBN (``entry`` needs ``custom_book``
+    loaded). Call with the user locked (``unverified_books.lock_user``), in
+    the transaction that trashed ``entry``. Rows the purge holds are skipped
+    (``SKIP LOCKED``): it is deleting them anyway. Returns how many were
+    deleted. Does not commit."""
+    others = (
+        UserBook.user_id == user_id,
+        UserBook.deleted_at.is_not(None),
+        UserBook.id != entry.id,
+    )
+    custom = entry.custom_book
+    if custom is not None:
+        rows = (
+            await db.execute(
+                select(
+                    UserBook.id,
+                    UserCustomBook.title,
+                    UserCustomBook.author,
+                    UserCustomBook.isbn_13,
+                )
+                .join(UserCustomBook, UserBook.custom_book_id == UserCustomBook.id)
+                .where(*others)
+                .with_for_update(of=UserBook, skip_locked=True)
+            )
+        ).all()
+        ids = [
+            r.id
+            for r in rows
+            if same_book(r, custom.title, custom.author, custom.isbn_13)
+        ]
+    elif entry.book is not None:
+        ids = list(
+            (
+                await db.execute(
+                    select(UserBook.id)
+                    .where(*others, of_work(UserBook.book_id, entry.book))
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalars()
+        )
+    else:
+        return 0
+    evicted = await _delete_entries(db, ids, UserBook.user_id == user_id)
+    if evicted:
+        logger.info("trash: evicted %d older trashed cop(ies) of a book", evicted)
+    return evicted
+
+
 async def evict_over_cap(db: AsyncSession, user_id: uuid.UUID) -> int:
     """Hard-delete the user's oldest trashed entries beyond
     ``settings.trash_max_entries_per_user`` (newest deletion kept; ties by
-    id). Call with the user locked (``unverified_books.lock_user``), in the
-    transaction that trashed the entry. Returns how many were deleted. Does
-    not commit."""
+    id, highest kept, the trash list's order). A backstop behind
+    :func:`evict_same_book`. Call with the user locked
+    (``unverified_books.lock_user``), in the transaction that trashed the
+    entry. Rows the purge holds are skipped (``SKIP LOCKED``): it is
+    deleting them anyway, and the ``DELETE`` re-checks its predicate.
+    Returns how many were deleted. Does not commit."""
     over = (
         await db.execute(
             select(UserBook.id)
             .where(UserBook.user_id == user_id, UserBook.deleted_at.is_not(None))
             .order_by(UserBook.deleted_at.desc(), UserBook.id.desc())
             .offset(settings.trash_max_entries_per_user)
-            .with_for_update()
+            .with_for_update(skip_locked=True)
         )
     ).scalars()
     evicted = await _delete_entries(db, list(over), UserBook.user_id == user_id)

@@ -36,7 +36,7 @@ or provider ID still adds the same work, once.
 import logging
 import uuid
 
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.book import Book
@@ -84,6 +84,16 @@ async def resolve_survivor(db: AsyncSession, book: Book) -> Book:
         result = await db.execute(select(Book).where(Book.id == target))
         book = result.scalar_one()
     return book
+
+
+def of_work(book_id_column, book: Book):
+    """A filter matching ``book_id_column`` against every row of ``book``'s
+    work: its survivor (``book`` itself unless merged) and any row merged
+    into that survivor. One hop, as merges keep chains at one hop. Used by
+    the restore conflict check and the trash's same-book eviction (#683)."""
+    survivor_id = book.merged_into_id or book.id
+    merged_ids = select(Book.id).where(Book.merged_into_id == survivor_id)
+    return or_(book_id_column == survivor_id, book_id_column.in_(merged_ids))
 
 
 def effective_book(book: Book | None) -> Book | None:

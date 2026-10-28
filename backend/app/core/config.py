@@ -331,13 +331,15 @@ class Settings(BaseSettings):
     # ago. 30 days is the owner's decision (2026-10-26). Env-overridable
     # (TRASH_RETENTION_DAYS).
     trash_retention_days: int = Field(default=30, ge=1, le=365)
-    # The most entries one user's trash holds (#683). A delete beyond it
-    # hard-deletes that user's oldest trashed entries, so the trash keeps 30
-    # days or the newest N entries, whichever comes first, and a delete loop
-    # cannot grow the table. Each row is at most ~3 KB (overrides) plus
-    # ~1.1 KB for an unverified entry, so ~400 KB per user worst case at the
-    # default. Env-overridable (TRASH_MAX_ENTRIES_PER_USER).
-    trash_max_entries_per_user: int = Field(default=100, ge=10, le=1000)
+    # The most entries one user's trash holds (#683), a backstop: DELETE
+    # already keeps one trashed copy per book (trash.evict_same_book), so an
+    # add / delete loop never grows the trash; past this many entries a
+    # delete hard-deletes that user's oldest trashed entries. 1,000 keeps a
+    # mass delete of up to 1,000 distinct books fully recoverable for the
+    # trash window (owner decision, 2026-10-28). Each row is at most ~3 KB
+    # (a user_books row with overrides, or a custom book), so ~3 MB per user
+    # worst case at the default. Env-overridable (TRASH_MAX_ENTRIES_PER_USER).
+    trash_max_entries_per_user: int = Field(default=1000, ge=100, le=5000)
     # Allowlist of Host header values accepted when settings.is_hardened is True
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]

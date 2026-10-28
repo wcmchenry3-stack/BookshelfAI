@@ -35,7 +35,7 @@ from app.schemas.user_book import (
 )
 from app.services import catalog
 from app.services.edition_check import require_edition_of_book
-from app.services.trash import evict_over_cap
+from app.services.trash import evict_over_cap, evict_same_book
 from app.services.unverified_books import (
     UnverifiedBookService,
     UnverifiedDuplicateError,
@@ -85,7 +85,9 @@ def _user_book_query(user_id: uuid.UUID, *, trashed: bool = False):
     through here, so an entry in the trash is never read as a live one."""
     if trashed:
         state = UserBook.deleted_at.is_not(None)
-        order = (UserBook.deleted_at.desc(), UserBook.id)
+        # Ties by id, highest first: the order the trash eviction keeps
+        # (``trash.evict_over_cap``), so the list shows exactly those rows.
+        order = (UserBook.deleted_at.desc(), UserBook.id.desc())
     else:
         state = UserBook.live()
         order = (UserBook.created_at.desc(),)
@@ -380,9 +382,10 @@ async def list_trash(
     """The user's entries in the trash (#683), most recently deleted first,
     each with ``deleted_at`` and ``purge_after``. An entry stays here (and
     restorable) until the daily cleanup purges it, which can be up to a day
-    after ``purge_after``. At most ``settings.trash_max_entries_per_user``
-    entries: the trash keeps 30 days or the newest N, whichever comes
-    first."""
+    after ``purge_after``. One entry per book (deleting a book that already
+    has a trashed copy replaces that copy) and at most
+    ``settings.trash_max_entries_per_user`` entries: the trash keeps 30 days
+    or the newest N, whichever comes first."""
     # DELETE keeps the trash within the cap; the limit is a second bound.
     result = await db.execute(
         _user_book_query(current_user.id, trashed=True).limit(
@@ -406,9 +409,12 @@ async def delete_user_book(
     every library read and check, and ``POST /user-books/{id}/restore``
     brings it back until the daily cleanup purges it. An entry already in
     the trash is a 404, like one that does not exist. In the same
-    transaction, the user's oldest trashed entries beyond
-    ``settings.trash_max_entries_per_user`` are hard-deleted, so the trash
-    (and a delete loop) stays bounded."""
+    transaction, the user's other, older trashed entries of the same book
+    are hard-deleted (``trash.evict_same_book``: only the newest trashed
+    copy of a book stays, so an add / delete loop never grows the trash),
+    then the oldest trashed entries beyond
+    ``settings.trash_max_entries_per_user`` (``trash.evict_over_cap``, a
+    backstop)."""
     # Lock order users -> user_books -> user_custom_books. The user lock
     # serialises this with the user's other deletes, restores and adds; the
     # row lock (live only) makes a concurrent second DELETE a 404.
@@ -420,7 +426,9 @@ async def delete_user_book(
             UserBook.user_id == current_user.id,
             UserBook.live(),
         )
-        .options(selectinload(UserBook.custom_book))
+        # The book (catalog entry) or custom book (unverified entry) names
+        # the book whose older trashed copies are evicted.
+        .options(selectinload(UserBook.book), selectinload(UserBook.custom_book))
         .with_for_update(of=UserBook)
     )
     user_book = result.scalar_one_or_none()
@@ -433,6 +441,7 @@ async def delete_user_book(
         # An unverified entry exists only for this library row: it goes to
         # the trash with it, and so no longer counts towards the cap.
         user_book.custom_book.deleted_at = now
+    await evict_same_book(db, current_user.id, user_book)
     await evict_over_cap(db, current_user.id)
     await db.commit()
 
@@ -499,14 +508,12 @@ async def _has_live_entry_of_work(
 ) -> bool:
     """Whether the user has a live entry on ``book``'s work: its survivor
     (``book`` itself unless merged, #682) or any row merged into it."""
-    survivor_id = book.merged_into_id or book.id
-    merged_ids = select(Book.id).where(Book.merged_into_id == survivor_id)
     result = await db.execute(
         select(UserBook.id)
         .where(
             UserBook.user_id == user_id,
             UserBook.live(),
-            or_(UserBook.book_id == survivor_id, UserBook.book_id.in_(merged_ids)),
+            catalog.of_work(UserBook.book_id, book),
         )
         .limit(1)
     )
