@@ -176,6 +176,12 @@ class Settings(BaseSettings):
     # later release.
     jwt_expiry_hours: str | None = None
     refresh_token_expiry_days: int = 7
+    # Refresh-token reuse detection (#690): a rotated refresh token presented
+    # again within this many seconds of its rotation is a client retry (the
+    # response was lost) and gets a fresh pair that replaces the successor;
+    # later, it is reuse and signs the user out everywhere. 0 = every later
+    # replay is reuse (concurrent duplicates still get a replacement).
+    refresh_reuse_grace_seconds: int = Field(default=30, ge=0, le=120)
     allowed_emails: str = ""
 
     # External APIs

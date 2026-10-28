@@ -23,8 +23,8 @@ async def revoke_all_sessions(db: AsyncSession, user: User) -> None:
     a stale value back.
 
     Does not commit: the caller commits, together with its own changes.
-    Callers: ``POST /auth/logout-all``. Account deletion (#291) and refresh
-    reuse detection (#690) are to call it too.
+    Callers: ``POST /auth/logout-all`` and refresh-token reuse detection in
+    ``POST /auth/refresh`` (#690). Account deletion (#291) is to call it too.
     """
     now = datetime.now(UTC)
     bumped = await db.execute(

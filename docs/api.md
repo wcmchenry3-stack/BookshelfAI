@@ -37,7 +37,7 @@ Common status codes:
 | Code | Meaning | Typical causes |
 |---|---|---|
 | 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware) |
-| 401 | Unauthorized | missing / invalid / expired access token, access token issued before #689 (`token_outdated`, refresh and retry), invalid refresh token, session revoked by sign out of all devices (`token_revoked`) |
+| 401 | Unauthorized | missing / invalid / expired access token, access token issued before #689 (`token_outdated`, refresh and retry), invalid refresh token, session revoked by sign out of all devices (`token_revoked`), rotated refresh token replayed (`refresh_reused`) |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), and other per-endpoint conflicts |
@@ -110,6 +110,16 @@ curl -X POST https://bookshelfapi.buffingchi.com/auth/google \
 
 Validates the refresh JWT, checks the `jti` exists + is not revoked and that its `tv` claim equals `users.token_version`, then **revokes the old `jti` and issues a new pair**. Refresh tokens are single-use. A refresh token without `tv` (issued before #689) counts as `tv = 0` until the legacy path is removed (#725; it accepts nothing after 2026-11-03, removal in #735; see Legacy tokens above).
 
+**Families and reuse detection (#690).** Each sign-in starts a token *family*; every rotation's new token joins it, and the old row is marked rotated (`used_at`, `replaced_by_id`). When an already-rotated token is presented again:
+
+- **Concurrent duplicate** (the token was still live when this request arrived, and a parallel request with the same token rotated it first) whose twin's new token is still unused: `200` with a **fresh pair in the same family**, and the twin's new token is *displaced*. Both requests get a `200`, but only the pair minted last stays usable; presenting the other one later is reuse. Two requests with one token are either one client's double refresh or a thief racing the real client, and this way a thief who wins the race is caught at the next refresh of either side. If the twin's new token was already refreshed or displaced by a third request with the same token: reuse (`401 refresh_reused`, every session revoked), since one app never sends three. If it was logged out or deleted: plain `401` "Refresh token revoked or not found", no alert. The holder of the displaced pair keeps its access token until it expires (up to `JWT_ACCESS_TTL_MINUTES`, default 15); detection needs that holder to refresh.
+- **Retry within the grace window** (`REFRESH_REUSE_GRACE_SECONDS`, default **30 s**, 0-120, counted from the rotation), and the token it was rotated into has not been used or revoked: `200` with a **fresh pair in the same family**, and the earlier successor is *displaced*. The server stores no raw token, so it cannot hand back the same successor. This covers a response lost on the network or an app suspended mid-request. **One retry per token**: once its successor has been displaced, presenting the same token again is reuse.
+- **Displaced token** presented (at any time, no grace window): reuse. Its holder is not the holder of the pair that replaced it.
+- **Reuse** (outside the window, the successor has already been rotated or displaced, or the token itself was displaced): `401 {"detail": "refresh_reused"}`. Every refresh token of the user is revoked (the family's included), `users.token_version` is bumped so every access token gets `401 token_revoked`, and one Sentry warning is sent with the user id and family id only.
+- Within the window, if the successor was revoked by a logout or has been deleted, the session is over: plain `401`.
+
+Why 30 s: a retry follows a lost response within seconds, but a slow mobile request can take tens of seconds to time out first. A longer window does not weaken detection. A replay inside the window displaces the real client's successor, so the real client's next refresh (about 15 minutes later) is reuse and revokes the family. Because each token gets one retry and a displaced token is always reuse, two holders cannot take turns inside the window.
+
 **Auth:** none (the refresh token in the body is the credential)
 **Rate limit:** `rate_limit_auth`
 **Source:** `backend/app/api/auth.py:refresh`
@@ -124,6 +134,7 @@ Validates the refresh JWT, checks the `jti` exists + is not revoked and that its
 **Errors:**
 - `401` — token expired / invalid signature / wrong type / `jti` revoked or not found / user not found
 - `401` `token_revoked` — the token's `tv` is malformed or older than `users.token_version` (a sign out of all devices happened after it was issued), or the token has no `tv` and `users.token_version` is no longer 0; the presented `jti` is revoked too
+- `401` `refresh_reused` — an already-rotated token presented again outside the grace rules (see above); every session of the user is revoked. The app signs out, as on any refresh `401`
 
 **Example:**
 ```bash
@@ -607,6 +618,8 @@ Never touches the database — always `200`. Render restarts a service on a fail
 
 5. Client: POST /auth/refresh {refresh_token}
    → {access_token (new), refresh_token (new, old revoked)}
+   (the old refresh token replayed within 30 s → a fresh pair; later →
+   401 refresh_reused and every session of the user is revoked)
 
 6. Client: retry GET /user-books with new access → 200
 
