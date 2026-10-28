@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Platform,
   Pressable,
@@ -240,16 +241,22 @@ export default function ScanScreen() {
     </View>
   );
 
-  const failedCount = (jobs ?? []).filter((j) => j.status === 'failed').length;
+  const allJobs = jobs ?? [];
+  const isStarting = (j: { status: string; nextAttemptAt?: number }) =>
+    j.status === 'pending' && j.nextAttemptAt == null;
+  const startingCount = allJobs.filter(isStarting).length;
+  // Jobs being sent right now are shown as progress, not as waiting.
+  const waitingCount = Math.max(0, pendingCount - startingCount);
+  const failedCount = allJobs.filter((j) => j.status === 'failed').length;
   const pendingBadge =
-    pendingCount > 0 ? (
+    waitingCount > 0 ? (
       <View
         style={[styles.pendingBadge, { backgroundColor: theme.colors.surfaceContainerHighest }]}
         accessibilityRole="text"
         accessibilityLiveRegion="polite"
       >
         <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
-          {t('pendingUploads', { count: pendingCount })}
+          {t('pendingUploads', { count: waitingCount })}
         </Text>
         <Pressable
           onPress={openScanQueue}
@@ -284,25 +291,50 @@ export default function ScanScreen() {
       </Pressable>
     ) : null;
 
-  // A scan is being uploaded / processed (job status 'searching'): show it
-  // from capture until the result or an error arrives (#742). The client
-  // can't see the server's phase, so this is one honest message, no percent.
-  const scanningCount = (jobs ?? []).filter((j) => j.status === 'searching').length;
-  const scanProgress =
-    scanningCount > 0 ? (
-      <View
-        style={[styles.progressRow, { backgroundColor: theme.colors.surfaceContainerHighest }]}
-        accessibilityRole="progressbar"
-        accessibilityLabel={t('scanInProgress')}
-        accessibilityLiveRegion="polite"
-        testID="scan-progress"
-      >
-        <ActivityIndicator size="small" color={activeColor} />
-        <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
-          {t('scanInProgress')}
-        </Text>
-      </View>
-    ) : null;
+  // A scan is being uploaded / processed (#742): from the shutter press (photo
+  // being saved) through job status 'searching' until the result or an error
+  // arrives. A 'pending' job with no scheduled retry is being sent right now
+  // (connectivity check), not waiting, so it counts as in progress too. The
+  // client can't see the server's phase: one honest message, no percentage.
+  const imageInProgress =
+    capturing ||
+    allJobs.some((j) => (j.status === 'searching' || isStarting(j)) && j.type !== 'text');
+  const inProgress = imageInProgress || allJobs.some((j) => j.status === 'searching');
+  const progressText = t(imageInProgress ? 'scanInProgress' : 'searchInProgress');
+  const wasInProgress = useRef(false);
+  useEffect(() => {
+    // accessibilityLiveRegion is Android-only: announce on iOS too.
+    if (inProgress && !wasInProgress.current) {
+      AccessibilityInfo.announceForAccessibility(progressText);
+    }
+    wasInProgress.current = inProgress;
+  }, [inProgress, progressText]);
+  // The live-region container stays mounted so Android announces its content.
+  const scanProgress = (
+    <View accessibilityLiveRegion="polite" testID="scan-progress-region">
+      {inProgress ? (
+        <View
+          style={[styles.progressRow, { backgroundColor: theme.colors.surfaceContainerHighest }]}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={progressText}
+          testID="scan-progress"
+        >
+          <ActivityIndicator
+            size="small"
+            color={theme.colors.primary}
+            importantForAccessibility="no"
+          />
+          <Text
+            style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}
+            importantForAccessibility="no"
+          >
+            {progressText}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
 
   const statusPanel = (
     <ScanStatusPanel

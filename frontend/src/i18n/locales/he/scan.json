@@ -109,5 +109,6 @@
   "ownedNotSavedRetryMessage": "{{owned}} כבר בספרייה שלך, {{failed}} לא נשמרו. הקש על הוספה כדי לנסות שוב.",
   "addItYourself": "הוסף בעצמך",
   "unverifiedSavedMessage": "{{title}} נוסף לרשימת המשאלות כלא מאומת.",
-  "scanInProgress": "קוראים את הספרים שלך ומחפשים התאמות…"
+  "scanInProgress": "קוראים את הספרים שלך ומחפשים התאמות…",
+  "searchInProgress": "מחפשים…"
 }

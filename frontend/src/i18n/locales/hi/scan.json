@@ -107,5 +107,6 @@
   "ownedNotSavedRetryMessage": "{{owned}} पहले से लाइब्रेरी में, {{failed}} सहेजी नहीं गईं। जोड़ें दबाएं।",
   "addItYourself": "खुद जोड़ें",
   "unverifiedSavedMessage": "{{title}} को आपकी विशलिस्ट में असत्यापित के रूप में जोड़ा गया।",
-  "scanInProgress": "आपकी किताबें पढ़ी जा रही हैं और मिलान खोजे जा रहे हैं…"
+  "scanInProgress": "आपकी किताबें पढ़ी जा रही हैं और मिलान खोजे जा रहे हैं…",
+  "searchInProgress": "खोज रही है…"
 }

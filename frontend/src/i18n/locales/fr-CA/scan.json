@@ -107,5 +107,6 @@
   "ownedNotSavedRetryMessage": "{{owned}} déjà dans votre bibliothèque, {{failed}} non enregistré(s). Touchez Ajouter.",
   "addItYourself": "L'ajouter vous-même",
   "unverifiedSavedMessage": "{{title}} a été ajouté à votre liste de souhaits, non vérifié.",
-  "scanInProgress": "Lecture de tes livres et recherche de correspondances…"
+  "scanInProgress": "Lecture de vos livres et recherche de correspondances…",
+  "searchInProgress": "Recherche en cours…"
 }

@@ -549,8 +549,13 @@
     "characterLimit": 80
   },
   "scanInProgress": {
-    "description": "Progress line on the scan screen and in the scan queue while a photo is being scanned (the server reads the photo, then looks up matches); shown with a spinner until the result or an error arrives",
+    "description": "Progress line on the scan screen while a photo is being scanned (the server reads the photo, then looks up matches); shown with a spinner until the result or an error arrives",
     "tone": "neutral",
     "characterLimit": 60
+  },
+  "searchInProgress": {
+    "description": "Progress line on the scan screen while a typed book search is running; shown with a spinner until the result or an error arrives",
+    "tone": "neutral",
+    "characterLimit": 30
   }
 }

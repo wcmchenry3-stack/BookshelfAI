@@ -107,5 +107,6 @@
   "ownedNotSavedRetryMessage": "{{owned}} al in je bibliotheek, {{failed}} niet opgeslagen. Tik op Toevoegen.",
   "addItYourself": "Zelf toevoegen",
   "unverifiedSavedMessage": "{{title}} is als niet geverifieerd aan je verlanglijst toegevoegd.",
-  "scanInProgress": "Je boeken worden gelezen en matches opgezocht…"
+  "scanInProgress": "Je boeken worden gelezen en matches opgezocht…",
+  "searchInProgress": "Zoeken…"
 }

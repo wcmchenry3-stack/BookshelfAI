@@ -109,5 +109,6 @@
   "ownedNotSavedRetryMessage": "Уже в библиотеке: {{owned}}. Не сохранено: {{failed}}. Нажмите «Добавить».",
   "addItYourself": "Добавить самому",
   "unverifiedSavedMessage": "«{{title}}» добавлена в список желаний без проверки.",
-  "scanInProgress": "Читаем ваши книги и ищем совпадения…"
+  "scanInProgress": "Читаем ваши книги и ищем совпадения…",
+  "searchInProgress": "Поиск…"
 }

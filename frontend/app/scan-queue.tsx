@@ -86,6 +86,7 @@ export default function ScanQueueScreen() {
         <View
           accessible
           accessibilityLabel={t('queueRowA11y', { what, state })}
+          accessibilityState={{ busy: job.status === 'searching' }}
           style={styles.info}
         >
           <Thumb job={job} />
@@ -94,8 +95,8 @@ export default function ScanQueueScreen() {
             <ActivityIndicator
               size="small"
               color={theme.colors.primary}
-              accessibilityRole="progressbar"
-              accessibilityLiveRegion="polite"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
               testID={`queue-progress-${job.id}`}
             />
           ) : null}
