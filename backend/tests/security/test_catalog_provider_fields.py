@@ -46,14 +46,19 @@ OL_DOC = {
 GB_VOLUME = {
     "id": "gb_dune_001",
     "volumeInfo": {
-        "title": "Dune (Google)",
+        # Differs from the Open Library title, so a test can tell whose title
+        # is shown; an edition note, so it still fits a "Dune" reading (#743).
+        "title": "Dune (Deluxe Edition)",
         "authors": ["F. Herbert"],
         "description": "Spice.",
         "industryIdentifiers": [{"type": "ISBN_13", "identifier": ISBN_13}],
     },
 }
+# A doctored cover: text no provider record has, which still fits Dune by
+# Frank Herbert (#743: a reading that fits no record is never paired with
+# one, so the doctoring has to stay within an edition note).
 DOCTORED = BookCandidate(
-    title="Dune — FREE CRYPTO at evil.example",
+    title="DUNE!!! — Special Collectors Edition",
     author="Totally Frank Herbert",
     confidence=0.9,
 )
@@ -77,7 +82,11 @@ def _service(*, ol=None, gb=None, by_isbn=False) -> EnrichmentService:
     ol_mock, gb_mock = AsyncMock(return_value=ol), AsyncMock(return_value=gb)
     if by_isbn:
         service.ol.search_by_isbn, service.gb.search_by_isbn = ol_mock, gb_mock
-        service.ol.search = service.gb.search = AsyncMock(side_effect=AssertionError)
+        # A provider whose ISBN record is missing or does not fit the reading
+        # is then searched by title (#743); here that finds nothing. Tests
+        # that mean "ISBN path only" assert it was not awaited.
+        service.ol.search = AsyncMock(return_value=None)
+        service.gb.search = AsyncMock(return_value=None)
     else:
         service.ol.search, service.gb.search = ol_mock, gb_mock
         service.ol.search_by_isbn = service.gb.search_by_isbn = AsyncMock(
@@ -86,8 +95,16 @@ def _service(*, ol=None, gb=None, by_isbn=False) -> EnrichmentService:
     return service
 
 
+async def _enrich_with(candidate, **providers):
+    service = _service(**providers)
+    (book,) = await service.enrich([candidate])
+    # Every lookup finished: no tripwire fired and no error was absorbed.
+    assert service.last_complete is True
+    return book, service
+
+
 async def _enrich_one(candidate, **providers):
-    (book,) = await _service(**providers).enrich([candidate])
+    book, _ = await _enrich_with(candidate, **providers)
     return book
 
 
@@ -105,7 +122,7 @@ class TestTitleAndAuthorFromTheProvider:
 
     async def test_google_books_when_open_library_missed(self):
         book = await _enrich_one(DOCTORED, ol=None, gb=GB_VOLUME)
-        assert (book.title, book.author) == ("Dune (Google)", "F. Herbert")
+        assert (book.title, book.author) == ("Dune (Deluxe Edition)", "F. Herbert")
         assert book.google_books_id == "gb_dune_001"
 
     async def test_author_from_google_books_when_open_library_has_none(self):
@@ -147,8 +164,9 @@ class TestOnlyConfirmedIsbns:
         candidate = BookCandidate(
             title="Dune", author="Frank Herbert", confidence=0.9, isbn_13=ISBN_13
         )
-        book = await _enrich_one(candidate, ol=OL_DOC, gb=None, by_isbn=True)
+        book, service = await _enrich_with(candidate, ol=OL_DOC, gb=None, by_isbn=True)
         assert book.editions[0].isbn_13 == ISBN_13
+        service.ol.search.assert_not_awaited()
 
     async def test_isbn_10_only_the_model_read_is_dropped(self):
         candidate = BookCandidate(
@@ -158,9 +176,13 @@ class TestOnlyConfirmedIsbns:
             isbn_13=ISBN_13,
             isbn_10="0000000000",
         )
-        book = await _enrich_one(candidate, ol=OL_DOC, gb=GB_VOLUME, by_isbn=True)
+        book, service = await _enrich_with(
+            candidate, ol=OL_DOC, gb=GB_VOLUME, by_isbn=True
+        )
         assert book.editions[0].isbn_13 == ISBN_13
         assert book.editions[0].isbn_10 is None
+        service.ol.search.assert_not_awaited()
+        service.gb.search.assert_not_awaited()
 
     async def test_isbns_listed_by_the_provider_are_kept(self):
         candidate = BookCandidate(
@@ -205,22 +227,31 @@ class TestIsbn13ConfirmedOnlyByIdentifiers:
         volume["volumeInfo"]["industryIdentifiers"] = [
             {"type": "ISBN_13", "identifier": "9780000000002"}
         ]
-        book = await _enrich_one(self.CANDIDATE, ol=None, gb=volume, by_isbn=True)
+        book, service = await _enrich_with(
+            self.CANDIDATE, ol=None, gb=volume, by_isbn=True
+        )
         assert book.google_books_id == "gb_dune_001"
         assert book.editions[0].isbn_13 is None
+        service.gb.search.assert_not_awaited()
         (signed,) = catalog_token.sign_books([book], USER)
         assert signed.editions[0].isbn_13 is None
 
     async def test_open_library_doc_not_listing_it(self):
         doc = {**OL_DOC, "isbn": ["9780000000002"]}
-        book = await _enrich_one(self.CANDIDATE, ol=doc, gb=None, by_isbn=True)
+        book, service = await _enrich_with(
+            self.CANDIDATE, ol=doc, gb=None, by_isbn=True
+        )
         assert book.open_library_work_id == "OL45804W"
         assert book.editions[0].isbn_13 is None
+        service.ol.search.assert_not_awaited()
 
     async def test_unsigned_isbn_cannot_create_an_edition(self):
         volume = {**GB_VOLUME, "volumeInfo": {**GB_VOLUME["volumeInfo"]}}
         del volume["volumeInfo"]["industryIdentifiers"]
-        book = await _enrich_one(self.CANDIDATE, ol=None, gb=volume, by_isbn=True)
+        book, service = await _enrich_with(
+            self.CANDIDATE, ol=None, gb=volume, by_isbn=True
+        )
+        service.gb.search.assert_not_awaited()
         (signed,) = catalog_token.sign_books([book], USER)
         # Adding the ISBN back breaks the signature.
         forged = signed.model_copy(
@@ -265,6 +296,28 @@ class TestProvidersMustAgree:
         )
         assert book.subjects == ["Science fiction"]
 
+    async def test_both_fit_the_reading_but_disagree(self):
+        # A reading with no author fits both records; only records_agree
+        # stops one book's Google Books ID being wired to another's work
+        # (#743 security review).
+        volume = {
+            "id": "gb_other_dune",
+            "volumeInfo": {
+                "title": "Dune",
+                "authors": ["Jane Doe"],
+                "description": "Another Dune.",
+                "industryIdentifiers": [
+                    {"type": "ISBN_13", "identifier": "9780000000002"}
+                ],
+            },
+        }
+        candidate = BookCandidate(title="Dune", author="", confidence=0.9)
+        book = await _enrich_one(candidate, ol=OL_DOC, gb=volume)
+        assert book.open_library_work_id == "OL45804W"
+        assert (book.title, book.author) == ("Dune", "Frank Herbert")
+        assert book.google_books_id is None
+        assert book.description is None and book.cover_url is None
+
     async def test_disagreeing_volume_confirms_no_isbn(self):
         candidate = BookCandidate(
             title="Dune",
@@ -273,9 +326,15 @@ class TestProvidersMustAgree:
             isbn_13="9780441569595",
         )
         doc = {k: v for k, v in OL_DOC.items() if k != "isbn"}
-        book = await _enrich_one(candidate, ol=doc, gb=NEUROMANCER_VOLUME, by_isbn=True)
+        book, service = await _enrich_with(
+            candidate, ol=doc, gb=NEUROMANCER_VOLUME, by_isbn=True
+        )
         assert book.google_books_id is None
         assert book.editions[0].isbn_13 is None
+        # The Open Library doc fits; the Neuromancer volume does not, so only
+        # Google Books is searched by title (and finds nothing here).
+        service.ol.search.assert_not_awaited()
+        service.gb.search.assert_awaited_once()
 
     async def test_agree_by_shared_isbn(self):
         volume = {**GB_VOLUME, "volumeInfo": {**GB_VOLUME["volumeInfo"]}}
@@ -328,9 +387,10 @@ class TestIsbn10PairsWithTheIsbn13:
             isbn_10=self.OTHER_EDITION_10,
         )
         doc = {**OL_DOC, "isbn": [ISBN_13, self.OTHER_EDITION_10]}
-        book = await _enrich_one(candidate, ol=doc, gb=None, by_isbn=True)
+        book, service = await _enrich_with(candidate, ol=doc, gb=None, by_isbn=True)
         assert book.editions[0].isbn_13 == ISBN_13
         assert book.editions[0].isbn_10 is None
+        service.ol.search.assert_not_awaited()
 
     async def test_matching_isbn_10_is_kept(self):
         candidate = BookCandidate(
@@ -340,11 +400,15 @@ class TestIsbn10PairsWithTheIsbn13:
             isbn_13=ISBN_13,
             isbn_10=ISBN_10,
         )
-        book = await _enrich_one(candidate, ol=OL_DOC, gb=GB_VOLUME, by_isbn=True)
+        book, service = await _enrich_with(
+            candidate, ol=OL_DOC, gb=GB_VOLUME, by_isbn=True
+        )
         assert (book.editions[0].isbn_13, book.editions[0].isbn_10) == (
             ISBN_13,
             ISBN_10,
         )
+        service.ol.search.assert_not_awaited()
+        service.gb.search.assert_not_awaited()
 
     async def test_unconfirmed_isbn_13_keeps_a_listed_isbn_10_alone(self):
         candidate = BookCandidate(
@@ -355,11 +419,12 @@ class TestIsbn10PairsWithTheIsbn13:
             isbn_10=self.OTHER_EDITION_10,
         )
         doc = {**OL_DOC, "isbn": [self.OTHER_EDITION_10]}
-        book = await _enrich_one(candidate, ol=doc, gb=None, by_isbn=True)
+        book, service = await _enrich_with(candidate, ol=doc, gb=None, by_isbn=True)
         assert (book.editions[0].isbn_13, book.editions[0].isbn_10) == (
             None,
             self.OTHER_EDITION_10,
         )
+        service.ol.search.assert_not_awaited()
 
 
 class TestSearchSignsOnlyProviderData:
