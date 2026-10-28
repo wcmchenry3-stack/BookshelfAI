@@ -17,8 +17,11 @@ title or author missing or not a string, or a confidence that is not a
 number), or an unexpected ``finish_reason`` (anything but ``stop``,
 ``length`` or ``content_filter``; a missing one is judged on the content
 alone). Otherwise the reply is ``ok`` with its well-formed items, kept as
-before #572: an empty author (or title) is still a candidate (a title-only
-lookup). A genuine ``{"books": []}`` is ``ok`` with no candidates. A
+before #572: an empty author is still a candidate (a title-only lookup).
+Since #746 a candidate with an empty or whitespace title is dropped (it is
+schema-valid, so it is not "broken" and a reply of only such items is ``ok``
+with no books), and an ISBN that is not a string or fails its check digit
+becomes None while the book is kept (the model can invent ISBNs). A genuine ``{"books": []}`` is ``ok`` with no candidates. A
 ``length`` reply stays ``truncated`` here; with no books the gateway reports
 it as ``malformed``.
 """
@@ -35,6 +38,7 @@ from app.ai.providers.base import (
     ProviderResult,
     ProviderTimeoutError,
 )
+from app.ai.providers.isbn import clean_isbn_10, clean_isbn_13
 from app.ai.registry import FeatureSpec
 from app.core.config import settings
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
@@ -154,26 +158,41 @@ def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None
     )
 
 
-def _candidate(item: object) -> BookCandidate | None:
-    """The candidate for one item, or None when the item is structurally
-    broken (#572): not an object, a title or author missing or not a string
-    (a ``null`` author used to crash the de-duplication), or a confidence
-    that is not a number. Strings are kept as they are, empty ones too."""
+def _is_broken(item: object) -> bool:
+    """An item that breaks the requested structure (#572): not an object, a
+    title or author missing or not a string (a ``null`` author used to crash
+    the de-duplication), or a confidence that is not a number. An empty title
+    or author is not broken: the item is schema-valid."""
     if not isinstance(item, dict):
-        return None
-    title, author = item.get("title"), item.get("author")
-    if not isinstance(title, str) or not isinstance(author, str):
-        return None
+        return True
+    if not isinstance(item.get("title"), str) or not isinstance(
+        item.get("author"), str
+    ):
+        return True
     try:
-        confidence = float(item.get("confidence", 0.5))
+        float(item.get("confidence", 0.5))
     except (TypeError, ValueError):
+        return True
+    return False
+
+
+def _candidate(item: object) -> BookCandidate | None:
+    """The candidate for one item, or None when the item is broken (see
+    :func:`_is_broken`) or has an empty or whitespace title (#746: dropped,
+    not broken). An empty author is kept (a title-only lookup). An ISBN that
+    is not a valid string becomes None; the book is kept."""
+    if _is_broken(item):
+        return None
+    assert isinstance(item, dict)
+    title = item["title"]
+    if not title.strip():
         return None
     return BookCandidate(
         title=title,
-        author=author,
-        confidence=confidence,
-        isbn_13=item.get("isbn_13"),
-        isbn_10=item.get("isbn_10"),
+        author=item["author"],
+        confidence=float(item.get("confidence", 0.5)),
+        isbn_13=clean_isbn_13(item.get("isbn_13")),
+        isbn_10=clean_isbn_10(item.get("isbn_10")),
     )
 
 
@@ -286,7 +305,7 @@ class OpenAIVisionProvider:
         """The candidates in the model's reply, or None when the reply is
         malformed (#572): no content, not JSON, the wrong shape, or a
         non-empty list in which every item is structurally broken (see
-        :func:`_candidate`)."""
+        :func:`_is_broken`)."""
         if content is None:
             # No text to parse (an unexpected body). The response itself is
             # not logged.
@@ -315,10 +334,12 @@ class OpenAIVisionProvider:
         for item in items:
             if len(candidates) >= max_books:
                 break
-            candidate = _candidate(item)
-            if candidate is None:
+            if _is_broken(item):
                 broken += 1
                 continue
+            candidate = _candidate(item)
+            if candidate is None:
+                continue  # schema-valid but dropped (empty title)
             key = _dedupe_key(candidate)
             if key in seen:
                 continue
