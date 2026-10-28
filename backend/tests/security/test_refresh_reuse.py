@@ -8,7 +8,12 @@
   401 ``refresh_reused``, and one Sentry warning carries the user id and
   family id only (never a token, jti or email).
 - Within the grace window, a replay of a token whose successor is unused is a
-  client retry: a fresh pair in the same family replaces the successor.
+  client retry: a fresh pair in the same family displaces the successor. A
+  displaced token is always reuse, and each rotated token gets one retry, so
+  two holders cannot take turns inside the window.
+- A concurrent refresh with the same token whose twin's successor is still
+  unused is handled like a retry, so a thief who wins the race is caught when
+  either holder refreshes again.
 - The route keeps the auth rate limit.
 
 Database-free: a small stateful fake session stands in for Postgres. The same
@@ -79,6 +84,9 @@ class FakeDb:
     def __init__(self) -> None:
         self.user: User | None = None
         self.tokens: list[RefreshToken] = []
+        # Runs once when /auth/refresh takes the user-row lock, after its
+        # first read of the refresh row: a test interleaves a twin request.
+        self.on_user_lock = None
 
     def by_jti(self, jti: str) -> RefreshToken:
         return next(t for t in self.tokens if t.jti == jti)
@@ -108,6 +116,9 @@ class FakeDb:
 
     async def get(self, model, pk, **_options):
         if model is User and self.user is not None and self.user.id == pk:
+            hook, self.on_user_lock = self.on_user_lock, None
+            if hook is not None:
+                hook()
             return self.user
         if model is RefreshToken:
             return next((t for t in self.tokens if t.id == pk), None)
@@ -329,6 +340,20 @@ class TestReuse:
         assert not [e for e in events if e.get("level") == "warning"]
 
 
+def _warnings(events) -> list:
+    return [e for e in events if e.get("level") == "warning"]
+
+
+def _assert_everything_revoked(db, client, *token_sets) -> None:
+    assert all(t.revoked_at is not None for t in db.tokens)
+    assert db.user.token_version == 1
+    for tokens in token_sets:
+        me = client.get("/auth/me", headers=_bearer(tokens["access_token"]))
+        assert me.status_code == 401
+        # (Each token's refresh row is revoked above; refreshing them all
+        # here would hit the 5/minute auth limit.)
+
+
 class TestGraceWindow:
     def test_retry_within_window_replaces_the_successor(self, db, client):
         tokens = _sign_in(client)
@@ -339,7 +364,7 @@ class TestGraceWindow:
         with captured_app_events() as events:
             retry = _refresh(client, tokens["refresh_token"])
         assert retry.status_code == 200, retry.text
-        assert not [e for e in events if e.get("level") == "warning"]
+        assert not _warnings(events)
         body = retry.json()
         assert body["refresh_token"] != lost["refresh_token"]
 
@@ -347,10 +372,13 @@ class TestGraceWindow:
         lost_row = db.by_jti(_jti(lost["refresh_token"]))
         new_row = db.by_jti(_jti(body["refresh_token"]))
         assert new_row.family_id == root.family_id
-        assert root.replaced_by_id == new_row.id
-        # The lost successor counts as rotated into the new row.
+        # The root keeps pointing at the lost successor, which is displaced
+        # (rotated into the new row): the root's one retry is spent.
+        assert root.replaced_by_id == lost_row.id
         assert lost_row.revoked_at is not None and lost_row.used_at is not None
+        assert lost_row.displaced_at is not None
         assert lost_row.replaced_by_id == new_row.id
+        assert new_row.displaced_at is None
         assert db.user.token_version == 0
         # The retried pair works.
         assert (
@@ -359,6 +387,140 @@ class TestGraceWindow:
         )
         assert _refresh(client, body["refresh_token"]).status_code == 200
 
+    def test_second_retry_of_the_same_token_is_reuse(self, db, client):
+        """#734 review (Codex P1 / S2): one retry per rotated token. Parallel
+        or repeated replays inside the window get one retry, then reuse."""
+        tokens = _sign_in(client)
+        lost = _refresh(client, tokens["refresh_token"]).json()
+        retry = _refresh(client, tokens["refresh_token"])
+        assert retry.status_code == 200
+
+        with captured_app_events() as events:
+            again = _refresh(client, tokens["refresh_token"])
+        assert again.status_code == 401
+        assert again.json()["detail"] == "refresh_reused"
+        assert len(_warnings(events)) == 1
+        _assert_everything_revoked(db, client, lost, retry.json())
+
+    def test_displaced_token_is_reuse_inside_the_window(self, db, client):
+        """#734 review (Codex P1 / S2): a thief replays the stolen token A
+        within the window and displaces the real client's B with C. When the
+        real client presents B, still inside the window, it is reuse, not
+        another retry: holders cannot alternate."""
+        stolen = _sign_in(client)
+        real = _refresh(client, stolen["refresh_token"]).json()  # B
+        thief = _refresh(client, stolen["refresh_token"])  # C displaces B
+        assert thief.status_code == 200
+        b_row = db.by_jti(_jti(real["refresh_token"]))
+        assert b_row.displaced_at is not None
+        assert b_row.used_at is not None  # inside the window
+
+        with captured_app_events() as events:
+            back = _refresh(client, real["refresh_token"])
+        assert back.status_code == 401
+        assert back.json()["detail"] == "refresh_reused"
+        (alert,) = _warnings(events)
+        assert alert["tags"]["family_id"] == str(b_row.family_id)
+        _assert_everything_revoked(db, client, real, thief.json())
+
+    def test_holders_cannot_alternate(self, db, client):
+        """The alternation the review reproduced: A, A, B, A, ... inside the
+        window. The third refresh is already reuse; nothing is left live."""
+        a = _sign_in(client)
+        b = _refresh(client, a["refresh_token"]).json()
+        assert _refresh(client, a["refresh_token"]).status_code == 200
+        codes = [
+            _refresh(client, t["refresh_token"]).json().get("detail") for t in (b, a)
+        ]
+        assert codes == ["refresh_reused", "token_revoked"]
+        assert all(t.revoked_at is not None for t in db.tokens)
+
+
+class TestRace:
+    """Two requests with one token: the first takes the user lock and
+    rotates; the second read the row as live and waited (Replay.RACE)."""
+
+    @staticmethod
+    def _race(db, client, token: str):
+        twin: list = []
+        db.on_user_lock = lambda: twin.append(_refresh(client, token))
+        second = _refresh(client, token)
+        (first,) = twin
+        return first, second
+
+    def test_race_gives_both_a_pair_and_displaces_the_first(self, db, client):
+        """A benign double refresh no longer signs the user out: both get a
+        pair, and only the last one minted stays usable."""
+        tokens = _sign_in(client)
+        with captured_app_events() as events:
+            first, second = self._race(db, client, tokens["refresh_token"])
+        assert [first.status_code, second.status_code] == [200, 200]
+        assert not _warnings(events)
+        assert db.user.token_version == 0
+
+        root = db.by_jti(_jti(tokens["refresh_token"]))
+        first_row = db.by_jti(_jti(first.json()["refresh_token"]))
+        second_row = db.by_jti(_jti(second.json()["refresh_token"]))
+        assert first_row.displaced_at is not None
+        assert first_row.replaced_by_id == second_row.id
+        assert root.replaced_by_id == first_row.id
+        assert [t for t in db.tokens if t.revoked_at is None] == [second_row]
+        assert second_row.family_id == root.family_id
+
+    def test_race_with_successor_already_gone_is_plain_401(self, db, client):
+        """The twin's successor was logged out before this request got the
+        lock: nothing to displace; the plain 401, no alert."""
+        tokens = _sign_in(client)
+        twin: list = []
+
+        def twin_then_logout():
+            resp = _refresh(client, tokens["refresh_token"])
+            twin.append(resp)
+            client.post(
+                "/auth/logout", json={"refresh_token": resp.json()["refresh_token"]}
+            )
+
+        db.on_user_lock = twin_then_logout
+        with captured_app_events() as events:
+            resp = _refresh(client, tokens["refresh_token"])
+        assert twin[0].status_code == 200
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Refresh token revoked or not found"
+        assert not _warnings(events)
+        assert db.user.token_version == 0
+
+    @pytest.mark.parametrize("thief_first", [True, False])
+    def test_thief_who_wins_the_race_is_caught(self, db, client, thief_first):
+        """#734 review S1: a thief with a stolen live token wins the user
+        lock and gets T1; the real client's in-flight refresh with the same
+        token used to get a plain 401, sign out, and leave the thief rotating
+        undetected. Now the victim gets V (T1 displaced), and when the victim
+        and the thief each refresh once more, reuse fires and everything is
+        revoked, in either order."""
+        stolen = _sign_in(client)
+        thief, victim = self._race(db, client, stolen["refresh_token"])
+        assert thief.status_code == victim.status_code == 200
+        thief, victim = thief.json(), victim.json()
+
+        with captured_app_events() as events:
+            if thief_first:
+                t = _refresh(client, thief["refresh_token"])
+                v = _refresh(client, victim["refresh_token"])
+                assert t.json()["detail"] == "refresh_reused"
+                # V was revoked (not rotated) by the reuse: the plain 401.
+                assert v.status_code == 401
+                assert v.json()["detail"] != "refresh_reused"
+            else:
+                v = _refresh(client, victim["refresh_token"])
+                assert v.status_code == 200
+                t = _refresh(client, thief["refresh_token"])
+                assert t.json()["detail"] == "refresh_reused"
+                victim = v.json()
+        assert len(_warnings(events)) == 1
+        _assert_everything_revoked(db, client, thief, victim)
+
+
+class TestDisplacedOutsideWindow:
     def test_lost_successor_turning_up_later_is_reuse(self, db, client):
         """The attacker replays the stolen token within the window and gets a
         pair; the real client's successor is now rotated, so when it next

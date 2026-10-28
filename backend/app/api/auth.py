@@ -29,6 +29,7 @@ from app.auth.refresh_family import (
     alert_reuse,
     classify_replay,
     family_of,
+    is_displaced,
     is_rotated,
     new_family_row,
     successor_row,
@@ -157,6 +158,7 @@ async def refresh(
     # Whether the token had already been rotated before this request: if it
     # is rotated only once we hold the lock, a concurrent request with the
     # same token did it while we waited (Replay.RACE), not a later replay.
+    # (Displacement also rotates a row; a displaced token is reuse anyway.)
     seen_rotated = is_rotated(stored)
 
     # FOR UPDATE on the user row: a concurrent revoke_all_sessions bumps
@@ -251,13 +253,6 @@ async def _refresh_rotated_token(
     """A token that /auth/refresh already rotated is presented again (#690).
     Called with the user row and ``stored`` locked. See
     app/auth/refresh_family.py for the four cases."""
-    if not seen_rotated:
-        # Replay.RACE: rotated by a concurrent request with the same token
-        # while this one waited for the user lock (#689 behaviour).
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=REFRESH_REVOKED_OR_NOT_FOUND,
-        )
     if token_version_claim(payload) != user.token_version:
         # Every session was already revoked (logout-all or an earlier reuse);
         # nothing left to protect, so no second alert.
@@ -265,8 +260,10 @@ async def _refresh_rotated_token(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=TOKEN_REVOKED
         )
 
+    # Lock order: user, the presented row, then its successor (as the
+    # rotation itself). A displaced token is reuse whatever its successor.
     successor = None
-    if stored.replaced_by_id is not None:
+    if not is_displaced(stored) and stored.replaced_by_id is not None:
         successor = await db.get(
             RefreshToken,
             stored.replaced_by_id,
@@ -276,25 +273,33 @@ async def _refresh_rotated_token(
     now = datetime.now(UTC)
     replay = classify_replay(
         seen_rotated=seen_rotated,
+        displaced=is_displaced(stored),
         used_at=stored.used_at,
         successor=successor,
         now=now,
         grace_seconds=settings.refresh_reuse_grace_seconds,
     )
 
-    if replay is Replay.RETRY:
-        # The client never got the successor: issue a fresh pair in the same
-        # family that replaces it. The successor counts as rotated from now,
-        # so if it does turn up later, that is reuse.
+    if replay in (Replay.RETRY, Replay.RACE):
+        # RETRY: the client never got the successor. RACE: a concurrent
+        # request with this token got it, and it may be a thief's. Either
+        # way, issue a fresh pair in the same family and displace the
+        # successor: whoever presents it later trips REUSE. ``stored`` keeps
+        # pointing at the displaced row, so presenting ``stored`` again is
+        # REUSE too (one retry per rotated token).
         tokens, replacement = await _issue_successor(db, user, stored)
         successor.revoked_at = now
         successor.used_at = now
+        successor.displaced_at = now
         successor.replaced_by_id = replacement.id
-        stored.replaced_by_id = replacement.id
         await db.commit()
         logger.info(
-            "Refresh retried within the grace window; successor replaced "
-            "(user_id=%s)",
+            "Refresh %s; successor displaced (user_id=%s)",
+            (
+                "retried within the grace window"
+                if replay is Replay.RETRY
+                else "raced a concurrent refresh"
+            ),
             user.id,
         )
         return tokens

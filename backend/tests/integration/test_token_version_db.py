@@ -9,7 +9,8 @@
 - A refresh that interleaves with logout-all leaves no token that works and
   no unrevoked refresh row.
 - Two concurrent refreshes with the same refresh token: one rotates, the
-  other gets 401, and only one session is left live.
+  other gets a replacement pair that displaces the first one's (#690, #734
+  review S1), and only one session is left live.
 
 Needs DATABASE_URL pointing at a Postgres database.
 """
@@ -368,8 +369,9 @@ async def test_refresh_interleaved_with_logout_all_leaves_nothing_usable(env):
 async def test_concurrent_refreshes_with_one_token_fork_no_session(env):
     """A and B present the same refresh token. A has locked the user row; B
     has already read the refresh row as live and waits for the lock. After A
-    rotates and commits, B must see the row is revoked: exactly one 200, one
-    401, and one live refresh row."""
+    rotates and commits, B must see the row is rotated: since #690 (#734
+    review S1) B gets a replacement pair that displaces A's, so two 200s,
+    and still exactly one live refresh row."""
     import asyncio
 
     factory, client, make_user, _statements = env
@@ -406,9 +408,9 @@ async def test_concurrent_refreshes_with_one_token_fork_no_session(env):
         _PausingSession.after_user_load = None
         app.dependency_overrides[get_db] = plain_db
 
-    assert sorted([resp_a.status_code, resp_b.status_code]) == [200, 401]
+    assert sorted([resp_a.status_code, resp_b.status_code]) == [200, 200]
     assert resp_a.status_code == 200, resp_a.text
-    assert resp_b.json()["detail"] == "Refresh token revoked or not found"
+    assert resp_b.status_code == 200, resp_b.text
 
     async with factory() as db:
         rows = (
@@ -421,5 +423,7 @@ async def test_concurrent_refreshes_with_one_token_fork_no_session(env):
             .all()
         )
         live = [r for r in rows if r.revoked_at is None]
-        assert len(rows) == 2
+        assert len(rows) == 3
         assert len(live) == 1
+        displaced = [r for r in rows if r.displaced_at is not None]
+        assert len(displaced) == 1

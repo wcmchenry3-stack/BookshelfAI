@@ -660,6 +660,8 @@ class TestCleanupTask:
     async def _run_once(self, **patches):
         """One cleanup run; returns the session the refresh-token delete used."""
         session = AsyncMock()
+        # A Result is synchronous (SQLAlchemy): .scalars().all() on it.
+        session.execute = AsyncMock(return_value=MagicMock())
         factory = MagicMock()
         factory.return_value.__aenter__ = AsyncMock(return_value=session)
         factory.return_value.__aexit__ = AsyncMock(return_value=False)

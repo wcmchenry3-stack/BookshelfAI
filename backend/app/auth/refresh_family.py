@@ -10,23 +10,41 @@ When ``/auth/refresh`` is handed a token whose row was already rotated, it is
 one of four cases (:func:`classify_replay`):
 
 - ``RACE``: the row was still live when this request first read it, so a
-  concurrent request with the same token rotated it while this one waited
-  for the user-row lock. Its twin's response carries the successor; this one
-  gets the plain 401, as before #690. No alert.
+  concurrent request with the same token (its *twin*) rotated it while this
+  one waited for the user-row lock, and the twin's successor is still live
+  and unused. Handled like ``RETRY``: this request gets a fresh pair in the
+  same family and the twin's successor is *displaced*. The two concurrent
+  requests may be one client's double refresh, or a thief with a copy of a
+  live token racing the real client; either way only one of the two pairs
+  stays usable, and the other one's holder trips ``REUSE`` on its next
+  refresh, so a thief who wins the race no longer takes over undetected.
+  If the twin's successor is no longer live and unused, the plain 401 from
+  before #690 (``ENDED``). No alert either way.
 - ``RETRY``: rotated at most ``refresh_reuse_grace_seconds`` ago and the
   successor is still live and unused, so the client most likely never got the
   response (lost on the network, app suspended). The server cannot return the
   same successor (it stores no raw token), so it mints a fresh pair in the
-  same family that *replaces* the successor: the successor is marked rotated
-  (``used_at``) and pointed at the new row, so if the successor does reach
-  someone later, presenting it is reuse.
+  same family and *displaces* the successor.
 - ``ENDED``: within the window, but the successor was revoked without being
   rotated (a logout) or has been deleted. The session is over; plain 401.
-- ``REUSE``: outside the window, or the successor was already rotated (the
-  chain moved on without this token). Someone else holds a copy. The caller
-  revokes every session (``revoke_all_sessions``: the family's rows and the
-  user's access tokens, via a token_version bump), answers 401
-  ``refresh_reused`` and calls :func:`alert_reuse`.
+- ``REUSE``: outside the window; or the successor was already rotated (the
+  chain moved on without this token); or the token itself was displaced; or
+  the successor was displaced (this token already had its one retry). Someone
+  else holds a copy. The caller revokes every session
+  (``revoke_all_sessions``: the family's rows and the user's access tokens,
+  via a token_version bump), answers 401 ``refresh_reused`` and calls
+  :func:`alert_reuse`.
+
+Displacing (``RACE``/``RETRY``) marks the successor rotated (``revoked_at``,
+``used_at``) and ``displaced_at``, and points its ``replaced_by_id`` at the
+new row. The rotated token's own ``replaced_by_id`` keeps pointing at the
+displaced row, so:
+
+- presenting the displaced token is always ``REUSE``, with no grace window
+  (whoever holds it is not the holder of the replacement);
+- presenting the rotated token again finds a displaced successor: ``REUSE``.
+  Each rotated token gets at most one retry, so two holders cannot take turns
+  displacing each other inside the window.
 """
 
 import enum
@@ -47,7 +65,8 @@ logger = logging.getLogger(__name__)
 REFRESH_REUSED = "refresh_reused"
 
 # 401 detail for an unknown or revoked refresh token (unchanged from before
-# #690; also the answer to the loser of a concurrent refresh).
+# #690; also the answer to ENDED, including a concurrent refresh whose twin's
+# successor is no longer live).
 REFRESH_REVOKED_OR_NOT_FOUND = "Refresh token revoked or not found"
 
 REUSE_ALERT_MESSAGE = "Refresh token reuse detected; all sessions revoked"
@@ -97,6 +116,12 @@ def is_live(row: RefreshToken) -> bool:
     return row.revoked_at is None and row.used_at is None
 
 
+def is_displaced(row: RefreshToken) -> bool:
+    """Replaced by a retry (or a won race) of the token before it: never
+    valid again, and presenting it is reuse."""
+    return row.displaced_at is not None
+
+
 def is_rotated(row: RefreshToken) -> bool:
     """Rotated by /auth/refresh: rotation sets both ``revoked_at`` and
     ``used_at``. A row revoked any other way (logout, logout-all, a stale
@@ -108,6 +133,7 @@ def is_rotated(row: RefreshToken) -> bool:
 def classify_replay(
     *,
     seen_rotated: bool,
+    displaced: bool,
     used_at: datetime,
     successor: RefreshToken | None,
     now: datetime,
@@ -116,14 +142,22 @@ def classify_replay(
     """What a rotated token presented again is (see the module docstring).
 
     ``seen_rotated`` is whether the row was already rotated when this request
-    first read it, before waiting for the user-row lock.
+    first read it, before waiting for the user-row lock; ``displaced`` is
+    whether the row itself was displaced by a retry; ``successor`` is the row
+    its ``replaced_by_id`` points at (``None`` if deleted).
     """
+    if displaced:
+        return Replay.REUSE
     if not seen_rotated:
-        return Replay.RACE
+        if successor is not None and is_live(successor):
+            return Replay.RACE
+        return Replay.ENDED
     if now - used_at > timedelta(seconds=grace_seconds):
         return Replay.REUSE
     if successor is None:
         return Replay.ENDED
+    if is_displaced(successor):
+        return Replay.REUSE  # this token already had its one retry
     if is_live(successor):
         return Replay.RETRY
     if not is_rotated(successor):
@@ -176,19 +210,70 @@ def purgeable(now: datetime):
 async def purge_refresh_tokens(db: AsyncSession, now: datetime | None = None) -> int:
     """Delete :func:`purgeable` rows in batches of :data:`PURGE_BATCH_SIZE`,
     at most :data:`PURGE_MAX_BATCHES` per run, committing each batch; return
-    how many were deleted. A row deleted while another row's
-    ``replaced_by_id`` points at it sets that pointer to NULL (FK
-    ``ON DELETE SET NULL``)."""
+    how many were deleted.
+
+    A row deleted while another row's ``replaced_by_id`` points at it sets
+    that pointer to NULL (FK ``ON DELETE SET NULL``), which needs that
+    predecessor's row lock. /auth/refresh locks a replayed row and then its
+    successor; deleting the successor first and then waiting for the
+    predecessor would deadlock with it. So the purge never waits for a lock:
+    it locks its batch ``FOR UPDATE SKIP LOCKED``, then the batch's
+    predecessors the same way, and leaves out (until a later run) any row
+    that is locked or has a predecessor that is."""
     cutoff = now or datetime.now(UTC)
     total = 0
     for _ in range(PURGE_MAX_BATCHES):
-        batch = select(RefreshToken.id).where(purgeable(cutoff)).limit(PURGE_BATCH_SIZE)
-        result = await db.execute(
-            delete(RefreshToken).where(RefreshToken.id.in_(batch))
+        candidates = list(
+            (
+                await db.execute(
+                    select(RefreshToken.id)
+                    .where(purgeable(cutoff))
+                    .limit(PURGE_BATCH_SIZE)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .all()
         )
+        deletable = await _without_locked_predecessors(db, candidates)
+        deleted = 0
+        if deletable:
+            result = await db.execute(
+                delete(RefreshToken).where(RefreshToken.id.in_(deletable))
+            )
+            deleted = result.rowcount or 0
         await db.commit()
-        deleted = result.rowcount or 0
         total += deleted
-        if deleted < PURGE_BATCH_SIZE:
+        if len(candidates) < PURGE_BATCH_SIZE:
             break
     return total
+
+
+async def _without_locked_predecessors(
+    db: AsyncSession, candidates: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    """Lock the rows whose ``replaced_by_id`` is one of ``candidates``
+    (``SKIP LOCKED``) and return the candidates whose predecessors are all
+    locked by this transaction. Rows already locked here (a candidate that
+    is another's predecessor) are not skipped."""
+    if not candidates:
+        return []
+    points_at = RefreshToken.replaced_by_id.in_(candidates)
+    locked = set(
+        (
+            await db.execute(
+                select(RefreshToken.id)
+                .where(points_at)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    predecessors = (
+        await db.execute(
+            select(RefreshToken.id, RefreshToken.replaced_by_id).where(points_at)
+        )
+    ).all()
+    blocked = {succ for pred, succ in predecessors if pred not in locked}
+    return [c for c in candidates if c not in blocked]

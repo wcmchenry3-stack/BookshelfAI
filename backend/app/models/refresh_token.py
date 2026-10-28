@@ -48,3 +48,10 @@ class RefreshToken(Base):
         nullable=True,
         index=True,
     )
+    # Set when a grace-window retry (or a concurrent refresh with the same
+    # token) replaced this row before it was ever used (#690): presenting it
+    # is reuse, with no grace window. revoked_at, used_at and replaced_by_id
+    # are set too. See app/auth/refresh_family.py.
+    displaced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

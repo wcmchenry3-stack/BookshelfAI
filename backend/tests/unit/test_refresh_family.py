@@ -16,14 +16,15 @@ from tests.unit._sentry_capture import captured_events
 NOW = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 
 
-def _row(*, revoked=False, used=False) -> RefreshToken:
+def _row(*, revoked=False, used=False, displaced=False) -> RefreshToken:
     return RefreshToken(
         id=uuid.uuid4(),
         jti=str(uuid.uuid4()),
         user_id=uuid.uuid4(),
         expires_at=NOW + timedelta(days=7),
-        revoked_at=NOW if revoked else None,
-        used_at=NOW if used else None,
+        revoked_at=NOW if revoked or displaced else None,
+        used_at=NOW if used or displaced else None,
+        displaced_at=NOW if displaced else None,
     )
 
 
@@ -57,21 +58,39 @@ class TestRows:
         assert not rf.is_live(_row(revoked=True))
         assert not rf.is_live(_row(used=True))
 
+    def test_displaced(self):
+        displaced = _row(displaced=True)
+        assert rf.is_displaced(displaced)
+        assert rf.is_rotated(displaced) and not rf.is_live(displaced)
+        assert not rf.is_displaced(_row(revoked=True, used=True))
+        assert not rf.is_displaced(_row())
+
 
 class TestClassifyReplay:
-    def _classify(self, *, seen=True, age=5, successor=None, grace=30):
+    def _classify(self, *, seen=True, displaced=False, age=5, successor=None, grace=30):
         return classify_replay(
             seen_rotated=seen,
+            displaced=displaced,
             used_at=NOW - timedelta(seconds=age),
             successor=successor,
             now=NOW,
             grace_seconds=grace,
         )
 
-    def test_rotated_while_waiting_is_a_race(self):
+    def test_rotated_while_waiting_with_live_successor_is_a_race(self):
         assert self._classify(seen=False, successor=_row()) is Replay.RACE
         # even long after: what matters is the request saw it live
-        assert self._classify(seen=False, age=3600) is Replay.RACE
+        assert self._classify(seen=False, age=3600, successor=_row()) is Replay.RACE
+
+    def test_race_whose_twin_successor_is_gone_is_ended(self):
+        """No live, unused successor to displace: the plain 401 (no alert)."""
+        for successor in (
+            None,
+            _row(revoked=True),
+            _row(revoked=True, used=True),
+            _row(displaced=True),  # a third concurrent request
+        ):
+            assert self._classify(seen=False, successor=successor) is Replay.ENDED
 
     def test_live_successor_within_window_is_a_retry(self):
         assert self._classify(successor=_row()) is Replay.RETRY
@@ -84,6 +103,22 @@ class TestClassifyReplay:
     def test_rotated_successor_is_reuse_within_window(self):
         rotated = _row(revoked=True, used=True)
         assert self._classify(successor=rotated) is Replay.REUSE
+
+    def test_displaced_successor_is_reuse_within_window(self):
+        """The token already had its one retry (or won-race replacement)."""
+        assert self._classify(age=0, successor=_row(displaced=True)) is Replay.REUSE
+
+    def test_displaced_token_is_always_reuse(self):
+        """No grace window, and even when this request saw it live (its
+        holder's refresh was in flight when a retry displaced it)."""
+        for seen in (True, False):
+            for successor in (None, _row(), _row(revoked=True)):
+                assert (
+                    self._classify(
+                        seen=seen, displaced=True, age=0, successor=successor
+                    )
+                    is Replay.REUSE
+                )
 
     def test_logged_out_or_missing_successor_within_window_is_ended(self):
         assert self._classify(successor=_row(revoked=True)) is Replay.ENDED
@@ -139,28 +174,106 @@ class TestPurge:
         assert " OR " in sql
 
     @staticmethod
-    def _db(rowcounts):
+    def _db(batches, *, predecessors=None, locked_predecessors=None):
+        """A session whose purge statements return, per batch, the candidate
+        ids in ``batches`` (SELECT ... FOR UPDATE SKIP LOCKED), the
+        predecessors pointing at them (``predecessors``: pred id -> candidate
+        id), of which ``locked_predecessors`` are the ones this transaction
+        could lock, and a DELETE rowcount equal to the ids it was given."""
+        predecessors = predecessors or {}
+        locked = (
+            set(predecessors) if locked_predecessors is None else locked_predecessors
+        )
+        batches = list(batches)
         db = MagicMock()
-        db.execute = AsyncMock(side_effect=[MagicMock(rowcount=n) for n in rowcounts])
+        db.statements = []
+        db.deleted = []
+
+        async def execute(stmt):
+            sql = str(stmt.compile(dialect=postgresql.dialect()))
+            db.statements.append(sql)
+            result = MagicMock()
+            if sql.startswith("DELETE"):
+                ids = list(stmt.whereclause.right.value)
+                db.deleted.append(ids)
+                result.rowcount = len(ids)
+            elif "replaced_by_id IN" in sql and "FOR UPDATE" in sql:
+                result.scalars.return_value.all.return_value = sorted(locked)
+            elif "replaced_by_id IN" in sql:
+                result.all.return_value = list(predecessors.items())
+            else:
+                result.scalars.return_value.all.return_value = batches.pop(0)
+            return result
+
+        db.execute = AsyncMock(side_effect=execute)
         db.commit = AsyncMock()
         return db
 
+    @staticmethod
+    def _ids(n):
+        return [uuid.uuid4() for _ in range(n)]
+
     async def test_stops_after_a_short_batch(self):
-        db = self._db([rf.PURGE_BATCH_SIZE, 7])
-        assert await rf.purge_refresh_tokens(db, NOW) == rf.PURGE_BATCH_SIZE + 7
-        assert db.execute.await_count == 2
+        full, short = self._ids(3), self._ids(2)
+        with patch.object(rf, "PURGE_BATCH_SIZE", 3):
+            db = self._db([full, short])
+            assert await rf.purge_refresh_tokens(db, NOW) == 5
+        assert db.deleted == [full, short]
         assert db.commit.await_count == 2
-        stmt = db.execute.await_args_list[0].args[0]
-        sql = str(stmt.compile(dialect=postgresql.dialect()))
-        assert sql.startswith("DELETE FROM refresh_tokens")
-        assert "LIMIT" in sql
+        first = db.statements[0]
+        assert first.startswith("SELECT refresh_tokens.id")
+        assert "LIMIT" in first and first.endswith("FOR UPDATE SKIP LOCKED")
 
     async def test_bounded_number_of_batches(self):
-        db = self._db([rf.PURGE_BATCH_SIZE] * (rf.PURGE_MAX_BATCHES + 5))
-        total = await rf.purge_refresh_tokens(db, NOW)
-        assert db.execute.await_count == rf.PURGE_MAX_BATCHES
-        assert total == rf.PURGE_BATCH_SIZE * rf.PURGE_MAX_BATCHES
+        with patch.object(rf, "PURGE_BATCH_SIZE", 2):
+            db = self._db([self._ids(2) for _ in range(rf.PURGE_MAX_BATCHES + 5)])
+            total = await rf.purge_refresh_tokens(db, NOW)
+        assert len(db.deleted) == rf.PURGE_MAX_BATCHES
+        assert total == 2 * rf.PURGE_MAX_BATCHES
+
+    async def test_nothing_to_purge(self):
+        db = self._db([[]])
+        assert await rf.purge_refresh_tokens(db, NOW) == 0
+        assert db.deleted == []
+        assert db.commit.await_count == 1
 
     async def test_none_rowcount_counts_as_zero(self):
-        db = self._db([None])
+        db = self._db([self._ids(1)])
+        db.execute.side_effect, inner = None, db.execute.side_effect
+
+        async def execute(stmt):
+            result = await inner(stmt)
+            result.rowcount = None
+            return result
+
+        db.execute.side_effect = execute
         assert await rf.purge_refresh_tokens(db, NOW) == 0
+
+    async def test_locks_predecessors_and_skips_rows_whose_predecessor_is_locked(
+        self,
+    ):
+        """#690 review C1: deleting a row nulls its predecessor's
+        replaced_by_id, which needs the predecessor's lock; a refresh replaying
+        that predecessor holds it and waits for the row being deleted. The
+        purge locks predecessors SKIP LOCKED and leaves out rows whose
+        predecessor someone else holds, instead of waiting (deadlock)."""
+        free, blocked, no_pred = self._ids(3)
+        free_pred, busy_pred = self._ids(2)
+        db = self._db(
+            [[free, blocked, no_pred]],
+            predecessors={free_pred: free, busy_pred: blocked},
+            locked_predecessors={free_pred},
+        )
+        assert await rf.purge_refresh_tokens(db, NOW) == 2
+        assert db.deleted == [[free, no_pred]]
+        lock_preds = db.statements[1]
+        assert "refresh_tokens.replaced_by_id IN" in lock_preds
+        assert lock_preds.endswith("FOR UPDATE SKIP LOCKED")
+
+    async def test_all_candidates_blocked_deletes_nothing(self):
+        (row,) = self._ids(1)
+        (pred,) = self._ids(1)
+        db = self._db([[row]], predecessors={pred: row}, locked_predecessors=set())
+        assert await rf.purge_refresh_tokens(db, NOW) == 0
+        assert db.deleted == []
+        assert db.commit.await_count == 1
