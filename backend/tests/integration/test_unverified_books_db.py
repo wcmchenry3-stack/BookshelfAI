@@ -175,7 +175,7 @@ async def test_other_user_cannot_update_or_delete(env):
         assert exc.value.status_code == 404
 
 
-async def test_owner_updates_then_deletes_both_rows(env):
+async def test_owner_updates_then_trashes_both_rows(env):
     factory, make_user, _ = env
     alice = await make_user()
     created = await _add(factory, alice)
@@ -195,9 +195,13 @@ async def test_owner_updates_then_deletes_both_rows(env):
         await user_books_api.delete_user_book.__wrapped__(
             request=_req(), user_book_id=created.id, current_user=alice, db=db
         )
+    # #683 replaces #616's hard delete: both rows go to the trash together.
     async with factory() as db:
-        assert await db.get(UserBook, created.id) is None
-        assert await db.get(UserCustomBook, created.book.id) is None
+        entry = await db.get(UserBook, created.id)
+        custom = await db.get(UserCustomBook, created.book.id)
+        assert entry.deleted_at is not None
+        assert custom.deleted_at == entry.deleted_at
+    assert await _list(factory, alice) == []
 
 
 async def test_duplicate_and_isbn_duplicate_refused(env):
@@ -402,9 +406,13 @@ async def test_account_deletion_removes_entries(env):
     async with factory() as db:
         await db.execute(delete(User).where(User.id == alice.id))
         await db.commit()
+    # #683 replaces #616's hard delete: both rows go to the trash together.
     async with factory() as db:
-        assert await db.get(UserBook, created.id) is None
-        assert await db.get(UserCustomBook, created.book.id) is None
+        entry = await db.get(UserBook, created.id)
+        custom = await db.get(UserCustomBook, created.book.id)
+        assert entry.deleted_at is not None
+        assert custom.deleted_at == entry.deleted_at
+    assert await _list(factory, alice) == []
 
 
 # ── Migration 0016 ───────────────────────────────────────────────────────────

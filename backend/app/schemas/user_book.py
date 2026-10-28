@@ -3,12 +3,20 @@ from __future__ import annotations
 import re
 import unicodedata
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.core.catalog_token import CATALOG_TOKEN_MAX_LENGTH
+from app.core.config import settings
 from app.core.url_validator import validate_safe_url
 from app.models.user_book import (
     AUTHOR_OVERRIDE_MAX,
@@ -335,3 +343,17 @@ class UserBookRead(BaseModel):
             "unverified": True,
             "unverified_isbn_13": custom.isbn_13,
         }
+
+
+class TrashedUserBookRead(UserBookRead):
+    """Returned by GET /user-books/trash (#683): a library entry in the
+    trash, read exactly like a live one, plus when it was deleted and when
+    the daily cleanup may purge it (``deleted_at`` +
+    ``settings.trash_retention_days``)."""
+
+    deleted_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def purge_after(self) -> datetime:
+        return self.deleted_at + timedelta(days=settings.trash_retention_days)

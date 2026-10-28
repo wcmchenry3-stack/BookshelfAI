@@ -325,6 +325,12 @@ class Settings(BaseSettings):
     # (UNVERIFIED_BOOKS_PER_USER_MAX); at the cap, POST /wishlist/unverified
     # answers 409 unverified_limit_reached.
     unverified_books_per_user_max: int = Field(default=200, ge=1, le=10_000)
+    # Trash window for deleted library entries (#683): DELETE /user-books/{id}
+    # moves an entry to the trash, it can be restored until the daily cleanup
+    # purges it, which happens once it was trashed more than this many days
+    # ago. 30 days is the owner's decision (2026-10-26). Env-overridable
+    # (TRASH_RETENTION_DAYS).
+    trash_retention_days: int = Field(default=30, ge=1, le=365)
     # Allowlist of Host header values accepted when settings.is_hardened is True
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]

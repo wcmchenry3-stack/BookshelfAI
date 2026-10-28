@@ -15,9 +15,10 @@ provider data the server itself produced (#602):
   (and an existing Edition of that Book), else it is refused with
   :class:`CatalogTokenInvalidError` (422 ``catalog_token_invalid``).
 
-A library holds one entry per title (``uq_user_books_user_book``), so a book
-the user already has is refused with :class:`AlreadyOwnedError` (409, #587)
-and no row is created or changed: the same edition (the same ISBN-13, an
+A library holds one live entry per title (``uq_user_books_user_book_live``;
+an entry in the trash does not count, so a trashed book can be added again
+as a new entry, #683), so a book the user already has is refused with
+:class:`AlreadyOwnedError` (409, #587) and no row is created or changed: the same edition (the same ISBN-13, an
 ISBN-10 normalised, or the same ``edition_id``) is ``owned_same_edition``,
 another edition of the work ``owned_other_edition``, and a match where one
 side has no ISBN ``owned_edition_unknown``. The work matches on the resolved
@@ -267,7 +268,7 @@ class WishlistService:
         Library work or Google Books volume (the scan's library check, so the
         409 matches what the scan showed), or holding this edition (``isbn``,
         normalised ISBN-13, whatever book it belongs to). One query; a
-        concurrent add of the same book (``uq_user_books_user_book``) is
+        concurrent add of the same book (``uq_user_books_user_book_live``) is
         refused the same way."""
         await self._refuse_if_owned(
             db, user_id, book_id, edition_id, isbn, work_id, volume_id

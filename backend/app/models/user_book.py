@@ -5,10 +5,12 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -34,7 +36,21 @@ OVERRIDE_COLUMNS = {
 class UserBook(Base):
     __tablename__ = "user_books"
     __table_args__ = (
-        UniqueConstraint("user_id", "book_id", name="uq_user_books_user_book"),
+        # One live entry per user and book (#683): an entry in the trash
+        # (``deleted_at`` set) does not block adding the book again.
+        Index(
+            "uq_user_books_user_book_live",
+            "user_id",
+            "book_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # The trash list and the purge read trashed rows only (#683).
+        Index(
+            "ix_user_books_deleted_at",
+            "deleted_at",
+            postgresql_where=text("deleted_at IS NOT NULL"),
+        ),
         # One unverified entry per library row (#616).
         UniqueConstraint("custom_book_id", name="uq_user_books_custom_book"),
         # Exactly one of a catalog book or the user's own unverified entry.
@@ -123,6 +139,14 @@ class UserBook(Base):
     title_override: Mapped[str | None] = mapped_column(String, nullable=True)
     author_override: Mapped[str | None] = mapped_column(String, nullable=True)
     cover_url_override: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Soft delete (#683): set by DELETE /user-books/{id}, cleared by
+    # POST /user-books/{id}/restore; the daily cleanup hard-deletes rows
+    # trashed more than settings.trash_retention_days ago. Every library
+    # query except the trash, restore and purge must filter on
+    # ``UserBook.live()``.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -139,6 +163,11 @@ class UserBook(Base):
     custom_book: Mapped["UserCustomBook | None"] = relationship(  # noqa: F821
         "UserCustomBook"
     )
+
+    @classmethod
+    def live(cls):
+        """The filter for entries not in the trash (#683)."""
+        return cls.deleted_at.is_(None)
 
     @property
     def unverified(self) -> bool:

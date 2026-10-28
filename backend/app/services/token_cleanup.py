@@ -24,7 +24,11 @@ The same daily run also purges, in bounded batches:
 - uncharged zero-result enhanced scans (``ai_enhanced_zero_results``) older
   than 30 days (app/ai/quota.py, #533);
 - per-user scan records (``scan_records``) older than
-  ``scan_records.retention_days`` (default 30) (app/ai/scan_records.py, #585).
+  ``scan_records.retention_days`` (default 30) (app/ai/scan_records.py, #585);
+- library entries in the trash (``user_books`` with ``deleted_at`` set, and
+  their ``user_custom_books``) trashed more than ``TRASH_RETENTION_DAYS``
+  (default 30) days ago, under a Postgres advisory lock so two instances
+  never run it at once (app/services/trash.py, #683).
 
 The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
@@ -53,6 +57,7 @@ from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
 from app.auth.refresh_family import purge_refresh_tokens
 from app.core.database import AsyncSessionLocal
+from app.services.trash import purge_trash
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +187,12 @@ async def _purge_refresh_tokens() -> None:
         )
 
 
+async def _purge_trash() -> None:
+    async with AsyncSessionLocal() as db:
+        purged = await purge_trash(db)
+        logger.info("token_cleanup: purged %d trashed library entr(ies)", purged)
+
+
 async def cleanup_expired_tokens() -> None:
     """Long-running coroutine; meant to be wrapped in asyncio.create_task()."""
     await asyncio.sleep(_INITIAL_DELAY_SECONDS)
@@ -193,6 +204,7 @@ async def cleanup_expired_tokens() -> None:
         await _run_step(_purge_spend, "ai spend")
         await _run_step(_purge_zero_results, "enhanced zero results")
         await _run_step(_purge_scan_records, "scan records")
+        await _run_step(_purge_trash, "trash")
         await _run_step(_purge_refresh_tokens)
 
         await asyncio.sleep(_INTERVAL_SECONDS)
