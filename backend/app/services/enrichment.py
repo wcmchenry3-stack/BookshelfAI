@@ -237,7 +237,9 @@ _HEAD = re.compile(r"\s*[,;:(\[–—]|\s+-\s+")
 # A rest of a record's title that only dates the book: "1848-1861", "1990".
 _DATES = re.compile(r"^\d{4}(?: \d{4})*$")
 # Name suffixes skipped when taking a surname ("Martin Luther King Jr.").
-_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "phd", "md"})
+_NAME_SUFFIXES = frozenset(
+    {"jr", "sr", "ii", "iii", "iv", "phd", "md", "pere", "père", "fils"}
+)
 
 
 def _head_and_rest(value: object) -> tuple[str, str]:
@@ -250,17 +252,28 @@ def _head_and_rest(value: object) -> tuple[str, str]:
     return normalise_title(parts[0]), rest
 
 
-# A (normalised) subtitle that tells volumes of a series apart: a marker
-# word ("Book Two", "Vol 3", "Tome Two", "Episode Four", "No 5"; "#2" is
-# "2" once normalised), a standalone 1-3 digit number, or a whole-token
-# Roman numeral ("II", "XIV"). A 4-digit year ("Since 1945") or an ordinal
-# ("The Calamitous 14th Century") is not one.
+# A (normalised) subtitle that tells volumes of a series apart. Only a
+# volume *position* counts: a marker word followed by a volume number
+# ("Book Two", "Vol 3", "Part II", "Episode IV A New Hope", "Dune
+# Chronicles Book 1"), a subtitle that is only a volume number ("II", "2";
+# "#2" is "2" once normalised), or a trailing 1-3 digit number ("Dune
+# Chronicles 1"). A marker word elsewhere ("A Memoir in Books", "Being the
+# First Part of the Lord of the Rings", "How to Say No"), a numeral inside a
+# phrase ("A World War II Story", "Pope John Paul II", "12 More Rules"), a
+# 4-digit year ("Since 1945") or an ordinal ("14th Century") is not one.
+_ROMAN = r"(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})"
+_NUM_WORDS = (
+    r"two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|first|second"
+    r"|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth"
+    r"|final|last"
+)
+_NUM = rf"(?:\d{{1,3}}|{_ROMAN}|{_NUM_WORDS}|one)"
+_NUM_NOT_ONE = rf"(?:\d{{1,3}}|{_ROMAN}|{_NUM_WORDS})"
 _VOLUME_MARKER = re.compile(
-    r"(?:^|\s)(?:"
-    r"(?:books?|volumes?|vols?|parts?|tomes?|episodes?|pt|bk|no|number)"
-    r"|\d{1,3}"
-    r"|(?=[ivx]{2,}(?:\s|$))x{0,3}(?:ix|iv|v?i{0,3})|v|x"
-    r")(?=\s|$)"
+    rf"(?:^|\s)(?:books?|volumes?|vols?|parts?|tomes?|episodes?|pt|bk)\s+{_NUM}(?=\s|$)"
+    rf"|(?:^|\s)(?:no|number)\s+{_NUM_NOT_ONE}(?=\s|$)"
+    rf"|^{_NUM}$"
+    r"|\s\d{1,3}$"
 )
 
 
@@ -286,6 +299,18 @@ def _fold(value: object) -> object:
     return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
 
 
+def _listed_same_book(reading_title: object, record_title: object) -> bool:
+    """For a record that lists the scanned ISBN: the same main title, unless
+    the record's subtitle is a volume marker and the reading carries a
+    different subtitle or volume ("Saga: Book One" vs "Saga: Book Two").
+    The listed ISBN is trusted otherwise, whatever the subtitles say."""
+    main_r, sub_r = _split_title(_fold(reading_title))
+    main_b, sub_b = _split_title(_fold(record_title))
+    if not main_r or main_r != main_b:
+        return False
+    return not (_is_volume_marker(sub_b) and sub_r and sub_r != sub_b)
+
+
 def _one_sided_subtitle(a: object, b: object) -> bool:
     """Whether two titles have the same main title and at most one of them a
     subtitle, which is not a volume marker ("Sapiens" and "Sapiens: A Brief
@@ -297,8 +322,9 @@ def _one_sided_subtitle(a: object, b: object) -> bool:
     return not _is_volume_marker(sub_a or sub_b)
 
 
-# (initials of the given names, surname, last two words joined).
-_NameParts = tuple[list[str], str, str]
+# (initials of the given names, surname, last two words joined, the
+# second-to-last word of a name of 3 or more words).
+_NameParts = tuple[list[str], str, str, str]
 
 
 # Company suffixes: "Lonely Planet Publications, Inc." is not "Inc. ...".
@@ -328,9 +354,10 @@ def _name_parts(name: object) -> _NameParts:
             name = f"{first} {last}"
     words = [w for w in _normalise(name).split() if not _suffix_or_date(w)]
     if not words or words == ["unknown"]:
-        return [], "", ""
+        return [], "", "", ""
     joined = "".join(words[-2:]) if len(words) > 1 else ""
-    return [w[0] for w in words[:-1]], words[-1], joined
+    penult = words[-2] if len(words) >= 3 else ""
+    return [w[0] for w in words[:-1]], words[-1], joined, penult
 
 
 def _names_agree(a: _NameParts, b: _NameParts) -> bool:
@@ -338,8 +365,12 @@ def _names_agree(a: _NameParts, b: _NameParts) -> bool:
     surname: "Le Guin" and "LeGuin") and, when both give a first name or
     initial, the first initial of one among the other's initials ("David
     Potter" and "David Morris Potter", "M. L. King" and "Martin Luther King
-    Jr.", but not "Frank Herbert" and "Brian Herbert")."""
-    (a_initials, a_surname, a_joined), (b_initials, b_surname, b_joined) = a, b
+    Jr.", but not "Frank Herbert" and "Brian Herbert"). A compound surname
+    also agrees with its first part: one side's surname may be the other's
+    second-to-last word when that name has 3 or more words ("Miguel de
+    Cervantes" and "Miguel de Cervantes Saavedra")."""
+    a_initials, a_surname, a_joined, a_penult = a
+    b_initials, b_surname, b_joined, b_penult = b
     if not a_surname or not b_surname:
         return False
     if a_surname != b_surname:
@@ -347,6 +378,10 @@ def _names_agree(a: _NameParts, b: _NameParts) -> bool:
             a_initials = a_initials[:-1]  # "Le" is part of the surname
         elif a_surname == b_joined:
             b_initials = b_initials[:-1]
+        elif a_surname == b_penult:
+            b_initials = b_initials[:-1]  # "Cervantes" is part of the surname
+        elif b_surname == a_penult:
+            a_initials = a_initials[:-1]
         else:
             return False
     if not a_initials or not b_initials:
@@ -589,12 +624,11 @@ def _isbn_record(
     """The record an ISBN lookup found, when it may be used (#743). Either
     it fits the reading (``score``), or it lists the ISBN and has a usable
     title (read in the provider's own shape, ``parts``) and either the
-    reading has no title, or the main titles are the same with a subtitle
-    on at most one side that is not a volume marker
-    (:func:`_one_sided_subtitle`: "Sapiens" and "Sapiens: A Brief History
-    of Humankind", never "Saga: Book One" and "Saga: Book Two") and the
-    record does not name another author. Otherwise None (the provider is
-    then searched by title).
+    reading has no title, or the main titles are the same and the two do
+    not name different volumes (:func:`_listed_same_book`: "Sapiens" and
+    "Sapiens: A Brief History of Humankind", never "Saga: Book One" and
+    "Saga: Book Two") and the record does not name another author.
+    Otherwise None (the provider is then searched by title).
 
     A record that lists the ISBN but whose main title differs from the
     reading's (a translated or paraphrased reading, say) is deliberately not
@@ -608,7 +642,7 @@ def _isbn_record(
     if display and candidate.isbn_13 in isbns(found):
         if not _split_title(candidate.title)[0]:
             return found
-        if _one_sided_subtitle(candidate.title, full) and not _author_contradicted(
+        if _listed_same_book(candidate.title, full) and not _author_contradicted(
             candidate, authors
         ):
             return found
@@ -674,6 +708,13 @@ class EnrichmentService:
                 await asyncio.gather(*pending, return_exceptions=True)
             for candidate, task in zip(chosen, tasks, strict=True):
                 if task in pending:
+                    results.append(self._build(candidate, None, None))
+                elif task.cancelled():
+                    # A provider raised CancelledError while this request was
+                    # not cancelled (a real cancel never reaches here): a
+                    # lookup failure, not a failed scan.
+                    logger.warning("enrichment: a candidate's lookup was cancelled")
+                    _note_failure("cancelled")
                     results.append(self._build(candidate, None, None))
                 elif task.exception() is not None:
                     results.append(task.exception())
@@ -792,9 +833,18 @@ class EnrichmentService:
         # The service already picked the best record; check it again here,
         # so nothing that does not fit the reading is ever used.
         best = found if isinstance(found, dict) and score(found) > 0 else None
-        if weak is not None and (best is None or score(best) <= score(weak)):
-            return weak
-        return best
+        if weak is None or best is None:
+            return weak if best is None else best
+        if score(weak) != score(best):
+            return weak if score(weak) > score(best) else best
+        # A tie: the record that lists one of the candidate's ISBNs, else the
+        # title-search record over a keyword ISBN hit that lists none.
+        wanted = {isbn_13, (candidate.isbn_10 or "").upper()} - {None, ""}
+
+        def lists(record: dict) -> bool:
+            return bool(wanted & {i.upper() for i in isbns(record)})
+
+        return weak if lists(weak) and not lists(best) else best
 
     async def _enrich_one(self, candidate: BookCandidate) -> EnrichedBook:
         # "978-0-06-231609-7" is looked up, and confirmed, as its digits.
