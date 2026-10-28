@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import DateTime, Index, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -10,6 +10,14 @@ from app.core.database import Base
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # One row per mailbox, ignoring case (#705, migration 0022), so a
+        # concurrent case-variant first sign-in loses with a unique violation
+        # (app/auth/identity.py turns it into 409 account_conflict). The
+        # case-sensitive unique constraint on ``email`` below is kept: the
+        # index implies it.
+        Index("uq_users_email_lower", text("lower(email)"), unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

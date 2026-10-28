@@ -9,6 +9,16 @@ from app.core.config import settings
 # whose tv differs from the user's current token_version is revoked.
 TOKEN_VERSION_CLAIM = "tv"
 
+# Legacy-token grace (#725). Tokens issued before #689 have no tv claim. A
+# legacy refresh token is read as tv=0 (every user's token_version started at
+# 0, migration 0021), so it works only until the user's first logout-all.
+# TODO(#735): remove the legacy path on or after 2026-11-04. #689 reached
+# production (and the dev API) on 2026-10-27, so no token without tv has been
+# issued since; legacy refresh tokens live REFRESH_TOKEN_EXPIRY_DAYS (7) and
+# have all expired by 2026-11-03 04:00 UTC, after which this path accepts
+# nothing.
+LEGACY_TOKEN_VERSION = 0
+
 
 def access_token_ttl_seconds() -> int:
     """Lifetime of an access token in seconds (the ``expires_in`` we return)."""
@@ -46,6 +56,12 @@ def create_refresh_token(user_id: str, token_version: int) -> tuple[str, str]:
     }
     token = jwt.encode(payload, settings.jwt_private_key, algorithm="RS256")
     return token, jti
+
+
+def has_token_version_claim(payload: dict) -> bool:
+    """Whether the token carries a ``tv`` claim at all (False for tokens
+    issued before #689). A present but malformed tv still counts as present."""
+    return TOKEN_VERSION_CLAIM in payload
 
 
 def token_version_claim(payload: dict) -> int | None:
