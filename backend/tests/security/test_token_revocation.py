@@ -1,12 +1,18 @@
 """Access-token revocation via users.token_version (#689).
 
 - Every access token carries ``tv``; ``get_current_user`` compares it with the
-  user row it already loads. A missing, malformed or stale ``tv`` is 401
-  ``token_revoked``; a ``tv`` edited without re-signing fails the signature.
+  user row it already loads. A malformed or stale ``tv`` is 401
+  ``token_revoked``; a missing ``tv`` (issued before #689) is 401
+  ``token_outdated`` so the client refreshes (#725); a ``tv`` edited without
+  re-signing fails the signature.
 - ``POST /auth/logout-all`` bumps token_version and revokes every refresh
   token, so neither the old access token nor any old refresh token works.
 - A refresh token whose ``tv`` is stale (one minted by a refresh that raced the
   bump) cannot mint tokens either.
+- Release upgrade (#725): a refresh token without ``tv`` (issued before #689)
+  is read as tv=0, so it rotates into a tv-bearing pair while the user has
+  never bumped token_version, and is rejected after any bump. It still goes
+  through the jti, revoked_at and expiry checks.
 
 Database-free: a small stateful fake session stands in for Postgres. The same
 flows run against real Postgres in tests/integration/test_token_version_db.py.
@@ -194,6 +200,24 @@ def _access_payload(user: User, **overrides) -> dict:
     return {k: v for k, v in payload.items() if v is not _DROP}
 
 
+def _legacy_refresh(user: User, jti, private_key: str, **overrides) -> str:
+    """A refresh token as issued before #689: no tv claim."""
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user.id),
+        "iat": now,
+        "exp": now + timedelta(days=1),
+        "type": "refresh",
+        "jti": jti,
+    }
+    payload.update(overrides)
+    return _sign({k: v for k, v in payload.items() if v is not _DROP}, private_key)
+
+
+def _decode(token: str) -> dict:
+    return jwt.decode(token, settings.jwt_public_key, algorithms=["RS256"])
+
+
 class TestAccessTokenRevocation:
     def test_tokens_carry_tv_and_15_minute_ttl(self, db, client):
         tokens = _sign_in(client)
@@ -226,12 +250,14 @@ class TestAccessTokenRevocation:
         # The check reuses the user row the dependency already loads.
         assert (db.gets, db.executes) == baseline == (1, 0)
 
-    def test_token_without_tv_is_revoked(self, db, client, _keys):
+    def test_token_without_tv_is_outdated_not_revoked(self, db, client, _keys):
+        """#725: a pre-#689 access token gets a plain 401 so the client
+        refreshes instead of signing out."""
         _sign_in(client)
         token = _sign(_access_payload(db.user, tv=_DROP), _keys[0])
         resp = client.get("/auth/me", headers=_bearer(token))
         assert resp.status_code == 401
-        assert resp.json()["detail"] == "token_revoked"
+        assert resp.json()["detail"] == "token_outdated"
 
     @pytest.mark.parametrize("bad", ["0", None, True, False, 0.0, [0], {"v": 0}])
     def test_malformed_tv_is_revoked(self, db, client, _keys, bad):
@@ -324,20 +350,15 @@ class TestLogoutAll:
         assert tokens["refresh_token"].split(".")[1] not in caplog.text
         assert db.user.email not in caplog.text
 
-    def test_refresh_token_without_tv_cannot_refresh(self, db, client, _keys, caplog):
+    def test_refresh_token_without_tv_cannot_refresh_after_a_bump(
+        self, db, client, _keys, caplog
+    ):
+        """A pre-#689 refresh token is read as tv=0 (#725): once the user's
+        token_version is bumped it is revoked, even if its row is live."""
         _sign_in(client)
         row = db.tokens[0]
-        now = datetime.now(UTC)
-        legacy = _sign(
-            {
-                "sub": str(db.user.id),
-                "iat": now,
-                "exp": now + timedelta(days=1),
-                "type": "refresh",
-                "jti": row.jti,
-            },
-            _keys[0],
-        )
+        db.user.token_version = 1  # bump; the row stays unrevoked (the race)
+        legacy = _legacy_refresh(db.user, row.jti, _keys[0])
         with caplog.at_level("WARNING", logger="app.api.auth"):
             resp = client.post("/auth/refresh", json={"refresh_token": legacy})
         assert resp.status_code == 401
@@ -410,3 +431,178 @@ class TestLogoutAll:
             db.user.token_version = 0
         assert codes[:5] == [204] * 5
         assert codes[5] == 429
+
+
+class TestReleaseUpgrade:
+    """#725: shipping #689 must not sign everyone out. Tokens issued before
+    #689 carry no tv; the user keeps their session through one refresh."""
+
+    def test_legacy_refresh_for_unbumped_user_returns_tv_pair(
+        self, db, client, _keys, caplog
+    ):
+        _sign_in(client)
+        row = db.tokens[0]
+        legacy = _legacy_refresh(db.user, row.jti, _keys[0])
+        with caplog.at_level("INFO", logger="app.api.auth"):
+            resp = client.post("/auth/refresh", json={"refresh_token": legacy})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert _decode(body["access_token"])["tv"] == 0
+        assert _decode(body["refresh_token"])["tv"] == 0
+        # Rotated like any refresh: old row revoked, one new live row.
+        assert row.revoked_at is not None
+        assert len(db.tokens) == 2 and db.tokens[1].revoked_at is None
+        assert (
+            client.get("/auth/me", headers=_bearer(body["access_token"])).status_code
+            == 200
+        )
+        # Logged with the user id only; no token value or email.
+        (record,) = [
+            r
+            for r in caplog.records
+            if r.name == "app.api.auth" and "legacy" in r.getMessage()
+        ]
+        assert record.levelname == "INFO"
+        assert record.getMessage() == (
+            f"refresh accepted legacy token without tv (user_id={db.user.id})"
+        )
+        for value in (legacy, body["access_token"], body["refresh_token"]):
+            assert value not in caplog.text
+            assert value.split(".")[1] not in caplog.text
+        assert db.user.email not in caplog.text
+
+    def test_legacy_access_token_refreshes_then_works(self, db, client, _keys):
+        """The whole upgrade: the old access token gets a plain 401 (not
+        token_revoked), the old refresh token mints a tv pair, and the new
+        access token is accepted."""
+        _sign_in(client)
+        old_access = _sign(_access_payload(db.user, tv=_DROP), _keys[0])
+        me = client.get("/auth/me", headers=_bearer(old_access))
+        assert me.status_code == 401
+        assert me.json()["detail"] != "token_revoked"
+
+        legacy = _legacy_refresh(db.user, db.tokens[0].jti, _keys[0])
+        resp = client.post("/auth/refresh", json={"refresh_token": legacy})
+        assert resp.status_code == 200, resp.text
+        me = client.get("/auth/me", headers=_bearer(resp.json()["access_token"]))
+        assert me.status_code == 200
+
+    def test_legacy_refresh_cannot_be_replayed(self, db, client, _keys):
+        _sign_in(client)
+        legacy = _legacy_refresh(db.user, db.tokens[0].jti, _keys[0])
+        first = client.post("/auth/refresh", json={"refresh_token": legacy})
+        assert first.status_code == 200, first.text
+        again = client.post("/auth/refresh", json={"refresh_token": legacy})
+        assert again.status_code == 401
+        assert again.json()["detail"] == "Refresh token revoked or not found"
+        assert len(db.tokens) == 2  # the replay minted nothing
+
+    def test_legacy_refresh_after_logout_all_is_rejected(self, db, client, _keys):
+        tokens = _sign_in(client)
+        legacy = _legacy_refresh(db.user, db.tokens[0].jti, _keys[0])
+        out = client.post("/auth/logout-all", headers=_bearer(tokens["access_token"]))
+        assert out.status_code == 204
+        assert db.user.token_version == 1
+        resp = client.post("/auth/refresh", json={"refresh_token": legacy})
+        assert resp.status_code == 401
+        assert len(db.tokens) == 1
+
+    @pytest.mark.parametrize("version", [1, 2, 7])
+    def test_legacy_refresh_with_live_row_after_bump_is_revoked(
+        self, db, client, _keys, version
+    ):
+        """Even with its row left unrevoked, a legacy token stops working
+        once token_version moves off 0."""
+        _sign_in(client)
+        row = db.tokens[0]
+        db.user.token_version = version
+        legacy = _legacy_refresh(db.user, row.jti, _keys[0])
+        resp = client.post("/auth/refresh", json={"refresh_token": legacy})
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "token_revoked"
+        assert row.revoked_at is not None
+        assert len(db.tokens) == 1
+
+
+class TestLegacyPathKeepsChecks:
+    """#725: the legacy branch only replaces the tv comparison; it cannot
+    skip any other refresh check."""
+
+    def _post(self, client, token):
+        return client.post("/auth/refresh", json={"refresh_token": token})
+
+    def test_unknown_jti_is_rejected(self, db, client, _keys):
+        _sign_in(client)
+        token = _legacy_refresh(db.user, str(uuid.uuid4()), _keys[0])
+        resp = self._post(client, token)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Refresh token revoked or not found"
+        assert len(db.tokens) == 1
+
+    def test_missing_jti_is_rejected(self, db, client, _keys):
+        _sign_in(client)
+        resp = self._post(client, _legacy_refresh(db.user, _DROP, _keys[0]))
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid refresh token"
+        assert len(db.tokens) == 1
+
+    def test_revoked_row_is_rejected(self, db, client, _keys):
+        _sign_in(client)
+        row = db.tokens[0]
+        row.revoked_at = datetime.now(UTC)
+        resp = self._post(client, _legacy_refresh(db.user, row.jti, _keys[0]))
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Refresh token revoked or not found"
+        assert len(db.tokens) == 1
+
+    def test_expired_token_is_rejected(self, db, client, _keys):
+        _sign_in(client)
+        past = datetime.now(UTC) - timedelta(days=8)
+        token = _legacy_refresh(
+            db.user,
+            db.tokens[0].jti,
+            _keys[0],
+            iat=past,
+            exp=past + timedelta(days=7),
+        )
+        resp = self._post(client, token)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Refresh token expired"
+        assert db.tokens[0].revoked_at is None and len(db.tokens) == 1
+
+    def test_legacy_access_token_is_not_a_refresh_token(self, db, client, _keys):
+        _sign_in(client)
+        token = _sign(
+            _access_payload(db.user, tv=_DROP, jti=db.tokens[0].jti), _keys[0]
+        )
+        resp = self._post(client, token)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid token type"
+        assert len(db.tokens) == 1
+
+    def test_other_key_is_rejected(self, db, client):
+        _sign_in(client)
+        other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        other_pem = other.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode()
+        token = _legacy_refresh(db.user, db.tokens[0].jti, other_pem)
+        resp = self._post(client, token)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid refresh token"
+        assert len(db.tokens) == 1
+
+    @pytest.mark.parametrize("bad", ["0", None, True, False, 0.0, [0], {"v": 0}])
+    def test_malformed_tv_is_not_treated_as_legacy(self, db, client, _keys, bad):
+        """Only a missing tv is legacy; a present but malformed tv is
+        revoked, even for a user still at token_version 0."""
+        _sign_in(client)
+        row = db.tokens[0]
+        token = _legacy_refresh(db.user, row.jti, _keys[0], tv=bad)
+        resp = self._post(client, token)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "token_revoked"
+        assert row.revoked_at is not None
+        assert len(db.tokens) == 1
