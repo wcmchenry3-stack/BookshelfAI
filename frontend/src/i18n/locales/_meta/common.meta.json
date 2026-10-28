@@ -49,5 +49,11 @@
     "description": "Accessibility label for the Unverified badge: the user added this book themselves; it was not found in the catalog.",
     "tone": "neutral",
     "characterLimit": 80
+  },
+  "serviceUnavailable": {
+    "description": "Message shown when the server refuses every request (HTTP 403 forbidden from the edge/origin lockdown) on the library, wishlist and scan screens",
+    "tone": "reassuring",
+    "characterLimit": 100,
+    "notes": "'BookshelfAI' must not be translated"
   }
 }

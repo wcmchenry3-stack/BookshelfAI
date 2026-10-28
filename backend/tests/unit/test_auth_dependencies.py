@@ -103,3 +103,28 @@ class TestGetCurrentUser:
             await _invoke(token, db_user=None)
         assert exc_info.value.status_code == 401
         assert "not found" in exc_info.value.detail.lower()
+
+    async def test_raises_token_outdated_for_token_without_tv(self, rsa_key_pair):
+        """#725: a pre-#689 access token (no tv) is a plain 401, not
+        token_revoked, so the client refreshes instead of signing out."""
+        from app.auth.dependencies import TOKEN_OUTDATED, TOKEN_REVOKED
+
+        private_pem, _ = rsa_key_pair
+        now = datetime.now(UTC)
+        legacy = jwt.encode(
+            {
+                "sub": str(USER_ID),
+                "email": "test@example.com",
+                "type": "access",
+                "iat": now,
+                "exp": now + timedelta(minutes=15),
+            },
+            private_pem,
+            algorithm="RS256",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _invoke(legacy)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == TOKEN_OUTDATED
+        assert TOKEN_OUTDATED != TOKEN_REVOKED
