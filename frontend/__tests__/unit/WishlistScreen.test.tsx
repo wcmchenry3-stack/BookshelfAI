@@ -240,4 +240,22 @@ describe('WishlistScreen', () => {
       expect(mockGet).toHaveBeenCalledWith('/user-books', { params: { status: 'wishlisted' } })
     );
   });
+
+  it('shows the service-unavailable message on 403 forbidden (#724)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGet.mockRejectedValue({ response: { status: 403, data: { detail: 'forbidden' } } });
+    await render(<WishlistScreen />);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+    expect(alertSpy.mock.calls[0][1]).toBe(
+      "Can't reach BookshelfAI right now. Please try again later."
+    );
+  });
+
+  it('keeps the generic load error for other failures (#724)', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGet.mockRejectedValue({ response: { status: 500, data: { detail: 'oops' } } });
+    await render(<WishlistScreen />);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+    expect(alertSpy.mock.calls[0][1]).not.toMatch(/Can't reach BookshelfAI/);
+  });
 });
