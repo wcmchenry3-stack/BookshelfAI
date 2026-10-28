@@ -93,6 +93,7 @@ IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespac
    OR EXISTS (SELECT 1 FROM pg_default_acl d, aclexplode(d.defaclacl) a
               WHERE d.defaclrole = current_user::regrole
                 AND d.defaclnamespace = 'public'::regnamespace
+                AND d.defaclobjtype IN ('r', 'S')
                 AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = '{role}'))
 THEN
     RAISE EXCEPTION '{role} still holds privileges in public after REVOKE';

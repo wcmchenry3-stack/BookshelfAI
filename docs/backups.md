@@ -157,6 +157,7 @@ WHERE n.nspname = 'public' AND a.grantee::regrole::text IN ('anon', 'authenticat
 SELECT d.defaclobjtype, a.grantee::regrole, a.privilege_type
 FROM pg_default_acl d, aclexplode(d.defaclacl) a
 WHERE d.defaclrole = 'postgres'::regrole AND d.defaclnamespace = 'public'::regnamespace
+  AND d.defaclobjtype IN ('r', 'S')
   AND a.grantee::regrole::text IN ('anon', 'authenticated');
 ```
 

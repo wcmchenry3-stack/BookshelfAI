@@ -130,6 +130,7 @@ def _assert_nothing_granted(connection) -> None:
             "FROM pg_default_acl d, aclexplode(d.defaclacl) a "
             "WHERE d.defaclrole = current_user::regrole "
             "AND d.defaclnamespace = 'public'::regnamespace "
+            "AND d.defaclobjtype IN ('r', 'S') "
             "AND a.grantee::regrole::text IN ('anon', 'authenticated')"
         )
     ).all()
@@ -169,6 +170,14 @@ def _migration_cycle(connection) -> None:
             sa.text(
                 "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
                 f"GRANT ALL ON SEQUENCES TO {role}"
+            )
+        )
+        # Stock Supabase also grants EXECUTE on future functions; 0023 leaves
+        # function privileges alone, so its self-check must not trip on them.
+        connection.execute(
+            sa.text(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+                f"GRANT EXECUTE ON FUNCTIONS TO {role}"
             )
         )
     sequence = _sequence(connection)

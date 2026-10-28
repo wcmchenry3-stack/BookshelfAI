@@ -89,13 +89,16 @@ Storage, or the Data API.
   WHERE n.nspname = 'public' AND a.grantee::regrole::text IN ('anon', 'authenticated');
   ```
 
-  Second, the default privileges of `postgres` in `public` that still name
-  either role:
+  Second, the table (`r`) and sequence (`S`) default privileges of `postgres`
+  in `public` that still name either role. Function defaults (`f`, `EXECUTE`)
+  are deliberately left as Supabase sets them, since 0023 doesn't touch
+  functions and the app defines none in `public`:
 
   ```sql
   SELECT d.defaclobjtype, a.grantee::regrole, a.privilege_type
   FROM pg_default_acl d, aclexplode(d.defaclacl) a
   WHERE d.defaclrole = 'postgres'::regrole AND d.defaclnamespace = 'public'::regnamespace
+    AND d.defaclobjtype IN ('r', 'S')
     AND a.grantee::regrole::text IN ('anon', 'authenticated');
   ```
 
