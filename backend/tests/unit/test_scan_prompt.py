@@ -32,3 +32,12 @@ def test_still_formats_and_keeps_the_json_contract():
     assert "up to 15 books" in prompt
     assert '{"books": [...]}' in prompt
     assert "isbn_13" in prompt and "isbn_10" in prompt
+
+
+def test_the_example_shows_no_isbn():
+    # A one-shot example primes the output: showing Dune's real ISBN invited
+    # the model to recall valid ISBNs it cannot see, which the check digit
+    # cannot catch (#746 review).
+    example = _prompt().rsplit("Example:", 1)[1]
+    assert '"isbn_13":null' in example and '"isbn_10":null' in example
+    assert "9780441013593" not in example
