@@ -26,6 +26,7 @@ from app.schemas.user_book import (
     UserBookUpdate,
     WishlistRequest,
 )
+from app.services.edition_check import require_edition_of_book
 from app.services.unverified_books import (
     UnverifiedBookService,
     UnverifiedDuplicateError,
@@ -185,6 +186,9 @@ async def add_purchased(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Book not found"
         )
+
+    # A client-sent edition must be an edition of this book (#686).
+    await require_edition_of_book(db, req.book_id, req.edition_id)
 
     # Resolve edition if ISBN provided
     edition_id: uuid.UUID | None = req.edition_id

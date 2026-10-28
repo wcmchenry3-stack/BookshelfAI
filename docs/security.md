@@ -10,7 +10,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 |---------|----------|
 | JWT algorithm confusion | Pinned to RS256; all other algorithms including `none` rejected |
 | JWT expiry | 15-minute access token (`JWT_ACCESS_TTL_MINUTES`, 1-60; the retired `JWT_EXPIRY_HOURS` is ignored with a boot warning), 7-day refresh token with JTI revocation |
-| Token revocation | Every access and refresh token carries `tv` = `users.token_version`. `get_current_user` compares it with the user row it already loads on every request (no cache, no extra query); missing or different → `401 token_revoked`. `POST /auth/logout-all` (`app/auth/sessions.py:revoke_all_sessions`) bumps the version in SQL and revokes all the user's refresh rows; `/auth/refresh` also rejects a refresh token whose `tv` is stale and locks the user row (`FOR UPDATE`) while it rotates, which closes a refresh racing the bump without leaving an unrevoked row. A `tv` edited without re-signing fails the RS256 signature. Account deletion (#291) and refresh-reuse detection (#690) are to call the same helper. Tests: `tests/security/test_token_revocation.py`, `tests/integration/test_token_version_db.py` (#689) |
+| Token revocation | Every access and refresh token carries `tv` = `users.token_version`. `get_current_user` compares it with the user row it already loads on every request (no cache, no extra query); malformed or different → `401 token_revoked`. Release upgrade (#725): a token without `tv` (issued before #689) is a legacy token. A legacy access token gets `401 token_outdated`, so the app refreshes instead of signing out; a legacy refresh token is read as `tv = 0`, so it is accepted only while the user's `token_version` is 0, still goes through the `jti`, `revoked_at`, expiry and row-lock checks, and rotates into a `tv` pair (logged at INFO with the user id only). Any sign out of all devices ends it. The legacy path is temporary and is to be removed after 2026-12-15 (`REFRESH_TOKEN_EXPIRY_DAYS` + margin after the release reaches production; re-anchor the date to the actual production release date). Removal is tracked in #735 (`TODO(#735)` in `app/auth/jwt.py`). Residual risk: old app builds (pre-#689 client, no shared in-flight refresh) that fire several requests at once can each send `/auth/refresh` with the same single-use legacy token; the losers get a 401 and that client signs the user out. The same race already exists for those builds on ordinary token expiry, so it is not a regression, and refresh-token reuse is deliberately not allowed. `POST /auth/logout-all` (`app/auth/sessions.py:revoke_all_sessions`) bumps the version in SQL and revokes all the user's refresh rows; `/auth/refresh` also rejects a refresh token whose `tv` is stale and locks the user row (`FOR UPDATE`) while it rotates, which closes a refresh racing the bump without leaving an unrevoked row. A `tv` edited without re-signing fails the RS256 signature. Account deletion (#291) and refresh-reuse detection (#690) are to call the same helper. Tests: `tests/security/test_token_revocation.py`, `tests/integration/test_token_version_db.py` (#689) |
 | Refresh token theft | Single-use rotation — every `/auth/refresh` revokes the old `jti` and issues a new one |
 | Single-user lock | `ALLOWED_EMAILS` env var checked post-Google-auth |
 | Account identity | Users are matched by the verified Google subject (`sub` → `users.google_id`), never by email (`app/auth/identity.py`, #688). An email change at Google keeps the same user and refreshes the stored email, unless another user already holds the new address (then the stored email is kept). A new subject whose verified email already belongs to another user is rejected with `409 account_conflict` — never merged; logs carry user ids only. Email comparisons (conflict lookups and `ALLOWED_EMAILS`) ignore case; emails are stored as Google reports them. A unique violation at commit (a concurrent sign-in) is rolled back and the lookup retried once. Gap: `users.email` is unique only case-sensitively, so two *concurrent* first sign-ins with case-variant emails can both succeed until a unique index on `lower(email)` exists (follow-up). A locked-out owner is recovered by an operator — see [`RENDER.md` → Resolving a sign-in `account_conflict`](RENDER.md#resolving-a-sign-in-account_conflict-409); the app shows a dedicated "contact support" message for this 409 |
@@ -139,6 +139,29 @@ committed.
 4. Set `ORIGIN_AUTH_SECRET` on the Render service to the same value. From then
    on only requests that came through the edge (plus `/health`) are served,
    which is what makes `CF-Connecting-IP` trustworthy.
+   **Verify** straight away: run `scripts/smoke_origin_lockdown.sh` (defaults
+   to `https://bookshelfapi.buffingchi.com`; pass the dev hostname too). It
+   calls `GET /health/db` through the public hostname and fails on 403.
+   `/health` is exempt, so CI's `backend-health` job and Render's health check
+   stay green even when the edge sends no header (#720: ~9 h of 403s, no
+   alert). The script cannot run in GitHub-hosted CI because Cloudflare Bot
+   Fight Mode blocks those runners, so it is a manual step.
+
+**Misconfiguration alert (#721):** a rejected request that carries
+`Authorization: Bearer <JWT-shaped value>` (three base64url segments; the token
+is never decoded) is almost certainly our app, not a scanner. It is sent to
+Sentry as `origin_auth_rejected_authenticated` (level `error`, tags `method`
+and `path`, extra `rejected_since_last`), throttled to one event per 300 s per
+process (at most 12 events/hour/process); the extra counts the rejections since
+the previous event. The WARNING log line of the same name is emitted only when
+an event is sent; throttled bearer rejections log at INFO with `bearer=1`, and
+rejections without a JWT-shaped bearer log at INFO and send nothing. Header
+values (the token, the origin secret) and the origin header never reach the
+event: it carries only the message, tags and the count. Control characters in
+the method and path are replaced with `?` before logging and tagging. Numeric
+and UUID path segments are collapsed to `:id` in the `path` tag for tag
+cardinality only; it is not a privacy measure (the raw path already appears in
+other Sentry fields for every event). Alert on this message in Sentry.
 
 To roll back the lockdown, clear `ORIGIN_AUTH_SECRET`. To stop trusting
 `CF-Connecting-IP`, set `TRUSTED_PROXY_MODE=none`.

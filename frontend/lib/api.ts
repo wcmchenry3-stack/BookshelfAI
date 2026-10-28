@@ -1,5 +1,6 @@
 import axios from 'axios';
 
+import { reportApiError } from './apiErrorReporting';
 import { Sentry } from './sentry';
 import * as storage from './storage';
 
@@ -108,6 +109,9 @@ api.interceptors.response.use(
   async (error) => {
     const original = error.config;
     if (error.response?.status !== 401) {
+      // #724: a 403 (incl. `forbidden`) is not an auth failure; it never
+      // signs the user out. Report unexpected failures once per session.
+      reportApiError(error);
       return Promise.reject(error);
     }
     const sent = sentAccessToken(original);

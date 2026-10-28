@@ -20,6 +20,7 @@ import { useOnlineOnly } from '../../hooks/useOnlineOnly';
 import { UnverifiedBadge } from '../../components/UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
+import { isServiceUnavailable } from '../../lib/apiErrorReporting';
 
 interface UserBook {
   id: string;
@@ -80,8 +81,13 @@ export default function WishlistScreen() {
         params: { status: 'wishlisted' },
       });
       setBooks(data);
-    } catch {
-      Alert.alert(t('errorTitle', { ns: 'common' }), t('errorLoadWishlist'));
+    } catch (err) {
+      Alert.alert(
+        t('errorTitle', { ns: 'common' }),
+        isServiceUnavailable(err)
+          ? t('serviceUnavailable', { ns: 'common' })
+          : t('errorLoadWishlist')
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);

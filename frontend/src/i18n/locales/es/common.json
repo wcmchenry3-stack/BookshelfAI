@@ -8,5 +8,6 @@
   "requiresConnection": "Esta acción requiere conexión a internet.",
   "offlineEditNotice": "Estás sin conexión. Conéctate para editar tu biblioteca.",
   "unverified": "Sin verificar",
-  "unverifiedA11y": "Sin verificar: lo añadiste tú, no está en el catálogo"
+  "unverifiedA11y": "Sin verificar: lo añadiste tú, no está en el catálogo",
+  "serviceUnavailable": "No se puede conectar con BookshelfAI en este momento. Inténtalo de nuevo más tarde."
 }

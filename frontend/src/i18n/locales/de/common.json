@@ -8,5 +8,6 @@
   "requiresConnection": "Für diese Aktion ist eine Internetverbindung erforderlich.",
   "offlineEditNotice": "Du bist offline. Geh online, um deine Bibliothek zu bearbeiten.",
   "unverified": "Ungeprüft",
-  "unverifiedA11y": "Ungeprüft: von dir hinzugefügt, nicht im Katalog gefunden"
+  "unverifiedA11y": "Ungeprüft: von dir hinzugefügt, nicht im Katalog gefunden",
+  "serviceUnavailable": "BookshelfAI ist gerade nicht erreichbar. Bitte versuche es später erneut."
 }
