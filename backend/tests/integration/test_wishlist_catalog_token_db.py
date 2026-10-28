@@ -64,7 +64,13 @@ async def env():
     factory = async_sessionmaker(engine, expire_on_commit=False)
     users: list[uuid.UUID] = []
     tag = uuid.uuid4().hex[:10]
-    isbn = "979" + str(uuid.uuid4().int)[:10]
+    # A unique ISBN-13 with a valid check digit: enrichment never looks up or
+    # stores one that fails it.
+    body = "979" + str(uuid.uuid4().int)[:9]
+    check = (
+        10 - sum(int(d) * (3 if i % 2 else 1) for i, d in enumerate(body)) % 10
+    ) % 10
+    isbn = body + str(check)
     ids = {
         "work": f"OL{tag}W",
         "volume": f"gb{tag}",
