@@ -11,7 +11,7 @@ Navigation is file-based via `expo-router`. Two route groups:
 
 ### `(tabs)` — authenticated tab bar
 - **Scan** (`scan.tsx`) — camera viewfinder (native) or file picker (web). Primary path into the app.
-- **My Books** (`my-books.tsx`) — the user's full library with a status filter (All / Wishlisted / Purchased / Reading / Read). Tapping a book opens its detail modal for notes, rating, status transitions, or delete. Since #683 a delete moves the entry to the server's trash (restorable for 30 days; deleting a book again replaces its trashed copy; newest 1,000 kept); the app's Trash screen is a follow-up.
+- **My Books** (`my-books.tsx`) — the user's full library with a status filter (All / Wishlisted / Purchased / Reading / Read). Tapping a book opens its detail modal for notes, rating, status transitions, or delete. Since #683 a delete moves the entry to the server's trash (restorable for 30 days; deleting a book again replaces older trashed copies that hold no data of yours, such as notes, a rating, an edition, overrides or a status beyond wishlisted, while copies with your data stay restorable for 30 days; newest 1,000 kept); the app's Trash screen is a follow-up.
 - **Wishlist** (`wishlist.tsx`) — filtered view showing only `wishlisted` entries. One-tap "I bought this" transitions to `purchased`.
 - **Settings** (`settings.tsx`) — account info, language picker, theme toggle, scan usage,
   sign-out (confirm prompt; best-effort `POST /auth/logout` with the refresh token, then local
@@ -168,7 +168,9 @@ A `UserBook` moves through four states. Transitions auto-timestamp the correspon
        │
        └─▶ dismiss (DELETE: moved to the trash, #683;
                     restore brings it back with its state;
-                    purged after 30 days or past the newest 100)
+                    one trashed copy per book (copies with your
+                    data are kept); purged after 30 days or past
+                    the newest 1,000)
 ```
 
 Non-canonical transitions (e.g. skipping states, re-reads) are allowed — the frontend UI exposes the common paths, but the API accepts any state value on `PATCH /user-books/{id}`.

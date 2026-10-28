@@ -4,19 +4,24 @@
 row and, for an unverified entry, its ``user_custom_books`` row). The trash
 is bounded three ways:
 
-- **One copy per book.** ``DELETE`` calls :func:`evict_same_book` in the
-  transaction that trashes the entry, under the user's row lock, which hard-deletes the user's
-  other (older) trashed entries of the same book: for a catalog entry any
-  row of the same work (``catalog.of_work``, merged rows included, #682);
-  for an unverified entry the same title and author or ISBN
-  (``unverified_books.same_book``, the duplicate check's key). Only the
-  newest trashed copy of a book survives, so an add / delete loop on one
-  book never grows the trash (owner decision, 2026-10-28).
+- **One empty copy per book.** ``DELETE`` calls :func:`evict_same_book`
+  in the transaction that trashes the entry, under the user's row lock,
+  which hard-deletes the user's other (older) trashed entries of the same
+  book that hold no data of the user's (``UserBook.has_no_user_data``: no
+  notes, rating, edition, overrides, status beyond wishlisted or status
+  dates). The same book is, for a catalog entry, any row of the same work
+  (``catalog.of_work``, merged rows included, #682); for an unverified
+  entry the same title and author or ISBN (``unverified_books.same_book``,
+  the duplicate check's key). So an add / delete loop on one book never
+  grows the trash, and a copy with the user's data is never replaced by a
+  later one: it stays restorable until the purge or the backstop cap
+  (owner decisions, 2026-10-28). The just-trashed entry is never evicted.
 - **Count (backstop).** At most ``settings.trash_max_entries_per_user``
   (1,000) entries per user. ``DELETE`` then calls :func:`evict_over_cap`,
-  which hard-deletes the user's oldest trashed entries beyond the cap. A
-  mass delete of up to 1,000 distinct books stays fully recoverable; beyond
-  that the oldest are lost.
+  which hard-deletes the user's oldest trashed entries beyond the cap,
+  whatever they hold: the only way a copy with the user's data leaves the
+  trash before the purge. A mass delete of up to 1,000 distinct books stays
+  fully recoverable; beyond that the oldest are lost.
 - **Age.** The daily cleanup (``app/services/token_cleanup.py``) calls
   :func:`purge_trash`, which deletes entries trashed more than
   ``settings.trash_retention_days`` (30) days ago:
@@ -103,19 +108,30 @@ async def _delete_entries(db: AsyncSession, ids: list[uuid.UUID], *conditions) -
 
 
 async def evict_same_book(db: AsyncSession, user_id: uuid.UUID, entry: UserBook) -> int:
-    """Hard-delete ``user_id``'s other trashed entries of ``entry``'s book,
-    so only ``entry`` (just trashed, the newest) stays in the trash: for a
-    catalog entry every trashed entry on a row of the same work (``entry``
-    needs ``book`` loaded), for an unverified entry every trashed one with
-    the same title and author or ISBN (``entry`` needs ``custom_book``
-    loaded). Call with the user locked (``unverified_books.lock_user``), in
-    the transaction that trashed ``entry``. Rows the purge holds are skipped
-    (``SKIP LOCKED``): it is deleting them anyway. Returns how many were
-    deleted. Does not commit."""
-    others = (
+    """Hard-delete ``user_id``'s other trashed entries of ``entry``'s book
+    that hold no data of the user's (:meth:`UserBook.has_no_user_data`):
+    for a catalog entry the trashed entries on a row of the same work
+    (``entry`` needs ``book`` loaded), for an unverified entry the trashed
+    ones with the same title and author or ISBN (``entry`` needs
+    ``custom_book`` loaded). ``entry`` itself (just trashed) is never
+    evicted, whatever it holds, and nor is an older copy with notes, a
+    rating, an edition, overrides or a status past wishlisted: those stay
+    until the purge or the backstop cap. Call with the user locked
+    (``unverified_books.lock_user``), in the transaction that trashed
+    ``entry``.
+
+    The catalog select skips rows the purge holds (``SKIP LOCKED``): it is
+    deleting them anyway. The unverified select takes no row locks (it reads
+    every trashed unverified entry of the user and matches the book in
+    Python, so locking would lock them all); the ``DELETE`` re-checks that
+    each row is still trashed, still the user's and still empty, and the
+    user lock serialises this with restore. Returns how many were deleted.
+    Does not commit."""
+    candidates = (
         UserBook.user_id == user_id,
         UserBook.deleted_at.is_not(None),
         UserBook.id != entry.id,
+        UserBook.has_no_user_data(),
     )
     custom = entry.custom_book
     if custom is not None:
@@ -128,8 +144,7 @@ async def evict_same_book(db: AsyncSession, user_id: uuid.UUID, entry: UserBook)
                     UserCustomBook.isbn_13,
                 )
                 .join(UserCustomBook, UserBook.custom_book_id == UserCustomBook.id)
-                .where(*others)
-                .with_for_update(of=UserBook, skip_locked=True)
+                .where(*candidates)
             )
         ).all()
         ids = [
@@ -142,16 +157,22 @@ async def evict_same_book(db: AsyncSession, user_id: uuid.UUID, entry: UserBook)
             (
                 await db.execute(
                     select(UserBook.id)
-                    .where(*others, of_work(UserBook.book_id, entry.book))
+                    .where(*candidates, of_work(UserBook.book_id, entry.book))
                     .with_for_update(skip_locked=True)
                 )
             ).scalars()
         )
     else:
         return 0
-    evicted = await _delete_entries(db, ids, UserBook.user_id == user_id)
+    evicted = await _delete_entries(
+        db,
+        ids,
+        UserBook.user_id == user_id,
+        UserBook.id != entry.id,
+        UserBook.has_no_user_data(),
+    )
     if evicted:
-        logger.info("trash: evicted %d older trashed cop(ies) of a book", evicted)
+        logger.info("trash: evicted %d older empty trashed cop(ies) of a book", evicted)
     return evicted
 
 

@@ -9,7 +9,9 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    and_,
     func,
+    or_,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -18,6 +20,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
 VALID_STATUSES = ("wishlisted", "purchased", "reading", "read")
+# The status a new entry starts with (POST /wishlist, unverified adds).
+DEFAULT_STATUS = "wishlisted"
 
 # The user's own corrections of a catalog book (#682), per library entry.
 # Limits match the catalog's title / author (BookBase, WishlistRequest) and
@@ -168,6 +172,31 @@ class UserBook(Base):
     def live(cls):
         """The filter for entries not in the trash (#683)."""
         return cls.deleted_at.is_(None)
+
+    @classmethod
+    def has_no_user_data(cls):
+        """The filter for entries that hold nothing the user set (#683), so
+        same-book eviction may replace them (``trash.evict_same_book``):
+        status still :data:`DEFAULT_STATUS`; no status dates
+        (``purchased_at``, ``started_at``, ``finished_at``, set by moving
+        the entry past wishlisted, kept if it moves back); notes NULL or
+        only whitespace; no rating, edition or overrides. ``wishlisted_at``
+        is set by the server on every add, so it is not user data. An
+        unverified entry's title, author and ISBN (``user_custom_books``)
+        are the book itself, not user data. Add a column here when you add
+        a user-set column to this table."""
+        return and_(
+            cls.status == DEFAULT_STATUS,
+            cls.purchased_at.is_(None),
+            cls.started_at.is_(None),
+            cls.finished_at.is_(None),
+            or_(cls.notes.is_(None), cls.notes.regexp_match(r"^\s*$")),
+            cls.rating.is_(None),
+            cls.edition_id.is_(None),
+            cls.title_override.is_(None),
+            cls.author_override.is_(None),
+            cls.cover_url_override.is_(None),
+        )
 
     @property
     def unverified(self) -> bool:

@@ -199,6 +199,9 @@ class TestDelete:
         assert "user_books.id !=" in same_sql
         assert "books.merged_into_id" in same_sql
         assert "FOR UPDATE SKIP LOCKED" in same_sql
+        # Only copies holding no data of the user's (owner decision,
+        # 2026-10-28).
+        assert _sql(UserBook.has_no_user_data()) in same_sql
         # ... and the user's trash beyond the cap, oldest last.
         evict_sql = _sql(evict)
         assert "user_books.user_id" in evict_sql
@@ -509,18 +512,41 @@ def test_documented_trash_numbers_match_the_code():
         "newest 1,000 per user",
         "100–5,000",
         "one trashed copy per book",
+        "copies with your data",
     ):
         assert phrase in doc, phrase
+
+
+def test_no_doc_states_a_stale_trash_cap_or_storage_estimate():
+    """R3-1 / R3-2: every "newest N" in docs/ is the cap's default, and no
+    doc keeps the old per-user storage estimate."""
+    import re
+
+    from app.core.config import Settings
+
+    cap = Settings.model_fields["trash_max_entries_per_user"].default
+    docs = Path(__file__).resolve().parents[3] / "docs"
+    stated = []
+    for path in sorted(docs.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        name = path.relative_to(docs)
+        for stale in ("newest 100", "~3 MB per user"):
+            assert stale not in text, f"{name}: {stale!r}"
+        for n in re.findall(r"newest (\d[\d,]*)", text):
+            stated.append((name, int(n.replace(",", ""))))
+    assert stated, "no doc states the trash cap"
+    assert all(n == cap for _, n in stated), stated
 
 
 # ── Same-book eviction (review round 2) ──────────────────────────────────────
 
 
 async def test_same_book_eviction_of_an_unverified_entry_matches_the_duplicate_key():
-    """Only the user's trashed unverified entries with the same normalised
-    title and author, or the same ISBN, are deleted; the select is the
-    user's own trash, other rows only, ``FOR UPDATE OF user_books SKIP
-    LOCKED``."""
+    """Only the user's empty trashed unverified entries with the same
+    normalised title and author, or the same ISBN, are deleted; the select
+    is the user's own trash, other rows only, empty rows only, and takes no
+    row locks (R3-3: it reads every trashed unverified entry of the user);
+    the ``DELETE`` re-checks the user, the row and emptiness."""
     custom = SimpleNamespace(title="Pond", author="A. Local", isbn_13="9780306406157")
     entry = _catalog_row(book=None, book_id=None, custom_book=custom)
     same_key, same_isbn, other = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -541,7 +567,73 @@ async def test_same_book_eviction_of_an_unverified_entry_matches_the_duplicate_k
     assert "JOIN user_custom_books" in sql
     assert "user_books.user_id" in sql and "user_books.id !=" in sql
     assert "user_books.deleted_at IS NOT NULL" in sql
-    assert "FOR UPDATE OF user_books SKIP LOCKED" in sql
-    _, ids, scope = deleted.await_args.args
+    assert _sql(UserBook.has_no_user_data()) in sql
+    assert "FOR UPDATE" not in sql
+    _, ids, *recheck = deleted.await_args.args
     assert ids == [same_key, same_isbn]
-    assert "user_books.user_id" in str(scope)
+    recheck_sql = " AND ".join(_sql(c) for c in recheck)
+    assert "user_books.user_id" in recheck_sql
+    assert "user_books.id !=" in recheck_sql
+    assert _sql(UserBook.has_no_user_data()) in recheck_sql
+
+
+# ── What counts as user data (owner decision, 2026-10-28) ────────────────────
+
+# Columns of user_books that are not user data: keys, the book itself, and
+# timestamps the server sets on its own (``wishlisted_at`` on every add).
+_NOT_USER_DATA = {
+    "id",
+    "user_id",
+    "book_id",
+    "custom_book_id",
+    "wishlisted_at",
+    "deleted_at",
+    "created_at",
+    "updated_at",
+}
+
+
+def test_has_no_user_data_covers_every_user_set_column():
+    """A new column on ``user_books`` must be either in the emptiness
+    predicate or listed above as not user data, so same-book eviction never
+    silently drops a copy carrying it."""
+    sql = _sql(UserBook.has_no_user_data())
+    columns = {c.name for c in UserBook.__table__.columns}
+    user_set = columns - _NOT_USER_DATA
+    assert user_set == {
+        "status",
+        "purchased_at",
+        "started_at",
+        "finished_at",
+        "notes",
+        "rating",
+        "edition_id",
+        "title_override",
+        "author_override",
+        "cover_url_override",
+    }
+    for column in user_set:
+        assert f"user_books.{column}" in sql, column
+
+
+def test_has_no_user_data_expression():
+    from app.models.user_book import DEFAULT_STATUS
+
+    expr = UserBook.has_no_user_data().compile(dialect=postgresql.dialect())
+    sql = str(expr)
+    assert "user_books.status = " in sql
+    assert DEFAULT_STATUS == "wishlisted" and "wishlisted" in expr.params.values()
+    for column in (
+        "purchased_at",
+        "started_at",
+        "finished_at",
+        "rating",
+        "edition_id",
+        "title_override",
+        "author_override",
+        "cover_url_override",
+    ):
+        assert f"user_books.{column} IS NULL" in sql, column
+    # Notes NULL or whitespace only.
+    assert "user_books.notes IS NULL OR user_books.notes ~ " in sql
+    assert r"^\s*$" in expr.params.values()

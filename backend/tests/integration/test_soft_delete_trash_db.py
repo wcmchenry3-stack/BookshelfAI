@@ -17,8 +17,11 @@
   of a merged work, an unverified duplicate, the unverified cap) are 409s
   that change nothing; another user's entry or a live one is a 404; an
   entry past the window that is not purged yet can still be restored.
-- Eviction on ``DELETE``: only the newest trashed copy of a book is kept
-  (catalog, merged work, unverified by the duplicate key); the backstop cap
+- Eviction on ``DELETE``: older trashed copies of the same book are
+  replaced only when they hold no data of the user's (catalog, merged
+  work, unverified by the duplicate key); a copy with notes, a rating, an
+  edition, overrides, a status past wishlisted or a status date is kept
+  and restores intact (owner decision, 2026-10-28); the backstop cap
   keeps the newest N (default 1,000: a mass delete of 150 books is all
   restorable); it never touches another user's rows; the trash list shows
   exactly the rows eviction keeps, ties included.
@@ -289,7 +292,8 @@ async def env():
 
 async def _entry(env, user, book, **fields) -> uuid.UUID:
     async with env.factory() as db:
-        ub = UserBook(user_id=user.id, book_id=book.id, status="wishlisted", **fields)
+        fields = {"status": "wishlisted", **fields}
+        ub = UserBook(user_id=user.id, book_id=book.id, **fields)
         db.add(ub)
         await db.commit()
         return ub.id
@@ -808,6 +812,162 @@ async def test_unverified_same_book_loop_keeps_one_trashed_copy(env):
             assert (live, trashed, custom) == (1, 3, 4)
     assert [t.id for t in await _trash(env, alice)] == [deleted[-1], *others[::-1]]
     assert [e.id for e in await _list(env, alice)] == [keep.id]
+
+
+# ── Review round 3: a trashed copy with the user's data is never replaced ───
+# (owner decision, 2026-10-28)
+
+
+async def _patch(env, user, entry_id, **fields) -> None:
+    async with env.factory() as db:
+        await user_books_api.update_user_book.__wrapped__(
+            request=_req(),
+            user_book_id=entry_id,
+            req=UserBookUpdate(**fields),
+            current_user=user,
+            db=db,
+        )
+
+
+async def _exists(env, entry_id) -> bool:
+    async with env.factory() as db:
+        return await db.get(UserBook, entry_id) is not None
+
+
+async def test_rich_older_copy_survives_deleting_an_empty_newer_copy(env):
+    alice = await env.make_user()
+    book = await env.make_book()
+    rich = (await _wishlist(env, alice, book)).id
+    await _patch(env, alice, rich, notes="Read it on the train", rating=4)
+    await _delete(env, alice, rich)
+    empty = (await _wishlist(env, alice, book)).id
+    await _delete(env, alice, empty)
+    assert [t.id for t in await _trash(env, alice)] == [empty, rich]
+    restored = await _restore(env, alice, rich)
+    assert (restored.id, restored.notes, restored.rating) == (
+        rich,
+        "Read it on the train",
+        4,
+    )
+
+
+async def test_empty_older_copy_is_evicted_by_deleting_a_rich_newer_copy(env):
+    alice = await env.make_user()
+    book = await env.make_book()
+    empty = (await _wishlist(env, alice, book)).id
+    await _delete(env, alice, empty)
+    rich = (await _wishlist(env, alice, book)).id
+    await _patch(env, alice, rich, notes="Mine", rating=2)
+    await _delete(env, alice, rich)
+    assert [t.id for t in await _trash(env, alice)] == [rich]
+    assert not await _exists(env, empty)
+
+
+async def test_mixed_older_copies_keep_the_rich_and_evict_the_empty(env):
+    """2 rich and 3 empty older copies (one with whitespace-only notes,
+    which is blank), then a delete: the rich ones and the new one stay."""
+    alice = await env.make_user()
+    book = await env.make_book()
+    base = datetime.now(UTC) - timedelta(hours=10)
+    older = [
+        ("rich", {"notes": "Keep me"}),
+        ("empty", {}),
+        ("rich", {"rating": 5}),
+        ("empty", {"notes": " \n\t "}),
+        ("empty", {"notes": None}),
+    ]
+    ids = {"rich": [], "empty": []}
+    for i, (kind, fields) in enumerate(older):
+        e = await _entry(
+            env, alice, book, deleted_at=base + timedelta(hours=i), **fields
+        )
+        ids[kind].append(e)
+    assert (await _counts(env, alice))[1] == 5
+    newest = (await _wishlist(env, alice, book)).id
+    await _delete(env, alice, newest)
+    trashed = [t.id for t in await _trash(env, alice)]
+    assert trashed == [newest, ids["rich"][1], ids["rich"][0]]
+    for e in ids["empty"]:
+        assert not await _exists(env, e)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"status": "purchased"},
+        {"status": "reading"},
+        {"status": "read"},
+        # Moved past wishlisted and back: the status date is history.
+        {"purchased_at": datetime(2026, 1, 1, tzinfo=UTC)},
+        {"started_at": datetime(2026, 1, 1, tzinfo=UTC)},
+        {"finished_at": datetime(2026, 1, 1, tzinfo=UTC)},
+        {"notes": "x"},
+        {"rating": 1},
+        {"edition": True},
+        {"title_override": "My title"},
+        {"author_override": "My author"},
+        {"cover_url_override": "https://example.com/c.jpg"},
+    ],
+    ids=lambda f: next(iter(f)),
+)
+async def test_any_user_data_keeps_an_older_trashed_copy(env, fields):
+    alice = await env.make_user()
+    book = await env.make_book()
+    if fields.pop("edition", None):
+        async with env.factory() as db:
+            edition = Edition(
+                book_id=book.id, isbn_13="979" + str(uuid.uuid4().int)[:10]
+            )
+            db.add(edition)
+            await db.commit()
+            fields = {"edition_id": edition.id}
+    long_ago = datetime.now(UTC) - timedelta(days=2)
+    kept = await _entry(env, alice, book, deleted_at=long_ago, **fields)
+    empty = await _entry(env, alice, book, deleted_at=long_ago + timedelta(hours=1))
+    newest = (await _wishlist(env, alice, book)).id
+    await _delete(env, alice, newest)
+    assert [t.id for t in await _trash(env, alice)] == [newest, kept]
+    assert not await _exists(env, empty)
+
+
+async def test_unverified_rich_older_copy_survives_deleting_an_empty_newer_copy(
+    env,
+):
+    alice = await env.make_user()
+    rich = (await _add_unverified(env, alice)).id
+    await _patch(env, alice, rich, notes="Signed copy", rating=5)
+    await _delete(env, alice, rich)
+    empty = (await _add_unverified(env, alice)).id
+    await _delete(env, alice, empty)
+    assert [t.id for t in await _trash(env, alice)] == [empty, rich]
+    assert await _counts(env, alice) == (0, 2, 2)
+    restored = await _restore(env, alice, rich)
+    assert (restored.id, restored.notes, restored.rating) == (rich, "Signed copy", 5)
+
+
+async def test_unverified_empty_older_copy_is_evicted_by_a_rich_newer_copy(env):
+    alice = await env.make_user()
+    empty = (await _add_unverified(env, alice)).id
+    await _delete(env, alice, empty)
+    rich = (await _add_unverified(env, alice)).id
+    await _patch(env, alice, rich, notes="Mine")
+    await _delete(env, alice, rich)
+    assert [t.id for t in await _trash(env, alice)] == [rich]
+    # The custom book went with it.
+    assert await _counts(env, alice) == (0, 1, 1)
+
+
+async def test_backstop_cap_still_evicts_copies_with_data(env):
+    """The cap is the only way a copy with data leaves before 30 days."""
+    alice = await env.make_user()
+    entries = []
+    for _ in range(4):
+        e = await _entry(env, alice, await env.make_book(), notes="n", rating=3)
+        entries.append(e)
+    with patch.object(settings, "trash_max_entries_per_user", 2):
+        for e in entries:
+            await _delete(env, alice, e)
+    assert [t.id for t in await _trash(env, alice)] == entries[::-1][:2]
 
 
 async def test_mass_delete_of_150_books_is_all_restorable_at_the_default_cap(env):

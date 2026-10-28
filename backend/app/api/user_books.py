@@ -382,8 +382,10 @@ async def list_trash(
     """The user's entries in the trash (#683), most recently deleted first,
     each with ``deleted_at`` and ``purge_after``. An entry stays here (and
     restorable) until the daily cleanup purges it, which can be up to a day
-    after ``purge_after``. One entry per book (deleting a book that already
-    has a trashed copy replaces that copy) and at most
+    after ``purge_after``. Deleting a book that already has a trashed copy
+    replaces older trashed copies that hold no data of the user's (no
+    notes, rating, edition, overrides, status beyond wishlisted); copies
+    with the user's data stay. At most
     ``settings.trash_max_entries_per_user`` entries: the trash keeps 30 days
     or the newest N, whichever comes first."""
     # DELETE keeps the trash within the cap; the limit is a second bound.
@@ -410,9 +412,10 @@ async def delete_user_book(
     brings it back until the daily cleanup purges it. An entry already in
     the trash is a 404, like one that does not exist. In the same
     transaction, the user's other, older trashed entries of the same book
-    are hard-deleted (``trash.evict_same_book``: only the newest trashed
-    copy of a book stays, so an add / delete loop never grows the trash),
-    then the oldest trashed entries beyond
+    that hold no data of the user's are hard-deleted
+    (``trash.evict_same_book``, so an add / delete loop never grows the
+    trash; a copy with notes, a rating, an edition, overrides or a status
+    past wishlisted is kept), then the oldest trashed entries beyond
     ``settings.trash_max_entries_per_user`` (``trash.evict_over_cap``, a
     backstop)."""
     # Lock order users -> user_books -> user_custom_books. The user lock

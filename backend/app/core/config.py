@@ -332,13 +332,18 @@ class Settings(BaseSettings):
     # (TRASH_RETENTION_DAYS).
     trash_retention_days: int = Field(default=30, ge=1, le=365)
     # The most entries one user's trash holds (#683), a backstop: DELETE
-    # already keeps one trashed copy per book (trash.evict_same_book), so an
-    # add / delete loop never grows the trash; past this many entries a
-    # delete hard-deletes that user's oldest trashed entries. 1,000 keeps a
-    # mass delete of up to 1,000 distinct books fully recoverable for the
-    # trash window (owner decision, 2026-10-28). Each row is at most ~3 KB
-    # (a user_books row with overrides, or a custom book), so ~3 MB per user
-    # worst case at the default. Env-overridable (TRASH_MAX_ENTRIES_PER_USER).
+    # already replaces older trashed copies of the same book that hold no
+    # user data (trash.evict_same_book), so an add / delete loop never grows
+    # the trash; copies with the user's data are kept, and this cap is the
+    # only thing that removes them before the trash window ends. Past this
+    # many entries a delete hard-deletes that user's oldest trashed entries,
+    # whatever they hold. 1,000 keeps a mass delete of up to 1,000 distinct
+    # books fully recoverable for the trash window (owner decision,
+    # 2026-10-28). A trashed user_books row is at most ~13 KB (10,000
+    # characters of notes plus overrides of 500 / 500 / 2,048, measured with
+    # pg_column_size), up to ~25 KB with multibyte notes: ~13-25 MB per user
+    # worst case at the default, ~65-125 MB at the maximum of 5,000.
+    # Env-overridable (TRASH_MAX_ENTRIES_PER_USER).
     trash_max_entries_per_user: int = Field(default=1000, ge=100, le=5000)
     # Allowlist of Host header values accepted when settings.is_hardened is True
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
