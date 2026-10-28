@@ -70,7 +70,8 @@ class EditionFakeSession:
     async def execute(self, stmt):
         entity = stmt.column_descriptions[0]["entity"]
         if entity is Book:
-            # The requested book, not merged (#682).
+            # The requested book, not merged (#682). Relies on the lookup's
+            # single ``Book.id == x`` WHERE clause.
             book_id = stmt.whereclause.right.value
             return result(MagicMock(id=book_id, merged_into_id=None))
         if entity is Edition:

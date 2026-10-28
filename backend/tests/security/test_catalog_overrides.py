@@ -194,10 +194,22 @@ class TestOverrideTextValidation:
         assert resp.status_code == 422
         assert entry.title_override is None and entry.author_override is None
 
+    @pytest.mark.parametrize("field", ["title_override", "author_override"])
+    def test_length_limit_applies_after_trimming(self, patch_entry, field):
+        call, entry, _, _ = patch_entry
+        resp = call({field: " " * 10 + "x" * 500 + "\n"})
+        assert resp.status_code == 200, resp.text
+        assert getattr(entry, field) == "x" * 500
+
 
 class TestCoverUrlSsrf:
+    """The override is never fetched by the server (only the owner's app
+    shows it), so its host is not resolved: a DNS lookup would block the
+    event loop (#737 review). Hosts that name a private address are still
+    refused."""
+
     @pytest.mark.parametrize(
-        "ip",
+        "host",
         [
             "127.0.0.1",
             "10.0.0.1",
@@ -205,19 +217,19 @@ class TestCoverUrlSsrf:
             "192.168.1.1",
             "169.254.169.254",
             "100.64.0.1",
-            "::1",
-            "fd00::1",
-            "::ffff:10.0.0.1",
+            "[::1]",
+            "[fd00::1]",
+            "[::ffff:10.0.0.1]",
+            "localhost",
+            "covers.localhost",
         ],
     )
-    def test_host_resolving_to_a_private_address_is_refused(self, patch_entry, ip):
+    def test_private_host_is_refused_without_resolving(self, patch_entry, host):
         call, entry, _, _ = patch_entry
-        with patch(
-            "app.core.url_validator.socket.getaddrinfo",
-            return_value=[(None, None, None, None, (ip, 0))],
-        ):
-            resp = call({"cover_url_override": "https://covers.example/c.jpg"})
+        with patch("app.core.url_validator.socket.getaddrinfo") as resolve:
+            resp = call({"cover_url_override": f"https://{host}/c.jpg"})
         assert resp.status_code == 422
+        resolve.assert_not_called()
         assert entry.cover_url_override is None
 
     @pytest.mark.parametrize(
@@ -228,8 +240,6 @@ class TestCoverUrlSsrf:
             "javascript:alert(1)",
             "file:///etc/passwd",
             "https:///nohost",
-            "https://127.0.0.1/c.jpg",
-            "https://169.254.169.254/latest/meta-data/",
         ],
     )
     def test_unsafe_urls_are_refused(self, patch_entry, url):
@@ -238,14 +248,15 @@ class TestCoverUrlSsrf:
         assert resp.status_code == 422
         assert entry.cover_url_override is None
 
-    def test_unresolvable_host_is_refused(self, patch_entry):
+    def test_host_name_is_never_resolved(self, patch_entry):
         call, entry, _, _ = patch_entry
         with patch(
             "app.core.url_validator.socket.getaddrinfo", side_effect=OSError("nx")
-        ):
+        ) as resolve:
             resp = call({"cover_url_override": "https://nx.example/c.jpg"})
-        assert resp.status_code == 422
-        assert entry.cover_url_override is None
+        assert resp.status_code == 200, resp.text
+        resolve.assert_not_called()
+        assert entry.cover_url_override == "https://nx.example/c.jpg"
 
     def test_oversized_url_is_refused_without_resolving(self, patch_entry):
         call, entry, _, _ = patch_entry
@@ -257,11 +268,7 @@ class TestCoverUrlSsrf:
 
     def test_public_https_cover_is_stored_on_the_users_row_only(self, patch_entry):
         call, entry, book, _ = patch_entry
-        with patch(
-            "app.core.url_validator.socket.getaddrinfo",
-            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
-        ):
-            resp = call({"cover_url_override": "https://covers.example/c.jpg"})
+        resp = call({"cover_url_override": "https://covers.example/c.jpg"})
         assert resp.status_code == 200, resp.text
         assert entry.cover_url_override == "https://covers.example/c.jpg"
         assert book.cover_url == CATALOG["cover_url"]
@@ -298,11 +305,7 @@ class TestCoverUrlCharacters:
     def test_surrounding_whitespace_is_stripped(self, patch_entry, padded):
         call, entry, _, _ = patch_entry
         url = "https://covers.example/c.jpg"
-        with patch(
-            "app.core.url_validator.socket.getaddrinfo",
-            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
-        ):
-            resp = call({"cover_url_override": padded.format(url)})
+        resp = call({"cover_url_override": padded.format(url)})
         assert resp.status_code == 200, resp.text
         assert entry.cover_url_override == url
 

@@ -196,11 +196,12 @@ class UserBookUpdate(BaseModel):
             raise ValueError("rating must be between 1 and 5")
         return v
 
-    @field_validator("title_override", "author_override")
+    @field_validator("title_override", "author_override", mode="before")
     @classmethod
-    def override_text_must_be_clean(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
+    def override_text_must_be_clean(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v  # None (clear) or a wrong type the str field refuses
+        # Before the length check, so the limit applies to the trimmed value.
         v = clean_text(v)
         if _has_format_char(v):
             # Bidi controls and zero-width characters (#682): they can make
@@ -215,12 +216,13 @@ class UserBookUpdate(BaseModel):
             return v  # None (clear) or a wrong type the str field refuses
         v = v.strip()
         if len(v) > COVER_URL_OVERRIDE_MAX:
-            # The length check first, so an oversized value is never resolved.
             raise ValueError("cover_url_override is too long")
         if _CONTROL.search(v) or _WHITESPACE.search(v) or _has_format_char(v):
-            # Never stored (Postgres refuses NUL) or resolved (#682).
+            # Never stored (Postgres refuses NUL) (#682).
             raise ValueError("cover_url_override must be a single URL")
-        return validate_safe_url(v)
+        # No DNS lookup: the server never fetches the override (only the
+        # owner's app shows it), and resolving would block the event loop.
+        return validate_safe_url(v, resolve=False)
 
     def override_changes(self) -> dict[str, str | None]:
         """The override columns this request sets or clears (only the fields

@@ -540,7 +540,7 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 - `status`: one of `wishlisted` / `purchased` / `reading` / `read`
 - `rating`: 1..5
 - `title_override`, `author_override`: 1–500 characters after trimming, no control characters and no Unicode format characters (bidi controls such as U+202E, zero-width characters)
-- `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, and the host must resolve to a public IP (the same SSRF check as `POST /wishlist`'s `cover_url`)
+- `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, with a host that is not `localhost` or an IP address in a private or reserved range. The host is not resolved: the server never fetches the override (only the owner's app shows it), so the DNS step of `POST /wishlist`'s `cover_url` check would only block the server
 
 **Response `200`:** the updated `UserBookRead`.
 

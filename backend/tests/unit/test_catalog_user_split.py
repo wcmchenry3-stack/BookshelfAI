@@ -409,12 +409,10 @@ class TestUpdateEndpoint:
 
     def test_ssrf_cover_is_refused_before_the_handler(self, patch_entry):
         entry = _entry(_book())
-        with patch(
-            "app.core.url_validator.socket.getaddrinfo",
-            return_value=[(None, None, None, None, ("169.254.169.254", 0))],
-        ):
+        with patch("app.core.url_validator.socket.getaddrinfo") as resolve:
             resp, _ = patch_entry(
-                entry, {"cover_url_override": "https://metadata.example/x"}
+                entry, {"cover_url_override": "https://169.254.169.254/x"}
             )
         assert resp.status_code == 422
+        resolve.assert_not_called()
         assert entry.cover_url_override is None

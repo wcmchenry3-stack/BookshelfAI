@@ -514,6 +514,8 @@ async def test_another_users_merged_work_is_not_owned(env):
         assert (
             await _scan_ownership(env, alice, open_library_work_id=work) == "not_owned"
         )
+        # Bob's entry on the merged row does count for Bob.
+        assert await _scan_ownership(env, bob, open_library_work_id=work) != "not_owned"
 
 
 async def _purchase(env, user, **body):
