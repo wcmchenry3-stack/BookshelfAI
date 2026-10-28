@@ -95,6 +95,7 @@ All settings are read from the environment by `Settings` in `backend/app/core/co
 | `DATABASE_URL` | required | none | Postgres URL; port 6543 (Supabase transaction pooler) refused | error (no default) |
 | `JWT_PRIVATE_KEY` | required when `ENVIRONMENT` is not `development`/`test` | empty | non-empty secret (the catalog-token key derives from it) | blank = unset, then the hardened check fails |
 | `JWT_ACCESS_TTL_MINUTES` | optional | `15` | 1-60 (access-token lifetime, #689) | blank = default |
+| `REFRESH_REUSE_GRACE_SECONDS` | optional | `30` | 0-120 (seconds after a refresh-token rotation in which replaying the old token is a client retry, not reuse; 0 = every later replay is reuse; concurrent duplicates still get a replacement, #690) | blank = default |
 | `JWT_EXPIRY_HOURS` | **retired**, remove it | unset | ignored; boot logs a warning while it is set. Still accepted for one release so a leftover value does not fail boot | blank = unset |
 | `ENVIRONMENT` | optional | `development` | any; anything but `development`/`test` is hardened | **boot error** (never silently development) |
 | `TRUSTED_HOSTS` | optional | `["*"]` | JSON list of hosts, e.g. `["api.example.com"]` | **boot error** |

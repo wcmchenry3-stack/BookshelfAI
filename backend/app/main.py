@@ -397,8 +397,8 @@ if not settings.is_hardened:
             create_access_token,
             create_refresh_token,
         )
+        from app.auth.refresh_family import new_family_row
         from app.core.database import get_db
-        from app.models.refresh_token import RefreshToken as RefreshTokenModel
 
         # A whitespace-only secret counts as unset: the route stays disabled.
         if not settings.test_auth_secret.strip():
@@ -454,7 +454,7 @@ if not settings.is_hardened:
             expires_at = datetime.now(UTC) + timedelta(
                 days=settings.refresh_token_expiry_days
             )
-            db.add(RefreshTokenModel(jti=jti, user_id=user.id, expires_at=expires_at))
+            db.add(new_family_row(user.id, jti, expires_at))
             await db.commit()
 
             logger.info("test-login: issued tokens (user_id=%s)", user.id)

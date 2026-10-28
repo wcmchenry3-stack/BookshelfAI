@@ -8,5 +8,30 @@
     "description": "Settings row label for the scan usage figure",
     "tone": "neutral",
     "characterLimit": 25
+  },
+  "signOut": {
+    "description": "Settings row/button label that signs the user out",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "signOutConfirmTitle": {
+    "description": "Title of the sign-out confirmation prompt",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "signOutConfirmBody": {
+    "description": "Body of the sign-out confirmation prompt",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "signOutConfirm": {
+    "description": "Confirm button in the sign-out prompt",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "signOutCancel": {
+    "description": "Cancel button in the sign-out prompt",
+    "tone": "neutral",
+    "characterLimit": 20
   }
 }

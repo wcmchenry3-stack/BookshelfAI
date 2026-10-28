@@ -1,6 +1,6 @@
 """Catalog/user split on real Postgres (#682).
 
-- Migration 0024 down and up: the new columns, constraints and index go and
+- Migration 0025 down and up: the new columns, constraints and index go and
   come back with no difference to the models, and the upgrade backfills
   ``books.source`` / ``fetched_at`` for rows that existed before it. Runs in
   a rolled-back transaction.
@@ -63,7 +63,7 @@ MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "alembic"
     / "versions"
-    / "0024_catalog_user_split.py"
+    / "0025_catalog_user_split.py"
 )
 
 
@@ -75,7 +75,7 @@ def _req():
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0024", MIGRATION)
+    spec = importlib.util.spec_from_file_location("migration_0025", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -87,7 +87,7 @@ _NEW_USER_BOOK_COLUMNS = {"title_override", "author_override", "cover_url_overri
 
 def _migration_cycle(connection) -> None:
     migration = _load_migration()
-    assert (migration.revision, migration.down_revision) == ("0024", "0023")
+    assert (migration.revision, migration.down_revision) == ("0025", "0024")
     context = MigrationContext.configure(connection)
 
     def columns(table) -> set:
@@ -163,7 +163,7 @@ def _migration_cycle(connection) -> None:
         )
 
 
-async def test_migration_0024_upgrade_downgrade_cycle():
+async def test_migration_0025_upgrade_downgrade_cycle():
     engine = create_async_engine(settings.async_database_url)
     try:
         async with engine.begin() as conn:

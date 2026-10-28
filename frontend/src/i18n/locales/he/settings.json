@@ -1,4 +1,9 @@
 {
   "heading": "הגדרות",
-  "scanUsageLabel": "שימוש בסריקות"
+  "scanUsageLabel": "שימוש בסריקות",
+  "signOut": "התנתקות",
+  "signOutConfirmTitle": "להתנתק?",
+  "signOutConfirmBody": "תצטרך להתחבר שוב כדי להשתמש ב-Bookshelf.",
+  "signOutConfirm": "התנתקות",
+  "signOutCancel": "ביטול"
 }

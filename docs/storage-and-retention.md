@@ -73,7 +73,7 @@ Missing:
 - **No deletion on low storage**, and no way to know storage is low.
 - **No deletion after N days for `queued` / `pending` photos.** A photo that never reaches the server (the user stays offline or blocked by a limit) stays on the phone until it eventually fails or is dismissed. After 5 attempts it becomes `failed` and the 7-day clock starts, but a photo refused by a limit stays `queued` (`hasRefusedJobs`, `scanErrors.ts:93-96`) with no age limit.
 - **No deletion of the camera original** in the cache directory.
-- **No deletion on sign-out** (`AuthContext` does not touch `scan-queue/`), so the next account on the device would upload the previous account's queued photos.
+- **Cleared on sign-out (#723):** when the user signs out (Settings button or a revoked session), `ScanJobContext` empties the in-memory queue, removes `scan_job_queue`, deletes the queued photos and sweeps `scan-queue/`, and a send still in flight drops its result. The next account therefore starts with an empty queue. Remaining bounding work (caps, sizes) is tracked in #669.
 - **No per-photo size check** before queueing (a 5 MB+ photo is queued, then fails on every attempt).
 - **No count cap on failed jobs.**
 - **No cap on completed but unreviewed photos.** A successful scan keeps its image so the review sheet can offer an enhanced re-scan (`ScanJobContext.tsx:1261-1263`); it is deleted only when the user dismisses the review or on the next app launch. `isPendingUpload` (`scanJob.ts:60`) excludes completed jobs, so they do not count toward the 50-photo cap (`ScanJobContext.tsx:459`). A user who keeps scanning without opening results accumulates them without limit until the app restarts.
@@ -144,7 +144,7 @@ Purges are called from `cleanup_expired_tokens` (`backend/app/services/token_cle
 | `editions` (`edition.py`) | shared catalog of editions | none by design | none | yes |
 | `user_books` (`user_book.py`) | the user's library rows | none; cascade with the user; no per-user cap | none | yes (doc is silent) |
 | `user_custom_books` (`user_custom_book.py`) | the user's own unverified entries | cap 200 per user (`config.py:312`, `unverified_books_per_user_max`); cascade with the user and with their library row | none needed | yes |
-| `refresh_tokens` (`refresh_token.py`) | one row per issued refresh JWT | expired rows (`expires_at < now`, 7 days after issue, `config.py:169`); revoked rows stay until they expire | `delete(RefreshToken)` in `token_cleanup.py:98-110`. One unbatched `DELETE` | **no volume or retention paragraph in the doc; fixed here** |
+| `refresh_tokens` (`refresh_token.py`) | one row per issued refresh JWT | expired rows (`expires_at < now`, 7 days after issue, `refresh_token_expiry_days`) and rows revoked without rotation (logout, logout-all); rotated rows stay until they expire, for reuse detection (#690) | `app/auth/refresh_family.py:purge_refresh_tokens`, called from `token_cleanup.py:_purge_refresh_tokens`; batches of 5,000, at most 20 per run, `SKIP LOCKED` (#690) | yes (#690 updated both) |
 | `ai_quota` (`ai_quota.py`) | per-user, per-day counters (`scan`, `scan.no_match`, `scan.requests`) and legacy month rows | day rows 90 days (`DAILY_RETENTION_DAYS` `app/ai/quota.py:235`); month rows 13 months (`:236`) | `quota.purge_old_quota` `:1695`, `_purge_kind` `:1653` | yes |
 | `ai_inflight` (`ai_quota.py`) | one lease row per user with a call in flight | deleted on release; a crashed request's row is replaced at that user's next scan | none; bounded by user count | yes |
 | `ai_settings` (`ai_settings.py`) | operator dials | fixed set of keys | none; does not grow | yes |
@@ -233,7 +233,7 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 | G4 | The camera original in the cache is never deleted; queued photos are not deleted on sign-out | `scan.tsx:159`, `AuthContext` |
 | G5 | No free-space check and no storage-full message | `frontend/` |
 | G6 | Session log lines are unbounded in length | `SessionLogger.ts:11-33` |
-| G7 | `refresh_tokens` purge is one unbatched `DELETE`; no doc text (doc fixed here) | `token_cleanup.py:98-110` |
+| G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others; doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
 | G8 | `scan_records` dominates the database and `docs/backups.md` sizes backups on the dump size; neither production size nor plan limit is recorded | `docs/RENDER.md`, `docs/backups.md` |
 | G9 | Log and Sentry retention are not documented anywhere | n/a |
 
@@ -261,7 +261,7 @@ Sizes: S under half a day, M about a day, L several days.
 - Why: the 200-line buffer is attached to Sentry, and one line can be arbitrarily large.
 - AC: each line is cut at 1,000 characters with a marker; total attachment at most 100 KB; unit tests in `SessionLogger` tests.
 
-**6. Batch the refresh-token purge (G7) - S**
+**6. Batch the refresh-token purge (G7) - S** (done in #690)
 - Why: it is the one purge that is not bounded; at 10,000 users after an outage it could delete hundreds of thousands of rows in one transaction.
 - AC: `cleanup_expired_tokens` deletes in batches of 5,000 (20 per run) like the others; an integration test for the batching; `data-model.md` text unchanged.
 

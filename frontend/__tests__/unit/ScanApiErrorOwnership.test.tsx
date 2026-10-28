@@ -13,6 +13,7 @@ import { resetApiErrorReporting } from '../../lib/apiErrorReporting';
 // reporter in lib/api.ts. These tests use the REAL api instance (only the
 // transport is faked) so the interceptor and ScanJobContext both run.
 
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/storage', () => ({
   getItem: jest.fn().mockResolvedValue('SECRET-ACCESS-TOKEN'),
   setItem: jest.fn(),

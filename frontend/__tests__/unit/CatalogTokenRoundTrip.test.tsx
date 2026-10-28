@@ -15,6 +15,7 @@ import type { EnrichedBook } from '../../components/BookCandidatePicker';
 
 const mockGet = jest.fn();
 const mockPost = jest.fn();
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/api', () => ({
   api: {
     get: (...a: unknown[]) => mockGet(...a),
@@ -132,7 +133,10 @@ describe('catalog_token round trip (#602)', () => {
 
     const posted = await addReviewedResults(hook);
 
-    expect(mockGet).toHaveBeenCalledWith('/books/search', { params: { q: 'Dune' } });
+    expect(mockGet).toHaveBeenCalledWith('/books/search', {
+      params: { q: 'Dune' },
+      signal: expect.any(AbortSignal),
+    });
     expect(posted).toEqual([dune]);
   });
 

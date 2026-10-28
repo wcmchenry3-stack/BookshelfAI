@@ -660,6 +660,8 @@ class TestCleanupTask:
     async def _run_once(self, **patches):
         """One cleanup run; returns the session the refresh-token delete used."""
         session = AsyncMock()
+        # A Result is synchronous (SQLAlchemy): .scalars().all() on it.
+        session.execute = AsyncMock(return_value=MagicMock())
         factory = MagicMock()
         factory.return_value.__aenter__ = AsyncMock(return_value=session)
         factory.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -692,6 +694,6 @@ class TestCleanupTask:
         rollup = AsyncMock(side_effect=ValueError("db down"))
         session = await self._run_once(rollup_and_purge=rollup)
         assert "error during cleanup run (ai usage)" in caplog.text
-        # The refresh-token delete still ran afterwards.
+        # The refresh-token purge still ran afterwards.
         session.execute.assert_awaited_once()
         session.commit.assert_awaited_once()

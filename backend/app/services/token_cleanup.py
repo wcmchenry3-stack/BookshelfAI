@@ -1,8 +1,13 @@
-"""Background task: periodically delete expired refresh tokens.
+"""Background task: periodically delete expired and revoked refresh tokens.
 
 Expired tokens (expires_at < now) can never be used regardless of their
-revocation status, so they are safe to remove.  Keeping them indefinitely
-causes unbounded table growth and slows the JTI revocation lookup index.
+revocation status, so they are safe to remove.  Tokens revoked without being
+rotated (logout, logout-all) are never read again and go too; rotated tokens
+stay until they expire, because reuse detection needs them (#690).  Keeping
+them indefinitely causes unbounded table growth and slows the JTI revocation
+lookup index.  The purge runs in bounded batches and never waits for a row
+lock (``SKIP LOCKED``; a row a refresh is replaying waits for the next run)
+(app/auth/refresh_family.py:purge_refresh_tokens).
 
 The same daily run also purges, in bounded batches:
 
@@ -25,9 +30,10 @@ The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
 
 Each step is isolated (one failing never skips the others) and runs through
-``_run_step``, which retries transient connection errors (any ``OSError``: DNS failure,
+``_run_step``, which retries transient errors (any ``OSError``: DNS failure,
 connection refused/reset, connect timeout; SQLAlchemy ``OperationalError`` /
-``InterfaceError``) a
+``InterfaceError``; and a deadlock or serialization failure, SQLSTATE
+``40P01`` / ``40001``, whose transaction Postgres rolled back) a
 bounded number of times with exponential backoff (#661).  A blip that recovers
 logs only a warning; a step that exhausts its retries, or fails with any other
 error, logs one ``logger.exception`` so a persistent outage still reaches
@@ -38,17 +44,15 @@ import asyncio
 import logging
 import socket
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 
-from sqlalchemy import delete
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.ai.breaker import purge_old_spend
 from app.ai.ledger import rollup_and_purge
 from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
+from app.auth.refresh_family import purge_refresh_tokens
 from app.core.database import AsyncSessionLocal
-from app.models.refresh_token import RefreshToken
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +76,32 @@ _TRANSIENT_ERRORS = (
 )
 
 
+# Postgres rolled the transaction back and a retry can succeed: deadlock
+# detected, serialization failure (#690: the refresh-token purge vs a
+# refresh-token replay).
+_TRANSIENT_SQLSTATES = frozenset({"40P01", "40001"})
+
+
+def _sqlstate(exc: BaseException) -> str | None:
+    """The SQLSTATE of a driver error (asyncpg ``sqlstate``, psycopg
+    ``pgcode``), or of the driver error a SQLAlchemy ``DBAPIError`` wraps."""
+    for err in (exc, getattr(exc, "orig", None)):
+        for attr in ("sqlstate", "pgcode"):
+            code = getattr(err, attr, None)
+            if isinstance(code, str):
+                return code
+    return None
+
+
 def _is_transient(exc: BaseException) -> bool:
-    """True for connection-level blips worth retrying (checks the cause chain)."""
+    """True for connection-level blips, deadlocks and serialization failures
+    worth retrying (checks the cause chain)."""
     seen: set[int] = set()
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
         if isinstance(cur, _TRANSIENT_ERRORS):
+            return True
+        if _sqlstate(cur) in _TRANSIENT_SQLSTATES:
             return True
         seen.add(id(cur))
         cur = cur.__cause__ or cur.__context__
@@ -152,12 +176,9 @@ async def _purge_scan_records() -> None:
 
 async def _purge_refresh_tokens() -> None:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            delete(RefreshToken).where(RefreshToken.expires_at < datetime.now(UTC))
-        )
-        await db.commit()
+        deleted = await purge_refresh_tokens(db)
         logger.info(
-            "token_cleanup: deleted %d expired refresh token(s)", result.rowcount
+            "token_cleanup: deleted %d expired or revoked refresh token(s)", deleted
         )
 
 

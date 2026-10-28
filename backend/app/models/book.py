@@ -24,7 +24,7 @@ from app.core.database import Base
 #   search query's) reading. Only rows written before #602 can be this: since
 #   then a book with no provider ID is never created.
 # NULL only for a row written by an older release (the column is nullable
-# until a contract migration, see migration 0024).
+# until a contract migration, see migration 0025).
 BOOK_SOURCES = ("google_books", "open_library", "scan")
 
 
@@ -64,7 +64,7 @@ class Book(Base):
     language: Mapped[str] = mapped_column(String, default="en", nullable=False)
     # Provenance (#682): which provider supplied the row (BOOK_SOURCES) and
     # when the server fetched that data. Set by every catalog write
-    # (``source_of`` in app/services/catalog.py); backfilled by migration 0024.
+    # (``source_of`` in app/services/catalog.py); backfilled by migration 0025.
     source: Mapped[str | None] = mapped_column(String, nullable=True)
     fetched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

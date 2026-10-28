@@ -15,6 +15,7 @@ import { draftFromBook, scanReferenceOf, withScanRecord } from '../../lib/unveri
 // reference rides on each result from the POST /scan response, through the
 // job (a retried one too) and the draft queue (draft ids, #625), to the save.
 
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/sentry', () => ({
   Sentry: {
     wrap: (c: unknown) => c,

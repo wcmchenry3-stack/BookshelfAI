@@ -27,8 +27,8 @@ Downgrade drops the new columns, constraints and index. The override values
 users entered and the provenance are lost (``books`` itself keeps every
 catalog value: nothing here ever changed one).
 
-Revision ID: 0024
-Revises: 0023
+Revision ID: 0025
+Revises: 0024
 Create Date: 2026-10-27
 """
 
@@ -37,8 +37,8 @@ from sqlalchemy.dialects.postgresql import UUID
 
 from alembic import op
 
-revision = "0024"
-down_revision = "0023"
+revision = "0025"
+down_revision = "0024"
 branch_labels = None
 depends_on = None
 

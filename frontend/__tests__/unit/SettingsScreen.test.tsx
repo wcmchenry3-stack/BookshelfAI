@@ -14,6 +14,7 @@ jest.mock('../../hooks/useTheme', () => ({
 }));
 
 const MockThemeToggleButton = ({ testID }: { testID?: string }) => <View testID={testID} />;
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ logout: jest.fn() }) }));
 jest.mock('../../components/ThemeToggleButton', () => ({
   ThemeToggleButton: () => <MockThemeToggleButton testID="theme-toggle-button" />,
 }));

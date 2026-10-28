@@ -1,4 +1,9 @@
 {
   "heading": "Configuración",
-  "scanUsageLabel": "Uso de escaneos"
+  "scanUsageLabel": "Uso de escaneos",
+  "signOut": "Cerrar sesión",
+  "signOutConfirmTitle": "¿Cerrar sesión?",
+  "signOutConfirmBody": "Tendrás que volver a iniciar sesión para usar Bookshelf.",
+  "signOutConfirm": "Cerrar sesión",
+  "signOutCancel": "Cancelar"
 }
