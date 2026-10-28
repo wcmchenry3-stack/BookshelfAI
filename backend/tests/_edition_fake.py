@@ -82,13 +82,17 @@ class EditionFakeSession:
             if ed in EDITION_BOOK and EDITION_BOOK[ed] == bound.get("book_id"):
                 return result(ed)
             return result(None)
-        # the user's existing entry (none) or the re-read for the response
+        # the user lock (#683), the user's existing entry (none) or the
+        # re-read for the response
         if not self.added:
             return result(None)
         return result(self.row)
 
     def add(self, obj):
         self.added.append(obj)
+
+    async def flush(self):
+        pass
 
     async def commit(self):
         self.committed = True

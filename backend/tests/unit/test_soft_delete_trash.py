@@ -89,6 +89,11 @@ def _catalog_row(**fields):
     return SimpleNamespace(**data)
 
 
+class _Scalars(list):
+    def all(self):
+        return list(self)
+
+
 class _Result:
     def __init__(self, rows=(), one=None):
         self._rows = list(rows)
@@ -101,7 +106,7 @@ class _Result:
         return self._one
 
     def scalars(self):
-        return SimpleNamespace(all=lambda: list(self._rows))
+        return _Scalars(self._rows)
 
     def all(self):
         return list(self._rows)
@@ -177,10 +182,21 @@ class TestDelete:
         assert row.deleted_at is not None
         db.delete.assert_not_awaited()
         db.commit.assert_awaited_once()
-        (stmt,) = [c.args[0] for c in db.execute.await_args_list]
-        # Looks up a live entry of this user only: a trashed one is a 404.
+        lock, stmt, evict = [c.args[0] for c in db.execute.await_args_list]
+        # The user is locked first (lock order users -> user_books).
+        assert lock._for_update_arg is not None
+        assert "FROM users" in _sql(lock)
+        # Looks up a live entry of this user only, row-locked: a trashed one
+        # (or one a concurrent DELETE just trashed) is a 404.
         assert _live_filter_in(stmt)
         assert "user_books.user_id" in _sql(stmt)
+        assert "FOR UPDATE OF user_books" in _sql(stmt)
+        # Then the user's trash beyond the cap, oldest last, is selected for
+        # eviction in the same transaction.
+        evict_sql = _sql(evict)
+        assert "user_books.deleted_at IS NOT NULL" in evict_sql
+        assert "ORDER BY user_books.deleted_at DESC" in evict_sql
+        assert "OFFSET" in evict_sql
 
     def test_missing_or_already_trashed_is_404(self, client):
         db = AsyncMock()
@@ -224,14 +240,14 @@ class TestLiveFilter:
 
         async def execute(stmt, *a, **k):
             stmts.append(stmt)
-            if len(stmts) == 1:
-                return _Result(one=book)  # the Book lookup
+            if len(stmts) == 2:
+                return _Result(one=book)  # the Book lookup (after the lock)
             return _Result(one=None)
 
         db = MagicMock()
         db.execute = execute
+        db.flush = AsyncMock()
         db.commit = AsyncMock()
-        db.refresh = AsyncMock()
         with patch.object(
             user_books_api, "require_edition_of_book", AsyncMock(return_value=None)
         ):
@@ -241,9 +257,11 @@ class TestLiveFilter:
                 current_user=FAKE_USER,
                 db=db,
             )
-        lookup = stmts[1]
+        assert "FROM users" in _sql(stmts[0])  # the user lock first
+        lookup = stmts[2]
         assert "user_books.book_id" in _sql(lookup)
         assert _live_filter_in(lookup)
+        assert "FOR UPDATE OF user_books" in _sql(lookup)
         # A new live entry was added rather than a trashed one promoted.
         (added,) = [c.args[0] for c in db.add.call_args_list]
         assert isinstance(added, UserBook) and added.deleted_at is None
@@ -316,6 +334,9 @@ class _RestoreDb:
         if n == 3 and self.row is not None and self.row.custom_book is None:
             return _Result(rows=[(uuid.uuid4(),)] if self.conflict else [])
         return _Result(one=self.row)
+
+    async def flush(self):
+        pass
 
     async def commit(self):
         self.committed = True

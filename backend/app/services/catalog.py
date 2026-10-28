@@ -16,7 +16,11 @@ row has ``merged_into_id`` set yet. A future merge must:
   survivor);
 - move the duplicate's ``user_books`` and ``editions`` to the survivor, as
   0015 did (reads would follow ``merged_into_id`` anyway; this keeps one
-  library entry per work).
+  library entry per work). That includes entries in the trash (#683,
+  ``deleted_at`` set), so a later restore lands on the survivor. Uniqueness
+  (``uq_user_books_user_book_live``) applies to live rows only: a user may
+  hold one live entry and any number of trashed ones on the survivor, and
+  only two live entries of the work need merging into one.
 
 A merged row and its survivor are one work, and library entries on a
 merged row can exist (nothing relies on a merge having moved them). Reads

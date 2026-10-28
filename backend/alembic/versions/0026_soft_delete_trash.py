@@ -27,10 +27,21 @@ Expand only:
 - ``uq_user_books_custom_book`` stays: an unverified entry belongs to exactly
   one library row and is trashed and restored with it.
 
-Downgrade loses the trash: trashed rows are hard-deleted first (the
-``user_custom_books`` of trashed entries, which cascades to their library
-rows, then the remaining trashed ``user_books``), because a trashed entry
-and a live entry of the same book would block the full unique constraint.
+Locks: the unique index is built without ``CONCURRENTLY`` (a SHARE lock
+on ``user_books``: reads run, writes wait) and ``DROP CONSTRAINT`` takes an
+ACCESS EXCLUSIVE lock; both are brief at the table's current size.
+
+Deploy overlap: while the previous release is still serving, its instances
+keep hard-deleting on ``DELETE`` and read trashed rows as live (they do not
+know ``deleted_at``) until they stop. Entries trashed by the new release in
+that window show up in the old instances' library reads; nothing is lost.
+
+Downgrade loses the trash: trashed rows are hard-deleted first, because a
+trashed entry and a live entry of the same book would block the full unique
+constraint. Only ``user_custom_books`` rows referenced by a trashed
+``user_books`` row (their cascade removes exactly that row), and trashed
+custom books no ``user_books`` row references, are deleted, so the cascade
+never reaches a live library row; then the remaining trashed ``user_books``.
 Then the constraint comes back and the indexes and columns are dropped.
 
 Revision ID: 0026
@@ -88,17 +99,25 @@ def upgrade() -> None:
 
 def purge_trash(conn) -> None:
     """Hard-delete every trashed entry (downgrade only): the unverified
-    entries of trashed rows (cascading to those rows) and any trashed
-    ``user_custom_books`` row, then the remaining trashed ``user_books``."""
+    entries of trashed rows (cascading to exactly those rows) and trashed
+    ``user_custom_books`` rows that no library row references, then the
+    remaining trashed ``user_books``. Never a custom book a live library row
+    references, so the cascade never removes a live entry."""
     trashed_custom = sa.select(_user_books.c.custom_book_id).where(
         _user_books.c.deleted_at.isnot(None),
         _user_books.c.custom_book_id.isnot(None),
     )
+    referenced = sa.select(_user_books.c.custom_book_id).where(
+        _user_books.c.custom_book_id.isnot(None)
+    )
     conn.execute(
         sa.delete(_user_custom_books).where(
             sa.or_(
-                _user_custom_books.c.deleted_at.isnot(None),
                 _user_custom_books.c.id.in_(trashed_custom),
+                sa.and_(
+                    _user_custom_books.c.deleted_at.isnot(None),
+                    _user_custom_books.c.id.not_in(referenced),
+                ),
             )
         )
     )

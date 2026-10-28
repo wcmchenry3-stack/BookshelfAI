@@ -151,6 +151,25 @@ def _migration_cycle(connection) -> None:
         u=uid,
         c=custom,
     )
+    # C6: a live entry whose custom book has deleted_at set (inconsistent,
+    # but possible by hand) must survive the downgrade; a trashed custom
+    # book no library row references (an orphan) goes.
+    live_custom, live_custom_entry, orphan = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    for cid in (live_custom, orphan):
+        insert(
+            "INSERT INTO user_custom_books (id, user_id, title, author, "
+            "deleted_at, created_at, updated_at) "
+            "VALUES (:id, :u, 'Q', 'A', now(), now(), now())",
+            id=cid,
+            u=uid,
+        )
+    insert(
+        "INSERT INTO user_books (id, user_id, custom_book_id, status, "
+        "created_at, updated_at) VALUES (:id, :u, :c, 'read', now(), now())",
+        id=live_custom_entry,
+        u=uid,
+        c=live_custom,
+    )
 
     def ids(table) -> set:
         return set(
@@ -178,8 +197,8 @@ def _migration_cycle(connection) -> None:
         assert not {"uq_user_books_user_book_live", "ix_user_books_deleted_at"} & (
             indexes()
         )
-        assert ids("user_books") == {live}
-        assert ids("user_custom_books") == set()
+        assert ids("user_books") == {live, live_custom_entry}
+        assert ids("user_custom_books") == {live_custom}
 
         migration.upgrade()
         assert "deleted_at" in columns("user_books")
@@ -189,7 +208,7 @@ def _migration_cycle(connection) -> None:
         )
         assert "uq_user_books_user_book" not in uniques()
         assert diffs() == []
-        assert ids("user_books") == {live}
+        assert ids("user_books") == {live, live_custom_entry}
 
 
 async def test_migration_0026_upgrade_downgrade_cycle():
@@ -655,3 +674,234 @@ async def test_purge_does_nothing_while_another_instance_holds_the_lock(env, cap
     async with env.factory() as db:
         assert await trash.purge_trash(db, now=now) == 1
     assert await _ids(env, UserBook, alice) == set()
+
+
+# ── Review round 1: the trash cap and concurrency ────────────────────────────
+
+
+async def _outcome(coro):
+    """``"ok"`` or the HTTP status the call raised; anything else raises."""
+    try:
+        await coro
+        return "ok"
+    except HTTPException as exc:
+        return exc.status_code
+
+
+async def _counts(env, user) -> tuple[int, int, int]:
+    """(live user_books, trashed user_books, user_custom_books) of ``user``."""
+    async with env.factory() as db:
+        rows = (
+            await db.execute(
+                select(UserBook.deleted_at).where(UserBook.user_id == user.id)
+            )
+        ).all()
+        custom = len(
+            (
+                await db.scalars(
+                    select(UserCustomBook.id).where(UserCustomBook.user_id == user.id)
+                )
+            ).all()
+        )
+    live = sum(1 for r in rows if r.deleted_at is None)
+    return live, len(rows) - live, custom
+
+
+async def test_unverified_add_delete_loop_is_bounded_by_the_trash_cap(env):
+    alice = await env.make_user()
+    deleted = []
+    with (
+        patch.object(settings, "trash_max_entries_per_user", 3),
+        patch.object(settings, "unverified_books_per_user_max", 2),
+    ):
+        keep = await _add_unverified(env, alice, title=f"Keep {env.tag}")
+        for _ in range(8):
+            # The same book again and again: the trash never blocks it.
+            added = await _add_unverified(env, alice)
+            await _delete(env, alice, added.id)
+            deleted.append(added.id)
+            live, trashed, custom = await _counts(env, alice)
+            # At most cap live + N trashed rows, never more.
+            assert live == 1 and trashed <= 3 and custom == live + trashed
+    assert await _counts(env, alice) == (1, 3, 4)
+    # The oldest went first: the newest three deletions are kept.
+    assert [t.id for t in await _trash(env, alice)] == deleted[::-1][:3]
+    assert [e.id for e in await _list(env, alice)] == [keep.id]
+
+
+async def test_wishlist_delete_loop_on_one_book_is_bounded(env):
+    alice = await env.make_user()
+    book = await env.make_book()
+    deleted = []
+    with patch.object(settings, "trash_max_entries_per_user", 3):
+        for _ in range(6):
+            added = await _wishlist(env, alice, book)
+            await _delete(env, alice, added.id)
+            deleted.append(added.id)
+            assert (await _counts(env, alice))[1] <= 3
+        assert await _counts(env, alice) == (0, 3, 0)
+        assert [t.id for t in await _trash(env, alice)] == deleted[::-1][:3]
+
+
+async def test_trash_list_never_returns_more_than_the_cap(env):
+    """Even with more trashed rows than the cap (written around DELETE, e.g.
+    by a release from before the cap), the list stops at the cap, newest
+    first."""
+    alice = await env.make_user()
+    entries = []
+    for i in range(5):
+        e = await _entry(env, alice, await env.make_book())
+        await _set_deleted_at(env, e, datetime.now(UTC) - timedelta(hours=10 - i))
+        entries.append(e)
+    with patch.object(settings, "trash_max_entries_per_user", 3):
+        listed = await _trash(env, alice)
+    assert [t.id for t in listed] == entries[::-1][:3]
+
+
+async def test_purge_never_deletes_a_row_a_restore_is_clearing(env):
+    """Connection A clears ``deleted_at`` on a row past the cutoff and has
+    not committed when the purge runs; after A commits the row must survive.
+    The purge skips the locked row (``SKIP LOCKED``) and its DELETE re-checks
+    that the row is still trashed and past the cutoff."""
+    import asyncio
+
+    alice = await env.make_user()
+    now = EPOCH + timedelta(days=300)
+    unverified = await _add_unverified(env, alice)
+    await _set_deleted_at(env, unverified.id, now - timedelta(days=100))
+
+    async with env.engine.connect() as a:
+        await a.execute(
+            update(UserBook).where(UserBook.id == unverified.id).values(deleted_at=None)
+        )
+        await a.execute(
+            update(UserCustomBook)
+            .where(UserCustomBook.id == unverified.book.id)
+            .values(deleted_at=None)
+        )
+
+        async def purge():
+            async with env.factory() as db:
+                return await trash.purge_trash(db, now=now)
+
+        task = asyncio.create_task(purge())
+        await asyncio.sleep(0.5)  # the purge has selected (and maybe blocked)
+        await a.commit()
+        await asyncio.wait_for(task, timeout=10)
+
+    async with env.factory() as db:
+        row = await db.get(UserBook, unverified.id)
+        custom = await db.get(UserCustomBook, unverified.book.id)
+    assert row is not None and row.deleted_at is None
+    assert custom is not None and custom.deleted_at is None
+
+
+async def test_patch_after_a_concurrent_delete_is_404_and_changes_nothing(env):
+    """A DELETE holds the row (trashing it, not yet committed) when a PATCH
+    arrives: the PATCH waits for the row lock, then finds the entry trashed."""
+    import asyncio
+
+    alice = await env.make_user()
+    entry = await _entry(env, alice, await env.make_book(), rating=2)
+
+    async with env.engine.connect() as deleter:
+        await deleter.execute(
+            update(UserBook)
+            .where(UserBook.id == entry)
+            .values(deleted_at=datetime.now(UTC))
+        )
+
+        async def patch_it():
+            async with env.factory() as db:
+                return await user_books_api.update_user_book.__wrapped__(
+                    request=_req(),
+                    user_book_id=entry,
+                    req=UserBookUpdate(rating=5),
+                    current_user=alice,
+                    db=db,
+                )
+
+        task = asyncio.create_task(_outcome(patch_it()))
+        await asyncio.sleep(0.5)
+        await deleter.commit()
+        assert await asyncio.wait_for(task, timeout=10) == 404
+
+    async with env.factory() as db:
+        row = await db.get(UserBook, entry)
+    assert row.deleted_at is not None and row.rating == 2
+
+
+async def test_two_concurrent_deletes_are_204_and_404(env):
+    import asyncio
+
+    alice = await env.make_user()
+    for _ in range(5):
+        entry = await _entry(env, alice, await env.make_book())
+        outcomes = await asyncio.gather(
+            _outcome(_delete(env, alice, entry)), _outcome(_delete(env, alice, entry))
+        )
+        assert sorted(outcomes, key=str) == [404, "ok"]
+    assert (await _counts(env, alice))[:2] == (0, 5)
+
+
+async def test_purchased_racing_delete_never_writes_a_trashed_row(env):
+    """Either the DELETE commits first (purchased then adds a new live
+    entry and the trashed row is untouched) or purchased promotes the live
+    entry first (and the DELETE then trashes it). Never a 500, never a
+    trashed row changed after it was trashed."""
+    import asyncio
+
+    for _ in range(6):
+        alice = await env.make_user()
+        book = await env.make_book()
+        entry = await _entry(env, alice, book)
+
+        async def purchase(user=alice, book_id=book.id):
+            async with env.factory() as db:
+                return await user_books_api.add_purchased.__wrapped__(
+                    request=_req(),
+                    req=PurchasedCreate(book_id=book_id),
+                    current_user=user,
+                    db=db,
+                )
+
+        outcomes = await asyncio.gather(
+            _outcome(_delete(env, alice, entry)), _outcome(purchase())
+        )
+        assert outcomes == ["ok", "ok"]
+        async with env.factory() as db:
+            rows = (
+                await db.scalars(select(UserBook).where(UserBook.user_id == alice.id))
+            ).all()
+        trashed = [r for r in rows if r.deleted_at is not None]
+        live = [r for r in rows if r.deleted_at is None]
+        assert [r.id for r in trashed] == [entry]
+        if live:  # DELETE first: a new entry, the trashed one untouched
+            assert [r.status for r in live] == ["purchased"]
+            assert trashed[0].status == "wishlisted"
+            assert trashed[0].purchased_at is None
+        else:  # purchased first: promoted, then trashed
+            assert trashed[0].status == "purchased"
+
+
+async def test_restore_on_a_merged_row_racing_a_survivor_add_leaves_one_entry(env):
+    """C5: the unique index is per book row, so a restore of an entry on a
+    merged row and an add of its survivor could both pass their checks.
+    Both take the user lock first: exactly one live entry, the other 409."""
+    import asyncio
+
+    survivor = await env.make_book()
+    merged = await env.make_book(
+        title=f"Dune duplicate {env.tag}", merged_into_id=survivor.id
+    )
+    for _ in range(6):
+        alice = await env.make_user()
+        on_merged = await _entry(env, alice, merged)
+        await _delete(env, alice, on_merged)
+        outcomes = await asyncio.gather(
+            _outcome(_restore(env, alice, on_merged)),
+            _outcome(_wishlist(env, alice, survivor)),
+        )
+        assert sorted(outcomes, key=str) == [409, "ok"]
+        live, _, _ = await _counts(env, alice)
+        assert live == 1
