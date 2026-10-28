@@ -180,7 +180,11 @@ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=<same as backend's GOOGLE_IOS_CLIENT_ID>
 EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=<same as backend's GOOGLE_ANDROID_CLIENT_ID>
 EXPO_PUBLIC_SENTRY_DSN=                               # optional
 EXPO_PUBLIC_ENVIRONMENT=development
+EXPO_PUBLIC_TURNSTILE_SITE_KEY=                       # optional (#740); unset = /scan without a token
+EXPO_PUBLIC_TURNSTILE_BASE_URL=                       # optional, native only; default = origin of EXPO_PUBLIC_API_URL
 ```
+
+For a local Turnstile round trip use Cloudflare's always-pass test keys (site key `1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`) with `TURNSTILE_REQUIRED=true` on the backend.
 
 Only `EXPO_PUBLIC_*` vars are exposed to the client bundle — anything else is server-only.
 

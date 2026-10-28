@@ -254,7 +254,7 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 
 **Request:** `multipart/form-data`
 - `file` (required) — image, max 5 MB, extensions `.jpg` / `.jpeg` / `.png` / `.webp` / `.heic` / `.heif`, `Content-Type` must start with `image/`, magic bytes must match the declared extension
-- `cf-turnstile-response` (required iff `TURNSTILE_SECRET_KEY` is set on the server) — Turnstile token from the client widget
+- `cf-turnstile-response` (required when `TURNSTILE_REQUIRED=true`, the default) — a fresh, single-use Turnstile token from the client's invisible widget, one per request (#740)
 - `enhanced` (optional, default `false`) — `true` re-scans with the stronger model. Premium only (#533); see the rules below
 - `attempt` (optional, integer 1–6, default `1`) — which try of this scan the request is (#603): `1` the first try, `2`–`6` the app's scheduled retries (#574). A missing or empty value means `1`. Anything else (not an integer, e.g. `x` or `1.5`, or out of range, e.g. `0` or `7`) is a `422` validation error like any other bad form field: it is rejected before the handler runs, so nothing is counted (not even the per-user daily request count, #586, or the 10/minute rate limit, which is applied by the handler's decorator), reserved or recorded. Parsing is Pydantic's lenient integer parsing, so `01`, `+3`, `1.0` and surrounding whitespace are accepted as integers. Purely informational: it is stored on every `ai_usage` row the request writes and in the `scan_record` log line, and never changes the quota, the charge, the cost, the model, the limits or the order of the checks
 

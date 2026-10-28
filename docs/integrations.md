@@ -168,7 +168,9 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Timeout:** 5 seconds
 **Source:** `backend/app/api/scan.py:_verify_turnstile`
 
-When configured, every `POST /scan` must include `cf-turnstile-response` as a multipart form field. Missing → 400, invalid → 403. A Turnstile outage falls through to False (request rejected) — the 5s timeout prevents it from blocking the endpoint indefinitely.
+When `TURNSTILE_REQUIRED=true` (the default; production runs `false` until the app's site key ships), every `POST /scan` must include `cf-turnstile-response` as a multipart form field. Missing → 400, invalid → 403. A Turnstile outage falls through to False (request rejected) — the 5s timeout prevents it from blocking the endpoint indefinitely.
+
+**Client (#740):** `EXPO_PUBLIC_TURNSTILE_SITE_KEY` (public site key) and, native only, `EXPO_PUBLIC_TURNSTILE_BASE_URL` (default: the origin of `EXPO_PUBLIC_API_URL`). The app gets a fresh token per request from an invisible widget (hidden WebView on iOS/Android, Cloudflare's script on web) and sends it as `cf-turnstile-response`; without a site key, or when the widget times out (10 s) or fails, the request goes without one. Details: [`security.md` → Turnstile on /scan](security.md#turnstile-on-scan). Re-enabling the check: [`RENDER.md` → Re-enabling `TURNSTILE_REQUIRED`](RENDER.md#re-enabling-turnstile_required).
 
 ### WAF + Bot Fight Mode
 

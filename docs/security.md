@@ -22,7 +22,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Host header spoofing | `TrustedHostMiddleware` (hardened only — staging + production) rejects requests with Host header outside `TRUSTED_HOSTS`; only `/health` (not `/health/db`) is exempted via `_HealthExemptTrustedHost` so origin-direct liveness probes still work |
 | Request size limit | `RequestSizeLimitMiddleware` (pure ASGI, #557) caps every request body: 6 MB on `POST /scan` (`MAX_SCAN_REQUEST_BYTES` = the 5 MB image limit + 1 MB multipart overhead), 10 MB elsewhere. A declared `Content-Length` over the cap → 413 without reading the body; otherwise the bytes are counted as they arrive, so a chunked body (no `Content-Length`) is cut off with 413 as soon as it passes the cap and no handler runs on it. A malformed `Content-Length` (non-numeric, negative, conflicting values) → 400 |
 | DDoS / Bot protection | Cloudflare free tier (Bot Fight Mode, HTTP DDoS protection) |
-| Bot protection on /scan | Cloudflare Turnstile — opt-in via `TURNSTILE_SECRET_KEY` env var. Request must carry `cf-turnstile-response`; verified against Cloudflare siteverify with 5s timeout |
+| Bot protection on /scan | Cloudflare Turnstile. When `TURNSTILE_REQUIRED=true` (the default; boot fails without `TURNSTILE_SECRET_KEY`), every `POST /scan` must carry `cf-turnstile-response`, verified against Cloudflare siteverify with a 5 s timeout (missing → `400 "Missing Turnstile token"`, rejected or siteverify unreachable → `403 "Turnstile verification failed"`). The check runs after the per-user daily request count and before the upload is read. Production currently runs `TURNSTILE_REQUIRED=false` until the app's site key is live; see [Turnstile on /scan](#turnstile-on-scan) |
 | CORS | Explicit method/header allowlist; wildcard origins rejected at config validation; only `Retry-After` is exposed to scripts (`expose_headers`), for the scan 429s |
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
 | Upload normalisation | Every `/scan` image is fully decoded, bomb-checked, stripped of metadata, downscaled and re-encoded as JPEG before any paid call. See [Upload pipeline](#upload-pipeline-post-scan) |
@@ -93,6 +93,20 @@ Library pins: `Pillow` and `pillow-heif` are pinned exactly in `backend/requirem
 
 - **Bundled native decoders:** the `pillow-heif` wheel bundles native libheif (1.23.4 in `pillow-heif` 1.8.0) and libde265 (1.1.3). CVEs in those C libraries are not visible to `pip-audit` or Trivy through PyPI advisories, so when updating `pillow-heif`, read each release's changelog for libheif/libde265 bumps (and check their upstream advisories) rather than relying on CI to flag them.
 - **Licences:** the `pillow-heif` wheel bundles libheif/libde265 (LGPL-3.0) and x265 (GPL-2.0+); they are used server-side only and not distributed.
+
+## Turnstile on /scan
+
+`POST /scan` spends money on AI calls, so it carries a Cloudflare Turnstile token (#740). The server side is unchanged: `backend/app/api/scan.py` reads the `cf-turnstile-response` form field and, when `TURNSTILE_REQUIRED=true`, verifies it with siteverify (`400 "Missing Turnstile token"` / `403 "Turnstile verification failed"`).
+
+**Client** (`frontend/lib/turnstile/`, `frontend/contexts/TurnstileContext.tsx`, `frontend/components/TurnstileWidget*.tsx`):
+
+- **One fresh token per request.** `ScanJobContext` asks `useTurnstile().getToken()` before every `POST /scan`, including the silent `scan_in_progress` retries, queued photos and scheduled retries. Tokens are single-use and expire after about 300 s, so nothing is cached: the widget is reset and executed for each request (`TurnstileTokenBroker`, one challenge at a time). A token is accepted only for the request that is running; a late token (after a timeout or abort) is dropped, never handed to a later request.
+- **Native (iOS/Android):** one hidden `react-native-webview`, mounted once by `TurnstileProvider` in `app/_layout.tsx`, loads an inline page (`source={{ html, baseUrl }}`) with an invisible widget (`execution: 'execute'`, `appearance: 'interaction-only'`). The token comes back by `postMessage`, and only messages from the page's own origin are read. `baseUrl` is `EXPO_PUBLIC_TURNSTILE_BASE_URL`, defaulting to the origin of `EXPO_PUBLIC_API_URL` (`https://bookshelfapi.buffingchi.com` in production, `https://bookshelfapi-dev.buffingchi.com` in dev); that hostname must be in the widget's allowed hostnames in the Cloudflare dashboard. The WebView is locked down: `originWhitelist` is that origin, `https://challenges.cloudflare.com` and blank frames; `onShouldStartLoadWithRequest` blocks every other URL in any frame (`lib/turnstile/navigationGuard.ts`); no file access, no new windows, no mixed content, debugging off; the inline page has its own CSP (`script-src`/`frame-src`/`connect-src` Turnstile only). JavaScript runs only for the widget. The view is 1x1, transparent, not touchable and hidden from screen readers.
+- **Web:** `https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit` is loaded once and one invisible widget is rendered outside the React tree, with the same per-request reset and execute. The web CSP (`render.yaml`) allows that origin in `script-src` and `frame-src` only (`backend/tests/unit/test_render_yaml.py`).
+- **Site key:** `EXPO_PUBLIC_TURNSTILE_SITE_KEY` (public). Unset or malformed: no widget is loaded and scans are sent without a token, with one Sentry breadcrumb per app session.
+- **Failures never block a scan on the client:** the wait for a token is bounded at 10 s (`TURNSTILE_TOKEN_TIMEOUT_MS`); on a timeout, widget error, script load failure or sign-out the request is sent without a token (or, after sign-out, not sent at all). A `400`/`403` Turnstile refusal is retryable (`lib/scanErrors.ts`, codes `turnstile_missing` / `turnstile_failed`) on the existing retry schedule and caps (5 attempts per photo), each attempt with a new token.
+- **Sign-out:** a token request in flight is aborted with the scan and its token is never used; the next account's scans run their own challenges.
+- Tokens are never logged; breadcrumbs carry only the outcome (`timeout`, `error`, ...).
 
 ## Client IP and origin lockdown
 
@@ -206,6 +220,7 @@ gitleaks protect --staged --redact
 ```
 
 ---
+
 
 ## Penetration Testing Runbook
 
@@ -391,7 +406,8 @@ WHERE user_id = '<uuid>' AND revoked_at IS NULL;
 **Contain scan abuse:**
 ```bash
 # Lower RATE_LIMIT_SCAN in Render env vars (e.g., "2/minute")
-# OR set TURNSTILE_SECRET_KEY to activate bot challenge
+# OR, once the app ships a site key, set TURNSTILE_REQUIRED=true (with
+# TURNSTILE_SECRET_KEY) — see RENDER.md "Re-enabling TURNSTILE_REQUIRED"
 ```
 
 **Post-incident:**

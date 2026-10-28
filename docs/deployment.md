@@ -172,7 +172,7 @@ Every response from the static site carries:
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-- `Content-Security-Policy: default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com; style-src 'self' 'unsafe-inline'; script-src 'self'`
+- `Content-Security-Policy: default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com` (Turnstile's script and challenge frame, #740)
 
 **Caching:**
 - `/*` → `no-cache` (HTML doesn't cache)
@@ -187,6 +187,7 @@ Every response from the static site carries:
 Dashboard-only (sync:false):
 - `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`
 - `EXPO_PUBLIC_SENTRY_DSN`
+- `EXPO_PUBLIC_TURNSTILE_SITE_KEY` (#740, the public Turnstile site key; unset = `/scan` without a token)
 
 ### Release process (web)
 
