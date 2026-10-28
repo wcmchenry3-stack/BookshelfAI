@@ -23,8 +23,8 @@ before this release).
 
 Downgrade drops the index, the foreign key and the four columns.
 
-Revision ID: 0022
-Revises: 0021
+Revision ID: 0024
+Revises: 0023
 Create Date: 2026-10-27
 """
 
@@ -33,8 +33,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0022"
-down_revision = "0021"
+revision = "0024"
+down_revision = "0023"
 branch_labels = None
 depends_on = None
 

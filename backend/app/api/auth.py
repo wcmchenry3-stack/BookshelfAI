@@ -209,8 +209,8 @@ async def refresh(
     # as tv=0, so it works only while the user has never bumped (#725); it
     # has passed the same jti, revoked_at and expiry checks above. A present
     # but malformed tv is rejected.
-    # TODO(#735): remove the legacy branch after 2026-12-15 (re-anchor the
-    # date to the actual production release; see app/auth/jwt.py).
+    # TODO(#735): remove the legacy branch on or after 2026-11-04 (see
+    # app/auth/jwt.py).
     legacy = not has_token_version_claim(payload)
     token_version = LEGACY_TOKEN_VERSION if legacy else token_version_claim(payload)
     if token_version != user.token_version:
@@ -230,7 +230,7 @@ async def refresh(
     # Rotate: mark the old row rotated and issue its successor (same family;
     # a legacy row has no family and is its own, so its successor gets one).
     # A legacy token (#725) is revoked without ``used_at``: it counts as
-    # plainly revoked, like rotations made before migration 0022, so a
+    # plainly revoked, like rotations made before migration 0024, so a
     # replay is the plain 401 (no grace retry, no reuse detection) and the
     # tv=0 reading stays confined to this one check. The legacy path ends
     # with #735.

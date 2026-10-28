@@ -1,6 +1,6 @@
 """Refresh-token families and reuse detection against real Postgres (#690).
 
-- Migration 0022 adds family_id / used_at / replaced_by_id / displaced_at,
+- Migration 0024 adds family_id / used_at / replaced_by_id / displaced_at,
   backfills every existing row as its own family (one UPDATE) and drops them
   again, leaving no difference to the models. Runs in a rolled-back
   transaction.
@@ -56,13 +56,13 @@ MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "alembic"
     / "versions"
-    / "0022_refresh_token_families.py"
+    / "0024_refresh_token_families.py"
 )
 COLUMNS = ("family_id", "used_at", "replaced_by_id", "displaced_at")
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0022", MIGRATION)
+    spec = importlib.util.spec_from_file_location("migration_0024", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -70,7 +70,7 @@ def _load_migration():
 
 def _migration_cycle(connection) -> None:
     migration = _load_migration()
-    assert (migration.revision, migration.down_revision) == ("0022", "0021")
+    assert (migration.revision, migration.down_revision) == ("0024", "0023")
     context = MigrationContext.configure(connection)
 
     def columns() -> dict:
@@ -153,7 +153,7 @@ def _migration_cycle(connection) -> None:
         assert diffs() == []
 
 
-async def test_migration_0022_upgrade_downgrade_cycle_with_backfill():
+async def test_migration_0024_upgrade_downgrade_cycle_with_backfill():
     engine = create_async_engine(settings.async_database_url)
     try:
         async with engine.begin() as conn:
@@ -201,7 +201,7 @@ def _warnings(events) -> list:
 
 
 async def test_rotation_inherits_family_from_a_row_without_one(env):
-    """make_user writes a row the way pre-0022 code did (no family_id): it is
+    """make_user writes a row the way pre-0024 code did (no family_id): it is
     its own family, and its successor joins it."""
     factory, client, make_user, _ = env
     user, _access, refresh = await make_user()

@@ -32,7 +32,7 @@ class RefreshToken(Base):
     )
     # Refresh-token families (#690). Every row of one sign-in's rotation chain
     # shares family_id (the first row's id). Nullable only for rows written
-    # by code from before migration 0022 during a deploy; readers fall back
+    # by code from before migration 0024 during a deploy; readers fall back
     # to the row's own id (app/auth/refresh_family.py:family_of).
     family_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True

@@ -86,7 +86,7 @@ class Replay(enum.Enum):
 
 def family_of(row: RefreshToken) -> uuid.UUID:
     """The row's family id. Rows written during the deploy by code from
-    before migration 0022 have none; each is its own family, as the
+    before migration 0024 have none; each is its own family, as the
     migration's backfill does."""
     return row.family_id or row.id
 
@@ -129,7 +129,7 @@ def is_displaced(row: RefreshToken) -> bool:
 def is_rotated(row: RefreshToken) -> bool:
     """Rotated by /auth/refresh: rotation sets both ``revoked_at`` and
     ``used_at``. A row revoked any other way (logout, logout-all, a stale
-    ``tv``) has no ``used_at``; rows rotated before migration 0022 have none
+    ``tv``) has no ``used_at``; rows rotated before migration 0024 have none
     either and count as plainly revoked."""
     return row.revoked_at is not None and row.used_at is not None
 
