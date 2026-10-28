@@ -57,8 +57,12 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 const grabbed: { start?: (type: 'image', uri: string) => void } = {};
+const setStart = (fn: (type: 'image', uri: string) => void) => {
+  grabbed.start = fn;
+};
 function Grab() {
-  grabbed.start = useScanJobs().startScan;
+  const { startScan } = useScanJobs();
+  React.useEffect(() => setStart(startScan), [startScan]);
   return null;
 }
 
