@@ -172,7 +172,12 @@ Rollout, per service (dev first, then prod):
    the API hostname.
 4. Set `ORIGIN_AUTH_SECRET` in the dashboard to the same value. Check that the
    public hostname still works and that `/health` still passes Render's health
-   check.
+   check. Run `scripts/smoke_origin_lockdown.sh` (add the dev hostname as an
+   argument): it requests `/health/db` through the public hostname and fails on
+   403, which `/health` (exempt) cannot reveal. A wrongly configured edge also
+   raises the Sentry message `origin_auth_rejected_authenticated` (at most one
+   per 5 minutes per process) as soon as a signed-in client is rejected; see
+   [`security.md`](security.md#client-ip-and-origin-lockdown).
 
 To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
 `TRUSTED_PROXY_MODE=none`.
@@ -323,6 +328,23 @@ the two; an operator does, by hand:
    If the old Google account signs in later, its stored email is refreshed
    from its token again (when no other user holds that address).
 4. Ask the person to sign in again and confirm it succeeds.
+
+### Migration 0022 refuses: case-duplicate emails
+
+Migration 0022 (#705) adds a unique index on `lower(users.email)`. If two
+`users` rows hold the same address differing only in case, the upgrade (the
+Render `preDeployCommand`) fails with `0022: <n> email address(es) are held
+by more than one users row` and changes nothing. Check before deploying with
+this read-only query (prints ids only, no emails):
+
+```sql
+SELECT count(*) AS user_rows, array_agg(id ORDER BY created_at) AS user_ids
+  FROM users GROUP BY lower(email) HAVING count(*) > 1;
+```
+
+No rows means the migration will run. Otherwise treat each group like an
+`account_conflict` above: verify who owns the mailbox, then move the library
+(A) or release the address on the other rows (B), and redeploy.
 
 ## First production deploy — cutover checklist
 

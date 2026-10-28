@@ -35,8 +35,9 @@ def email_allowed(email: str, allowlist: list[str]) -> bool:
 
 def _by_email(email: str, exclude_id=None):
     """The oldest user holding ``email``, ignoring case, other than
-    ``exclude_id``. ``limit(1)`` so rows that already differ only by case can
-    never raise MultipleResultsFound."""
+    ``exclude_id``. ``limit(1)`` so rows differing only by case (impossible
+    since the ``uq_users_email_lower`` index, #705) can never raise
+    MultipleResultsFound."""
     query = select(User).where(func.lower(User.email) == email.lower())
     if exclude_id is not None:
         query = query.where(User.id != exclude_id)
@@ -79,8 +80,8 @@ async def resolve_google_user(
 
     - Known ``google_id``: profile fields are refreshed. A changed email is
       stored too, unless another user already holds that address, ignoring
-      case (rows differing only by case can exist); then the old address is kept and the
-      sign-in still succeeds, because the subject proves who this is.
+      case; then the old address is kept and the sign-in still succeeds,
+      because the subject proves who this is.
     - Unknown ``google_id`` but the email (ignoring case) belongs to an
       existing user: that user necessarily has a different ``google_id`` (it
       is unique and not null), so this raises :class:`AccountConflictError`.
@@ -95,8 +96,9 @@ async def resolve_google_user(
         user.display_name = display_name
         user.avatar_url = avatar_url
         if email and user.email != email:
-            # Also for a case-only change: another row may hold this exact
-            # spelling (only `email` is unique, case-sensitively).
+            # Also for a case-only change. Since migration 0022 (#705)
+            # ``uq_users_email_lower`` stops another row holding a case
+            # variant; the lookup stays as a guard for databases without it.
             holder = (
                 await db.execute(_by_email(email, exclude_id=user.id))
             ).scalar_one_or_none()
@@ -144,8 +146,9 @@ async def resolve_and_commit_google_user(
 
     A unique violation at commit means a concurrent sign-in won the race
     (a double tap with the same new subject, or another account taking the
-    email first). The session is rolled back and the lookup runs once more,
-    which then finds the winner's row: the same subject signs in, a
+    email first, in any case: ``uq_users_email_lower``, #705). The session
+    is rolled back and the lookup runs once more, which then finds the
+    winner's row: the same subject signs in, a
     different one gets :class:`AccountConflictError`. A second violation is
     also reported as a conflict. Any other integrity error (NOT NULL, FK)
     is a bug, not a race: it is rolled back and re-raised.

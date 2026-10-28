@@ -201,7 +201,7 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | generated |
-| `email` | string, **unique**, not null | authenticated email |
+| `email` | string, **unique**, not null | authenticated email, stored as Google reports it. Also **unique ignoring case**: index `uq_users_email_lower` on `lower(email)` (#705, migration 0022); the case-sensitive constraint `uq_users_email` is kept, as the index implies it |
 | `google_id` | string, **unique**, not null | Google OAuth `sub` claim |
 | `display_name` | string, nullable | from Google profile |
 | `avatar_url` | string, nullable | from Google profile |
@@ -260,7 +260,7 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | |
 | `book_id` | UUID FK → `books.id`, restrict delete, nullable | the catalog book; `NULL` only for an unverified entry (#616) |
 | `custom_book_id` | UUID FK → `user_custom_books.id`, cascade delete, nullable, unique (`uq_user_books_custom_book`) | the user's own unverified entry (#616); `ck_user_books_one_book` requires exactly one of `book_id` / `custom_book_id` |
-| `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet |
+| `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet. **Must be an edition of `book_id`** (#686): enforced in the API (`app/services/edition_check.py`, `422 edition_book_mismatch`), not by a composite FK (see below) |
 | `status` | string, indexed, not null | check constraint: `wishlisted`, `purchased`, `reading`, `read` |
 | `wishlisted_at` | timestamptz, nullable | set when status first enters `wishlisted` |
 | `purchased_at` | timestamptz, nullable | set on wishlisted→purchased transition |
@@ -271,6 +271,8 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
 **Uniqueness:** `(user_id, book_id)` is a unique constraint (`uq_user_books_user_book`). A user can have at most one tracking row per work — this is what dedup is enforcing. Different editions of the same work still share one `UserBook`; changing edition updates `edition_id` in place. (Unverified rows have `book_id` NULL, which the constraint does not compare; their duplicates are refused by `UnverifiedBookService`.)
+
+**Edition belongs to book (#686).** A composite FK `(book_id, edition_id)` → `editions(book_id, id)` was considered and not added: it needs a unique key on `editions(book_id, id)` and would fail on any existing mismatched row, so it waits for the existing-data check to come back clean. Until then the API enforces the rule on every write that takes an `edition_id`.
 
 ### `user_custom_books` (`backend/app/models/user_custom_book.py`)
 
@@ -576,6 +578,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0017_scan_corrections.py` — adds `scan_corrections` (correction flags per scan record and candidate, #631; FK `scan_records` `ON DELETE CASCADE`, unique `(scan_record_id, candidate_index)`, `created_at` index) and `scan_corrections_daily` (daily totals, no user); expand only, the downgrade drops only these two tables
 - `0018_drop_retired_monthly_quota.py` — contract step for #582 (#594): deletes the `ai_settings` rows `quota.free.monthly`, `quota.premium.monthly` and `quota.premium.enhanced_monthly` (only those keys) and drops `ai_inflight.monthly_taken` and `ai_inflight.enhanced_taken`. `ai_quota` month rows are left to age out through the 13-month retention. The downgrade recreates the two columns as 0012 made them (boolean, not null, default false) but cannot restore the deleted settings rows (the release before #582 re-seeds missing quota keys at boot).
 - `0019_drop_legacy_scan_counters.py` — contract step for #528 and #533 (#540): drops the table `scan_usage_daily` (with `ix_scan_usage_daily_usage_date`; the per-user daily scan counter `/scan` stopped using in #528) and the column `users.enhanced_scan_credits` (the lifetime enhanced-scan balance nothing read since #533). Both go with their data. The downgrade recreates them exactly as 0005 and 0003 made them (schema only: the table comes back empty and every user gets the column's default of 5). The previous release maps `users.enhanced_scan_credits`, so user queries fail between the migration and the new code taking traffic; see "Upgrade notes" in [`deployment.md`](deployment.md#upgrade-notes)
+- `0022_users_email_lower_unique.py` — adds the unique index `uq_users_email_lower` on `users (lower(email))` (#705), so two concurrent first sign-ins whose emails differ only in case cannot both create a user (the loser gets `409 account_conflict`); expand only, the case-sensitive `uq_users_email` stays. Before building, it takes `LOCK TABLE users IN SHARE MODE` (writes wait, reads run; 5 s `lock_timeout`, reset at the end) and counts case-duplicate addresses; if there are any, the upgrade fails with the count only (no emails) and changes nothing; they are resolved by hand (see [`RENDER.md`](RENDER.md#resolving-a-sign-in-account_conflict-409)), not merged. Offline `--sql` is refused. The downgrade drops the index
 
 ### Writing a new migration
 
