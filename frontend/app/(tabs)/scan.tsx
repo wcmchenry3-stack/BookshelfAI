@@ -27,6 +27,10 @@ import { ScanStatusPanel } from '../../components/ScanStatusPanel';
 type InputMode = 'camera' | 'search';
 type CameraFacing = 'back' | 'front';
 
+// Jobs created before this (restored from a previous launch) are never shown
+// as being sent until they really are ('searching').
+const LAUNCHED_AT = Date.now();
+
 export default function ScanScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation('scan');
@@ -242,8 +246,11 @@ export default function ScanScreen() {
   );
 
   const allJobs = jobs ?? [];
-  const isStarting = (j: { status: string; nextAttemptAt?: number }) =>
-    j.status === 'pending' && j.nextAttemptAt == null;
+  // A 'pending' job with no scheduled retry, created since this launch, is
+  // being sent right now (connectivity check). One restored from a previous
+  // launch (interrupted mid-scan) is waiting to be sent, not in progress.
+  const isStarting = (j: { status: string; nextAttemptAt?: number; createdAt: number }) =>
+    j.status === 'pending' && j.nextAttemptAt == null && j.createdAt >= LAUNCHED_AT;
   const startingCount = allJobs.filter(isStarting).length;
   // Jobs being sent right now are shown as progress, not as waiting.
   const waitingCount = Math.max(0, pendingCount - startingCount);

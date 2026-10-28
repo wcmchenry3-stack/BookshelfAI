@@ -18,17 +18,19 @@ const mockGet = jest.fn();
 jest.mock('../../lib/api', () => ({
   api: { post: (...a: unknown[]) => mockPost(...a), get: (...a: unknown[]) => mockGet(...a) },
 }));
+const mockLoadJobs = jest.fn((): Promise<unknown[]> => Promise.resolve([]));
 jest.mock('../../lib/scanJobStorage', () => ({
-  loadJobs: () => Promise.resolve([]),
+  loadJobs: () => mockLoadJobs(),
   saveJobs: () => Promise.resolve(undefined),
   clearJobs: jest.fn(),
   sweepOrphanedScanFiles: () => Promise.resolve(0),
   deleteScanImage: jest.fn(),
 }));
+let mockConnected = true;
 jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: {
-    fetch: () => Promise.resolve({ isConnected: true }),
+    fetch: () => Promise.resolve({ isConnected: mockConnected }),
     addEventListener: () => () => {},
   },
 }));
@@ -104,6 +106,7 @@ async function startPhoto() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockUuid = 0;
+  mockConnected = true;
 });
 
 describe('scan progress (#742)', () => {
@@ -194,6 +197,27 @@ describe('scan progress (#742)', () => {
     const { queryByText } = await renderBoth();
     await startPhoto();
     expect(queryByText(/Pending uploads/)).toBeNull();
+  });
+
+  it('a scan interrupted in a previous launch, restored offline, stays a pending upload', async () => {
+    // The app was killed mid-scan: the job was saved as 'searching' and is
+    // restored as 'pending'. Offline, the drain leaves it alone.
+    mockConnected = false;
+    mockLoadJobs.mockResolvedValueOnce([
+      {
+        id: 'old-1',
+        type: 'image',
+        status: 'searching',
+        imageUri: 'file:///docs/scan-queue/old.jpg',
+        createdAt: Date.now() - 60_000,
+        retryCount: 0,
+      },
+    ]);
+    const { queryByTestId, getByText } = await renderBoth();
+    await act(async () => {});
+    expect(queryByTestId('scan-progress')).toBeNull();
+    expect(getByText('Pending uploads: 1')).toBeTruthy();
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it('shows a search message for a text search', async () => {
