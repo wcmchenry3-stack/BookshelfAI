@@ -16,10 +16,11 @@ Additive (expand only):
   a row is never merged into itself. No row is merged yet: the only merge
   (0015) deleted its duplicates.
 
-Backfill of existing books, in batches of ``_BATCH`` rows: ``source`` is
-``google_books`` when ``google_books_id`` is set, else ``open_library`` when
-``open_library_work_id`` is set, else ``scan`` (no provider matched: a row
-from before #602); ``fetched_at`` is ``created_at``. The rule is
+Backfill of existing books, in one ``UPDATE`` (alembic runs the whole
+migration in one transaction, so batches would not shorten any lock):
+``source`` is ``google_books`` when ``google_books_id`` is set, else
+``open_library`` when ``open_library_work_id`` is set, else ``scan`` (no
+provider matched: a row from before #602); ``fetched_at`` is ``created_at``. The rule is
 ``app.services.catalog.source_of``, frozen here.
 
 Downgrade drops the new columns, constraints and index. The override values
@@ -41,8 +42,6 @@ down_revision = "0021"
 branch_labels = None
 depends_on = None
 
-# Books backfilled per UPDATE statement.
-_BATCH = 5_000
 # Frozen copy of app.models.book.BOOK_SOURCES at this revision.
 _SOURCES = ("google_books", "open_library", "scan")
 _OVERRIDES = (
@@ -64,31 +63,20 @@ _books = sa.table(
 
 def backfill_provenance(conn) -> int:
     """Set ``source`` and ``fetched_at`` on every book with no ``source``,
-    ``_BATCH`` rows per statement. Returns the number of rows set."""
+    in one statement. Returns the number of rows set."""
     source = sa.case(
         (_books.c.google_books_id.isnot(None), sa.literal("google_books")),
         (_books.c.open_library_work_id.isnot(None), sa.literal("open_library")),
         else_=sa.literal("scan"),
     )
-    total = 0
-    while True:
-        batch = (
-            sa.select(_books.c.id)
-            .where(_books.c.source.is_(None))
-            .limit(_BATCH)
-            .scalar_subquery()
+    return conn.execute(
+        sa.update(_books)
+        .where(_books.c.source.is_(None))
+        .values(
+            source=source,
+            fetched_at=sa.func.coalesce(_books.c.fetched_at, _books.c.created_at),
         )
-        done = conn.execute(
-            sa.update(_books)
-            .where(_books.c.id.in_(batch))
-            .values(
-                source=source,
-                fetched_at=sa.func.coalesce(_books.c.fetched_at, _books.c.created_at),
-            )
-        ).rowcount
-        if not done:
-            return total
-        total += done
+    ).rowcount
 
 
 def upgrade() -> None:

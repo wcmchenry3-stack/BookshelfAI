@@ -181,6 +181,11 @@ class TestOverrideTextValidation:
             {"author_override": "a\x1bb"},
             {"title_override": "a\u0085b"},
             {"title_override": 5},
+            # Unicode format characters (Cf): bidi override, zero-width.
+            {"title_override": "a\u202eb"},
+            {"author_override": "a\u200bb"},
+            {"title_override": "\ufeffDune"},
+            {"author_override": "a\u2066b"},
         ],
     )
     def test_invalid_text_is_refused_with_nothing_written(self, patch_entry, body):
@@ -261,6 +266,45 @@ class TestCoverUrlSsrf:
         assert entry.cover_url_override == "https://covers.example/c.jpg"
         assert book.cover_url == CATALOG["cover_url"]
         assert resp.json()["book"]["cover_url"] == "https://covers.example/c.jpg"
+
+
+class TestCoverUrlCharacters:
+    """A cover URL with control characters, whitespace inside it or format
+    characters is refused (422) before it is resolved or stored; a NUL used
+    to reach Postgres and fail with a 500."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://covers.example/c.jpg\x00",
+            "https://covers.example/c\x00.jpg",
+            "https://covers.example/c\n.jpg",
+            "https://covers.example/c\t.jpg",
+            "https://covers.example/c .jpg",
+            "https://covers.example/c\u202e.jpg",
+            "https://covers.example/c\u200b.jpg",
+            "https://covers.example/c\x85.jpg",
+        ],
+    )
+    def test_refused_without_resolving(self, patch_entry, url):
+        call, entry, _, _ = patch_entry
+        with patch("app.core.url_validator.socket.getaddrinfo") as resolve:
+            resp = call({"cover_url_override": url})
+        assert resp.status_code == 422, resp.text
+        resolve.assert_not_called()
+        assert entry.cover_url_override is None
+
+    @pytest.mark.parametrize("padded", [" {}", "{}\n", "\t{} "])
+    def test_surrounding_whitespace_is_stripped(self, patch_entry, padded):
+        call, entry, _, _ = patch_entry
+        url = "https://covers.example/c.jpg"
+        with patch(
+            "app.core.url_validator.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+        ):
+            resp = call({"cover_url_override": padded.format(url)})
+        assert resp.status_code == 200, resp.text
+        assert entry.cover_url_override == url
 
 
 class TestAuthAndRateLimit:

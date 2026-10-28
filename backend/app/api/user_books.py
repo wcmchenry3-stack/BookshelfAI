@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -216,12 +216,18 @@ async def add_purchased(
         if edition:
             edition_id = edition.id
 
-    # Find existing user_book or create
+    # Find existing user_book or create. An entry on a row merged into the
+    # survivor is an entry of the same work (#682): promote it rather than
+    # add a second one. The survivor's own entry wins, then the oldest.
+    merged_ids = select(Book.id).where(Book.merged_into_id == book_id)
     ub_result = await db.execute(
-        select(UserBook).where(
+        select(UserBook)
+        .where(
             UserBook.user_id == current_user.id,
-            UserBook.book_id == book_id,
+            or_(UserBook.book_id == book_id, UserBook.book_id.in_(merged_ids)),
         )
+        .order_by(UserBook.book_id != book_id, UserBook.created_at, UserBook.id)
+        .limit(1)
     )
     user_book = ub_result.scalar_one_or_none()
     now = datetime.now(UTC)

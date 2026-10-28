@@ -48,13 +48,19 @@ OTHER_13 = "9780593099322"
 def _entry(isbn_13=None, isbn_10=None, *, no_edition=False):
     """A row of the library query: an entry of ``WORK`` and its edition's
     ISBNs."""
+    book_id = uuid.uuid4()
     return SimpleNamespace(
-        book_id=uuid.uuid4(),
+        book_id=book_id,
         edition_id=None if no_edition else uuid.uuid4(),
         open_library_work_id=WORK,
         google_books_id=None,
         isbn_13=isbn_13,
         isbn_10=isbn_10,
+        # Not merged (#682): the book is its own survivor and whole work.
+        survivor_id=book_id,
+        family_book_ids=[book_id],
+        family_work_ids=[WORK],
+        family_volume_ids=[None],
     )
 
 

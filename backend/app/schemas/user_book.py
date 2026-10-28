@@ -49,6 +49,13 @@ class WishlistRequest(BaseModel):
 # Control characters (C0, DEL, C1): never part of a title, author or ISBN;
 # NUL would also be refused by Postgres.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_WHITESPACE = re.compile(r"\s")
+
+
+def _has_format_char(v: str) -> bool:
+    """Unicode category Cf: bidi controls (U+202E) and zero-width
+    characters, which can make text display as something it is not."""
+    return any(unicodedata.category(c) == "Cf" for c in v)
 
 
 def clean_text(v: str) -> str:
@@ -192,15 +199,28 @@ class UserBookUpdate(BaseModel):
     @field_validator("title_override", "author_override")
     @classmethod
     def override_text_must_be_clean(cls, v: str | None) -> str | None:
-        return None if v is None else clean_text(v)
+        if v is None:
+            return None
+        v = clean_text(v)
+        if _has_format_char(v):
+            # Bidi controls and zero-width characters (#682): they can make
+            # an override display as something other than what is stored.
+            raise ValueError("must not contain format characters")
+        return v
 
     @field_validator("cover_url_override", mode="before")
     @classmethod
     def cover_url_override_must_be_safe(cls, v: object) -> object:
-        if isinstance(v, str) and len(v) > COVER_URL_OVERRIDE_MAX:
+        if not isinstance(v, str):
+            return v  # None (clear) or a wrong type the str field refuses
+        v = v.strip()
+        if len(v) > COVER_URL_OVERRIDE_MAX:
             # The length check first, so an oversized value is never resolved.
             raise ValueError("cover_url_override is too long")
-        return validate_safe_url(v) if isinstance(v, str) else v
+        if _CONTROL.search(v) or _WHITESPACE.search(v) or _has_format_char(v):
+            # Never stored (Postgres refuses NUL) or resolved (#682).
+            raise ValueError("cover_url_override must be a single URL")
+        return validate_safe_url(v)
 
     def override_changes(self) -> dict[str, str | None]:
         """The override columns this request sets or clears (only the fields
@@ -223,12 +243,6 @@ class UserBookOverrides(BaseModel):
     cover_url: str | None = None
 
 
-def _text_or_none(value: object) -> str | None:
-    """A stored override, or None (also for anything that is not a string,
-    e.g. a test double's attribute)."""
-    return value if isinstance(value, str) else None
-
-
 # The UserBookRead fields that are not read off the library row (#616,
 # #682); ``book`` is read off it but rebuilt for a catalog entry.
 _UNVERIFIED_FIELDS = ("unverified", "unverified_isbn_13", "overrides")
@@ -243,7 +257,7 @@ def _catalog_book(data: object) -> object:
     present = {
         field: value
         for field, column in OVERRIDE_COLUMNS.items()
-        if (value := _text_or_none(getattr(data, column, None))) is not None
+        if (value := getattr(data, column)) is not None
     }
     if book is None or (not present and book is getattr(data, "book", None)):
         return book
@@ -299,7 +313,7 @@ class UserBookRead(BaseModel):
                 "unverified": False,
                 "unverified_isbn_13": None,
                 "overrides": {
-                    field: _text_or_none(getattr(data, column, None))
+                    field: getattr(data, column)
                     for field, column in OVERRIDE_COLUMNS.items()
                 },
             }

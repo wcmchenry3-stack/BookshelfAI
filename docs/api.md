@@ -511,7 +511,7 @@ Either `isbn_13` or `edition_id` may be provided (or neither). If `isbn_13` is p
 - `404` — `book_id` not found
 - `422 edition_book_mismatch` — `edition_id` is not an edition of `book_id` (another book's edition, or no such edition: both get the same answer). Nothing is written. The app does not send `edition_id` today, so it has no message for this code.
 
-A `book_id` whose catalog row was merged into another (#682, `books.merged_into_id`) adds or promotes the surviving book instead: no library entry is created on a merged row.
+A `book_id` whose catalog row was merged into another (#682, `books.merged_into_id`) adds or promotes the surviving book instead: no library entry is created on a merged row. An existing entry of the same work is promoted whichever row it is on (the survivor or one merged into it; the survivor's own entry first), so the user never gets a second entry of the work. `edition_id` must then be an edition of the surviving book (a merge moves editions there); one still on the merged row is `422 edition_book_mismatch`.
 
 ---
 
@@ -539,8 +539,8 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 **Validation:**
 - `status`: one of `wishlisted` / `purchased` / `reading` / `read`
 - `rating`: 1..5
-- `title_override`, `author_override`: 1–500 characters after trimming, no control characters
-- `cover_url_override`: at most 2048 characters, `https` only, and the host must resolve to a public IP (the same SSRF check as `POST /wishlist`'s `cover_url`)
+- `title_override`, `author_override`: 1–500 characters after trimming, no control characters and no Unicode format characters (bidi controls such as U+202E, zero-width characters)
+- `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, and the host must resolve to a public IP (the same SSRF check as `POST /wishlist`'s `cover_url`)
 
 **Response `200`:** the updated `UserBookRead`.
 

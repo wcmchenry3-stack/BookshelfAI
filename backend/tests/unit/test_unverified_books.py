@@ -185,6 +185,7 @@ def test_row_fields_follow_the_schema():
             created_at=NOW,
             updated_at=NOW,
             editions=[],
+            merged_into_id=None,  # not merged (#682)
         ),
         edition=None,
         status="read",
@@ -197,6 +198,10 @@ def test_row_fields_follow_the_schema():
         created_at=NOW,
         updated_at=NOW,
         marker="seen",
+        # No user overrides (#682).
+        title_override=None,
+        author_override=None,
+        cover_url_override=None,
     )
     assert WithExtra.model_validate(row).marker == "seen"
 
@@ -215,6 +220,7 @@ def test_catalog_row_is_not_unverified():
         created_at=NOW,
         updated_at=NOW,
         editions=[],
+        merged_into_id=None,  # not merged (#682)
     )
     ub = UserBook(
         id=uuid.uuid4(),

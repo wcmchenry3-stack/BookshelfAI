@@ -5,8 +5,10 @@
   ``overrides`` object says which are the user's; the catalog row is never
   changed by serialising.
 - Merged rows: a read follows ``merged_into_id`` to a loaded survivor and
-  never lazy-loads; ``resolve_survivor`` follows the chain and refuses a
-  cycle or an over-long chain.
+  never lazy-loads (a survivor that is itself merged is logged);
+  ``resolve_survivor`` follows the chain and refuses a cycle or an
+  over-long chain; the library check matches an entry of a merged work on
+  any of the work's IDs.
 - Provenance: ``source_of`` and the ``books`` row POST /wishlist creates.
 - PATCH /user-books: the request schema's override semantics (absent,
   null, a value) and the 422 for an unverified entry.
@@ -141,6 +143,76 @@ class TestMergedRead:
         book = _book()
         assert catalog.effective_book(book) is book
         assert catalog.effective_book(None) is None
+
+    def test_survivor_that_is_itself_merged_is_logged(self, caplog):
+        """Merges keep chains at one hop; a longer one is a broken merge.
+        The read shows the first hop and logs it (it never lazy-loads)."""
+        end = _book(title="end")
+        middle = _book(title="middle", merged_into_id=end.id)
+        start = _book(title="start", merged_into_id=middle.id)
+        start.merged_into = middle
+        assert catalog.effective_book(start) is middle
+        assert "longer than one hop" in caplog.text
+
+
+class TestMergedWorkMatching:
+    """#587 for a merged work: an entry matches a candidate carrying the
+    entry's own IDs, the survivor's or any merged row's (scan, search and
+    POST /wishlist use the same ``matching``)."""
+
+    SURVIVOR, MERGED = uuid.uuid4(), uuid.uuid4()
+
+    def _held(self, *, on_merged: bool):
+        from types import SimpleNamespace
+
+        from app.services.deduplication import _held
+
+        return _held(
+            SimpleNamespace(
+                book_id=self.MERGED if on_merged else self.SURVIVOR,
+                edition_id=None,
+                open_library_work_id="OLMW" if on_merged else "OLSW",
+                google_books_id=None if on_merged else "gs",
+                isbn_13=None,
+                isbn_10=None,
+                survivor_id=self.SURVIVOR,
+                family_book_ids=[self.SURVIVOR, self.MERGED],
+                family_work_ids=["OLSW", "OLMW"],
+                family_volume_ids=["gs", None],
+            )
+        )
+
+    @pytest.mark.parametrize("on_merged", [True, False])
+    @pytest.mark.parametrize(
+        "candidate",
+        [
+            {"work_id": "OLSW"},
+            {"work_id": "OLMW"},
+            {"volume_id": "gs"},
+            {"book_id": SURVIVOR},
+            {"book_id": MERGED},
+        ],
+    )
+    def test_any_id_of_the_work_matches(self, on_merged, candidate):
+        from app.services.deduplication import matching
+
+        held = self._held(on_merged=on_merged)
+        assert held.book_id == self.SURVIVOR
+        assert matching([held], **candidate) == [held]
+
+    @pytest.mark.parametrize(
+        "candidate", [{"work_id": "OLother"}, {"volume_id": "gx"}, {"isbn": "1"}]
+    )
+    def test_other_ids_do_not_match(self, candidate):
+        from app.services.deduplication import matching
+
+        assert matching([self._held(on_merged=True)], **candidate) == []
+
+    def test_entry_keeps_its_own_ids(self):
+        held = self._held(on_merged=True)
+        assert (held.open_library_work_id, held.google_books_id) == ("OLMW", None)
+        # NULLs in the aggregates (a row without that ID) are dropped.
+        assert held.volume_ids == {"gs"}
 
 
 class _Rows:

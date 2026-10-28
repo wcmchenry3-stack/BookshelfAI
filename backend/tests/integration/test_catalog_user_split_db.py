@@ -10,9 +10,13 @@
   constraints refuse overrides on an unverified entry and over-long values.
 - ``merged_into_id``: a library read follows it to the survivor; POST
   /purchased and POST /wishlist redirect a merged row to the survivor (no
-  new entry targets a merged row); the library check counts an entry on a
-  merged row as an entry on the survivor; a survivor cannot be deleted
-  while a row is merged into it (ON DELETE RESTRICT).
+  new entry targets a merged row) and promote an entry on a merged row
+  rather than add a second one; the edition check runs against the
+  survivor; the library check (scan, search and POST /wishlist alike)
+  counts an entry on any row of a merged work for any of the work's IDs; a
+  survivor cannot be deleted while a row is merged into it (ON DELETE
+  RESTRICT).
+- IDOR: another user's PATCH of an entry is a 404 and changes nothing.
 - A catalog row created through POST /wishlist records its provenance.
 
 Needs DATABASE_URL pointing at a Postgres database.
@@ -51,7 +55,7 @@ from app.schemas.user_book import (
     UserBookUpdate,
     WishlistRequest,
 )
-from app.services.deduplication import held_entries
+from app.services.deduplication import DeduplicationService, held_entries
 
 pytestmark = pytest.mark.integration
 
@@ -131,8 +135,6 @@ def _migration_cycle(connection) -> None:
                 },
             )
 
-        # One row per statement: the batch loop must still reach every row.
-        migration._BATCH = 1
         migration.upgrade()
         assert _NEW_BOOK_COLUMNS <= columns("books")
         assert _NEW_USER_BOOK_COLUMNS <= columns("user_books")
@@ -150,7 +152,9 @@ def _migration_cycle(connection) -> None:
             ).one()
             assert got.source == source, key
             assert got.fetched_at == created + timedelta(days=i), key
-        # No book is left without provenance.
+        # No book is left without provenance: a second backfill has nothing
+        # to do.
+        assert migration.backfill_provenance(connection) == 0
         assert (
             connection.execute(
                 sa.text("SELECT count(*) FROM books WHERE source IS NULL")
@@ -428,7 +432,192 @@ async def test_library_check_counts_an_entry_on_a_merged_row(env):
         )
     assert [h.book_id for h in by_book] == [survivor.id]
     assert [h.book_id for h in by_work] == [survivor.id]
-    assert by_work[0].open_library_work_id == survivor.open_library_work_id
+    # The entry keeps its own book's IDs and carries the whole work's.
+    assert by_work[0].open_library_work_id == merged.open_library_work_id
+    assert by_work[0].work_ids == {
+        survivor.open_library_work_id,
+        merged.open_library_work_id,
+    }
+    assert by_work[0].book_ids == {survivor.id, merged.id}
+
+
+async def _wishlist_by_work(env, user, work_id):
+    async with env.factory() as db:
+        return await user_books_api.add_to_wishlist.__wrapped__(
+            request=_req(),
+            req=WishlistRequest(
+                open_library_work_id=work_id, title="Dune", author="Frank Herbert"
+            ),
+            current_user=user,
+            db=db,
+        )
+
+
+async def _scan_ownership(env, user, **ids) -> str:
+    candidate = EnrichedBook(
+        title="Dune", author="Frank Herbert", confidence=0.9, editions=[], **ids
+    )
+    async with env.factory() as db:
+        (checked,) = await DeduplicationService().check(db, user.id, [candidate])
+    return checked.ownership
+
+
+@pytest.mark.parametrize("entry_on", ["survivor", "merged"])
+@pytest.mark.parametrize("candidate_of", ["survivor", "merged"])
+async def test_scan_and_wishlist_agree_on_any_id_of_a_merged_work(
+    env, entry_on, candidate_of
+):
+    """#587 for a merged work (#682): a scan/search candidate carrying the
+    survivor's or the merged row's work or volume ID is owned whichever row
+    the entry is on, and POST /wishlist refuses it with the same answer."""
+    alice = await env.make_user()
+    survivor = await env.make_book(
+        title=f"Dune {env.tag}",
+        open_library_work_id=f"OL{env.tag}SW",
+        google_books_id=f"gs{env.tag}",
+    )
+    merged = await env.make_book(
+        title=f"Dune duplicate {env.tag}",
+        open_library_work_id=f"OL{env.tag}MW",
+        google_books_id=f"gm{env.tag}",
+        merged_into_id=survivor.id,
+    )
+    rows = {"survivor": survivor, "merged": merged}
+    await _entry(env, alice, rows[entry_on])
+    candidate = rows[candidate_of]
+
+    assert (
+        await _scan_ownership(
+            env, alice, open_library_work_id=candidate.open_library_work_id
+        )
+        == "owned_edition_unknown"
+    )
+    assert (
+        await _scan_ownership(env, alice, google_books_id=candidate.google_books_id)
+        == "owned_edition_unknown"
+    )
+    with pytest.raises(HTTPException) as exc:
+        await _wishlist_by_work(env, alice, candidate.open_library_work_id)
+    assert (exc.value.status_code, exc.value.detail) == (409, "owned_edition_unknown")
+    async with env.factory() as db:
+        count = (
+            await db.scalars(select(UserBook.id).where(UserBook.user_id == alice.id))
+        ).all()
+    assert len(count) == 1
+
+
+async def test_another_users_merged_work_is_not_owned(env):
+    alice, bob = await env.make_user(), await env.make_user()
+    survivor, merged = await _merged_pair(env)
+    await _entry(env, bob, merged)
+    for work in (survivor.open_library_work_id, merged.open_library_work_id):
+        assert (
+            await _scan_ownership(env, alice, open_library_work_id=work) == "not_owned"
+        )
+
+
+async def _purchase(env, user, **body):
+    async with env.factory() as db:
+        return await user_books_api.add_purchased.__wrapped__(
+            request=_req(),
+            req=PurchasedCreate(**body),
+            current_user=user,
+            db=db,
+        )
+
+
+async def _entries(env, user) -> list[UserBook]:
+    async with env.factory() as db:
+        return list(
+            await db.scalars(select(UserBook).where(UserBook.user_id == user.id))
+        )
+
+
+@pytest.mark.parametrize("posted", ["survivor", "merged"])
+async def test_purchased_promotes_an_entry_on_a_merged_row(env, posted):
+    """An entry on a merged row is an entry of the survivor's work: POST
+    /purchased with either row's id promotes it, never adds a second one."""
+    alice = await env.make_user()
+    survivor, merged = await _merged_pair(env)
+    entry = await _entry(env, alice, merged)
+    target = survivor if posted == "survivor" else merged
+
+    row = await _purchase(env, alice, book_id=target.id)
+
+    assert row.id == entry
+    assert row.status == "purchased"
+    (only,) = await _entries(env, alice)
+    assert (only.id, only.status) == (entry, "purchased")
+
+
+async def test_purchased_prefers_the_survivors_own_entry(env):
+    alice = await env.make_user()
+    survivor, merged = await _merged_pair(env)
+    await _entry(env, alice, merged)
+    on_survivor = await _entry(env, alice, survivor)
+
+    row = await _purchase(env, alice, book_id=merged.id)
+
+    assert row.id == on_survivor
+    assert len(await _entries(env, alice)) == 2
+
+
+async def test_purchased_edition_check_uses_the_survivor(env):
+    """#686 after a merge (#682): editions move to the survivor, so an
+    edition is accepted only when it is the survivor's, whichever row's id
+    is posted. An edition still on the merged row (not moved) is refused."""
+    alice = await env.make_user()
+    survivor, merged = await _merged_pair(env)
+    async with env.factory() as db:
+        of_survivor = Edition(
+            book_id=survivor.id, isbn_13="979" + str(uuid.uuid4().int)[:10]
+        )
+        of_merged = Edition(
+            book_id=merged.id, isbn_13="979" + str(uuid.uuid4().int)[:10]
+        )
+        db.add_all([of_survivor, of_merged])
+        await db.commit()
+
+    for posted in (merged, survivor):
+        with pytest.raises(HTTPException) as exc:
+            await _purchase(env, alice, book_id=posted.id, edition_id=of_merged.id)
+        assert (exc.value.status_code, exc.value.detail) == (
+            422,
+            "edition_book_mismatch",
+        )
+    assert await _entries(env, alice) == []
+
+    row = await _purchase(env, alice, book_id=merged.id, edition_id=of_survivor.id)
+    assert (row.book_id, row.edition_id) == (survivor.id, of_survivor.id)
+
+
+async def test_another_users_entry_cannot_be_patched(env):
+    """IDOR: Bob's PATCH of Alice's entry is a 404 and changes nothing."""
+    alice, bob = await env.make_user(), await env.make_user()
+    book = await env.make_book(title=f"Dune {env.tag}")
+    entry = await _entry(env, alice, book)
+    await _patch(env, alice, entry, title_override="Alice's", author_override="A")
+
+    with pytest.raises(HTTPException) as exc:
+        await _patch(
+            env,
+            bob,
+            entry,
+            title_override="Bob's",
+            author_override="B",
+            cover_url_override=None,
+            status="read",
+        )
+    assert exc.value.status_code == 404
+
+    async with env.factory() as db:
+        row = await db.get(UserBook, entry)
+    assert (row.user_id, row.status) == (alice.id, "wishlisted")
+    assert (row.title_override, row.author_override, row.cover_url_override) == (
+        "Alice's",
+        "A",
+        None,
+    )
 
 
 async def test_survivor_cannot_be_deleted_while_rows_are_merged_into_it(env):

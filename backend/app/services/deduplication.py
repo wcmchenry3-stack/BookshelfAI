@@ -16,6 +16,8 @@ user's library:
 Every library entry of the work counts (Open Library work ID *or* Google
 Books ID): any entry holding the same edition makes it the same edition;
 otherwise any entry holding an edition with an ISBN makes it another edition.
+A merged work (#682) is one work: an entry on the survivor or on a row merged
+into it matches a result carrying any of those rows' IDs.
 
 Only the requesting user's ``user_books`` count. One query per response,
 whatever the number of results: the user's entries (``user_books.user_id``
@@ -25,12 +27,12 @@ for its 409 (#587).
 """
 
 import logging
-import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import array_agg
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -81,13 +83,22 @@ MAX_HELD = 200
 
 @dataclass(frozen=True)
 class Held:
-    """One of the user's library entries, with its edition's ISBN key."""
+    """One of the user's library entries, with its edition's ISBN key.
+
+    ``book_id`` is the survivor's id when the entry's book was merged
+    (#682). ``book_ids``, ``work_ids`` and ``volume_ids`` hold every ID of
+    the entry's work: the survivor's and those of every row merged into it
+    (which includes the entry's own book), so a candidate carrying any of
+    them is this entry."""
 
     book_id: object
     edition_id: object
-    open_library_work_id: str | None
-    google_books_id: str | None
+    open_library_work_id: str | None  # the entry's own book's
+    google_books_id: str | None  # the entry's own book's
     isbn: str | None  # normalised ISBN-13 of the entry's edition
+    book_ids: frozenset = frozenset()
+    work_ids: frozenset[str] = frozenset()
+    volume_ids: frozenset[str] = frozenset()
 
 
 def isbn_lookup_values(isbn_13s: set[str]) -> tuple[set[str], set[str]]:
@@ -111,31 +122,39 @@ async def held_entries(
     one join-shaped query driven by the user's entries. No query when there
     is nothing to look for.
 
-    An entry on a merged catalog row (#682) counts as an entry on the row it
-    was merged into: its ``book_id`` and provider IDs are the survivor's
-    (falling back to the merged row's own IDs where the survivor has none)."""
+    An entry counts for its whole work (#682): it is selected when its
+    book, the row its book was merged into, or any row merged into that
+    survivor carries a requested ID, and its ``book_id`` is the survivor's.
+    Entries on merged rows can exist (a merge moves them, but reads never
+    rely on it)."""
     book_ids, work_ids = set(book_ids), set(work_ids)
     volume_ids, isbns = set(volume_ids), set(isbns)
-    # The survivor of a merged row (#682), read with correlated subqueries
-    # so ``books`` stays an inner join on the entry's own book.
-    survivor = aliased(Book)
-    survivor_of = survivor.id == Book.merged_into_id
-    survivor_work = (
-        select(survivor.open_library_work_id).where(survivor_of).scalar_subquery()
-    )
-    survivor_volume = (
-        select(survivor.google_books_id).where(survivor_of).scalar_subquery()
-    )
+    # The entry's work (#682): its survivor (the entry's book, or the row it
+    # was merged into) and every row merged into that survivor. Merges keep
+    # chains at one hop, so this is the whole work. Read with correlated
+    # subqueries, so ``books`` stays an inner join on the entry's own book.
+    survivor_id = func.coalesce(Book.merged_into_id, Book.id)
+    family = aliased(Book)
+    of_work = or_(family.id == survivor_id, family.merged_into_id == survivor_id)
+
+    def family_ids(column):
+        return select(array_agg(column)).where(of_work).scalar_subquery()
+
+    # The entry's own book matches (the usual, unmerged case), or any row
+    # of its work does.
     conditions = []
+    family_match = []
     if book_ids:
         conditions.append(UserBook.book_id.in_(book_ids))
-        conditions.append(Book.merged_into_id.in_(book_ids))
+        family_match.append(family.id.in_(book_ids))
     if work_ids:
         conditions.append(Book.open_library_work_id.in_(work_ids))
-        conditions.append(survivor_work.in_(work_ids))
+        family_match.append(family.open_library_work_id.in_(work_ids))
     if volume_ids:
         conditions.append(Book.google_books_id.in_(volume_ids))
-        conditions.append(survivor_volume.in_(volume_ids))
+        family_match.append(family.google_books_id.in_(volume_ids))
+    if family_match:
+        conditions.append(select(family.id).where(of_work, or_(*family_match)).exists())
     if isbns:
         isbn_13s, isbn_10s = isbn_lookup_values(isbns)
         conditions.append(Edition.isbn_13.in_(isbn_13s))
@@ -151,10 +170,10 @@ async def held_entries(
             Book.google_books_id,
             Edition.isbn_13,
             Edition.isbn_10,
-            # The survivor of a merged row (#682); all NULL when not merged.
-            Book.merged_into_id,
-            survivor_work.label("survivor_work_id"),
-            survivor_volume.label("survivor_volume_id"),
+            survivor_id.label("survivor_id"),
+            family_ids(family.id).label("family_book_ids"),
+            family_ids(family.open_library_work_id).label("family_work_ids"),
+            family_ids(family.google_books_id).label("family_volume_ids"),
         )
         .join(Book, Book.id == UserBook.book_id)
         .outerjoin(Edition, Edition.id == UserBook.edition_id)
@@ -166,27 +185,23 @@ async def held_entries(
     return [_held(row) for row in result.all()]
 
 
-def _text(value) -> str | None:
-    return value if isinstance(value, str) else None
+def _ids(values) -> frozenset:
+    """An aggregated ID list as a set, without NULLs (rows with no such ID)."""
+    return frozenset(v for v in values or () if v is not None)
 
 
 def _held(row) -> Held:
-    """A library query row as :class:`Held`, read as its survivor when the
-    entry's book was merged (#682): the survivor's ``book_id`` and provider
-    IDs (the merged row's own where the survivor has none). The survivor
-    columns come last and are read defensively, so a row without them (a
-    test double) is an unmerged entry."""
-    merged_into = getattr(row, "merged_into_id", None)
+    """A library query row as :class:`Held`: the survivor's ``book_id``
+    (#682), the entry's own provider IDs and every ID of its work."""
     return Held(
-        book_id=merged_into if isinstance(merged_into, uuid.UUID) else row.book_id,
+        book_id=row.survivor_id,
         edition_id=row.edition_id,
-        open_library_work_id=(
-            _text(getattr(row, "survivor_work_id", None)) or row.open_library_work_id
-        ),
-        google_books_id=(
-            _text(getattr(row, "survivor_volume_id", None)) or row.google_books_id
-        ),
+        open_library_work_id=row.open_library_work_id,
+        google_books_id=row.google_books_id,
         isbn=normalise_isbn_13(row.isbn_13, row.isbn_10),
+        book_ids=_ids(row.family_book_ids),
+        work_ids=_ids(row.family_work_ids),
+        volume_ids=_ids(row.family_volume_ids),
     )
 
 
@@ -199,13 +214,14 @@ def matching(
     book_id=None,
 ) -> list[Held]:
     """The entries that are this book: the same catalog row, Open Library
-    work, Google Books volume or edition ISBN."""
+    work, Google Books volume or edition ISBN. A merged work (#682) matches
+    on any of its rows' IDs (the survivor's or a merged row's)."""
     return [
         h
         for h in held
-        if (book_id is not None and h.book_id == book_id)
-        or (work_id and h.open_library_work_id == work_id)
-        or (volume_id and h.google_books_id == volume_id)
+        if (book_id is not None and (h.book_id == book_id or book_id in h.book_ids))
+        or (work_id and (h.open_library_work_id == work_id or work_id in h.work_ids))
+        or (volume_id and (h.google_books_id == volume_id or volume_id in h.volume_ids))
         or (isbn and h.isbn == isbn)
     ]
 

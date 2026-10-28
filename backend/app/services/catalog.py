@@ -18,9 +18,13 @@ row has ``merged_into_id`` set yet. A future merge must:
   0015 did (reads would follow ``merged_into_id`` anyway; this keeps one
   library entry per work).
 
-Reads follow ``merged_into_id`` to the survivor (:func:`effective_book` for
-an already loaded row, :func:`resolve_survivor` otherwise). A merged row is
-never the target of a new library entry: the write paths redirect to the
+A merged row and its survivor are one work, and library entries on a
+merged row can exist (nothing relies on a merge having moved them). Reads
+follow ``merged_into_id`` to the survivor (:func:`effective_book` for an
+already loaded row, :func:`resolve_survivor` otherwise); the library check
+(``deduplication.held_entries``) matches an entry on any ID of its work;
+``POST /purchased`` promotes an entry on any row of the work. A merged row
+is never the target of a new library entry: the write paths redirect to the
 survivor (:func:`resolve_survivor`), so a client holding a stale ``book_id``
 or provider ID still adds the same work, once.
 """
@@ -29,7 +33,6 @@ import logging
 import uuid
 
 from sqlalchemy import inspect, select
-from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.book import Book
@@ -64,12 +67,11 @@ def source_of(open_library_work_id: str | None, google_books_id: str | None) -> 
 
 async def resolve_survivor(db: AsyncSession, book: Book) -> Book:
     """``book``, or the row it was merged into (followed to the end). The
-    same object when ``book`` is not merged (anything whose
-    ``merged_into_id`` is not a UUID, e.g. a test double, counts as not
-    merged)."""
+    same object when ``book`` is not merged. :class:`MergeChainError` on a
+    cycle or a chain longer than :data:`MAX_MERGE_HOPS`."""
     seen: set[uuid.UUID] = {book.id}
     hops = 0
-    while isinstance(book.merged_into_id, uuid.UUID):
+    while book.merged_into_id is not None:
         hops += 1
         target = book.merged_into_id
         if hops > MAX_MERGE_HOPS or target in seen:
@@ -80,19 +82,20 @@ async def resolve_survivor(db: AsyncSession, book: Book) -> Book:
     return book
 
 
-def effective_book(book):
+def effective_book(book: Book | None) -> Book | None:
     """The row a library read shows for ``book``: the survivor it was merged
     into when that is loaded (``selectinload(Book.merged_into)``), else
-    ``book``. Never lazy-loads. Anything that is not a merged ORM row
-    (e.g. a test double) is returned as is."""
-    if not isinstance(getattr(book, "merged_into_id", None), uuid.UUID):
+    ``book``. Never lazy-loads. Follows one hop, as merges keep chains at
+    one hop: a survivor that is itself merged is a broken merge and is
+    logged (the read still shows the first hop)."""
+    if book is None or book.merged_into_id is None:
         return book
-    try:
-        loaded = "merged_into" not in inspect(book).unloaded
-    except NoInspectionAvailable:  # not an ORM instance
-        return book
-    survivor = book.merged_into if loaded else None
+    survivor = book.merged_into if "merged_into" not in inspect(book).unloaded else None
     if survivor is None:
         logger.warning("catalog: merged book %s read without its survivor", book.id)
         return book
+    if survivor.merged_into_id is not None:
+        logger.warning(
+            "catalog: books.merged_into_id chain longer than one hop at %s", book.id
+        )
     return survivor
