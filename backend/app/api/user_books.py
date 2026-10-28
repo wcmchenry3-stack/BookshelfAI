@@ -350,13 +350,7 @@ async def update_user_book(
     if req.rating is not None:
         user_book.rating = req.rating
 
-    await db.commit()
-    await db.refresh(user_book)
-
-    result = await db.execute(
-        _user_book_query(current_user.id).where(UserBook.id == user_book.id)
-    )
-    return result.scalar_one()
+    return await _reread_and_commit(db, current_user.id, user_book)
 
 
 def _apply_overrides(user_book: UserBook, req: UserBookUpdate) -> None:
