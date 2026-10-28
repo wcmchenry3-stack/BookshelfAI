@@ -153,7 +153,7 @@ ENVIRONMENT=development
 CORS_ORIGINS=http://localhost:8081,exp://localhost:8081
 UNVERIFIED_BOOKS_PER_USER_MAX=200      # 1..10000, private unverified entries per user (#616); restart to change
 TRASH_RETENTION_DAYS=30                # 1..365, days a deleted library entry stays restorable (#683)
-TRASH_MAX_ENTRIES_PER_USER=100         # 10..1000, most trashed entries per user; oldest go first (#683)
+TRASH_MAX_ENTRIES_PER_USER=1000        # 100..5000, most trashed entries per user, a backstop; oldest go first (#683)
 ```
 In dev, `CORS_ORIGINS` must include the Expo dev-server origin. The wildcard `*` is blocked by a validator in `app/core/config.py`.
 

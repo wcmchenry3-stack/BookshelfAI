@@ -570,7 +570,7 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 
 ### `DELETE /user-books/{user_book_id}` — move book to the trash
 
-Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, for an unverified entry, so does its `user_custom_books` row). Nothing is deleted. The entry disappears from every library read and check (`GET /user-books`, `PATCH`, `POST /purchased`, `POST /wishlist`'s 409, the scan / search `ownership`, the unverified cap and duplicate check) and appears in `GET /user-books/trash`. `POST /user-books/{id}/restore` brings it back until it leaves the trash. **The trash keeps 30 days or the newest N entries, whichever comes first:** the daily cleanup purges an entry `TRASH_RETENTION_DAYS` (default 30) days after deletion, and a `DELETE` that leaves the user with more than `TRASH_MAX_ENTRIES_PER_USER` (default 100) trashed entries hard-deletes the oldest ones beyond it (with their `user_custom_books` rows) in the same transaction, so a delete loop cannot grow the database. Concurrent requests for one user are serialised (a second concurrent `DELETE` of the same entry gets `404`).
+Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, for an unverified entry, so does its `user_custom_books` row). Nothing is deleted. The entry disappears from every library read and check (`GET /user-books`, `PATCH`, `POST /purchased`, `POST /wishlist`'s 409, the scan / search `ownership`, the unverified cap and duplicate check) and appears in `GET /user-books/trash`. `POST /user-books/{id}/restore` brings it back until it leaves the trash. **The trash keeps 30 days, one copy per book, and the newest 1,000 entries per user:** the daily cleanup purges an entry `TRASH_RETENTION_DAYS` (default 30) days after deletion. **Deleting a book that already has a trashed copy replaces that copy:** in the same transaction, the `DELETE` hard-deletes the user's other, older trashed entries of the same book (for a catalog entry any row of the same work, merged rows included, #682; for an unverified entry the same title and author or ISBN, the duplicate check's key), with their `user_custom_books` rows, so an add / delete loop cannot grow the database. As a backstop, a `DELETE` that leaves the user with more than `TRASH_MAX_ENTRIES_PER_USER` (default 1,000) trashed entries hard-deletes the oldest ones beyond it, so a mass delete of up to 1,000 distinct books stays fully restorable. Concurrent requests for one user are serialised (a second concurrent `DELETE` of the same entry gets `404`).
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -586,7 +586,7 @@ Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, 
 
 ### `GET /user-books/trash` — list the trash
 
-The requesting user's deleted entries (#683), most recently deleted first, at most `TRASH_MAX_ENTRIES_PER_USER` (default 100) (the trash keeps 30 days or the newest N entries, whichever comes first). Only this user's entries; another user's trash is never visible.
+The requesting user's deleted entries (#683), most recently deleted first (ties by `id`, highest first), at most `TRASH_MAX_ENTRIES_PER_USER` (default 1,000). The trash keeps 30 days, one copy per book (deleting a book that already has a trashed copy replaces that copy) and the newest 1,000 entries per user. Only this user's entries; another user's trash is never visible.
 
 **Auth:** required
 **Rate limit:** `rate_limit_reads`
