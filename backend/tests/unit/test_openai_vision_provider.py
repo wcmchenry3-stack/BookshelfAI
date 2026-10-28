@@ -430,6 +430,13 @@ class TestIsbnAndTitleValidation:
         assert [c.title for c in result.candidates] == ["A Book", "B"]
         assert all(c.isbn_13 is None and c.isbn_10 is None for c in result.candidates)
 
+    async def test_a_dropped_item_does_not_use_up_the_book_cap(self, identifier):
+        with patch("app.ai.providers.openai_vision.settings.scan_max_books", 1):
+            result = await self._identify(
+                identifier, [self._item(title=""), self._item(title="Dune")]
+            )
+        assert [c.title for c in result.candidates] == ["Dune"]
+
     async def test_separated_valid_isbns_are_cleaned(self, identifier):
         result = await self._identify(
             identifier,
