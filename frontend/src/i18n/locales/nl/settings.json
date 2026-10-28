@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "Uitloggen?",
   "signOutConfirmBody": "Je moet opnieuw inloggen om Bookshelf te gebruiken.",
   "signOutConfirm": "Uitloggen",
-  "signOutCancel": "Annuleren"
+  "signOutCancel": "Annuleren",
+  "trash": "Prullenbak",
+  "trashA11y": "Prullenbak openen",
+  "trashHint": "Herstel boeken die je de afgelopen 30 dagen hebt verwijderd"
 }

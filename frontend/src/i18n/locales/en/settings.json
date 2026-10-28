@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "Sign out?",
   "signOutConfirmBody": "You will need to sign in again to use Bookshelf.",
   "signOutConfirm": "Sign out",
-  "signOutCancel": "Cancel"
+  "signOutCancel": "Cancel",
+  "trash": "Trash",
+  "trashA11y": "Open the trash",
+  "trashHint": "Restore books you removed in the last 30 days"
 }

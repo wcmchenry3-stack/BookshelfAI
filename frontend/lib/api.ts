@@ -204,3 +204,41 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * A library entry in the trash (#683): the `UserBookRead` shape plus when it
+ * was deleted and when the daily cleanup may delete it for good.
+ */
+export interface TrashedUserBook {
+  id: string;
+  status: string;
+  rating: number | null;
+  notes: string | null;
+  book: {
+    id: string;
+    title: string;
+    author: string;
+    cover_url: string | null;
+    description: string | null;
+  };
+  /** A book the user added themselves; the catalog could not find it (#616). */
+  unverified?: boolean;
+  deleted_at: string;
+  purge_after: string;
+}
+
+/** GET /user-books/trash: newest deletion first, at most 1,000 entries. */
+export async function listTrash(): Promise<TrashedUserBook[]> {
+  const { data } = await api.get<TrashedUserBook[]>('/user-books/trash');
+  return data;
+}
+
+/**
+ * POST /user-books/{id}/restore: moves an entry out of the trash. Rejects with
+ * the axios error; `restoreFailure` (lib/trash.ts) maps 404 and the two 409
+ * codes (`restore_conflict`, `unverified_limit_reached`).
+ */
+export async function restoreUserBook(id: string): Promise<unknown> {
+  const { data } = await api.post<unknown>(`/user-books/${encodeURIComponent(id)}/restore`);
+  return data;
+}

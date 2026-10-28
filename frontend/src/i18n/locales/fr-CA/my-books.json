@@ -32,5 +32,24 @@
   "sectionTitle": "Ma bibliothèque",
   "bookCount": "{{count}} volumes dans votre collection.",
   "heroSubtitle": "Toute ta vie de lecture ici",
-  "archiveSummary": "livres suivis"
+  "archiveSummary": "livres suivis",
+  "movedToTrash": "Déplacé dans la corbeille. Vous pouvez le restaurer pendant 30 jours.",
+  "viewTrash": "Voir la corbeille",
+  "trash": {
+    "title": "Corbeille",
+    "back": "Retour",
+    "loading": "Chargement de la corbeille…",
+    "intro": "Les livres supprimés sont conservés 30 jours, puis effacés définitivement. Supprimer de nouveau un livre remplace les anciennes copies sans notes ni évaluation. Seuls les 1 000 plus récents sont conservés.",
+    "emptyTitle": "La corbeille est vide",
+    "emptyBody": "Les livres que vous retirez de votre bibliothèque apparaissent ici pendant 30 jours. Vous pouvez les restaurer jusque-là.",
+    "dates": "Supprimé le {{deleted}} · effacé définitivement le {{purge}}",
+    "restore": "Restaurer",
+    "restoreA11y": "Restaurer {{title}}",
+    "restored": "{{title}} a été restauré dans votre bibliothèque.",
+    "restoreConflict": "Ce livre est déjà dans votre bibliothèque.",
+    "restoreNotFound": "Ce livre n'est plus dans la corbeille.",
+    "restoreFailed": "Impossible de restaurer ce livre. Réessayez.",
+    "errorLoad": "Impossible de charger la corbeille.",
+    "retry": "Réessayer"
+  }
 }

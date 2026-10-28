@@ -10,6 +10,7 @@ import { useScanJobs } from '../../hooks/useScanJobs';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { noMatchRemainingToday, remainingToday } from '../../components/ScanStatusPanel';
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
+import { openTrash } from '../../lib/trash';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
@@ -80,6 +81,18 @@ export default function SettingsScreen() {
       ) : null}
       <ThemeToggleButton />
       <Pressable
+        onPress={openTrash}
+        style={styles.trash}
+        accessibilityRole="button"
+        accessibilityLabel={t('trashA11y')}
+        testID="settings-trash"
+      >
+        <Text style={[styles.trashText, { color: theme.colors.text }]}>{t('trash')}</Text>
+        <Text style={[styles.trashHint, { color: theme.colors.textSecondary }]}>
+          {t('trashHint')}
+        </Text>
+      </Pressable>
+      <Pressable
         onPress={confirmSignOut}
         style={[styles.signOut, isSigningOut && styles.signOutBusy]}
         accessibilityRole="button"
@@ -97,6 +110,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   usageRow: { alignItems: 'center', marginBottom: 16 },
   usageLabel: { fontSize: 12 },
+  trash: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
+  trashText: { fontSize: 16, fontWeight: '600' },
+  trashHint: { fontSize: 12, textAlign: 'center' },
   signOut: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, marginTop: 16 },
   signOutBusy: { opacity: 0.5 },
   signOutText: { fontSize: 16, fontWeight: '600' },

@@ -32,5 +32,24 @@
   "sectionTitle": "Minha biblioteca",
   "bookCount": "{{count}} volumes na sua coleção.",
   "heroSubtitle": "Sua vida leitora em um lugar",
-  "archiveSummary": "livros registrados"
+  "archiveSummary": "livros registrados",
+  "movedToTrash": "Movido para a lixeira. Você pode restaurar em até 30 dias.",
+  "viewTrash": "Ver lixeira",
+  "trash": {
+    "title": "Lixeira",
+    "back": "Voltar",
+    "loading": "Carregando a lixeira…",
+    "intro": "Os livros removidos ficam guardados por 30 dias e depois são excluídos de vez. Remover um livro de novo substitui cópias mais antigas sem notas nem avaliação. Só os 1.000 mais recentes são mantidos.",
+    "emptyTitle": "A lixeira está vazia",
+    "emptyBody": "Os livros que você remove da biblioteca aparecem aqui por 30 dias. Você pode restaurá-los até lá.",
+    "dates": "Excluído em {{deleted}} · removido de vez em {{purge}}",
+    "restore": "Restaurar",
+    "restoreA11y": "Restaurar {{title}}",
+    "restored": "{{title}} foi restaurado na sua biblioteca.",
+    "restoreConflict": "Este livro já está na sua biblioteca.",
+    "restoreNotFound": "Este livro não está mais na lixeira.",
+    "restoreFailed": "Não foi possível restaurar este livro. Tente novamente.",
+    "errorLoad": "Não foi possível carregar a lixeira.",
+    "retry": "Tentar novamente"
+  }
 }

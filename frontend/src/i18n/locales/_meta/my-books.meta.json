@@ -142,5 +142,82 @@
     "tone": "friendly",
     "placeholders": ["{{count}}"],
     "characterLimit": 50
+  },
+  "movedToTrash": {
+    "description": "Banner after a library entry is moved to the trash; says it can be restored within 30 days",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "viewTrash": {
+    "description": "Banner action button that opens the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "trash.title": {
+    "description": "Heading of the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "trash.back": {
+    "description": "Back button on the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 12
+  },
+  "trash.loading": {
+    "description": "Loading spinner message on the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "trash.intro": {
+    "description": "Explains the 30-day trash rules under the Trash heading",
+    "tone": "neutral"
+  },
+  "trash.emptyTitle": {
+    "description": "Empty state heading when the trash has no entries",
+    "tone": "friendly",
+    "characterLimit": 30
+  },
+  "trash.emptyBody": {
+    "description": "Empty state explanation of the 30-day rule",
+    "tone": "friendly"
+  },
+  "trash.dates": {
+    "description": "Dates line on a trashed book: deletion date and the date it is permanently removed",
+    "tone": "neutral"
+  },
+  "trash.restore": {
+    "description": "Button that restores a trashed book to the library",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "trash.restoreA11y": {
+    "description": "Screen-reader label for the Restore button; title is the book title",
+    "tone": "neutral"
+  },
+  "trash.restored": {
+    "description": "Banner after a book is restored; title is the book title",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "trash.restoreConflict": {
+    "description": "Error when restoring a book that already has a live library entry",
+    "tone": "neutral"
+  },
+  "trash.restoreNotFound": {
+    "description": "Error when the book is no longer in the trash; the list reloads",
+    "tone": "neutral"
+  },
+  "trash.restoreFailed": {
+    "description": "Generic error when restoring a book fails",
+    "tone": "neutral"
+  },
+  "trash.errorLoad": {
+    "description": "Error shown when the trash list cannot be loaded",
+    "tone": "neutral"
+  },
+  "trash.retry": {
+    "description": "Retry button after the trash list fails to load",
+    "tone": "neutral",
+    "characterLimit": 20
   }
 }

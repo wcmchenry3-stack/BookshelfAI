@@ -20,7 +20,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
+import { useBanner } from '../../hooks/useBanner';
 import { useOnlineOnly } from '../../hooks/useOnlineOnly';
+import { openTrash } from '../../lib/trash';
 import { UnverifiedBadge } from '../../components/UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
@@ -89,6 +91,7 @@ export default function MyBooksScreen() {
   const mutatingRef = useRef<Set<string>>(new Set());
   const [mutatingIds, setMutatingIds] = useState<ReadonlySet<string>>(new Set());
   const { isConnected, requireOnline } = useOnlineOnly();
+  const { showBanner } = useBanner();
 
   /** Atomically claims `id` for a mutation. Returns false if one is already in flight. */
   function beginMutating(id: string): boolean {
@@ -172,6 +175,12 @@ export default function MyBooksScreen() {
     if (!requireOnline() || !beginMutating(item.id)) return;
     try {
       await api.delete(`/user-books/${item.id}`);
+      // A delete moves the entry to the trash (#683), restorable for 30 days.
+      showBanner({
+        message: t('movedToTrash', { ns: 'my-books' }),
+        type: 'success',
+        actions: [{ label: t('viewTrash', { ns: 'my-books' }), onPress: openTrash }],
+      });
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
       setSelected(null);
     } catch {

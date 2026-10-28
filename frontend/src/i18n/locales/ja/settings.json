@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "ログアウトしますか?",
   "signOutConfirmBody": "Bookshelfを使うには再度ログインが必要です。",
   "signOutConfirm": "ログアウト",
-  "signOutCancel": "キャンセル"
+  "signOutCancel": "キャンセル",
+  "trash": "ゴミ箱",
+  "trashA11y": "ゴミ箱を開く",
+  "trashHint": "過去30日間に削除した本を元に戻します"
 }

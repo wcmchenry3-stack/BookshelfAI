@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "Sair?",
   "signOutConfirmBody": "Você precisará entrar novamente para usar o Bookshelf.",
   "signOutConfirm": "Sair",
-  "signOutCancel": "Cancelar"
+  "signOutCancel": "Cancelar",
+  "trash": "Lixeira",
+  "trashA11y": "Abrir a lixeira",
+  "trashHint": "Restaure livros removidos nos últimos 30 dias"
 }

@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "로그아웃할까요?",
   "signOutConfirmBody": "Bookshelf를 사용하려면 다시 로그인해야 합니다.",
   "signOutConfirm": "로그아웃",
-  "signOutCancel": "취소"
+  "signOutCancel": "취소",
+  "trash": "휴지통",
+  "trashA11y": "휴지통 열기",
+  "trashHint": "최근 30일 내에 삭제한 책을 복원합니다"
 }

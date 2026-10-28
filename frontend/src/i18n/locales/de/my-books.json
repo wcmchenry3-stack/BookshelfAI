@@ -32,5 +32,24 @@
   "sectionTitle": "Meine Bibliothek",
   "bookCount": "{{count}} Bände in deiner Sammlung.",
   "heroSubtitle": "Dein Leserleben auf einen Blick",
-  "archiveSummary": "Bücher erfasst"
+  "archiveSummary": "Bücher erfasst",
+  "movedToTrash": "In den Papierkorb verschoben. 30 Tage lang wiederherstellbar.",
+  "viewTrash": "Papierkorb ansehen",
+  "trash": {
+    "title": "Papierkorb",
+    "back": "Zurück",
+    "loading": "Papierkorb wird geladen…",
+    "intro": "Entfernte Bücher bleiben 30 Tage erhalten und werden dann endgültig gelöscht. Wird ein Buch erneut entfernt, ersetzt das ältere Kopien ohne Notizen oder Bewertung. Es bleiben nur die neuesten 1.000.",
+    "emptyTitle": "Der Papierkorb ist leer",
+    "emptyBody": "Bücher, die du aus deiner Bibliothek entfernst, erscheinen hier 30 Tage lang. Bis dahin kannst du sie wiederherstellen.",
+    "dates": "Gelöscht {{deleted}} · endgültig entfernt {{purge}}",
+    "restore": "Wiederherstellen",
+    "restoreA11y": "{{title}} wiederherstellen",
+    "restored": "{{title}} wurde in deiner Bibliothek wiederhergestellt.",
+    "restoreConflict": "Dieses Buch ist bereits in deiner Bibliothek.",
+    "restoreNotFound": "Dieses Buch ist nicht mehr im Papierkorb.",
+    "restoreFailed": "Das Buch konnte nicht wiederhergestellt werden. Versuch es erneut.",
+    "errorLoad": "Der Papierkorb konnte nicht geladen werden.",
+    "retry": "Erneut versuchen"
+  }
 }

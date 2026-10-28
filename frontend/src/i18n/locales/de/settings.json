@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "Abmelden?",
   "signOutConfirmBody": "Du musst dich erneut anmelden, um Bookshelf zu nutzen.",
   "signOutConfirm": "Abmelden",
-  "signOutCancel": "Abbrechen"
+  "signOutCancel": "Abbrechen",
+  "trash": "Papierkorb",
+  "trashA11y": "Papierkorb öffnen",
+  "trashHint": "Entfernte Bücher der letzten 30 Tage wiederherstellen"
 }

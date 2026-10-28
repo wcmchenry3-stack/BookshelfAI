@@ -5,5 +5,8 @@
   "signOutConfirmTitle": "تسجيل الخروج؟",
   "signOutConfirmBody": "ستحتاج إلى تسجيل الدخول مرة أخرى لاستخدام Bookshelf.",
   "signOutConfirm": "تسجيل الخروج",
-  "signOutCancel": "إلغاء"
+  "signOutCancel": "إلغاء",
+  "trash": "سلة المحذوفات",
+  "trashA11y": "فتح سلة المحذوفات",
+  "trashHint": "استعد الكتب التي حذفتها خلال آخر 30 يومًا"
 }
