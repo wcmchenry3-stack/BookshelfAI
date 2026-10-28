@@ -676,6 +676,7 @@ class TestCleanupTask:
             patch.object(
                 token_cleanup, "purge_old_scan_records", AsyncMock(return_value=0)
             ),
+            patch.object(token_cleanup, "purge_trash", AsyncMock(return_value=0)),
             patch.object(token_cleanup.asyncio, "sleep", sleeps),
             patch.multiple(token_cleanup, **patches),
             pytest.raises(_Stop),

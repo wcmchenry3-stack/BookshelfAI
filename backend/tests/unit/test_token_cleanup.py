@@ -268,6 +268,10 @@ class TestTransientRetry:
                 "app.services.token_cleanup.purge_old_scan_records",
                 AsyncMock(return_value=0),
             ),
+            patch(
+                "app.services.token_cleanup.purge_trash",
+                AsyncMock(return_value=0),
+            ),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
             patch("app.services.token_cleanup._RETRY_BASE_DELAY_SECONDS", base_delay),

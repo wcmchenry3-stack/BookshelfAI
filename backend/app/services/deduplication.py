@@ -19,7 +19,8 @@ otherwise any entry holding an edition with an ISBN makes it another edition.
 A merged work (#682) is one work: an entry on the survivor or on a row merged
 into it matches a result carrying any of those rows' IDs.
 
-Only the requesting user's ``user_books`` count. One query per response,
+Only the requesting user's live ``user_books`` count: an entry in the trash
+(``deleted_at`` set, #683) is not owned. One query per response,
 whatever the number of results: the user's entries (``user_books.user_id``
 index) of any of the results' works, volumes or ISBNs, with each entry's
 edition ISBNs joined in. ``WishlistService`` uses the same query and rules
@@ -177,7 +178,8 @@ async def held_entries(
         )
         .join(Book, Book.id == UserBook.book_id)
         .outerjoin(Edition, Edition.id == UserBook.edition_id)
-        .where(UserBook.user_id == user_id, or_(*conditions))
+        # Entries in the trash (#683) are not in the library.
+        .where(UserBook.user_id == user_id, UserBook.live(), or_(*conditions))
         # Entries with an edition first, then a stable order.
         .order_by(UserBook.edition_id.is_(None), UserBook.created_at, UserBook.id)
         .limit(MAX_HELD)

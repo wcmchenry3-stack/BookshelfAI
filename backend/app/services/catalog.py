@@ -16,7 +16,11 @@ row has ``merged_into_id`` set yet. A future merge must:
   survivor);
 - move the duplicate's ``user_books`` and ``editions`` to the survivor, as
   0015 did (reads would follow ``merged_into_id`` anyway; this keeps one
-  library entry per work).
+  library entry per work). That includes entries in the trash (#683,
+  ``deleted_at`` set), so a later restore lands on the survivor. Uniqueness
+  (``uq_user_books_user_book_live``) applies to live rows only: a user may
+  hold one live entry and any number of trashed ones on the survivor, and
+  only two live entries of the work need merging into one.
 
 A merged row and its survivor are one work, and library entries on a
 merged row can exist (nothing relies on a merge having moved them). Reads
@@ -32,7 +36,7 @@ or provider ID still adds the same work, once.
 import logging
 import uuid
 
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.book import Book
@@ -80,6 +84,16 @@ async def resolve_survivor(db: AsyncSession, book: Book) -> Book:
         result = await db.execute(select(Book).where(Book.id == target))
         book = result.scalar_one()
     return book
+
+
+def of_work(book_id_column, book: Book):
+    """A filter matching ``book_id_column`` against every row of ``book``'s
+    work: its survivor (``book`` itself unless merged) and any row merged
+    into that survivor. One hop, as merges keep chains at one hop. Used by
+    the restore conflict check and the trash's same-book eviction (#683)."""
+    survivor_id = book.merged_into_id or book.id
+    merged_ids = select(Book.id).where(Book.merged_into_id == survivor_id)
+    return or_(book_id_column == survivor_id, book_id_column.in_(merged_ids))
 
 
 def effective_book(book: Book | None) -> Book | None:

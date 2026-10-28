@@ -57,8 +57,8 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all` |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
-| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*` |
-| `rate_limit_reads` | 120/min | `GET /user-books`, `GET /auth/me`, `GET /scan/usage` |
+| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore` |
+| `rate_limit_reads` | 120/min | `GET /user-books`, `GET /user-books/trash`, `GET /auth/me`, `GET /scan/usage` |
 | `rate_limit_health` | 60/min | `GET /health`, `GET /health/db` |
 
 429 responses are logged at WARN level.
@@ -388,7 +388,7 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 
 Finds the `Book` by `open_library_work_id`, then `google_books_id`, and the `Edition` by the first edition's `isbn_13`; then inserts a `UserBook` with `status=wishlisted` and `wishlisted_at=now()`.
 
-**A book the user already has is refused with `409` (#587).** A library holds one entry per title (`uq_user_books_user_book`), so this endpoint no longer returns the existing entry: when the user already has an entry for the `Book`, for the same `open_library_work_id` or `google_books_id` (so the 409 agrees with what the scan showed), or an entry whose edition has the same ISBN as the posted first edition (ISBN-10 converted to ISBN-13, whichever `Book` it belongs to), nothing is written (not even a new catalog row) and `detail` says how they have it, with the same values and rules as `ownership` on scan results: `owned_same_edition` (same ISBN, or the same `edition_id`), `owned_other_edition` or `owned_edition_unknown`. Only the requesting user's library counts. Of two adds of the same book at once, the one that loses on `uq_user_books_user_book` gets the same 409.
+**A book the user already has is refused with `409` (#587).** A library holds one live entry per title (`uq_user_books_user_book_live`; an entry in the trash does not count, #683), so this endpoint no longer returns the existing entry: when the user already has an entry for the `Book`, for the same `open_library_work_id` or `google_books_id` (so the 409 agrees with what the scan showed), or an entry whose edition has the same ISBN as the posted first edition (ISBN-10 converted to ISBN-13, whichever `Book` it belongs to), nothing is written (not even a new catalog row) and `detail` says how they have it, with the same values and rules as `ownership` on scan results: `owned_same_edition` (same ISBN, or the same `edition_id`), `owned_other_edition` or `owned_edition_unknown`. Only the requesting user's library counts. Of two adds of the same book at once, the one that loses on `uq_user_books_user_book_live` gets the same 409. A book whose entry is in the trash (#683) is not owned: adding it creates a new entry, and the trashed one can then no longer be restored (`409 restore_conflict`).
 
 **Shared-catalog rule (#602).** `books` and `editions` are shared by every user, so they are written only from server-produced data. A missing `Book` / `Edition` is created only when `catalog_token` verifies: signed by this server for **this user**, not expired, current version (`v1`), and every catalog field in the body exactly as signed. Without a valid token (missing, malformed, expired, another user's, or any field changed) the request may only link the user to a `Book` that already exists (and to an existing `Edition` of that book); if no such `Book` exists it is refused with `422 catalog_token_invalid` and nothing is written. A book with neither `open_library_work_id` nor `google_books_id` is never added, token or not: `422 book_not_in_catalog`. A user book is never linked to an edition of a different book (it is then saved without an edition). Existing catalog rows are never changed by this endpoint, signed or not.
 
@@ -477,7 +477,7 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 **Errors:**
 - `422` — validation failure (`detail` is a list; `loc` names the field, e.g. `["body", "isbn"]`), or an unknown field
 - `409 unverified_duplicate` — the user already has an unverified entry with the same title and author (casefolded, punctuation and spacing ignored; text that is only punctuation is compared as typed, so `!!!` and `???` differ) or the same ISBN; nothing was written. Other users' entries never count
-- `409 unverified_limit_reached` — the user already holds `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) unverified entries; nothing was written. Deleting one (`DELETE /user-books/{id}`) frees a place
+- `409 unverified_limit_reached` — the user already holds `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) unverified entries; nothing was written. Deleting one (`DELETE /user-books/{id}`) frees a place: entries in the trash do not count towards the cap or the duplicate check (#683)
 
 ---
 
@@ -490,7 +490,7 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 **Query params:**
 - `status` (optional) — filter by `wishlisted` / `purchased` / `reading` / `read`
 
-**Response `200`:** array of `UserBookRead`, ordered by `created_at DESC`, with `Book` + `editions` + optional `Edition` eager-loaded. Every row has `unverified` (#616): `false` for a catalog book; `true` for the user's own unverified entry, which is shaped as in `POST /wishlist/unverified` (`book` holds only its `id`, `title` and `author`; `unverified_isbn_13`). `PATCH` and `DELETE /user-books/{id}` work on both kinds; deleting an unverified entry also deletes its `user_custom_books` row. `POST /purchased` takes only catalog books (an unverified entry's `book.id` is `404`); use `PATCH` to change an unverified entry's status.
+**Response `200`:** array of `UserBookRead`, ordered by `created_at DESC`, with `Book` + `editions` + optional `Edition` eager-loaded. Every row has `unverified` (#616): `false` for a catalog book; `true` for the user's own unverified entry, which is shaped as in `POST /wishlist/unverified` (`book` holds only its `id`, `title` and `author`; `unverified_isbn_13`). `PATCH` and `DELETE /user-books/{id}` work on both kinds; deleting an unverified entry also moves its `user_custom_books` row to the trash. Entries in the trash (#683) are never listed here. `POST /purchased` takes only catalog books (an unverified entry's `book.id` is `404`); use `PATCH` to change an unverified entry's status.
 
 Since #682 every row also has `overrides` (`{"title", "author", "cover_url"}`, each the user's own value or `null`), and `book.title` / `book.author` / `book.cover_url` show the user's override when set. A row whose catalog book was merged into another (`books.merged_into_id`) shows the surviving book (its `id`, fields and editions). Both are additive: older clients that ignore `overrides` keep working.
 
@@ -504,7 +504,7 @@ curl "https://bookshelfapi.buffingchi.com/user-books?status=reading" \
 
 ### `POST /purchased` — promote to purchased (or create directly)
 
-Transitions an existing `UserBook` to `status=purchased` with `purchased_at=now()`, OR creates a new `UserBook` in `purchased` status if the user didn't have one yet for this book. Optionally binds an edition via `edition_id` or by ISBN-13 lookup.
+Transitions an existing live `UserBook` to `status=purchased` with `purchased_at=now()`, OR creates a new `UserBook` in `purchased` status if the user didn't have one yet for this book. Optionally binds an edition via `edition_id` or by ISBN-13 lookup.
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -528,7 +528,7 @@ Either `isbn_13` or `edition_id` may be provided (or neither). If `isbn_13` is p
 - `404` — `book_id` not found
 - `422 edition_book_mismatch` — `edition_id` is not an edition of `book_id` (another book's edition, or no such edition: both get the same answer). Nothing is written. The app does not send `edition_id` today, so it has no message for this code.
 
-A `book_id` whose catalog row was merged into another (#682, `books.merged_into_id`) adds or promotes the surviving book instead: no library entry is created on a merged row. An existing entry of the same work is promoted whichever row it is on (the survivor or one merged into it; the survivor's own entry first), so the user never gets a second entry of the work. `edition_id` must then be an edition of the surviving book (a merge moves editions there); one still on the merged row is `422 edition_book_mismatch`.
+A `book_id` whose catalog row was merged into another (#682, `books.merged_into_id`) adds or promotes the surviving book instead: no library entry is created on a merged row. An existing entry of the same work is promoted whichever row it is on (the survivor or one merged into it; the survivor's own entry first), so the user never gets a second entry of the work. An entry in the trash (#683) is never promoted: the book is added as a new live entry and the trashed one stays in the trash. `edition_id` must then be an edition of the surviving book (a merge moves editions there); one still on the merged row is `422 edition_book_mismatch`.
 
 ---
 
@@ -562,13 +562,15 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 **Response `200`:** the updated `UserBookRead`.
 
 **Errors:**
-- `404` — `user_book_id` not found or belongs to another user
+- `404` — `user_book_id` not found, in the trash (#683) or belongs to another user
 - `422` — `rating` out of range, or an invalid override (too long, blank, control characters, an unsafe `cover_url_override`)
 - `422 overrides_not_supported` — overrides sent for an unverified entry (#616), which is already the user's own data and never has a cover; nothing is written
 
 ---
 
-### `DELETE /user-books/{user_book_id}` — remove book from library
+### `DELETE /user-books/{user_book_id}` — move book to the trash
+
+Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, for an unverified entry, so does its `user_custom_books` row). Nothing is deleted. The entry disappears from every library read and check (`GET /user-books`, `PATCH`, `POST /purchased`, `POST /wishlist`'s 409, the scan / search `ownership`, the unverified cap and duplicate check) and appears in `GET /user-books/trash`. `POST /user-books/{id}/restore` brings it back until it leaves the trash. **The trash keeps 30 days, one trashed copy per book (copies with your data are kept), and the newest 1,000 entries per user:** the daily cleanup purges an entry `TRASH_RETENTION_DAYS` (default 30) days after deletion. **Deleting a book that already has a trashed copy replaces older trashed copies that hold no data of yours** (no notes, rating, edition, overrides, status beyond wishlisted); copies with your data stay restorable for 30 days. In the same transaction, the `DELETE` hard-deletes the user's other, older trashed entries of the same book (for a catalog entry any row of the same work, merged rows included, #682; for an unverified entry the same title and author or ISBN, the duplicate check's key) that hold no user data, with their `user_custom_books` rows, so an add / delete loop cannot grow the database. The entry being deleted is always kept. As a backstop, a `DELETE` that leaves the user with more than `TRASH_MAX_ENTRIES_PER_USER` (default 1,000) trashed entries hard-deletes the oldest ones beyond it, so a mass delete of up to 1,000 distinct books stays fully restorable. Concurrent requests for one user are serialised (a second concurrent `DELETE` of the same entry gets `404`).
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -577,7 +579,42 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 **Response `204`:** empty body.
 
 **Errors:**
-- `404` — not found or belongs to another user
+- `404` — not found, already in the trash, or belongs to another user. Deleting twice is a `404` the second time, not a second `204`
+- `422` — `user_book_id` is not a UUID
+
+---
+
+### `GET /user-books/trash` — list the trash
+
+The requesting user's deleted entries (#683), most recently deleted first (ties by `id`, highest first), at most `TRASH_MAX_ENTRIES_PER_USER` (default 1,000). The trash keeps 30 days, one trashed copy per book (deleting a book that already has a trashed copy replaces older trashed copies that hold no data of yours: no notes, rating, edition, overrides, status beyond wishlisted; copies with your data stay restorable for 30 days) and the newest 1,000 entries per user. Only this user's entries; another user's trash is never visible.
+
+**Auth:** required
+**Rate limit:** `rate_limit_reads`
+**Source:** `backend/app/api/user_books.py:list_trash`
+
+**Response `200`:** array of `TrashedUserBookRead`: the same per-row shape as `GET /user-books` (`UserBookRead`, including `unverified`, `overrides` and a merged book shown as its survivor), plus:
+- `deleted_at` — when the entry was deleted
+- `purge_after` — `deleted_at` + `TRASH_RETENTION_DAYS`. The daily cleanup deletes the entry for good at its first run after this time, so an entry can still be listed (and restored) for up to a day after `purge_after`
+
+---
+
+### `POST /user-books/{user_book_id}/restore` — restore from the trash
+
+Clears `deleted_at` on the entry (and on its `user_custom_books` row for an unverified entry). Status, dates, notes, rating, edition and overrides are exactly as they were when it was deleted. No request body.
+
+**Auth:** required
+**Rate limit:** `rate_limit_writes`
+**Source:** `backend/app/api/user_books.py:restore_user_book`
+
+**Response `200`:** the restored `UserBookRead`.
+
+**Errors** (nothing is written on any of them):
+- `404` — not found, not in the trash (a live entry), or belongs to another user
+- `409 restore_conflict` — the user has a live entry of the same book: the same work (any catalog row of a merged work counts, #682), typically because the book was added again after it was deleted. For an unverified entry: a live unverified entry with the same title and author or the same ISBN (the `unverified_duplicate` rule)
+- `409 unverified_limit_reached` — restoring this unverified entry would exceed `UNVERIFIED_BOOKS_PER_USER_MAX`
+- `422` — `user_book_id` is not a UUID
+
+An entry past `purge_after` that the cleanup has not purged yet can still be restored: the window is a minimum, and the purge is the only thing that ends it.
 
 ---
 

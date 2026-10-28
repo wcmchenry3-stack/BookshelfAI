@@ -237,7 +237,9 @@ def test_catalog_row_is_not_unverified():
     assert ub.unverified is False
 
 
-async def test_delete_removes_the_unverified_entry_too():
+async def test_delete_trashes_the_unverified_entry_too():
+    """#683 (soft delete) replaces #616's hard delete: the library row and
+    its unverified entry both go to the trash, nothing is deleted."""
     custom = _custom()
     ub = UserBook(id=uuid.uuid4(), user_id=custom.user_id, custom_book_id=custom.id)
     ub.custom_book = custom
@@ -254,7 +256,9 @@ async def test_delete_removes_the_unverified_entry_too():
         current_user=SimpleNamespace(id=custom.user_id),
         db=db,
     )
-    assert [c.args[0] for c in db.delete.await_args_list] == [ub, custom]
+    db.delete.assert_not_awaited()
+    assert ub.deleted_at is not None
+    assert custom.deleted_at == ub.deleted_at
     db.commit.assert_awaited_once()
 
 

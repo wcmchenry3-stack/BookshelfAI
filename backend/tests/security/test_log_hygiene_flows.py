@@ -9,7 +9,8 @@ verifier and AI provider are faked at their boundaries, and JWTs are real
 Flows covered today: Google sign-in, refresh, logout, sign out of all
 devices (logout-all) and the revoked-token rejections after it (#689),
 refresh-token reuse detection and its Sentry alert (#690),
-library add (wishlist) and delete, a scan, the allowlist-reject path, and a
+library add (wishlist), delete (to the trash), the trash list and restore
+(#683), a scan, the allowlist-reject path, and a
 server error. Account
 deletion does not exist yet: the story that adds it must drive its flow inside
 ``capture()`` here (see ``tests/_log_hygiene.py``).
@@ -111,6 +112,10 @@ class FakeDb:
             result.scalar_one_or_none.return_value = self.book
         elif entity is UserBook:
             result.scalar_one_or_none.return_value = self.user_book
+            result.scalar_one.return_value = self.user_book
+            result.scalars.return_value.all.return_value = (
+                [self.user_book] if self.user_book else []
+            )
         return result
 
     async def get(self, model, pk, **_options):
@@ -348,6 +353,49 @@ class TestLibraryFlows:
             assert added.status_code == 201, added.text
             deleted = client.delete(f"/user-books/{added.json()['id']}", headers=auth)
             assert deleted.status_code == 204, deleted.text
+        _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
+
+    def test_delete_trash_and_restore(self, db):
+        """#683: moving an entry to the trash, listing the trash and
+        restoring it log no token or email."""
+        client = TestClient(app)
+        db.book = Book(
+            id=uuid.uuid4(),
+            open_library_work_id=WORK,
+            title="Dune",
+            author="Frank Herbert",
+            language="en",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        with lh.capture() as cap:
+            tokens = _sign_in(client).json()
+            auth = {"Authorization": f"Bearer {tokens['access_token']}"}
+            with patch(
+                "app.services.wishlist.WishlistService._find_or_create_edition",
+                AsyncMock(return_value=None),
+            ):
+                added = client.post(
+                    "/wishlist",
+                    headers=auth,
+                    json={
+                        "open_library_work_id": WORK,
+                        "title": "Dune",
+                        "author": "Frank Herbert",
+                        "editions": [],
+                    },
+                )
+            assert added.status_code == 201, added.text
+            entry = added.json()["id"]
+            deleted = client.delete(f"/user-books/{entry}", headers=auth)
+            assert deleted.status_code == 204, deleted.text
+            assert db.user_book.deleted_at is not None
+            listed = client.get("/user-books/trash", headers=auth)
+            assert listed.status_code == 200, listed.text
+            assert [e["id"] for e in listed.json()] == [entry]
+            restored = client.post(f"/user-books/{entry}/restore", headers=auth)
+            assert restored.status_code == 200, restored.text
+            assert db.user_book.deleted_at is None
         _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
 
     def test_server_error_reaches_sentry_without_pii(self, db):

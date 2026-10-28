@@ -139,6 +139,7 @@ class TestCleanupIsolation:
         "purge_old_spend",
         "purge_old_zero_results",
         "purge_old_scan_records",
+        "purge_trash",
     ]
 
     @staticmethod
@@ -184,7 +185,7 @@ class TestCleanupIsolation:
         await self._run_once(patches, caplog)
         for name, mock in mocks.items():
             assert mock.await_count == 1, name
-        # five purges plus the refresh-token delete each logged their failure.
+        # the purges plus the refresh-token delete each logged their failure.
         assert caplog.text.count("error during cleanup run") == len(self.PURGES) + 1
 
     async def test_refresh_token_failure_alone_is_logged_not_raised(self, caplog):

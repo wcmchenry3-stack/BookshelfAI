@@ -424,6 +424,7 @@ class TestAddPurchasedSuccess:
             db = AsyncMock()
             db.execute = AsyncMock(
                 side_effect=[
+                    _none_result(),  # the user lock (#683)
                     _scalar_result(book),  # verify book exists
                     _none_result(),  # no existing user_book → create
                     _scalar_one_result(ub),  # re-fetch after commit
@@ -450,6 +451,7 @@ class TestAddPurchasedSuccess:
             db = AsyncMock()
             db.execute = AsyncMock(
                 side_effect=[
+                    _none_result(),  # the user lock (#683)
                     _scalar_result(book),  # verify book exists
                     _scalar_result(ub),  # existing user_book found → update
                     _scalar_one_result(ub),  # re-fetch after commit
@@ -480,6 +482,7 @@ class TestAddPurchasedSuccess:
             db = AsyncMock()
             db.execute = AsyncMock(
                 side_effect=[
+                    _none_result(),  # the user lock (#683)
                     _scalar_result(book),  # verify book exists
                     _scalar_result(edition),  # resolve edition by ISBN
                     _none_result(),  # no existing user_book → create
@@ -514,8 +517,10 @@ class TestAddPurchasedSuccess:
             async def _execute(q, *args, **kwargs):
                 execute_calls.append(q)
                 if len(execute_calls) == 1:
-                    return _scalar_result(book)
+                    return _none_result()  # the user lock (#683)
                 elif len(execute_calls) == 2:
+                    return _scalar_result(book)
+                elif len(execute_calls) == 3:
                     return _none_result()
                 else:
                     return _scalar_one_result(ub)
@@ -531,8 +536,9 @@ class TestAddPurchasedSuccess:
         app.dependency_overrides[get_db] = _fake_db
         resp = client.post("/purchased", json={"book_id": str(BOOK_ID)})
         assert resp.status_code == 201
-        # Only 3 execute calls: book lookup, user_book lookup, re-fetch
-        assert len(execute_calls) == 3
+        # Only 4 execute calls: the user lock (#683), book lookup,
+        # user_book lookup, re-fetch
+        assert len(execute_calls) == 4
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

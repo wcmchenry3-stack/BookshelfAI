@@ -134,8 +134,8 @@ Backed by `slowapi` + in-memory storage (single Render instance). Every endpoint
 | `rate_limit_auth` | 5/min | `/auth/*` endpoints |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
-| `rate_limit_writes` | 60/min | POST/PATCH/DELETE on `/user-books/*` |
-| `rate_limit_reads` | 120/min | GET on `/user-books/*`, `/auth/me`, `/scan/usage` |
+| `rate_limit_writes` | 60/min | POST/PATCH/DELETE on `/user-books/*` (including `POST /user-books/{id}/restore`) |
+| `rate_limit_reads` | 120/min | GET on `/user-books/*` (including `/user-books/trash`), `/auth/me`, `/scan/usage` |
 | `rate_limit_health` | 60/min | `/health`, `/health/db` |
 
 **Keying:** `user:<sub>` when the request carries a verified **access** token (`type: access`); otherwise the client IP from `app/core/client_ip.py` (one bucket per IPv4 address, per IPv6 /64). Refresh tokens never select a per-user bucket. The resolver trusts `CF-Connecting-IP` only when `TRUSTED_PROXY_MODE=cloudflare` (the default in hardened environments, and set explicitly on Render); with `none` every client behind Cloudflare and Render would share the proxy's IP. See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
@@ -210,7 +210,7 @@ Lives in `backend/app/services/` and is orchestrated from the `POST /scan` endpo
 
 **Why work_id-based dedup instead of ISBN:**
 - A single "work" (e.g. *Dune*) has dozens of editions — hardcovers, paperbacks, audiobooks, translations, anniversary reprints — all with different ISBNs. ISBN-based dedup would let the user wishlist 14 copies of *Dune*.
-- Since #587 the ISBN only refines the answer within that identity: it tells "this exact edition" (`owned_same_edition`) from "another edition of a work you have" (`owned_other_edition`). The work stays the unit of a library entry (`uq_user_books_user_book`); adding another edition is #610.
+- Since #587 the ISBN only refines the answer within that identity: it tells "this exact edition" (`owned_same_edition`) from "another edition of a work you have" (`owned_other_edition`). The work stays the unit of a library entry (`uq_user_books_user_book_live`, one live entry per work; entries in the trash do not count, #683); adding another edition is #610.
 - Open Library's `work_id` identifies the conceptual book independent of edition, which matches how users actually think about their collection.
 - When the work_id is unavailable, we fall back to Google Books volume ID (which is also work-level, not edition-level).
 
@@ -222,7 +222,7 @@ The server owns all library state. The client never holds a competing copy of it
 
 **How the client behaves:**
 - **Reads:** the wishlist and My Books screens fetch from `GET /user-books` when focused, on pull-to-refresh, and when the filter tab changes. The result lives in component state only. Nothing authoritative is persisted between sessions (no persisted query cache, no library data in `AsyncStorage`).
-- **Writes:** a handler sends the request, waits, and only then changes the list — for a status change it applies the row the server returned (`PATCH /user-books/{id}` responds with the full `UserBookRead`, including server-set timestamps); for a remove it drops the row after the `DELETE` succeeds. On failure the list is left untouched and an alert explains what went wrong.
+- **Writes:** a handler sends the request, waits, and only then changes the list — for a status change it applies the row the server returned (`PATCH /user-books/{id}` responds with the full `UserBookRead`, including server-set timestamps); for a remove it drops the row after the `DELETE` succeeds. A remove is a soft delete (#683): the server moves the entry to the trash (`deleted_at`), where `GET /user-books/trash` lists it and `POST /user-books/{id}/restore` brings it back intact for `TRASH_RETENTION_DAYS` (30) days, until the same book is deleted again (deleting a book that already has a trashed copy replaces older trashed copies that hold no data of yours: no notes, rating, edition, overrides, status beyond wishlisted; copies with your data stay restorable for 30 days), or until the user's trash passes `TRASH_MAX_ENTRIES_PER_USER` (1,000, oldest out first; a backstop), after which the daily cleanup purges it (`app/services/trash.py`: batches of 500, one commit each, under a Postgres advisory lock so only one instance purges). Every other library read and check sees live entries only. On failure the list is left untouched and an alert explains what went wrong.
 - **In flight:** the row's buttons are locked (`mutatingIds`) so a double-tap can't send a second request. The UI shows the old state until the server answers.
 - **Offline:** `useOnlineOnly()` (built on `useNetworkStatus`) reports connectivity. While offline, the mutation buttons are disabled and an `OfflineNotice` ("Go online to edit your library") is shown on both screens. If a press still gets through (for example the connection drops mid-tap), `requireOnline()` shows "This action requires an internet connection" and the request is never sent. Adding a scanned book to the wishlist (`ScanJobContext.handleSelectBook`) is guarded the same way.
 
