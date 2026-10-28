@@ -511,10 +511,13 @@ Transitions an existing `UserBook` to `status=purchased` with `purchased_at=now(
 ```
 Either `isbn_13` or `edition_id` may be provided (or neither). If `isbn_13` is provided and matches an existing `Edition` of the book, that edition is bound.
 
+**An `edition_id` must be an edition of `book_id` (#686).** The server checks `editions.book_id == book_id` before writing (shared helper `app/services/edition_check.py`); a client-sent pair is never trusted. `edition_id: null` skips the check. This is the only write that accepts an `edition_id`: `POST /wishlist` takes no `edition_id` (it links only an edition of the same book, see above) and `PATCH /user-books/{id}` cannot change the edition.
+
 **Response `201`:** the `UserBook` (same shape as `/wishlist` response).
 
 **Errors:**
 - `404` — `book_id` not found
+- `422 edition_book_mismatch` — `edition_id` is not an edition of `book_id` (another book's edition, or no such edition: both get the same answer). Nothing is written. The app does not send `edition_id` today, so it has no message for this code.
 
 ---
 
