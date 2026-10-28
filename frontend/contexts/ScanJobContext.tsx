@@ -10,12 +10,6 @@ import { useBanner } from '../hooks/useBanner';
 import { api } from '../lib/api';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
-import {
-  apiErrorTags,
-  isReportedCentrally,
-  isServiceUnavailable,
-  sanitizeApiError,
-} from '../lib/apiErrorReporting';
 import { Sentry } from '../lib/sentry';
 import {
   classifyScanError,
@@ -525,6 +519,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const startScan = useCallback(
     async (type: ScanJobType, imageUri?: string, query?: string) => {
       let startedId: string | null = null;
+      const generation = generationRef.current;
       try {
         // Backstop for the cap — the scan screen checks isQueueFull before
         // persisting a capture, but a stale render could still get here.
@@ -563,6 +558,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         inFlightRef.current.add(job.id);
 
         const netState = await NetInfo.fetch();
+        // Signed out during the connectivity check: the job was dropped with
+        // the queue, so nothing is sent or announced.
+        if (generationRef.current !== generation) return;
         if (!netState.isConnected) {
           updateJob(job.id, { status: 'queued' });
           showBanner({
@@ -575,9 +573,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
 
         await executeScanRef.current(job);
       } catch (err) {
-        if (!isReportedCentrally(err)) {
-          Sentry.captureException(sanitizeApiError(err));
-        }
+        Sentry.captureException(err);
         showBanner({
           message: t('scanFailedMessage'),
           type: 'error',
@@ -916,11 +912,10 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
         if (
           outcome.status === 'rejected' &&
           !alreadyOwned(outcome) &&
-          catalogRefusal(outcome.reason) === null &&
-          !isReportedCentrally(outcome.reason)
+          catalogRefusal(outcome.reason) === null
         ) {
-          Sentry.captureException(sanitizeApiError(outcome.reason), {
-            tags: { feature: 'scan', action: 'add_books', ...apiErrorTags(outcome.reason) },
+          Sentry.captureException(outcome.reason, {
+            tags: { feature: 'scan', action: 'add_books' },
           });
         }
       }
@@ -1470,18 +1465,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // #724: the central API reporter (lib/api.ts) owns 403/5xx responses;
-        // capture only what it does not (no response, other statuses).
-        if (!isReportedCentrally(err)) {
-          Sentry.captureException(sanitizeApiError(err), {
-            tags: {
-              feature: 'scan',
-              action: 'execute_scan',
-              jobType: job.type,
-              ...apiErrorTags(err),
-            },
-          });
-        }
+        Sentry.captureException(err, {
+          tags: { feature: 'scan', action: 'execute_scan', jobType: job.type },
+        });
 
         // A failed enhanced re-scan must not strand the books the standard scan
         // already found — a failed job has no review sheet.
@@ -1496,9 +1482,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           nextAttemptAt: undefined,
         });
         showBanner({
-          message: isServiceUnavailable(err)
-            ? t('serviceUnavailable', { ns: 'common' })
-            : t('scanFailedTitle'),
+          message: t('scanFailedTitle'),
           type: 'error',
           actions: [
             { label: t('retryNow'), onPress: () => retryScan(job.id) },

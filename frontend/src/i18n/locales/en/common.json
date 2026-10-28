@@ -8,6 +8,5 @@
   "requiresConnection": "This action requires an internet connection.",
   "offlineEditNotice": "You're offline. Go online to edit your library.",
   "unverified": "Unverified",
-  "unverifiedA11y": "Unverified: added by you, not found in the catalog",
-  "serviceUnavailable": "Can't reach BookshelfAI right now. Please try again later."
+  "unverifiedA11y": "Unverified: added by you, not found in the catalog"
 }

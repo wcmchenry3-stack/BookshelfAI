@@ -171,8 +171,7 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
       'Ulysses',
     ]);
     // Only the 500 is reported.
-    // #724: the central API reporter (lib/api.ts, mocked here) owns the 500.
-    expect(mockCaptureException).not.toHaveBeenCalled();
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
   });
 
   it('mixed: added next to a stale result needs no retry hint and closes the review', async () => {
@@ -247,8 +246,7 @@ describe('POST /wishlist 422 catalog refusals (#612)', () => {
       'Dune',
       'Ulysses',
     ]);
-    // #724: the central API reporter (lib/api.ts, mocked here) owns the 500.
-    expect(mockCaptureException).not.toHaveBeenCalled();
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
   });
 
   it('shows the whole banner, not two lines', async () => {

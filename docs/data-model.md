@@ -260,7 +260,7 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | |
 | `book_id` | UUID FK → `books.id`, restrict delete, nullable | the catalog book; `NULL` only for an unverified entry (#616) |
 | `custom_book_id` | UUID FK → `user_custom_books.id`, cascade delete, nullable, unique (`uq_user_books_custom_book`) | the user's own unverified entry (#616); `ck_user_books_one_book` requires exactly one of `book_id` / `custom_book_id` |
-| `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet. **Must be an edition of `book_id`** (#686): enforced in the API (`app/services/edition_check.py`, `422 edition_book_mismatch`), not by a composite FK (see below) |
+| `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet |
 | `status` | string, indexed, not null | check constraint: `wishlisted`, `purchased`, `reading`, `read` |
 | `wishlisted_at` | timestamptz, nullable | set when status first enters `wishlisted` |
 | `purchased_at` | timestamptz, nullable | set on wishlisted→purchased transition |
@@ -271,8 +271,6 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
 **Uniqueness:** `(user_id, book_id)` is a unique constraint (`uq_user_books_user_book`). A user can have at most one tracking row per work — this is what dedup is enforcing. Different editions of the same work still share one `UserBook`; changing edition updates `edition_id` in place. (Unverified rows have `book_id` NULL, which the constraint does not compare; their duplicates are refused by `UnverifiedBookService`.)
-
-**Edition belongs to book (#686).** A composite FK `(book_id, edition_id)` → `editions(book_id, id)` was considered and not added: it needs a unique key on `editions(book_id, id)` and would fail on any existing mismatched row, so it waits for the existing-data check to come back clean. Until then the API enforces the rule on every write that takes an `edition_id`.
 
 ### `user_custom_books` (`backend/app/models/user_custom_book.py`)
 

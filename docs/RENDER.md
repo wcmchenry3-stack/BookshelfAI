@@ -120,12 +120,7 @@ Rollout, per service (dev first, then prod):
    the API hostname.
 4. Set `ORIGIN_AUTH_SECRET` in the dashboard to the same value. Check that the
    public hostname still works and that `/health` still passes Render's health
-   check. Run `scripts/smoke_origin_lockdown.sh` (add the dev hostname as an
-   argument): it requests `/health/db` through the public hostname and fails on
-   403, which `/health` (exempt) cannot reveal. A wrongly configured edge also
-   raises the Sentry message `origin_auth_rejected_authenticated` (at most one
-   per 5 minutes per process) as soon as a signed-in client is rejected; see
-   [`security.md`](security.md#client-ip-and-origin-lockdown).
+   check.
 
 To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
 `TRUSTED_PROXY_MODE=none`.

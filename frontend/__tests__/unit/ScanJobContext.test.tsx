@@ -934,6 +934,40 @@ describe('ScanJobContext — sign-out aborts and checks every scan path (#723)',
     expect(hook.result.current.scan.jobs).toEqual([]);
   });
 
+  it('a NetInfo check resolving after sign-out sends nothing', async () => {
+    let connected: (v: unknown) => void = () => {};
+    mockNetInfoFetch.mockReturnValue(new Promise((r) => (connected = r)));
+    mockPost.mockResolvedValue({ data: { books: [BOOK] } });
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.startScan('image', 'file:///docs/scan-queue/p.jpg');
+    });
+    await signOutOf(hook);
+    await act(async () => {
+      connected({ isConnected: true });
+    });
+    await flush();
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(hook.result.current.banner.banner).toBeNull();
+    expect(hook.result.current.scan.jobs).toEqual([]);
+  });
+
+  it('a successful text search resolving after sign-out shows nothing', async () => {
+    let finish: (v: unknown) => void = () => {};
+    mockGet.mockReturnValue(new Promise((r) => (finish = r)));
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.startScan('text', undefined, 'Dune');
+    });
+    await signOutOf(hook);
+    await act(async () => {
+      finish({ data: [] });
+    });
+    await flush();
+    expect(hook.result.current.banner.banner).toBeNull();
+    expect(hook.result.current.scan.jobs).toEqual([]);
+  });
+
   it('aborts the in-flight request on sign-out', async () => {
     mockPost.mockReturnValue(new Promise(() => {}));
     const hook = await renderBoth();

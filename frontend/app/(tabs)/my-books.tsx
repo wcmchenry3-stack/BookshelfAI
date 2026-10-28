@@ -24,7 +24,6 @@ import { useOnlineOnly } from '../../hooks/useOnlineOnly';
 import { UnverifiedBadge } from '../../components/UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
-import { isServiceUnavailable } from '../../lib/apiErrorReporting';
 
 type Status = 'all' | 'wishlisted' | 'purchased' | 'reading' | 'read';
 
@@ -116,11 +115,8 @@ export default function MyBooksScreen() {
       const params = tab !== 'all' ? { status: tab } : {};
       const { data } = await api.get<UserBook[]>('/user-books', { params });
       setBooks(data.filter((b) => b.book != null));
-    } catch (err) {
-      Alert.alert(
-        t('errorTitle', { ns: 'common' }),
-        isServiceUnavailable(err) ? t('serviceUnavailable', { ns: 'common' }) : t('errorLoadBooks')
-      );
+    } catch {
+      Alert.alert(t('errorTitle', { ns: 'common' }), t('errorLoadBooks'));
     } finally {
       setLoading(false);
       setRefreshing(false);

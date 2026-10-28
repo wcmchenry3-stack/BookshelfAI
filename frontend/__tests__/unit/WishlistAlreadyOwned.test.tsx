@@ -149,8 +149,7 @@ describe('POST /wishlist 409 = already in your library (#587)', () => {
         : Promise.reject(httpError(409, 'owned_edition_unknown'))
     );
     expect(hook.result.current.scan.reviewingJob?.results?.map((b) => b.title)).toEqual(['Emma']);
-    // #724: the central API reporter (lib/api.ts, mocked here) owns the 500.
-    expect(mockCaptureException).not.toHaveBeenCalled();
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
     // Nothing was added: the owned book is not counted as added.
     expect(hook.result.current.banner.banner).toEqual(
       expect.objectContaining({
