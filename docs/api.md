@@ -570,7 +570,7 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 
 ### `DELETE /user-books/{user_book_id}` — move book to the trash
 
-Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, for an unverified entry, so does its `user_custom_books` row). Nothing is deleted. The entry disappears from every library read and check (`GET /user-books`, `PATCH`, `POST /purchased`, `POST /wishlist`'s 409, the scan / search `ownership`, the unverified cap and duplicate check) and appears in `GET /user-books/trash`. `POST /user-books/{id}/restore` brings it back until the daily cleanup purges it, `TRASH_RETENTION_DAYS` (default 30) days after deletion.
+Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, for an unverified entry, so does its `user_custom_books` row). Nothing is deleted. The entry disappears from every library read and check (`GET /user-books`, `PATCH`, `POST /purchased`, `POST /wishlist`'s 409, the scan / search `ownership`, the unverified cap and duplicate check) and appears in `GET /user-books/trash`. `POST /user-books/{id}/restore` brings it back until it leaves the trash. **The trash keeps 30 days or the newest N entries, whichever comes first:** the daily cleanup purges an entry `TRASH_RETENTION_DAYS` (default 30) days after deletion, and a `DELETE` that leaves the user with more than `TRASH_MAX_ENTRIES_PER_USER` (default 100) trashed entries hard-deletes the oldest ones beyond it (with their `user_custom_books` rows) in the same transaction, so a delete loop cannot grow the database. Concurrent requests for one user are serialised (a second concurrent `DELETE` of the same entry gets `404`).
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -586,7 +586,7 @@ Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, 
 
 ### `GET /user-books/trash` — list the trash
 
-The requesting user's deleted entries (#683), most recently deleted first. Only this user's entries; another user's trash is never visible.
+The requesting user's deleted entries (#683), most recently deleted first, at most `TRASH_MAX_ENTRIES_PER_USER` (default 100) (the trash keeps 30 days or the newest N entries, whichever comes first). Only this user's entries; another user's trash is never visible.
 
 **Auth:** required
 **Rate limit:** `rate_limit_reads`

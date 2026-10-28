@@ -384,7 +384,7 @@ class TestWishlistRefusesOwnedBooks:
 
 class TestConcurrentAdd:
     """Finding 3: two adds of the same book at once both pass the check;
-    the loser's insert hits ``uq_user_books_user_book`` inside a SAVEPOINT
+    the loser's insert hits ``uq_user_books_user_book_live`` inside a SAVEPOINT
     and is refused like any owned book (409), not a 500."""
 
     @staticmethod
@@ -392,7 +392,9 @@ class TestConcurrentAdd:
         db = _wishlist_db(_one(book), _one(edition), _rows(), _rows(*after))
 
         async def flush():
-            raise IntegrityError("INSERT", {}, Exception("uq_user_books_user_book"))
+            raise IntegrityError(
+                "INSERT", {}, Exception("uq_user_books_user_book_live")
+            )
 
         db.flush = AsyncMock(side_effect=flush)
         return db

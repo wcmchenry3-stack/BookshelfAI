@@ -401,7 +401,7 @@ class TestWorkMatchedByEitherId:
 class TestConcurrentAdds:
     async def test_the_add_that_loses_the_race_is_a_409(self, env):
         """Two adds of the same book at once both pass the library check;
-        the loser's insert hits ``uq_user_books_user_book``. Reproduced by
+        the loser's insert hits ``uq_user_books_user_book_live``. Reproduced by
         hiding the user's entry from the first library query, as if the
         other request committed just after it (review finding 3)."""
         factory, make_user, _ids, _ = env

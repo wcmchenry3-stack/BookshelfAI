@@ -481,6 +481,7 @@ def test_documented_trash_numbers_match_the_code():
     from app.core.config import Settings
 
     assert Settings.model_fields["trash_retention_days"].default == 30
+    assert Settings.model_fields["trash_max_entries_per_user"].default == 100
     assert trash.PURGE_BATCH_SIZE == 500
     assert trash.PURGE_MAX_BATCHES == 20
     doc = (
@@ -491,5 +492,7 @@ def test_documented_trash_numbers_match_the_code():
         "batches of 500",
         "at most 20 per run",
         "pg_try_advisory_xact_lock",
+        "TRASH_MAX_ENTRIES_PER_USER",
+        "newest 100 per user",
     ):
         assert phrase in doc, phrase

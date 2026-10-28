@@ -31,7 +31,8 @@ class UserCustomBook(Base):
     user. Rows go with the account (ON DELETE CASCADE) and with the library
     entry: ``DELETE /user-books/{id}`` moves both to the trash
     (``deleted_at``, #683), restore brings both back, and the daily purge
-    deletes both once the trash window has passed. Trashed rows do not count
+    deletes both once the trash window has passed (or the per-user trash
+    cap evicts them). Trashed rows do not count
     towards the cap or the duplicate check. Account deletion and export (not
     built yet) must include this table, trashed rows included.
     """
