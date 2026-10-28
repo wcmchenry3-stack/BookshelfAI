@@ -15,6 +15,14 @@ jest.mock('@react-native-community/netinfo', () =>
   jest.requireActual('@react-native-community/netinfo/jest/netinfo-mock.js')
 );
 
+// AsyncStorage has no native module under Jest. AuthContext imports it through
+// lib/freshInstall, so any screen using useAuth needs it. The official mock is an
+// in-memory store; tests that assert on storage calls override it with their own
+// jest.mock('@react-native-async-storage/async-storage', ...).
+jest.mock('@react-native-async-storage/async-storage', () =>
+  jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock')
+);
+
 // Initialize i18n with English resources before every test.
 // en translations are bundled as static imports and available synchronously;
 // components calling useTranslation() will get the correct English strings.

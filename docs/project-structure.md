@@ -111,7 +111,7 @@ frontend/
 │   ├── LoadingSpinner.tsx
 │   └── ThemeToggleButton.tsx
 ├── contexts/              React Context providers
-│   ├── AuthContext.tsx            Token storage, session hydration, login/logout
+│   ├── AuthContext.tsx            Token storage, session hydration + launch /auth/me check, login/logout
 │   ├── BannerContext.tsx          InAppBanner imperative API
 │   └── ScanJobContext.tsx         Scan queue state machine + offline drain
 ├── hooks/                 Thin hooks over contexts
@@ -122,6 +122,7 @@ frontend/
 │   └── useTheme.ts
 ├── lib/                   Non-React modules
 │   ├── api.ts                     Axios instance + auth header interceptor
+│   ├── freshInstall.ts            Clears Keychain tokens left by a previous install (#722)
 │   ├── scanJob.ts                 ScanJob types + state enum
 │   ├── scanJobStorage.ts          expo-file-system persistence for scan queue
 │   ├── sentry.ts                  Sentry init + captureException wrapper

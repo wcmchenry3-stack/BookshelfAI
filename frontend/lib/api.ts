@@ -16,10 +16,46 @@ export function setAuthFailureCallback(cb: () => void) {
   onAuthFailure = cb;
 }
 
+// Session gate (#722). Until AuthProvider's install check confirms that the
+// stored tokens belong to this install, requests wait for it. If it resolves
+// false (a fresh-install wipe failed, or the install state is unknown), the
+// stored tokens are never sent and never refreshed. logout closes the gate;
+// login/testLogin lift it once they have stored a new session. Every change
+// bumps the session epoch, so a refresh that started before it drops its
+// result instead of storing tokens for a session that has ended.
+let storedSession: Promise<boolean> = Promise.resolve(true);
+let sessionEpoch = 0;
+
+export function gateStoredSession(check: Promise<boolean>) {
+  sessionEpoch += 1;
+  storedSession = check.catch(() => false);
+}
+
+export function resumeStoredSession() {
+  sessionEpoch += 1;
+  storedSession = Promise.resolve(true);
+}
+
+// Responses from these never start a refresh: a rejected sign-in or refresh
+// is not an expired access token. '/auth/refresh' is listed for safety only:
+// refreshAccessToken posts with bare axios, which bypasses these interceptors.
+const NO_REFRESH_PATHS = ['/auth/google', '/auth/refresh'];
+
+// The request's path without baseURL/origin, query, hash or trailing slash.
+function requestPath(url: string | undefined): string {
+  let path = url ?? '';
+  if (path.startsWith(BASE_URL)) path = path.slice(BASE_URL.length);
+  path = path.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '');
+  path = path.replace(/[?#].*$/, '').replace(/\/+$/, '');
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
 export const api = axios.create({
   baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
+
+type SessionTagged = { _sessionEpoch?: number };
 
 // Inject access token on every request and add Sentry breadcrumb
 api.interceptors.request.use(async (config) => {
@@ -28,9 +64,14 @@ api.interceptors.request.use(async (config) => {
     message: `${(config.method ?? 'GET').toUpperCase()} ${config.url}`,
     level: 'info',
   });
-  const token = await storage.getItem(ACCESS_TOKEN_KEY);
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  const usable = await storedSession;
+  // The session this request is sent in; see the 401 handler.
+  (config as SessionTagged)._sessionEpoch = sessionEpoch;
+  if (usable) {
+    const token = await storage.getItem(ACCESS_TOKEN_KEY);
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
   return config;
 });
@@ -43,6 +84,15 @@ async function signOut() {
   await storage.deleteItem(ACCESS_TOKEN_KEY);
   await storage.deleteItem(REFRESH_TOKEN_KEY);
   onAuthFailure?.();
+}
+
+async function dropWrittenTokens(access: string, refresh: string) {
+  if ((await storage.getItem(ACCESS_TOKEN_KEY)) === access) {
+    await storage.deleteItem(ACCESS_TOKEN_KEY);
+  }
+  if ((await storage.getItem(REFRESH_TOKEN_KEY)) === refresh) {
+    await storage.deleteItem(REFRESH_TOKEN_KEY);
+  }
 }
 
 // One refresh at a time. The refresh token is single-use (rotated on every
@@ -68,17 +118,27 @@ export async function waitForPendingRefresh(): Promise<void> {
 function refreshAccessToken(): Promise<string | null> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
+      const epoch = sessionEpoch;
       const refreshToken = await storage.getItem(REFRESH_TOKEN_KEY);
       if (!refreshToken) return null;
       try {
         const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
           refresh_token: refreshToken,
         });
+        // Signed out (or into a new session) meanwhile: drop the result.
+        if (epoch !== sessionEpoch) return null;
         await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
         await storage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+        // A sign-out (or new login) began during the writes: remove what this
+        // refresh wrote, unless a newer session has replaced it already.
+        if (epoch !== sessionEpoch) {
+          await dropWrittenTokens(data.access_token, data.refresh_token);
+          return null;
+        }
         return data.access_token as string;
       } catch (refreshError) {
-        if ((refreshError as { response?: { status?: number } })?.response?.status === 401) {
+        const status = (refreshError as { response?: { status?: number } })?.response?.status;
+        if (status === 401 && epoch === sessionEpoch) {
           await signOut();
         }
         return null;
@@ -113,6 +173,15 @@ api.interceptors.response.use(
       // #724: a 403 (incl. `forbidden`) is not an auth failure; it never
       // signs the user out. Report unexpected failures once per session.
       reportApiError(error);
+      return Promise.reject(error);
+    }
+    if (NO_REFRESH_PATHS.includes(requestPath(original?.url)) || !(await storedSession)) {
+      return Promise.reject(error);
+    }
+    // Sent in an earlier session (a sign-out, and maybe a new sign-in, since):
+    // never retry it, or it would be replayed with the new session's token.
+    const sentEpoch = (original as SessionTagged | undefined)?._sessionEpoch;
+    if (sentEpoch !== undefined && sentEpoch !== sessionEpoch) {
       return Promise.reject(error);
     }
     const sent = sentAccessToken(original);
