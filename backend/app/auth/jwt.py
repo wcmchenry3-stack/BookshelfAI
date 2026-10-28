@@ -12,10 +12,11 @@ TOKEN_VERSION_CLAIM = "tv"
 # Legacy-token grace (#725). Tokens issued before #689 have no tv claim. A
 # legacy refresh token is read as tv=0 (every user's token_version started at
 # 0, migration 0021), so it works only until the user's first logout-all.
-# TODO(#735): remove the legacy path after 2026-12-15, once the #689 release
-# has been in production for longer than REFRESH_TOKEN_EXPIRY_DAYS (7) plus
-# margin; by then every legacy refresh token has expired. The date assumes a
-# release date; re-anchor it to the actual production release date.
+# TODO(#735): remove the legacy path on or after 2026-11-04. #689 reached
+# production (and the dev API) on 2026-10-27, so no token without tv has been
+# issued since; legacy refresh tokens live REFRESH_TOKEN_EXPIRY_DAYS (7) and
+# have all expired by 2026-11-03 04:00 UTC, after which this path accepts
+# nothing.
 LEGACY_TOKEN_VERSION = 0
 
 

@@ -182,8 +182,8 @@ async def refresh(
     # as tv=0, so it works only while the user has never bumped (#725); it
     # has passed the same jti, revoked_at and expiry checks above. A present
     # but malformed tv is rejected.
-    # TODO(#735): remove the legacy branch after 2026-12-15 (re-anchor the
-    # date to the actual production release; see app/auth/jwt.py).
+    # TODO(#735): remove the legacy branch on or after 2026-11-04 (see
+    # app/auth/jwt.py).
     legacy = not has_token_version_claim(payload)
     token_version = LEGACY_TOKEN_VERSION if legacy else token_version_claim(payload)
     if token_version != user.token_version:
