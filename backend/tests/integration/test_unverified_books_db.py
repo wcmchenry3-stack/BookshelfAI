@@ -406,13 +406,9 @@ async def test_account_deletion_removes_entries(env):
     async with factory() as db:
         await db.execute(delete(User).where(User.id == alice.id))
         await db.commit()
-    # #683 replaces #616's hard delete: both rows go to the trash together.
     async with factory() as db:
-        entry = await db.get(UserBook, created.id)
-        custom = await db.get(UserCustomBook, created.book.id)
-        assert entry.deleted_at is not None
-        assert custom.deleted_at == entry.deleted_at
-    assert await _list(factory, alice) == []
+        assert await db.get(UserBook, created.id) is None
+        assert await db.get(UserCustomBook, created.book.id) is None
 
 
 # ── Migration 0016 ───────────────────────────────────────────────────────────
