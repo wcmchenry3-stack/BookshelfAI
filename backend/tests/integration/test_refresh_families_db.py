@@ -215,26 +215,27 @@ async def test_rotation_inherits_family_from_a_row_without_one(env):
     assert root.used_at is not None and root.revoked_at is not None
 
 
-async def _race(factory, client, token: str):
+async def _race_n(factory, client, token: str, followers: int):
     """A presents ``token`` and pauses right after loading the user row
-    (holding its lock); B presents the same token, reads the refresh row as
-    live and waits for the lock. Returns (A's response, B's response, whether
-    B had to wait)."""
+    (holding its lock); ``followers`` more requests present the same token,
+    read the refresh row as live and wait for the lock. Returns (A's
+    response, the followers' responses, whether they all had to wait)."""
     paused = async_sessionmaker(
         factory.kw["bind"], class_=_PausingSession, expire_on_commit=False
     )
-    second: list[asyncio.Task] = []
-    b_waited: list[bool] = []
+    others: list[asyncio.Task] = []
+    waited: list[bool] = []
 
     async def interleave():
         _PausingSession.after_user_load = None
-        second.append(
+        others.extend(
             asyncio.create_task(
                 client.post("/auth/refresh", json={"refresh_token": token})
             )
+            for _ in range(followers)
         )
-        done, _ = await asyncio.wait(second, timeout=1)
-        b_waited.append(not done)
+        done, _ = await asyncio.wait(others, timeout=1)
+        waited.append(not done)
 
     async def _paused_db():
         async with paused() as session:
@@ -245,11 +246,18 @@ async def _race(factory, client, token: str):
     app.dependency_overrides[get_db] = _paused_db
     try:
         resp_a = await client.post("/auth/refresh", json={"refresh_token": token})
-        resp_b = await asyncio.wait_for(second[0], timeout=10)
+        rest = await asyncio.wait_for(asyncio.gather(*others), timeout=10)
     finally:
         _PausingSession.after_user_load = None
         app.dependency_overrides[get_db] = plain_db
-    return resp_a, resp_b, b_waited == [True]
+    return resp_a, list(rest), waited == [True]
+
+
+async def _race(factory, client, token: str):
+    """A and one follower B (see ``_race_n``). Returns (A's response, B's
+    response, whether B had to wait)."""
+    resp_a, (resp_b,), waited = await _race_n(factory, client, token, 1)
+    return resp_a, resp_b, waited
 
 
 async def test_concurrent_refreshes_rotate_once_and_are_not_reuse(env):
@@ -337,6 +345,38 @@ async def test_thief_who_wins_the_race_is_caught(env, thief_first):
     for token in (access, thief_tokens["access_token"], victim_tokens["access_token"]):
         me = await client.get("/auth/me", headers=_auth(token))
         assert me.status_code == 401
+
+
+async def test_three_requests_with_one_live_token_are_reuse(env):
+    """#734 review S3: a thief sends two refreshes with a stolen live token
+    while the real client's refresh waits behind them. The first rotates it,
+    the second (a race) displaces that successor, and the third finds its
+    twin's successor displaced: one app never sends three, so it is reuse,
+    not the plain 401 that let the thief keep the session unnoticed."""
+    factory, client, make_user, _ = env
+    user, _access, t0 = await make_user()
+    with captured_app_events() as events:
+        first, rest, waited = await _race_n(factory, client, t0, 2)
+
+    assert waited
+    assert first.status_code == 200, first.text
+    statuses = sorted(r.status_code for r in rest)
+    assert statuses == [200, 401], [r.text for r in rest]
+    (reused,) = [r for r in rest if r.status_code == 401]
+    assert reused.json()["detail"] == "refresh_reused"
+    assert len(_warnings(events)) == 1
+
+    rows = await _rows(factory, user.id)
+    assert rows and all(r.revoked_at is not None for r in rows.values())
+    async with factory() as db:
+        assert (await db.get(User, user.id)).token_version == 1
+    for resp in [first, *rest]:
+        if resp.status_code == 200:
+            nxt = await client.post(
+                "/auth/refresh",
+                json={"refresh_token": resp.json()["refresh_token"]},
+            )
+            assert nxt.status_code == 401
 
 
 async def test_grace_window_retry_replaces_successor(env):

@@ -18,8 +18,12 @@ one of four cases (:func:`classify_replay`):
   live token racing the real client; either way only one of the two pairs
   stays usable, and the other one's holder trips ``REUSE`` on its next
   refresh, so a thief who wins the race no longer takes over undetected.
-  If the twin's successor is no longer live and unused, the plain 401 from
-  before #690 (``ENDED``). No alert either way.
+  No alert. If the twin's successor has itself been rotated or displaced
+  (a third request with the same token got there first), that is
+  ``REUSE``: one client single-flights its refreshes, so three requests
+  with one token means a copy. If the twin's successor was revoked without
+  rotation (a logout) or deleted, the plain 401 from before #690
+  (``ENDED``).
 - ``RETRY``: rotated at most ``refresh_reuse_grace_seconds`` ago and the
   successor is still live and unused, so the client most likely never got the
   response (lost on the network, app suspended). The server cannot return the
@@ -66,7 +70,7 @@ REFRESH_REUSED = "refresh_reused"
 
 # 401 detail for an unknown or revoked refresh token (unchanged from before
 # #690; also the answer to ENDED, including a concurrent refresh whose twin's
-# successor is no longer live).
+# successor was signed out or deleted).
 REFRESH_REVOKED_OR_NOT_FOUND = "Refresh token revoked or not found"
 
 REUSE_ALERT_MESSAGE = "Refresh token reuse detected; all sessions revoked"
@@ -151,6 +155,8 @@ def classify_replay(
     if not seen_rotated:
         if successor is not None and is_live(successor):
             return Replay.RACE
+        if successor is not None and is_rotated(successor):
+            return Replay.REUSE  # a third request got there first
         return Replay.ENDED
     if now - used_at > timedelta(seconds=grace_seconds):
         return Replay.REUSE

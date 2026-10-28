@@ -83,14 +83,15 @@ class TestClassifyReplay:
         assert self._classify(seen=False, age=3600, successor=_row()) is Replay.RACE
 
     def test_race_whose_twin_successor_is_gone_is_ended(self):
-        """No live, unused successor to displace: the plain 401 (no alert)."""
-        for successor in (
-            None,
-            _row(revoked=True),
-            _row(revoked=True, used=True),
-            _row(displaced=True),  # a third concurrent request
-        ):
+        """Successor signed out or deleted: the plain 401 (no alert)."""
+        for successor in (None, _row(revoked=True)):
             assert self._classify(seen=False, successor=successor) is Replay.ENDED
+
+    def test_race_whose_twin_successor_moved_on_is_reuse(self):
+        """A third request with the same token rotated or displaced the twin's
+        successor first: one client never sends three, so it is a copy."""
+        for successor in (_row(revoked=True, used=True), _row(displaced=True)):
+            assert self._classify(seen=False, successor=successor) is Replay.REUSE
 
     def test_live_successor_within_window_is_a_retry(self):
         assert self._classify(successor=_row()) is Replay.RETRY

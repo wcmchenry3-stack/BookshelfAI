@@ -694,6 +694,6 @@ class TestCleanupTask:
         rollup = AsyncMock(side_effect=ValueError("db down"))
         session = await self._run_once(rollup_and_purge=rollup)
         assert "error during cleanup run (ai usage)" in caplog.text
-        # The refresh-token delete still ran afterwards.
+        # The refresh-token purge still ran afterwards.
         session.execute.assert_awaited_once()
         session.commit.assert_awaited_once()
