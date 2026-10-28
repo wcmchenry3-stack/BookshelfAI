@@ -114,6 +114,8 @@ def _first_text(values: object) -> str | None:
 def _gb_isbns(volume: dict | None) -> set[str]:
     info = (volume or {}).get("volumeInfo") or {}
     identifiers = info.get("industryIdentifiers") or []
+    if not isinstance(identifiers, list):
+        return set()
     return {
         entry["identifier"]
         for entry in identifiers
@@ -192,14 +194,6 @@ def titles_agree(a: object, b: object) -> bool:
     return all(not sub or _EDITION_NOTE.match(sub) for sub in (sub_a, sub_b))
 
 
-def _surname(authors: object) -> str:
-    """The normalised last word of the first author's name."""
-    if not isinstance(authors, list) or not authors:
-        return ""
-    words = _normalise(authors[0]).split()
-    return words[-1] if words else ""
-
-
 def _full_title(record: dict) -> object:
     """A record's title with its separate ``subtitle`` (Google Books
     ``volumeInfo``, Open Library docs since #743) folded in as "title:
@@ -215,11 +209,6 @@ def _gb_full_title(info: dict) -> object:
     return _full_title(info)
 
 
-def _fold_all(values: object) -> object:
-    """:func:`_fold` on each item of a list (anything else unchanged)."""
-    return [_fold(v) for v in values] if isinstance(values, list) else values
-
-
 def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     """Whether an Open Library doc and a Google Books volume describe the
     same book: they share an ISBN, or their titles agree (:func:`titles_agree`:
@@ -228,14 +217,18 @@ def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     if _ol_isbns(ol_doc) & _gb_isbns(gb_volume):
         return True
     info = gb_volume.get("volumeInfo") or {}
-    # Diacritics ignored (#743): "Garcia Marquez" and "García Márquez" agree.
-    ol_author = _surname(_fold_all(ol_doc.get("author_name")))
-    gb_author = _surname(_fold_all(info.get("authors")))
-    return (
-        bool(ol_author)
-        and ol_author == gb_author
-        and titles_agree(_fold(_full_title(ol_doc)), _fold(_gb_full_title(info)))
+    if not isinstance(info, dict):
+        return False
+    # Since #743 the first authors are compared as names (:func:`_names_agree`:
+    # "Herbert, Frank" is "Frank Herbert", diacritics ignored), and a
+    # subtitle on one side only that is not a volume marker still agrees.
+    ol_names, gb_names = _record_names(ol_doc.get("author_name")), _record_names(
+        info.get("authors")
     )
+    if not ol_names or not gb_names or not _names_agree(ol_names[0], gb_names[0]):
+        return False
+    ol_title, gb_title = _fold(_full_title(ol_doc)), _fold(_gb_full_title(info))
+    return titles_agree(ol_title, gb_title) or _one_sided_subtitle(ol_title, gb_title)
 
 
 # Where a title's head ends when a reading is matched against a record: the
@@ -257,36 +250,83 @@ def _head_and_rest(value: object) -> tuple[str, str]:
     return normalise_title(parts[0]), rest
 
 
-# A subtitle that tells volumes of a series apart ("Book Two", "Vol. 3",
-# "Part II", "#2"): never ignored when only one side has a subtitle.
-_VOLUME_MARKER = re.compile(r"(?:^|\s)(?:book|volume|vol|part)(?:\s|$)|\d")
+# A (normalised) subtitle that tells volumes of a series apart: a marker
+# word ("Book Two", "Vol 3", "Tome Two", "Episode Four", "No 5"; "#2" is
+# "2" once normalised), a standalone 1-3 digit number, or a whole-token
+# Roman numeral ("II", "XIV"). A 4-digit year ("Since 1945") or an ordinal
+# ("The Calamitous 14th Century") is not one.
+_VOLUME_MARKER = re.compile(
+    r"(?:^|\s)(?:"
+    r"(?:books?|volumes?|vols?|parts?|tomes?|episodes?|pt|bk|no|number)"
+    r"|\d{1,3}"
+    r"|(?=[ivx]{2,}(?:\s|$))x{0,3}(?:ix|iv|v?i{0,3})|v|x"
+    r")(?=\s|$)"
+)
+
+
+def _is_volume_marker(subtitle: str) -> bool:
+    return bool(_VOLUME_MARKER.search(subtitle))
+
+
+# Letters NFKD does not decompose, folded for comparison ("Nesbø").
+_FOLD_LETTERS = str.maketrans(
+    {"ø": "o", "Ø": "O", "ł": "l", "Ł": "L", "æ": "ae", "Æ": "AE", "œ": "oe"}
+    | {"Œ": "OE", "đ": "d", "Đ": "D", "ı": "i", "ß": "ss"}
+)
 
 
 def _fold(value: object) -> object:
-    """``value`` without diacritics (NFKD, combining marks dropped), for
-    comparing a reading with a record only: "García Márquez" and "Garcia
-    Marquez" compare equal (#743)."""
+    """``value`` without diacritics (NFKD, combining marks dropped, and the
+    letters in ``_FOLD_LETTERS`` spelled out), for comparing a reading with
+    a record only: "García Márquez" and "Garcia Marquez", "Jo Nesbø" and
+    "Jo Nesbo" compare equal (#743)."""
     if not isinstance(value, str):
         return value
-    decomposed = unicodedata.normalize("NFKD", value)
+    decomposed = unicodedata.normalize("NFKD", value.translate(_FOLD_LETTERS))
     return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+
+
+def _one_sided_subtitle(a: object, b: object) -> bool:
+    """Whether two titles have the same main title and at most one of them a
+    subtitle, which is not a volume marker ("Sapiens" and "Sapiens: A Brief
+    History of Humankind", never "Saga: Book One" and "Saga: Book Two")."""
+    main_a, sub_a = _split_title(_fold(a))
+    main_b, sub_b = _split_title(_fold(b))
+    if not main_a or main_a != main_b or (sub_a and sub_b):
+        return False
+    return not _is_volume_marker(sub_a or sub_b)
 
 
 # (initials of the given names, surname, last two words joined).
 _NameParts = tuple[list[str], str, str]
 
 
+# Company suffixes: "Lonely Planet Publications, Inc." is not "Inc. ...".
+_COMPANY_SUFFIXES = frozenset({"inc", "ltd", "llc", "co", "corp", "plc", "gmbh"})
+
+
+def _suffix_or_date(word: str) -> bool:
+    return word in _NAME_SUFFIXES or word in _COMPANY_SUFFIXES or word.isdigit()
+
+
 def _name_parts(name: object) -> _NameParts:
-    """One name, normalised and without suffixes: "David M. Potter" is
-    (["d", "m"], "potter", "mpotter"). A single "Last, First" comma is
-    swapped ("Herbert, Frank" is "Frank Herbert"), but not one before a
-    suffix ("Martin Luther King, Jr.")."""
-    if isinstance(name, str) and name.count(",") == 1:
-        last, first = name.split(",")
+    """One name, normalised and without suffixes or dates: "David M.
+    Potter" is (["d", "m"], "potter", "mpotter"). "Last, First" is swapped
+    ("Herbert, Frank", "Smith, John, Jr.", "Brown, Dan, 1964-"), but not
+    when the part after the first comma is a suffix ("Martin Luther King,
+    Jr.", "Lonely Planet Publications, Inc.") or the parts after it are not
+    all suffixes or dates."""
+    if isinstance(name, str) and "," in name:
+        last, first, *rest = name.split(",")
         first_words = _normalise(first).split()
-        if first_words and not all(w in _NAME_SUFFIXES for w in first_words):
+        rest_words = _normalise(" ".join(rest)).split()
+        if (
+            first_words
+            and not all(_suffix_or_date(w) for w in first_words)
+            and all(_suffix_or_date(w) for w in rest_words)
+        ):
             name = f"{first} {last}"
-    words = [w for w in _normalise(name).split() if w not in _NAME_SUFFIXES]
+    words = [w for w in _normalise(name).split() if not _suffix_or_date(w)]
     if not words or words == ["unknown"]:
         return [], "", ""
     joined = "".join(words[-2:]) if len(words) > 1 else ""
@@ -337,11 +377,6 @@ def _author_contradicted(candidate: BookCandidate, authors: object) -> bool:
     return not any(_names_agree(reading_name, n) for n in record_names)
 
 
-def _same_main_title(candidate: BookCandidate, title: object) -> bool:
-    reading_main, _ = _split_title(_fold(candidate.title))
-    return bool(reading_main) and reading_main == _split_title(_fold(title))[0]
-
-
 def reading_match_score(
     candidate: BookCandidate, title: object, authors: object
 ) -> int:
@@ -377,8 +412,8 @@ def reading_match_score(
     still comes from the record (#602). It cannot prove the record is the
     book in the photo: a wrong reading can still fit another real book."""
     reading_title, title = _fold(candidate.title), _fold(title)
-    reading_main, reading_sub = _split_title(reading_title)
-    record_main, record_sub = _split_title(title)
+    reading_main, _ = _split_title(reading_title)
+    record_main, _ = _split_title(title)
     if not reading_main or not record_main:
         return 0
     reading_name = _name_parts(_fold(candidate.author))
@@ -398,12 +433,7 @@ def reading_match_score(
     head, rest = _head_and_rest(title)
     if head == reading_main and (_DATES.match(rest) or _EDITION_NOTE.match(rest)):
         return 3
-    one_sided = reading_sub if not record_sub else record_sub if not reading_sub else ""
-    if (
-        reading_main == record_main
-        and one_sided
-        and not _VOLUME_MARKER.search(one_sided)
-    ):
+    if _one_sided_subtitle(reading_title, title):
         return 2
     return 0
 
@@ -430,11 +460,25 @@ def _scorer(
     candidate: BookCandidate, parts: Callable[[object], _RecordParts]
 ) -> Callable[[dict], int]:
     """:func:`reading_match_score` for one provider's records (0 for a
-    record without a usable title)."""
+    record without a usable title), on its title with the subtitle folded
+    in. When the reading has no subtitle and the record's is not a volume
+    marker, the bare title is scored too, capped at the lowest tier (2), so
+    a reading "Sapiens" with no
+    author still fits a record "Sapiens" + subtitle, but an exact title
+    always ranks higher and "Saga" never fits "Saga" + "Book Two"."""
 
     def score(record: dict) -> int:
         display, full, authors = parts(record)
-        return reading_match_score(candidate, full, authors) if display else 0
+        if not display:
+            return 0
+        best = reading_match_score(candidate, full, authors)
+        if full != display and not _split_title(_fold(candidate.title))[1]:
+            _, subtitle = _split_title(_fold(full))
+            if subtitle and not _is_volume_marker(subtitle):
+                best = max(
+                    best, min(2, reading_match_score(candidate, display, authors))
+                )
+        return best
 
     return score
 
@@ -481,7 +525,8 @@ def _edition_isbns(
     """The candidate's ISBNs a provider confirmed, paired consistently: an
     ISBN-10 beside a confirmed ISBN-13 only when it is that ISBN-13's
     ISBN-10 form; without one, a confirmed ISBN-10 on its own."""
-    isbn_13 = isbn_13 if isbn_13 in confirmed else None
+    # Never an invalid ISBN-13, even one a provider happens to list.
+    isbn_13 = isbn_13 if isbn_13 in confirmed and valid_isbn_13(isbn_13) else None
     if isbn_10 is not None:
         isbn_10 = isbn_10.upper()
     if isbn_13:
@@ -522,8 +567,13 @@ def _isbn_digits(value: object) -> object:
 
 
 def valid_isbn_13(value: object) -> bool:
-    """Whether ``value`` is 13 digits with a valid check digit."""
-    if not isinstance(value, str) or len(value) != 13 or not value.isdigit():
+    """Whether ``value`` is 13 ASCII digits with a valid check digit."""
+    if (
+        not isinstance(value, str)
+        or len(value) != 13
+        or not value.isascii()
+        or not value.isdigit()
+    ):
         return False
     total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(value))
     return total % 10 == 0
@@ -539,10 +589,12 @@ def _isbn_record(
     """The record an ISBN lookup found, when it may be used (#743). Either
     it fits the reading (``score``), or it lists the ISBN and has a usable
     title (read in the provider's own shape, ``parts``) and either the
-    reading has no title, or the main titles are the same and the record
-    does not name another author (a one-sided subtitle: "Sapiens" and
-    "Sapiens: A Brief History of Humankind"). Otherwise None (the provider
-    is then searched by title).
+    reading has no title, or the main titles are the same with a subtitle
+    on at most one side that is not a volume marker
+    (:func:`_one_sided_subtitle`: "Sapiens" and "Sapiens: A Brief History
+    of Humankind", never "Saga: Book One" and "Saga: Book Two") and the
+    record does not name another author. Otherwise None (the provider is
+    then searched by title).
 
     A record that lists the ISBN but whose main title differs from the
     reading's (a translated or paraphrased reading, say) is deliberately not
@@ -556,7 +608,7 @@ def _isbn_record(
     if display and candidate.isbn_13 in isbns(found):
         if not _split_title(candidate.title)[0]:
             return found
-        if _same_main_title(candidate, full) and not _author_contradicted(
+        if _one_sided_subtitle(candidate.title, full) and not _author_contradicted(
             candidate, authors
         ):
             return found
@@ -681,17 +733,53 @@ class EnrichmentService:
     ) -> dict | None:
         """One provider's record for a candidate: its ISBN lookup, then, if
         that found nothing usable, its title search (see
-        :meth:`_find_records`)."""
-        score = _scorer(candidate, parts)
-        if not _split_title(candidate.title)[0] and not isbn_13:
+        :meth:`_find_records`).
+
+        An ISBN record is final only when it lists the ISBN or fits the
+        reading well (score 3 or more). A weaker one (a one-sided subtitle,
+        not listing the ISBN: Google Books ``q=isbn:X`` is a keyword search
+        and may return another book) is kept only if the title search finds
+        nothing that scores higher.
+
+        Any error here (a malformed provider record, say) counts as a lookup
+        failure: the provider contributes nothing, the enrichment is
+        incomplete, and the candidate still gets its result."""
+        try:
+            return await EnrichmentService._chain(
+                candidate, isbn_13, provider, source, parts, isbns
+            )
+        except Exception as exc:  # noqa: BLE001 - never drop the candidate
+            logger.warning(
+                "%s error: unusable record (%s)",
+                _SOURCE_NAMES[source],
+                type(exc).__name__,
+            )
+            _note_failure(source)
             return None
+
+    @staticmethod
+    async def _chain(
+        candidate: BookCandidate,
+        isbn_13: str | None,
+        provider: OpenLibraryService | GoogleBooksService,
+        source: str,
+        parts: Callable[[object], _RecordParts],
+        isbns: Callable[[dict], set[str]],
+    ) -> dict | None:
+        score = _scorer(candidate, parts)
+        has_title = bool(_split_title(candidate.title)[0])
+        if not has_title and not isbn_13:
+            return None
+        weak: dict | None = None
         if isbn_13:
             found = await _lookup(provider.search_by_isbn(isbn_13), source)
             record = _isbn_record(candidate, found, score, parts, isbns)
-            if record is not None or found is _FAILED:
+            if found is _FAILED or not has_title:
                 return record
-            if not _split_title(candidate.title)[0]:
-                return None
+            if record is not None:
+                if isbn_13 in isbns(record) or score(record) >= 3:
+                    return record
+                weak = record
         found = await _lookup(
             provider.search(
                 candidate.title,
@@ -703,7 +791,10 @@ class EnrichmentService:
         )
         # The service already picked the best record; check it again here,
         # so nothing that does not fit the reading is ever used.
-        return found if isinstance(found, dict) and score(found) > 0 else None
+        best = found if isinstance(found, dict) and score(found) > 0 else None
+        if weak is not None and (best is None or score(best) <= score(weak)):
+            return weak
+        return best
 
     async def _enrich_one(self, candidate: BookCandidate) -> EnrichedBook:
         # "978-0-06-231609-7" is looked up, and confirmed, as its digits.

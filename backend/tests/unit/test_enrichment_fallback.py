@@ -559,23 +559,27 @@ class TestDeadlines:
         assert settings.scan_timeout_seconds + enrichment.ENRICHMENT_DEADLINE_S <= 70
 
     async def test_provider_chains_run_concurrently(self):
-        # Open Library's ISBN lookup and Google Books' title search are slow:
-        # each chain waits only for its own provider.
-        async def slow_doc(*_args, **_kwargs):
-            await asyncio.sleep(0.3)
+        # Open Library's ISBN lookup does not finish until Google Books' title
+        # search has started, and vice versa. That only completes when each
+        # provider's chain runs on its own; with both ISBN lookups gathered
+        # before either title search, the fakes would time out.
+        ol_isbn_started, gb_title_started = asyncio.Event(), asyncio.Event()
+
+        async def ol_isbn(*_args, **_kwargs):
+            ol_isbn_started.set()
+            await asyncio.wait_for(gb_title_started.wait(), 2)
             return CRISIS_DOC
 
-        async def slow_volume(*_args, **_kwargs):
-            await asyncio.sleep(0.3)
+        async def gb_title(*_args, **_kwargs):
+            gb_title_started.set()
+            await asyncio.wait_for(ol_isbn_started.wait(), 2)
             return CRISIS_VOLUME
 
         service = _service(gb_isbn=None, ol_title=None)
-        service.ol.search_by_isbn = AsyncMock(side_effect=slow_doc)
-        service.gb.search = AsyncMock(side_effect=slow_volume)
-        loop = asyncio.get_running_loop()
-        started = loop.time()
+        service.ol.search_by_isbn = AsyncMock(side_effect=ol_isbn)
+        service.gb.search = AsyncMock(side_effect=gb_title)
         book = await _enrich_one(service, _reading(isbn_13=CRISIS_ISBN))
-        assert loop.time() - started < 0.5
+        assert service.last_complete is True
         assert book.open_library_work_id == "OL1966510W"
         assert book.google_books_id == "gb_crisis"
 
@@ -836,3 +840,232 @@ class TestIsbnSeparators:
         service.gb.search_by_isbn.assert_not_awaited()
         assert book.open_library_work_id == "OL17075811W"
         assert book.editions[0].isbn_13 is None
+
+
+SAGA_ISBN = "9781607066019"
+
+
+class TestRound4SeriesAndWeakIsbnRecords:
+    """Round 4, items 1 and 2."""
+
+    @pytest.mark.parametrize(
+        "reading_title, record_title, record_subtitle, author",
+        [
+            ("Saga: Book One", "Saga", "Book Two", "Brian K. Vaughan"),
+            ("Saga", "Saga", "Book Two", "Brian K. Vaughan"),
+            ("Dune: Deluxe Edition", "Dune", "Messiah", "Frank Herbert"),
+        ],
+    )
+    async def test_isbn_record_of_another_volume_is_not_used(
+        self, reading_title, record_title, record_subtitle, author
+    ):
+        doc = {
+            "key": "/works/OL2W",
+            "title": record_title,
+            "subtitle": record_subtitle,
+            "author_name": [author],
+            "isbn": [SAGA_ISBN],
+        }
+        service = _service(ol_isbn=doc)
+        candidate = BookCandidate(
+            title=reading_title, author=author, confidence=0.9, isbn_13=SAGA_ISBN
+        )
+        book = await _enrich_one(service, candidate)
+        assert book.open_library_work_id is None
+        assert book.editions[0].isbn_13 is None
+
+    async def test_exact_title_search_beats_a_weak_isbn_record(self):
+        graphic = {
+            "id": "gb_graphic",
+            "volumeInfo": {
+                "title": "Sapiens",
+                "subtitle": "A Graphic History",
+                "authors": ["Yuval Noah Harari"],
+            },
+        }
+        exact = {
+            "id": "gb_exact",
+            "volumeInfo": {"title": "Sapiens", "authors": ["Yuval Noah Harari"]},
+        }
+        service = _service(gb_isbn=graphic, gb_title=exact)
+        candidate = BookCandidate(
+            title="Sapiens", author="Harari", confidence=0.9, isbn_13=SAPIENS_ISBN
+        )
+        book = await _enrich_one(service, candidate)
+        service.gb.search.assert_awaited_once()
+        assert book.google_books_id == "gb_exact"
+        assert _calls(service) <= 4
+
+    async def test_weak_isbn_record_is_kept_when_the_search_finds_nothing(self):
+        graphic = {
+            "id": "gb_graphic",
+            "volumeInfo": {
+                "title": "Sapiens",
+                "subtitle": "A Graphic History",
+                "authors": ["Yuval Noah Harari"],
+            },
+        }
+        service = _service(gb_isbn=graphic, gb_title=None)
+        candidate = BookCandidate(
+            title="Sapiens", author="Harari", confidence=0.9, isbn_13=SAPIENS_ISBN
+        )
+        book = await _enrich_one(service, candidate)
+        service.gb.search.assert_awaited_once()
+        assert book.google_books_id == "gb_graphic"
+        # It does not list the ISBN, so the ISBN is not kept.
+        assert book.editions[0].isbn_13 is None
+
+
+class TestRound4VolumeMarkers:
+    """Round 4, item 3: years and ordinals are not volume markers."""
+
+    @pytest.mark.parametrize(
+        "reading_title, author, record_title",
+        [
+            ("Postwar", "Tony Judt", "Postwar: A History of Europe Since 1945"),
+            (
+                "A Distant Mirror",
+                "Barbara W. Tuchman",
+                "A Distant Mirror: The Calamitous 14th Century",
+            ),
+            ("Berlin", "Antony Beevor", "Berlin: The Downfall 1945"),
+        ],
+    )
+    def test_history_subtitles_fit(self, reading_title, author, record_title):
+        reading = BookCandidate(title=reading_title, author=author, confidence=1)
+        assert reading_match_score(reading, record_title, [author]) == 2
+
+    @pytest.mark.parametrize(
+        "subtitle",
+        [
+            "Book Two",
+            "Books One to Three",
+            "Volume 3",
+            "Vol. 3",
+            "Vols 1-2",
+            "Part II",
+            "Parts One and Two",
+            "Tome Two",
+            "Episode Four",
+            "Pt 1",
+            "Bk 3",
+            "No. 5",
+            "Number Nine",
+            "#2",
+            "2",
+            "II",
+            "XIV",
+            "The Final Chapter, Book 4",
+        ],
+    )
+    def test_volume_markers_do_not_fit(self, subtitle):
+        reading = BookCandidate(title="Saga", author="Vaughan", confidence=1)
+        assert (
+            reading_match_score(reading, f"Saga: {subtitle}", ["Brian K. Vaughan"]) == 0
+        )
+
+    def test_author_less_reading_fits_a_record_with_a_subtitle(self):
+        reading = BookCandidate(title="Sapiens", author="", confidence=1)
+        score = enrichment._scorer(reading, enrichment._ol_parts)
+        with_sub = {**SAPIENS_DOC, "subtitle": "A Brief History of Humankind"}
+        assert 0 < score(with_sub) < score(SAPIENS_DOC)
+        saga = {"title": "Saga", "subtitle": "Book Two", "author_name": ["Vaughan"]}
+        saga_reading = BookCandidate(title="Saga", author="", confidence=1)
+        assert enrichment._scorer(saga_reading, enrichment._ol_parts)(saga) == 0
+
+
+class TestRound4NameShapes:
+    @pytest.mark.parametrize(
+        "reading_author, record_author",
+        [
+            ("John Smith", "Smith, John, Jr."),
+            ("Dan Brown", "Brown, Dan, 1964-"),
+            ("Dan Brown", "Brown, Dan, 1964-2020"),
+            ("Lonely Planet Publications", "Lonely Planet Publications, Inc."),
+            ("Jo Nesbo", "Jo Nesbø"),
+            ("Stanisław Lem", "Stanislaw Lem"),
+        ],
+    )
+    def test_same_author_fits(self, reading_author, record_author):
+        reading = BookCandidate(title="A Title", author=reading_author, confidence=1)
+        assert reading_match_score(reading, "A Title", [record_author]) == 7
+
+
+class TestRound4Robustness:
+    async def test_malformed_identifiers_do_not_drop_the_candidate(self):
+        volume = {
+            "id": "gb_bad",
+            "volumeInfo": {
+                "title": "Sapiens",
+                "authors": ["Yuval Noah Harari"],
+                "industryIdentifiers": 5,
+            },
+        }
+        service = _service(ol_isbn=SAPIENS_DOC, gb_isbn=volume)
+        candidate = BookCandidate(
+            title="Sapiens", author="Harari", confidence=0.9, isbn_13=SAPIENS_ISBN
+        )
+        (book,) = await service.enrich([candidate])
+        assert book.open_library_work_id == "OL17075811W"
+        assert book.editions[0].isbn_13 == SAPIENS_ISBN
+
+    async def test_an_error_in_a_chain_is_a_lookup_failure(self, monkeypatch):
+        real = enrichment._isbn_record
+
+        def flaky(candidate, found, score, parts, isbns):
+            if parts is enrichment._gb_parts:
+                raise TypeError("malformed record")
+            return real(candidate, found, score, parts, isbns)
+
+        monkeypatch.setattr(enrichment, "_isbn_record", flaky)
+        service = _service(ol_isbn=SAPIENS_DOC, gb_isbn=SAPIENS_VOLUME)
+        candidate = BookCandidate(
+            title="Sapiens", author="Harari", confidence=0.9, isbn_13=SAPIENS_ISBN
+        )
+        books = await service.enrich([candidate])
+        assert len(books) == 1
+        assert books[0].open_library_work_id == "OL17075811W"
+        assert books[0].google_books_id is None
+        assert service.last_complete is False
+
+    @pytest.mark.parametrize(
+        "value", ["٩٧٨٠٤٤١٠١٣٥٩٣", "978044101359²", "978044101359", None, 9780441013593]
+    )
+    def test_valid_isbn_13_rejects_non_ascii_and_junk(self, value):
+        assert enrichment.valid_isbn_13(value) is False
+
+    def test_invalid_isbn_13_is_never_stored(self):
+        bad = "9780000000001"
+        assert enrichment._edition_isbns(bad, None, {bad}) == (None, None)
+        good = "9780441013593"
+        assert enrichment._edition_isbns(good, None, {good}) == (good, None)
+
+
+class TestRound4RecordsAgree:
+    def test_one_sided_subtitle_agrees(self):
+        doc = {
+            "title": "Sapiens",
+            "subtitle": "A Brief History of Humankind",
+            "author_name": ["Yuval Noah Harari"],
+        }
+        volume = {"volumeInfo": {"title": "Sapiens", "authors": ["Yuval Noah Harari"]}}
+        assert enrichment.records_agree(doc, volume)
+
+    def test_last_first_author_agrees(self):
+        doc = {"title": "Dune", "author_name": ["Herbert, Frank"]}
+        volume = {"volumeInfo": {"title": "Dune", "authors": ["Frank Herbert"]}}
+        assert enrichment.records_agree(doc, volume)
+
+    @pytest.mark.parametrize(
+        "ol_title, gb_title, gb_author",
+        [
+            ("Saga: Book One", "Saga", "Brian K. Vaughan"),
+            ("Saga: Book One", "Saga: Book Two", "Brian K. Vaughan"),
+            ("Dune", "Dune", "Brian Herbert"),
+        ],
+    )
+    def test_other_volumes_and_namesakes_disagree(self, ol_title, gb_title, gb_author):
+        author = "Brian K. Vaughan" if "Saga" in ol_title else "Frank Herbert"
+        doc = {"title": ol_title, "author_name": [author]}
+        volume = {"volumeInfo": {"title": gb_title, "authors": [gb_author]}}
+        assert not enrichment.records_agree(doc, volume)
