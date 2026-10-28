@@ -193,6 +193,38 @@ def test_web_csp_does_not_allow_retired_feedback_worker(service_name):
     assert "workers.dev" not in csp
 
 
+def _csp_directive(csp: str, name: str) -> list[str]:
+    for part in csp.split(";"):
+        tokens = part.split()
+        if tokens and tokens[0] == name:
+            return tokens[1:]
+    return []
+
+
+@pytest.mark.parametrize("service_name", ["bookshelf-web", "bookshelf-web-dev"])
+def test_web_csp_allows_turnstile_script_and_frame(service_name):
+    # #740: the web app loads Cloudflare Turnstile's script, which renders its
+    # challenge in an iframe from the same origin. Nothing broader is allowed.
+    csp = _header_value(
+        _service(_load_render_yaml(), service_name), "Content-Security-Policy"
+    )
+    assert _csp_directive(csp, "script-src") == [
+        "'self'",
+        "https://challenges.cloudflare.com",
+    ]
+    assert _csp_directive(csp, "frame-src") == ["https://challenges.cloudflare.com"]
+
+
+@pytest.mark.parametrize("service_name", ["bookshelf-web", "bookshelf-web-dev"])
+def test_web_turnstile_site_key_is_set_in_the_dashboard(service_name):
+    # #740: declared for the web build, value set by the owner in Render.
+    env_var = _env_var(
+        _service(_load_render_yaml(), service_name), "EXPO_PUBLIC_TURNSTILE_SITE_KEY"
+    )
+    assert env_var.get("sync") is False
+    assert "value" not in env_var
+
+
 # --- Secret-leak guards -------------------------------------------------------
 
 

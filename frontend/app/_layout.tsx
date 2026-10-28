@@ -32,6 +32,7 @@ import { ThemeToggleButton } from '../components/ThemeToggleButton';
 import { AuthProvider } from '../contexts/AuthContext';
 import { BannerProvider } from '../contexts/BannerContext';
 import { ScanJobProvider } from '../contexts/ScanJobContext';
+import { TurnstileProvider } from '../contexts/TurnstileContext';
 import { useModalHandoff } from '../hooks/useModalHandoff';
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
@@ -179,12 +180,15 @@ function RootLayout() {
       <ThemeProvider>
         <BannerProvider>
           <AuthProvider>
-            <ScanJobProvider>
-              <InAppBanner />
-              <InnerStack />
-              <GlobalScanModals />
-              <FeedbackButton />
-            </ScanJobProvider>
+            {/* One hidden Turnstile widget for every POST /scan (#740). */}
+            <TurnstileProvider>
+              <ScanJobProvider>
+                <InAppBanner />
+                <InnerStack />
+                <GlobalScanModals />
+                <FeedbackButton />
+              </ScanJobProvider>
+            </TurnstileProvider>
           </AuthProvider>
         </BannerProvider>
       </ThemeProvider>

@@ -46,7 +46,26 @@ describe('classifyScanError: every backend code maps to exactly one UI state', (
     ],
     ['402 no_enhanced_credits (removed)', err(402, 'no_enhanced_credits'), { kind: 'generic' }],
     ['402 with no detail', err(402), { kind: 'generic' }],
-    ['403 other detail', err(403, 'Turnstile verification failed'), { kind: 'generic' }],
+    // #740: a Turnstile refusal is retryable (a fresh token on the next try),
+    // no longer a generic failure.
+    [
+      '403 Turnstile verification failed',
+      err(403, 'Turnstile verification failed'),
+      { kind: 'unavailable', code: 'turnstile_failed' },
+    ],
+    [
+      '400 Missing Turnstile token',
+      err(400, 'Missing Turnstile token'),
+      { kind: 'unavailable', code: 'turnstile_missing' },
+    ],
+    ['403 other detail', err(403, 'forbidden'), { kind: 'generic' }],
+    ['400 other detail', err(400, 'Invalid Content-Length header'), { kind: 'generic' }],
+    // The status must match too.
+    [
+      '400 Turnstile verification failed',
+      err(400, 'Turnstile verification failed'),
+      { kind: 'generic' },
+    ],
     ['402 unknown detail', err(402, 'something_else'), { kind: 'generic' }],
     [
       '429 daily_scan_limit',

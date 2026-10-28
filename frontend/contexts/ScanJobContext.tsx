@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useAuth } from '../hooks/useAuth';
 import { useBanner } from '../hooks/useBanner';
+import { useTurnstile } from '../hooks/useTurnstile';
 import { api } from '../lib/api';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
@@ -21,6 +22,7 @@ import {
   classifyScanError,
   enhancedRefusalMessage,
   hasRefusedJobs,
+  isTurnstileCode,
   MAX_IN_PROGRESS_RETRIES,
   MAX_SCAN_ATTEMPTS,
   MAX_SCAN_RETRY_DELAY_MS,
@@ -48,6 +50,7 @@ import {
   saveJobs,
   sweepOrphanedScanFiles,
 } from '../lib/scanJobStorage';
+import { TURNSTILE_FORM_FIELD } from '../lib/turnstile/config';
 import { draftFromBook, withScanRecord, type UnverifiedDraft } from '../lib/unverified';
 
 /** An "Add it yourself" form waiting to be shown, with its own id (#616). */
@@ -212,6 +215,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const { showBanner } = useBanner();
   const { t, i18n } = useTranslation('scan');
   const { isAuthenticated } = useAuth();
+  // A fresh Turnstile token per POST /scan (#740). Read through a ref so the
+  // long-lived executeScan closure always uses the current provider.
+  const { getToken: getTurnstileToken } = useTurnstile();
+  const getTurnstileTokenRef = useRef(getTurnstileToken);
+  useEffect(() => {
+    getTurnstileTokenRef.current = getTurnstileToken;
+  }, [getTurnstileToken]);
   // Bumped on sign-out. A send started under an earlier generation drops its
   // result instead of writing it into the next account's queue.
   const generationRef = useRef(0);
@@ -1222,21 +1232,33 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           if (signedOutSince()) return;
           results = response.data ?? [];
         } else {
-          const formData = new FormData();
-          if (job.enhanced) formData.append('enhanced', 'true');
-          // The server accepts 1-6 (#603) and ignores it until that ships.
-          formData.append('attempt', String(attempt));
-          if (Platform.OS === 'web') {
-            formData.append('file', job.imageUri as unknown as Blob, 'scan.jpg');
-          } else {
-            formData.append('file', {
-              uri: job.imageUri,
-              name: 'scan.jpg',
-              type: 'image/jpeg',
-            } as unknown as Blob);
-          }
-          const postScan = () =>
-            api.post<ScanResponse>('/scan', formData, {
+          // Built per post: each one carries its own Turnstile token (#740).
+          const buildFormData = (turnstileToken: string | null) => {
+            const formData = new FormData();
+            if (job.enhanced) formData.append('enhanced', 'true');
+            // The server accepts 1-6 (#603) and ignores it until that ships.
+            formData.append('attempt', String(attempt));
+            // Single-use, so never reused across posts. Missing (no site key,
+            // widget timeout or error): sent without it, which a server with
+            // TURNSTILE_REQUIRED=false accepts.
+            if (turnstileToken) formData.append(TURNSTILE_FORM_FIELD, turnstileToken);
+            if (Platform.OS === 'web') {
+              formData.append('file', job.imageUri as unknown as Blob, 'scan.jpg');
+            } else {
+              formData.append('file', {
+                uri: job.imageUri,
+                name: 'scan.jpg',
+                type: 'image/jpeg',
+              } as unknown as Blob);
+            }
+            return formData;
+          };
+          const postScan = async () => {
+            const turnstileToken = await getTurnstileTokenRef.current(signal);
+            // Signed out while the token was being fetched: nothing is sent,
+            // and the token is never used for the next account.
+            if (signedOutSince() || signal.aborted) return null;
+            return api.post<ScanResponse>('/scan', buildFormData(turnstileToken), {
               signal,
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               transformRequest: [
@@ -1250,16 +1272,19 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
                 },
               ],
             });
+          };
           // 429 scan_in_progress means another scan holds the user's lease:
           // wait Retry-After and retry silently, at most MAX_IN_PROGRESS_RETRIES
           // times. If it persists the error propagates and the catch below
           // shows the neutral "Still processing" notice.
-          let response!: Awaited<ReturnType<typeof postScan>>;
+          let response!: NonNullable<Awaited<ReturnType<typeof postScan>>>;
           for (let attempt = 0, done = false; !done; attempt++) {
             // Checked before every post, retries included.
             if (signedOutSince()) return;
             try {
-              response = await postScan();
+              const answered = await postScan();
+              if (!answered) return;
+              response = answered;
               done = true;
             } catch (postErr) {
               if (signedOutSince()) return;
@@ -1437,8 +1462,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           job.type === 'image' &&
           (err as { response?: unknown } | null)?.response != null &&
           uiState.kind !== 'paused' &&
-          // #604: refunded server-side.
-          uiState.kind !== 'unavailable' &&
+          // #604: refunded server-side. A Turnstile refusal (#740) is not, but
+          // it was counted as a /scan request (#586), so it refreshes.
+          (uiState.kind !== 'unavailable' || isTurnstileCode(uiState.code)) &&
           uiState.kind !== 'in_progress' &&
           uiState.kind !== 'enhanced_refused' &&
           // #586: refused before anything was taken; the counters are unchanged.
