@@ -18,7 +18,19 @@ jest.mock('../../lib/api', () => ({
   REFRESH_TOKEN_KEY: 'refresh',
   api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
   setAuthFailureCallback: jest.fn(),
+  gateStoredSession: jest.fn(),
+  resumeStoredSession: jest.fn(),
   waitForPendingRefresh: () => mockWaitForRefresh(),
+}));
+// An existing install: the reinstall check (#722) leaves the tokens alone, so
+// the only token deletes these tests see come from signing out.
+const mockMarkWipePending = jest.fn();
+jest.mock('../../lib/freshInstall', () => ({
+  clearTokensIfFreshInstall: () => Promise.resolve('no_change'),
+  markInstallDone: () => Promise.resolve(),
+  markWipePending: () => mockMarkWipePending(),
+  storedTokensUsable: () => true,
+  supersedeInstallCheck: () => Promise.resolve(),
 }));
 jest.mock('../../lib/sentry', () => ({
   Sentry: { addBreadcrumb: (...a: unknown[]) => mockBreadcrumb(...a) },
@@ -64,6 +76,7 @@ describe('Settings sign out', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockWaitForRefresh.mockResolvedValue(undefined);
+    mockMarkWipePending.mockResolvedValue(undefined);
     mockGetItem.mockImplementation(async (k: string) => (k === 'access' ? 'at' : 'refresh-abc'));
     mockDeleteItem.mockResolvedValue(undefined);
     mockPost.mockResolvedValue({});
@@ -201,8 +214,19 @@ describe('Settings sign out', () => {
     );
   });
 
-  it('a throwing logout leaves a breadcrumb and re-enables the row', async () => {
+  it('a failed token delete still signs out and marks the wipe pending (#722)', async () => {
     mockDeleteItem.mockRejectedValue(new Error('storage down'));
+    await setup();
+    pressConfirm();
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(auth)/login'));
+    expect(mockMarkWipePending).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing logout leaves a breadcrumb and re-enables the row', async () => {
+    // markWipePending never rejects in production; forcing it here is the
+    // only way to make logout() throw and reach the screen's catch.
+    mockDeleteItem.mockRejectedValue(new Error('storage down'));
+    mockMarkWipePending.mockRejectedValue(new Error('marker down'));
     const { getByTestId } = await setup();
     pressConfirm();
     await waitFor(() =>
