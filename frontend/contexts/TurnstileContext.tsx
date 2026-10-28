@@ -14,10 +14,17 @@ export interface TurnstileContextValue {
    * Never rejects. Call it once per attempt: tokens are single-use.
    */
   getToken: (signal?: AbortSignal) => Promise<string | null>;
+  /**
+   * Whether this build can produce tokens at all (a site key, and on native a
+   * base URL). False: every request goes without one, so a server answer of
+   * 400 "Missing Turnstile token" cannot be fixed by retrying.
+   */
+  configured: boolean;
 }
 
 export const TurnstileContext = createContext<TurnstileContextValue>({
   getToken: async () => null,
+  configured: false,
 });
 
 // Logged once per app session, not per scan.
@@ -62,7 +69,8 @@ export function TurnstileProvider({ children }: { children: React.ReactNode }) {
     [broker, missing]
   );
 
-  const value = useMemo(() => ({ getToken }), [getToken]);
+  const configured = missing === null;
+  const value = useMemo(() => ({ getToken, configured }), [getToken, configured]);
 
   return (
     <TurnstileContext.Provider value={value}>

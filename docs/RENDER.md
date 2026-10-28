@@ -267,11 +267,11 @@ when it is built with a site key (see [`security.md` → Turnstile on
    from the web app and an iOS and an Android build that has the site key.
    Every scan must succeed; Sentry must show no `turnstile` breadcrumbs with
    `timeout`/`error` on them and no `403` on `POST /scan`.
-5. **Wait for the app update:** builds from before #740 send no token, so with
-   the check on every scan they send gets `400 "Missing Turnstile token"` (the
-   app retries it on its schedule and then fails the photo). Turn production
-   on only once those builds are no longer in use (or are blocked by a forced
-   update).
+5. **Wait for the app update:** builds from before #740 send no token and
+   treat a `400 "Missing Turnstile token"` as a generic failure: with the check
+   on, every scan from them fails at once ("Scan failed", no automatic
+   retry). Turn production on only once those builds are no longer in use (or
+   are blocked by a forced update).
 6. **Production:** set `TURNSTILE_SECRET_KEY` and then `TURNSTILE_REQUIRED=true`
    on `bookshelf-api` (boot fails if the secret is missing while required).
    Watch `400`/`403` rates on `POST /scan` for the first day.

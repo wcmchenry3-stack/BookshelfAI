@@ -11,6 +11,11 @@ export interface TurnstileSolver {
   start(id: number): void;
   /** Abandon the current challenge (timed out, aborted or failed). */
   reset(): void;
+  /**
+   * A request timed out while the widget was not ready (it never loaded, or
+   * went away): the widget should recover, e.g. remount its page.
+   */
+  stalled?(): void;
 }
 
 interface PendingRequest {
@@ -112,6 +117,15 @@ export class TurnstileTokenBroker {
     if (this.active) this.finish(this.active, null, 'error');
   }
 
+  /**
+   * The widget is broken (its page could not load Turnstile): answer every
+   * waiting request with no token now instead of letting each time out.
+   */
+  failAll(): void {
+    const waiting = [...(this.active ? [this.active] : []), ...this.queue];
+    for (const p of waiting) this.finish(p, null, 'error');
+  }
+
   private pump(): void {
     if (this.active || !this.solver || !this.ready) return;
     const next = this.queue.shift();
@@ -127,6 +141,9 @@ export class TurnstileTokenBroker {
   private finish(p: PendingRequest, token: string | null, outcome: Outcome): void {
     clearTimeout(p.timer);
     if (p.signal && p.onAbort) p.signal.removeEventListener('abort', p.onAbort);
+    // Read before the queue changes: was this request stuck behind a widget
+    // that is not ready?
+    const stalled = outcome === 'timeout' && !this.ready && this.active !== p;
     if (this.active === p) {
       this.active = null;
       // Throw away whatever the widget is still working on for it.
@@ -151,6 +168,13 @@ export class TurnstileTokenBroker {
       });
     }
     p.resolve(token);
+    if (stalled && this.solver?.stalled) {
+      try {
+        this.solver.stalled();
+      } catch {
+        // Best-effort.
+      }
+    }
     this.pump();
   }
 }

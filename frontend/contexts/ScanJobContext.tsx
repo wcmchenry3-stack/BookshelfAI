@@ -217,11 +217,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
   // A fresh Turnstile token per POST /scan (#740). Read through a ref so the
   // long-lived executeScan closure always uses the current provider.
-  const { getToken: getTurnstileToken } = useTurnstile();
+  const { getToken: getTurnstileToken, configured: turnstileConfigured } = useTurnstile();
   const getTurnstileTokenRef = useRef(getTurnstileToken);
+  const turnstileConfiguredRef = useRef(turnstileConfigured);
   useEffect(() => {
     getTurnstileTokenRef.current = getTurnstileToken;
-  }, [getTurnstileToken]);
+    turnstileConfiguredRef.current = turnstileConfigured;
+  }, [getTurnstileToken, turnstileConfigured]);
   // Bumped on sign-out. A send started under an earlier generation drops its
   // result instead of writing it into the next account's queue.
   const generationRef = useRef(0);
@@ -1452,8 +1454,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const uiState =
-          job.type === 'image' ? classifyScanError(err) : { kind: 'generic' as const };
+        const classified: ScanUiState =
+          job.type === 'image' ? classifyScanError(err) : { kind: 'generic' };
+        // #740: the server wants a token this build can never send (no site
+        // key or base URL), so retrying cannot help: a final failure now, not
+        // the retry schedule. A rejected token (403) stays retryable.
+        const uiState: ScanUiState =
+          classified.kind === 'unavailable' &&
+          classified.code === 'turnstile_missing' &&
+          !turnstileConfiguredRef.current
+            ? { kind: 'generic' }
+            : classified;
 
         // The server answered, so a scan may have been counted (or refunded):
         // refresh the counters. Not for paused/in_progress (nothing reserved),

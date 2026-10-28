@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, renderHook, screen } from '@testing-library/react-native';
 
+import { TURNSTILE_REMOUNT_DELAYS_MS } from '../../components/TurnstileWidget';
 import { resetTurnstileLoggingForTests, TurnstileProvider } from '../../contexts/TurnstileContext';
 import { useTurnstile } from '../../hooks/useTurnstile';
 import {
@@ -11,7 +12,7 @@ import {
 } from '../../lib/turnstile/config';
 import {
   isAllowedTurnstileNavigation,
-  turnstileOriginWhitelist,
+  TURNSTILE_ORIGIN_WHITELIST,
 } from '../../lib/turnstile/navigationGuard';
 import { TurnstileTokenBroker, type TurnstileSolver } from '../../lib/turnstile/tokenBroker';
 import { buildTurnstileHtml, parseTurnstileMessage } from '../../lib/turnstile/widgetHtml';
@@ -24,7 +25,7 @@ jest.mock('../../lib/sentry', () => ({
 }));
 
 const { __mock: webView } = jest.requireMock('react-native-webview') as {
-  __mock: { injectJavaScript: jest.Mock; reload: jest.Mock };
+  __mock: { injectJavaScript: jest.Mock; reload: jest.Mock; mount: jest.Mock };
 };
 
 const BASE = 'https://bookshelfapi.example.com';
@@ -237,6 +238,10 @@ describe('WebView navigation guard', () => {
   it.each([
     [BASE, true],
     [`${BASE}/`, true],
+    // Only the initial page load, not any path on the API origin.
+    [`${BASE}/scan`, false],
+    [`${BASE}/?next=1`, false],
+    [`${BASE}/auth/google`, false],
     ['about:blank', true],
     ['about:srcdoc', true],
     ['https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2', true],
@@ -256,12 +261,8 @@ describe('WebView navigation guard', () => {
     expect(isAllowedTurnstileNavigation(url, BASE)).toBe(allowed);
   });
 
-  it('the origin whitelist lists only the page and Turnstile', () => {
-    expect(turnstileOriginWhitelist(BASE)).toEqual([
-      BASE,
-      'https://challenges.cloudflare.com',
-      'about:srcdoc',
-    ]);
+  it('the origin whitelist lets every URL reach the guard (never Linking.openURL)', () => {
+    expect(TURNSTILE_ORIGIN_WHITELIST).toEqual(['*']);
   });
 });
 
@@ -331,17 +332,33 @@ describe('TurnstileProvider (native)', () => {
     await expect(token).resolves.toBeNull();
   });
 
+  it('ignores a message that reports no URL', async () => {
+    jest.useFakeTimers();
+    process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
+    process.env.EXPO_PUBLIC_TURNSTILE_BASE_URL = BASE;
+    const { result } = await renderHook(() => useTurnstile(), { wrapper });
+    fromPage({ type: 'ready' });
+    let token: Promise<string | null> = Promise.resolve(null);
+    await act(async () => {
+      token = result.current.getToken();
+    });
+    fromPage({ type: 'token', id: 1, token: 'no-url' }, '');
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(TURNSTILE_TOKEN_TIMEOUT_MS);
+    });
+    await expect(token).resolves.toBeNull();
+  });
+
   it('is locked down: guarded navigation, limited origins, no file access, no windows', async () => {
     process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
     process.env.EXPO_PUBLIC_TURNSTILE_BASE_URL = BASE;
     await renderHook(() => useTurnstile(), { wrapper });
     const props = webViewEl().props;
-    expect(props.originWhitelist).toEqual([
-      BASE,
-      'https://challenges.cloudflare.com',
-      'about:srcdoc',
-    ]);
+    // Everything passes the whitelist, so nothing is handed to Linking.openURL;
+    // the guard decides.
+    expect(props.originWhitelist).toEqual(['*']);
     expect(props.onShouldStartLoadWithRequest({ url: 'https://evil.example.com/' })).toBe(false);
+    expect(props.onShouldStartLoadWithRequest({ url: `${BASE}/scan` })).toBe(false);
     expect(props.onShouldStartLoadWithRequest({ url: 'file:///etc/hosts' })).toBe(false);
     expect(
       props.onShouldStartLoadWithRequest({ url: 'https://challenges.cloudflare.com/cdn-cgi/x' })
@@ -398,5 +415,143 @@ describe('TurnstileProvider (native)', () => {
   it('without a provider, getToken is null (no widget anywhere)', async () => {
     const { result } = await renderHook(() => useTurnstile());
     await expect(result.current.getToken()).resolves.toBeNull();
+    expect(result.current.configured).toBe(false);
   });
+
+  it('reports whether this build can produce tokens', async () => {
+    process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
+    process.env.EXPO_PUBLIC_TURNSTILE_BASE_URL = BASE;
+    const configured = await renderHook(() => useTurnstile(), { wrapper });
+    expect(configured.result.current.configured).toBe(true);
+    await configured.unmount();
+    delete process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY;
+    const unconfigured = await renderHook(() => useTurnstile(), { wrapper });
+    expect(unconfigured.result.current.configured).toBe(false);
+  });
+});
+
+describe('TurnstileProvider (native): recovering a broken page', () => {
+  function wrapper({ children }: { children: React.ReactNode }) {
+    return <TurnstileProvider>{children}</TurnstileProvider>;
+  }
+  const webViewEl = () => screen.getByTestId('turnstile-webview', { includeHiddenElements: true });
+  function fromPage(msg: object) {
+    webViewEl().props.onMessage({ nativeEvent: { data: JSON.stringify(msg), url: BASE } });
+  }
+  const advance = (ms: number) =>
+    act(async () => {
+      await jest.advanceTimersByTimeAsync(ms);
+    });
+  /** The page answers each challenge with `tok-<id>`. */
+  function autoSolve() {
+    webView.injectJavaScript.mockImplementation((js: string) => {
+      const m = /\.run\((\d+)\)/.exec(js);
+      if (m) {
+        const id = Number(m[1]);
+        Promise.resolve().then(() => fromPage({ type: 'token', id, token: `tok-${id}` }));
+      }
+    });
+  }
+  async function setup() {
+    jest.useFakeTimers();
+    process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
+    process.env.EXPO_PUBLIC_TURNSTILE_BASE_URL = BASE;
+    const hook = await renderHook(() => useTurnstile(), { wrapper });
+    // Let the render finish under fake timers.
+    await advance(0);
+    expect(webView.mount).toHaveBeenCalledTimes(1);
+    return hook;
+  }
+
+  it('backs off 5 s, 30 s, 2 min (then 2 min again)', () => {
+    expect(TURNSTILE_REMOUNT_DELAYS_MS).toEqual([5_000, 30_000, 120_000]);
+  });
+
+  it('offline launch: the script fails to load, the page is remounted and then works', async () => {
+    const { result } = await setup();
+    let first: Promise<string | null> = Promise.resolve(null);
+    await act(async () => {
+      first = result.current.getToken();
+    });
+    // api.js could not load: the waiting request is answered at once.
+    await act(async () => fromPage({ type: 'error', id: null, code: 'script' }));
+    await expect(first).resolves.toBeNull();
+
+    await advance(TURNSTILE_REMOUNT_DELAYS_MS[0] - 1);
+    expect(webView.mount).toHaveBeenCalledTimes(1);
+    await advance(1);
+    expect(webView.mount).toHaveBeenCalledTimes(2);
+
+    // Online again: the new page loads and tokens flow.
+    autoSolve();
+    fromPage({ type: 'ready' });
+    let token: Promise<string | null> = Promise.resolve(null);
+    await act(async () => {
+      token = result.current.getToken();
+    });
+    await expect(token).resolves.toMatch(/^tok-/);
+    expect(webView.reload).not.toHaveBeenCalled();
+  });
+
+  it('a page that keeps failing is remounted with growing waits', async () => {
+    await setup();
+    await act(async () => fromPage({ type: 'error', id: null, code: 'script' }));
+    await advance(5_000);
+    expect(webView.mount).toHaveBeenCalledTimes(2);
+    await act(async () => fromPage({ type: 'error', id: null, code: 'render' }));
+    await advance(29_999);
+    expect(webView.mount).toHaveBeenCalledTimes(2);
+    await advance(1);
+    expect(webView.mount).toHaveBeenCalledTimes(3);
+    await act(async () => fromPage({ type: 'error', id: null, code: 'script' }));
+    await advance(120_000);
+    expect(webView.mount).toHaveBeenCalledTimes(4);
+    await act(async () => fromPage({ type: 'error', id: null, code: 'script' }));
+    await advance(120_000);
+    expect(webView.mount).toHaveBeenCalledTimes(5);
+    // A ready page resets the backoff.
+    fromPage({ type: 'ready' });
+    await act(async () => fromPage({ type: 'error', id: null, code: 'script' }));
+    await advance(5_000);
+    expect(webView.mount).toHaveBeenCalledTimes(6);
+  });
+
+  it('a page that never says ready: a timed-out request triggers the remount', async () => {
+    const { result } = await setup();
+    let first: Promise<string | null> = Promise.resolve(null);
+    await act(async () => {
+      first = result.current.getToken();
+    });
+    await advance(TURNSTILE_TOKEN_TIMEOUT_MS);
+    await expect(first).resolves.toBeNull();
+    await advance(TURNSTILE_REMOUNT_DELAYS_MS[0]);
+    expect(webView.mount).toHaveBeenCalledTimes(2);
+    autoSolve();
+    fromPage({ type: 'ready' });
+    let token: Promise<string | null> = Promise.resolve(null);
+    await act(async () => {
+      token = result.current.getToken();
+    });
+    await expect(token).resolves.toMatch(/^tok-/);
+  });
+
+  it.each(['onRenderProcessGone', 'onContentProcessDidTerminate'])(
+    '%s: a new WebView is mounted at once (never reload()), and a pending challenge re-runs',
+    async (handler) => {
+      const { result } = await setup();
+      fromPage({ type: 'ready' });
+      let token: Promise<string | null> = Promise.resolve(null);
+      await act(async () => {
+        token = result.current.getToken();
+      });
+      expect(webView.injectJavaScript).toHaveBeenCalledWith(expect.stringContaining('.run(1)'));
+      await act(async () => webViewEl().props[handler]({ nativeEvent: {} }));
+      expect(webView.mount).toHaveBeenCalledTimes(2);
+      expect(webView.reload).not.toHaveBeenCalled();
+      // The new page is ready: the same request runs again and gets its token.
+      autoSolve();
+      await act(async () => fromPage({ type: 'ready' }));
+      await expect(token).resolves.toBe('tok-1');
+    }
+  );
 });

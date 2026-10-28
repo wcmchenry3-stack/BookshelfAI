@@ -3,6 +3,12 @@ import { TURNSTILE_ORIGIN, TURNSTILE_SCRIPT_URL } from './config';
 /** The bridge object the inline page puts on `window` for injected calls. */
 export const TURNSTILE_BRIDGE = '__bookshelfTurnstile';
 
+/**
+ * Error codes meaning the page itself is broken (Turnstile's script did not
+ * load, or the widget could not render), not one challenge: remount it.
+ */
+export const PAGE_FAILURE_CODES: readonly string[] = ['script', 'render'];
+
 /** Messages the inline page posts to React Native. */
 export type TurnstilePageMessage =
   | { type: 'ready' }
@@ -105,8 +111,14 @@ export function buildTurnstileHtml(siteKey: string): string {
     post({ type: 'ready' });
     if (pending !== null) { var p = pending; pending = null; run(p); }
   };
+  // Loaded from here (not a <script src> tag) so a failed load (offline, a
+  // blocked request) is reported and React Native can remount the page.
+  var s = document.createElement('script');
+  s.src = ${JSON.stringify(TURNSTILE_SCRIPT_URL + '&onload=onBookshelfTurnstileLoad')};
+  s.async = true;
+  s.onerror = function () { post({ type: 'error', id: current, code: 'script' }); };
+  document.body.appendChild(s);
 })();
 </script>
-<script src="${TURNSTILE_SCRIPT_URL}&onload=onBookshelfTurnstileLoad" async defer></script>
 </body></html>`;
 }

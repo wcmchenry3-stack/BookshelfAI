@@ -254,6 +254,41 @@ describe('a Turnstile refusal is retryable (#740)', () => {
   });
 });
 
+describe('a build that cannot produce tokens (#740)', () => {
+  beforeEach(() => {
+    delete process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY;
+  });
+
+  it('400 "Missing Turnstile token" is final at once: no retry schedule', async () => {
+    mockPost.mockRejectedValue(TURNSTILE_MISSING);
+    const { result } = await setup({ ready: false });
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    expect(result.current.scan.jobs[0]).toEqual(
+      expect.objectContaining({ status: 'failed', error: 'network_or_server' })
+    );
+    expect(result.current.scan.jobs[0].nextAttemptAt).toBeUndefined();
+    expect(result.current.banner.banner?.type).toBe('error');
+    // It does not hold the queue: nothing is retried.
+    await advance(24 * 3_600_000);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('403 "Turnstile verification failed" stays retryable', async () => {
+    mockPost.mockRejectedValueOnce(TURNSTILE_FAILED).mockResolvedValue(OK);
+    const { result } = await setup({ ready: false });
+    await act(async () => {
+      await result.current.scan.startScan('image', 'file:///a.jpg');
+    });
+    expect(result.current.scan.jobs[0]).toEqual(
+      expect.objectContaining({ status: 'queued', error: 'unavailable', attempts: 1 })
+    );
+    await advance(30_000);
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
+  });
+});
+
 describe('without a token the scan is still sent (#740)', () => {
   it('site key unset: no widget, no token, the scan proceeds; logged once', async () => {
     delete process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY;

@@ -91,6 +91,40 @@ describe('mountWebTurnstile', () => {
       jest.useRealTimers();
     }
   });
+
+  it('offline launch: the next request loads the script again and gets a token', async () => {
+    const ts = fakeTurnstile();
+    const load = jest
+      .fn()
+      // Launch (preload) and the first scan: offline.
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('offline'))
+      // Back online.
+      .mockResolvedValue(ts as unknown as TurnstileApi);
+    const broker = new TurnstileTokenBroker();
+    mountWebTurnstile(broker, 'key', load);
+    await flush();
+    await expect(broker.request()).resolves.toBeNull();
+    expect(load).toHaveBeenCalledTimes(2);
+
+    await expect(broker.request()).resolves.toBe('web-1');
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(ts.render).toHaveBeenCalledTimes(1);
+    // Loaded now: later requests reuse the widget.
+    await expect(broker.request()).resolves.toBe('web-2');
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it('the hidden container is inert and aria-hidden', async () => {
+    const ts = fakeTurnstile();
+    mountWebTurnstile(new TurnstileTokenBroker(), 'key', () =>
+      Promise.resolve(ts as unknown as TurnstileApi)
+    );
+    await flush();
+    const container = ts.render.mock.calls[0][0] as HTMLElement;
+    expect(container.hasAttribute('inert')).toBe(true);
+    expect(container.getAttribute('aria-hidden')).toBe('true');
+  });
 });
 
 describe('loadTurnstileScript', () => {
