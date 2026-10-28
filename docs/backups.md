@@ -135,7 +135,7 @@ production, restore into a fresh database, verify, then repoint
 `DATABASE_URL`; do not restore over a live database.
 
 **Restoring into a Supabase project.** The dump has no grants (`--no-acl`),
-and `alembic_version` already says 0022, so migration 0022 (#704) won't run
+and `alembic_version` already says 0023, so migration 0023 (#704) won't run
 again. Supabase's default privileges then give `anon` and `authenticated`
 up to `ALL` (stock Supabase grants `ALL`) on every restored table and
 sequence (RLS stays on: it is part of the table definition, not an ACL). Before repointing `DATABASE_URL`, revoke them

@@ -63,9 +63,9 @@ Storage, or the Data API.
   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
   `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
 - **No table or sequence privileges for `anon` / `authenticated`** (migration
-  0022, #704). Supabase grants both roles up to `ALL` (stock Supabase grants `ALL`; the
+  0023, #704). Supabase grants both roles up to `ALL` (stock Supabase grants `ALL`; the
   dev branch had fewer) on every table and sequence in `public`. RLS hides rows, but it doesn't govern `TRUNCATE`, `REFERENCES`,
-  `TRIGGER` or sequences, so 0022 revokes all of it, plus the default
+  `TRIGGER` or sequences, so 0023 revokes all of it, plus the default
   privileges of the migrating role (`postgres`), so tables created later
   aren't granted either. Limits:
   - Supabase also keeps default privileges `FOR ROLE supabase_admin`, which
@@ -73,13 +73,13 @@ Storage, or the Data API.
     creates in `public`; the app never does, and RLS still covers those rows.
   - Function `EXECUTE` and schema `USAGE` are left as they are (`EXECUTE` is
     granted to `PUBLIC` anyway; see the migration's docstring).
-  - On plain Postgres (CI, local) the roles don't exist and 0022 does nothing.
+  - On plain Postgres (CI, local) the roles don't exist and 0023 does nothing.
 
-  0022 checks itself: it raises, and the deploy fails, if either role still
+  0023 checks itself: it raises, and the deploy fails, if either role still
   holds anything after the revoke (for example a grant made by another
   grantor, which `REVOKE` leaves in place).
 
-  **Verify after each deploy that runs 0022** (Supabase SQL editor, prod and
+  **Verify after each deploy that runs 0023** (Supabase SQL editor, prod and
   the `dev` branch). Both queries must return 0 rows. First, every privilege
   either role holds on a relation in `public`:
 
@@ -99,7 +99,7 @@ Storage, or the Data API.
     AND a.grantee::regrole::text IN ('anon', 'authenticated');
   ```
 
-  `alembic downgrade` past 0022 does nothing to the grants; they stay revoked.
+  `alembic downgrade` past 0023 does nothing to the grants; they stay revoked.
   If Supabase's stock grants are ever needed back, run as `postgres`:
 
   ```sql

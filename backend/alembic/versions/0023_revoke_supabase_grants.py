@@ -63,15 +63,15 @@ Supabase's stock grants are ever needed back, run as ``postgres``, for each of
 
 No data is touched either way.
 
-Revision ID: 0022
-Revises: 0021
+Revision ID: 0023
+Revises: 0022
 Create Date: 2026-10-27
 """
 
 from alembic import op
 
-revision = "0022"
-down_revision = "0021"
+revision = "0023"
+down_revision = "0022"
 branch_labels = None
 depends_on = None
 
@@ -125,6 +125,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Grants are not restored: see the module docstring.
     op.execute(
-        "DO $$ BEGIN RAISE NOTICE '0022 downgrade: anon/authenticated grants "
+        "DO $$ BEGIN RAISE NOTICE '0023 downgrade: anon/authenticated grants "
         "are not restored; see the migration docstring'; END $$"
     )

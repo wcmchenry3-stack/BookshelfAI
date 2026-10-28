@@ -1,8 +1,8 @@
-"""Supabase grants (migration 0022): anon/authenticated lose table privileges.
+"""Supabase grants (migration 0023): anon/authenticated lose table privileges.
 
 Supabase grants its Data API roles ``anon`` and ``authenticated`` ``ALL`` on
 every table and sequence in ``public``, plus default privileges for future
-ones. 0022 revokes them when the roles exist (and checks that nothing is left),
+ones. 0023 revokes them when the roles exist (and checks that nothing is left),
 and does nothing otherwise. Its downgrade is a no-op.
 
 Plain Postgres (CI) has neither role, so the cycle test creates stand-ins
@@ -29,18 +29,18 @@ MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "alembic"
     / "versions"
-    / "0022_revoke_supabase_grants.py"
+    / "0023_revoke_supabase_grants.py"
 )
 ROLES = ("anon", "authenticated")
 TABLES = ("users", "refresh_tokens", "user_books", "books")
 TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
 # A BIGSERIAL primary key, so it owns a sequence.
 SEQUENCE_OF = ("ai_usage", "id")
-PROBE_TABLE = "supabase_grants_probe_0022"
+PROBE_TABLE = "supabase_grants_probe_0023"
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0022", MIGRATION)
+    spec = importlib.util.spec_from_file_location("migration_0023", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -141,7 +141,7 @@ def _with_migration(connection, fn) -> None:
     from alembic.operations import Operations
 
     migration = _load_migration()
-    assert (migration.revision, migration.down_revision) == ("0022", "0021")
+    assert (migration.revision, migration.down_revision) == ("0023", "0022")
     assert tuple(migration.ROLES) == ROLES
     context = MigrationContext.configure(connection)
     with Operations.context(context):
@@ -223,7 +223,7 @@ def _migration_noop(connection) -> None:
 
 def _migration_foreign_grantor(connection) -> None:
     """A grant the owner's REVOKE can't remove makes the upgrade raise."""
-    helper = "grants_helper_0022"
+    helper = "grants_helper_0023"
     for role in ROLES:
         if not _role_exists(connection, role):
             connection.execute(sa.text(f"CREATE ROLE {role} NOLOGIN NOBYPASSRLS"))
@@ -264,13 +264,13 @@ async def _run_rolled_back(fn) -> None:
         await engine.dispose()
 
 
-async def test_migration_0022_revokes_supabase_grants_and_downgrade_is_a_noop():
+async def test_migration_0023_revokes_supabase_grants_and_downgrade_is_a_noop():
     await _run_rolled_back(_migration_cycle)
 
 
-async def test_migration_0022_is_a_noop_without_supabase_roles():
+async def test_migration_0023_is_a_noop_without_supabase_roles():
     await _run_rolled_back(_migration_noop)
 
 
-async def test_migration_0022_raises_when_a_foreign_grant_survives_the_revoke():
+async def test_migration_0023_raises_when_a_foreign_grant_survives_the_revoke():
     await _run_rolled_back(_migration_foreign_grantor)
