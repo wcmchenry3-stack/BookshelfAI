@@ -106,5 +106,6 @@
   "notSavedOnlyMessage": "{{notSaved}} nicht gespeichert.",
   "ownedNotSavedRetryMessage": "{{owned}} schon in der Bibliothek, {{failed}} nicht gespeichert. Erneut: Hinzufügen.",
   "addItYourself": "Selbst hinzufügen",
-  "unverifiedSavedMessage": "{{title}} wurde als ungeprüft zu deiner Wunschliste hinzugefügt."
+  "unverifiedSavedMessage": "{{title}} wurde als ungeprüft zu deiner Wunschliste hinzugefügt.",
+  "scanInProgress": "Deine Bücher werden gelesen und Treffer gesucht…"
 }

@@ -547,5 +547,10 @@
     "description": "Message that the enhanced scan failed and the earlier results are shown",
     "tone": "neutral",
     "characterLimit": 80
+  },
+  "scanInProgress": {
+    "description": "Progress line on the scan screen and in the scan queue while a photo is being scanned (the server reads the photo, then looks up matches); shown with a spinner until the result or an error arrives",
+    "tone": "neutral",
+    "characterLimit": 60
   }
 }

@@ -105,5 +105,6 @@
   "notSavedOnlyMessage": "{{notSaved}} 本未保存。",
   "ownedNotSavedRetryMessage": "{{owned}} 本已在书库中，{{failed}} 本未保存。点按添加以重试。",
   "addItYourself": "自己添加",
-  "unverifiedSavedMessage": "已将《{{title}}》以未验证状态加入心愿单。"
+  "unverifiedSavedMessage": "已将《{{title}}》以未验证状态加入心愿单。",
+  "scanInProgress": "正在识别您的书籍并查找匹配项…"
 }

@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Image, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  SectionList,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
@@ -81,6 +90,15 @@ export default function ScanQueueScreen() {
         >
           <Thumb job={job} />
           <Text style={[styles.rowText, { color: theme.colors.onSurface }]}>{state}</Text>
+          {job.status === 'searching' ? (
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.primary}
+              accessibilityRole="progressbar"
+              accessibilityLiveRegion="polite"
+              testID={`queue-progress-${job.id}`}
+            />
+          ) : null}
         </View>
         {isFailed ? (
           <View testID={`queue-actions-${job.id}`} style={styles.actions}>

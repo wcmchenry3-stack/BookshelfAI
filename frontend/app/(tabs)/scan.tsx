@@ -1,5 +1,13 @@
 import React, { useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useTranslation } from 'react-i18next';
@@ -276,6 +284,26 @@ export default function ScanScreen() {
       </Pressable>
     ) : null;
 
+  // A scan is being uploaded / processed (job status 'searching'): show it
+  // from capture until the result or an error arrives (#742). The client
+  // can't see the server's phase, so this is one honest message, no percent.
+  const scanningCount = (jobs ?? []).filter((j) => j.status === 'searching').length;
+  const scanProgress =
+    scanningCount > 0 ? (
+      <View
+        style={[styles.progressRow, { backgroundColor: theme.colors.surfaceContainerHighest }]}
+        accessibilityRole="progressbar"
+        accessibilityLabel={t('scanInProgress')}
+        accessibilityLiveRegion="polite"
+        testID="scan-progress"
+      >
+        <ActivityIndicator size="small" color={activeColor} />
+        <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
+          {t('scanInProgress')}
+        </Text>
+      </View>
+    ) : null;
+
   const statusPanel = (
     <ScanStatusPanel
       usage={usage}
@@ -295,6 +323,7 @@ export default function ScanScreen() {
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         {modeToggle}
         {pendingBadge}
+        {scanProgress}
         {statusPanel}
         <View style={styles.searchContainer}>
           <TextInput
@@ -345,6 +374,7 @@ export default function ScanScreen() {
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
           {modeToggle}
           {pendingBadge}
+          {scanProgress}
           {statusPanel}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
@@ -414,6 +444,7 @@ export default function ScanScreen() {
         <View style={styles.topGroup}>
           {modeToggle}
           {pendingBadge}
+          {scanProgress}
           {statusPanel}
         </View>
 
@@ -471,6 +502,16 @@ export default function ScanScreen() {
 }
 
 const styles = StyleSheet.create({
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
   container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   camera: { flex: 1, width: '100%' },
   overlay: {
