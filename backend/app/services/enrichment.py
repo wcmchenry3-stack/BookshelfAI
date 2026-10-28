@@ -1,7 +1,17 @@
 """EnrichmentService — merges Open Library + Google Books into EnrichedBook.
 
 The candidate (the vision model's reading of the photo, or a search hit) is
-only a search key. Whenever a provider matched, every catalog field of the
+only a search key. Which records are looked at (#743): with an ISBN-13, each
+provider is first looked up by it, and a record found that way is used only
+when it fits the reading (:func:`reading_match_score`: the title, and the
+author's surname when both name one), since the model's ISBN is often
+misread or invented. For each provider that has no such record (and for a
+candidate without an ISBN-13) the provider is searched by title and author
+surname, and the best fitting of up to ``TITLE_SEARCH_RESULTS`` records is
+used; a record that fits nothing is never used. At most four provider
+requests per candidate.
+
+Whenever a provider matched, every catalog field of the
 result comes from the provider records (#602), because a signed result may
 create shared ``books`` / ``editions`` rows:
 
@@ -33,6 +43,7 @@ import contextvars
 import logging
 import re
 import unicodedata
+from collections.abc import Awaitable, Callable
 
 from app.schemas.book import EditionPreview, EnrichedBook
 from app.services.book_identifier import BookCandidate
@@ -47,9 +58,15 @@ UNKNOWN_AUTHOR = "Unknown"
 _MAX_TEXT = 500
 
 
-# Each candidate fires one Open Library and one Google Books request. A shelf
-# photo can yield 15 candidates, so cap how many are in flight at once.
+# Each candidate fires one Open Library and one Google Books request, and at
+# most one more of each (#743): a title search when that provider's ISBN
+# lookup found nothing or another book. A shelf photo can yield 15
+# candidates, so cap how many are in flight at once.
 MAX_CONCURRENT_ENRICHMENTS = 5
+# How many records one title search considers (#743).
+TITLE_SEARCH_RESULTS = 5
+# What ``_lookup`` returns for a call that raised.
+_FAILED = object()
 
 # Lookup failures (an Open Library or Google Books call that raised) during
 # the current ``enrich`` call. A context variable, so concurrent calls on a
@@ -190,6 +207,101 @@ def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     )
 
 
+# Where a title's head ends when a reading is matched against a record: the
+# subtitle separators above plus a comma or semicolon, so the spine's "The
+# Impending Crisis" fits the catalog's "The impending crisis, 1848-1861",
+# while "Dune" never fits "Dune Messiah".
+_HEAD = re.compile(r"\s*[,;:(\[–—]|\s+-\s+")
+# Name suffixes skipped when taking a surname ("Martin Luther King Jr.").
+_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "phd", "md"})
+
+
+def _title_head(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return normalise_title(_HEAD.split(value, maxsplit=1)[0])
+
+
+def _name_surname(name: object) -> str:
+    """The normalised surname of one name: its last word that is not a
+    suffix; "" for none (or the model's "Unknown")."""
+    words = [w for w in _normalise(name).split() if w not in _NAME_SUFFIXES]
+    if not words or words == ["unknown"]:
+        return ""
+    return words[-1]
+
+
+def reading_surname(candidate: BookCandidate) -> str:
+    """The surname of the author the model read ("David M. Potter",
+    "David Potter" and "Potter" all give "potter"): the author key of a
+    title search (#743)."""
+    return _name_surname(candidate.author)
+
+
+def reading_match_score(
+    candidate: BookCandidate, title: object, authors: object
+) -> int:
+    """How well a provider record (its title and author list) fits the
+    model's reading of the photo (#743); 0 means it is not that book.
+
+    The record's title must fit the reading: titles that agree
+    (:func:`titles_agree`) score highest, then the same main title before
+    any subtitle, then, only with the author confirmed, the same head before
+    a comma or subtitle ("The Impending Crisis" vs "The impending crisis,
+    1848-1861"). When both name an author, the reading's surname must be
+    one of the record's authors' surnames; a confirmed author adds 1. A
+    reading without a title fits nothing.
+
+    This only chooses which record is used: every catalog field of a match
+    still comes from the record (#602)."""
+    reading_main, _ = _split_title(candidate.title)
+    record_main, _ = _split_title(title)
+    if not reading_main or not record_main:
+        return 0
+    surname = reading_surname(candidate)
+    record_surnames = (
+        {_name_surname(a) for a in authors} - {""}
+        if isinstance(authors, list)
+        else set()
+    )
+    if surname and record_surnames and surname not in record_surnames:
+        return 0
+    author_confirmed = bool(surname) and surname in record_surnames
+    if titles_agree(candidate.title, title):
+        level = 3
+    elif reading_main == record_main:
+        level = 2
+    elif author_confirmed and _title_head(candidate.title) == _title_head(title):
+        level = 1
+    else:
+        return 0
+    return level * 2 + int(author_confirmed)
+
+
+def _ol_score(candidate: BookCandidate) -> Callable[[dict], int]:
+    """:func:`reading_match_score` for an Open Library doc."""
+
+    def score(doc: dict) -> int:
+        if not isinstance(doc, dict) or not _provider_text(doc.get("title")):
+            return 0
+        return reading_match_score(candidate, doc.get("title"), doc.get("author_name"))
+
+    return score
+
+
+def _gb_score(candidate: BookCandidate) -> Callable[[dict], int]:
+    """:func:`reading_match_score` for a Google Books volume (its subtitle
+    folded into the title)."""
+
+    def score(volume: dict) -> int:
+        info = volume.get("volumeInfo") if isinstance(volume, dict) else None
+        if not isinstance(info, dict) or not _provider_text(info.get("title")):
+            return 0
+        return reading_match_score(candidate, _gb_full_title(info), info.get("authors"))
+
+    return score
+
+
 def isbn_13_to_10(isbn_13: str | None) -> str | None:
     """The ISBN-10 form of a 978-prefixed ISBN-13, else None."""
     if not isbn_13 or len(isbn_13) != 13 or not isbn_13.isdigit():
@@ -247,6 +359,39 @@ def _note_failure(source: str) -> None:
         failures.append(source)
 
 
+_SOURCE_NAMES = {"open_library": "Open Library", "google_books": "Google Books"}
+
+
+async def _lookup(call: Awaitable[object], source: str) -> object:
+    """The call's result, or ``_FAILED`` (logged and noted as a lookup
+    failure) when it raised."""
+    try:
+        return await call
+    except Exception as exc:  # noqa: BLE001 - a provider error never fails the scan
+        logger.warning("%s error: %s", _SOURCE_NAMES[source], exc)
+        _note_failure(source)
+        return _FAILED
+
+
+def _isbn_record(
+    candidate: BookCandidate,
+    found: object,
+    score: Callable[[dict], int],
+    isbns: Callable[[dict], set[str]],
+) -> dict | None:
+    """The record an ISBN lookup found, when it may be used (#743): it fits
+    the reading, or, for a reading without a title, it lists the ISBN.
+    Otherwise None (the provider is then searched by title)."""
+    if not isinstance(found, dict):
+        return None
+    if score(found) > 0:
+        return found
+    if not _split_title(candidate.title)[0] and _provider_text(found.get("title")):
+        return found if candidate.isbn_13 in isbns(found) else None
+    logger.info("enrichment: ISBN lookup found another book; ignored")
+    return None
+
+
 class EnrichmentService:
     def __init__(self) -> None:
         self.ol = OpenLibraryService()
@@ -293,30 +438,77 @@ class EnrichmentService:
                 logger.warning("Enrichment failed for a candidate: %s", r)
         return enriched
 
-    async def _enrich_one(self, candidate: BookCandidate) -> EnrichedBook:
-        # Fetch from both APIs concurrently
-        ol_task = (
-            self.ol.search_by_isbn(candidate.isbn_13)
-            if candidate.isbn_13
-            else self.ol.search(candidate.title, candidate.author)
-        )
-        gb_task = (
-            self.gb.search_by_isbn(candidate.isbn_13)
-            if candidate.isbn_13
-            else self.gb.search(candidate.title, candidate.author)
-        )
-        ol_doc, gb_volume = await asyncio.gather(
-            ol_task, gb_task, return_exceptions=True
-        )
+    async def _find_records(
+        self, candidate: BookCandidate
+    ) -> tuple[dict | None, dict | None]:
+        """The Open Library doc and Google Books volume for a candidate, each
+        None when that provider has no record that fits the reading (#743).
 
-        if isinstance(ol_doc, Exception):
-            logger.warning("Open Library error: %s", ol_doc)
-            _note_failure("open_library")
-            ol_doc = None
-        if isinstance(gb_volume, Exception):
-            logger.warning("Google Books error: %s", gb_volume)
-            _note_failure("google_books")
-            gb_volume = None
+        With an ISBN-13, both providers are first looked up by it,
+        concurrently. A record found that way is used only when it fits the
+        model's reading (:func:`reading_match_score`), or, for a reading
+        without a title, when it lists that ISBN: a misread or invented ISBN
+        often names another book, or none. For each provider whose lookup
+        finished without such a record, and for every candidate without an
+        ISBN-13, the provider is searched by title and author surname
+        (``TITLE_SEARCH_RESULTS`` records, the best fitting one kept). A
+        lookup that raised is not retried. So a candidate costs at most two
+        requests per provider, four in all."""
+        ol_score, gb_score = _ol_score(candidate), _gb_score(candidate)
+        has_title = bool(_split_title(candidate.title)[0])
+        ol_doc = gb_volume = None
+        search_ol = search_gb = has_title
+        if candidate.isbn_13:
+            ol_found, gb_found = await asyncio.gather(
+                _lookup(self.ol.search_by_isbn(candidate.isbn_13), "open_library"),
+                _lookup(self.gb.search_by_isbn(candidate.isbn_13), "google_books"),
+            )
+            ol_doc = _isbn_record(candidate, ol_found, ol_score, _ol_isbns)
+            gb_volume = _isbn_record(candidate, gb_found, gb_score, _gb_isbns)
+            search_ol = has_title and ol_doc is None and ol_found is not _FAILED
+            search_gb = has_title and gb_volume is None and gb_found is not _FAILED
+
+        surname = reading_surname(candidate)
+        searches: list[Awaitable[object]] = []
+        if search_ol:
+            searches.append(
+                _lookup(
+                    self.ol.search(
+                        candidate.title,
+                        surname,
+                        limit=TITLE_SEARCH_RESULTS,
+                        score=ol_score,
+                    ),
+                    "open_library",
+                )
+            )
+        if search_gb:
+            searches.append(
+                _lookup(
+                    self.gb.search(
+                        candidate.title,
+                        surname,
+                        limit=TITLE_SEARCH_RESULTS,
+                        score=gb_score,
+                    ),
+                    "google_books",
+                )
+            )
+        found = list(await asyncio.gather(*searches)) if searches else []
+        # The service already picked the best record; check it again here,
+        # so nothing that does not fit the reading is ever used.
+        if search_ol:
+            doc = found.pop(0)
+            ol_doc = doc if isinstance(doc, dict) and ol_score(doc) > 0 else None
+        if search_gb:
+            volume = found.pop(0)
+            gb_volume = (
+                volume if isinstance(volume, dict) and gb_score(volume) > 0 else None
+            )
+        return ol_doc, gb_volume
+
+    async def _enrich_one(self, candidate: BookCandidate) -> EnrichedBook:
+        ol_doc, gb_volume = await self._find_records(candidate)
 
         # A record without a usable title is not a match: nothing from it
         # (ID, cover, subjects) may be paired with the candidate's reading.

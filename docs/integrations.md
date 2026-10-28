@@ -90,9 +90,9 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Source:** `backend/app/services/google_books.py`
 
 **Methods used:**
-- `search(title, author)` — `q=intitle:<title>+inauthor:<author>`, `maxResults=1`. Primary enrichment lookup.
+- `search(title, author, limit=1, score=None)` — `q=intitle:"<title>" inauthor:"<author>"` (quoted phrases; the author part only when there is one), `maxResults=limit` (at most 5). With `score`, returns the highest-scoring volume with a positive score, else the first. Enrichment calls it with the read title, the read author's surname, `limit=5` and a score of how well each volume fits the reading (#743): for a candidate without an ISBN-13, and when the ISBN lookup found nothing or another book.
 - `search_query(q, limit=3)` — free-text, backs `GET /books/search`.
-- `search_by_isbn(isbn)` — `q=isbn:<isbn>`, `maxResults=1`. Called as a fallback when title+author doesn't resolve cleanly.
+- `search_by_isbn(isbn)` — `q=isbn:<isbn>`, `maxResults=1`. The first lookup for a candidate with an ISBN-13; its volume is used only when it fits the reading (#743).
 
 **Fields consumed:** `volumeInfo.{title, authors, description, imageLinks, industryIdentifiers}`. Cover URL picks the largest available (`large` → `medium` → `small` → `thumbnail`) and rewrites `http://` to `https://`.
 
@@ -110,8 +110,10 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Source:** `backend/app/services/open_library.py`
 
 **Methods used:**
-- `search(title, author)` — `/search.json?title=...&author=...&fields=key,title,author_name,isbn,subject&limit=1`
-- `search_by_isbn(isbn)` — same endpoint, `isbn=<isbn>` param
+- `search(title, author, limit=1, score=None)` — `/search.json?title=...&author=...&fields=key,title,author_name,isbn,subject&limit=<limit>` (at most 5; `author` only when there is one). With `score`, returns the highest-scoring doc with a positive score, else the first. Called like the Google Books `search` above (#743).
+- `search_by_isbn(isbn)` — same endpoint, `isbn=<isbn>` param, `limit=1`
+
+Enrichment makes at most four provider requests per scan candidate (an ISBN lookup and a title search per provider), see [architecture.md](architecture.md) step 3.
 
 **Why Open Library over Google Books for dedup:** Open Library's `work_id` identifies the conceptual work (*Dune*), not a specific edition. Google Books' `volume_id` is also work-level but less consistent — Open Library has cleaner work/edition separation. See [data-model.md → Dedup strategy](data-model.md#dedup-strategy--why-work_id-not-isbn).
 
