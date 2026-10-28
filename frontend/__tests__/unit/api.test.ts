@@ -711,4 +711,64 @@ describe('api session gate (#722)', () => {
 
     expect(mockAxiosPost).not.toHaveBeenCalled();
   });
+
+  it('never replays an old session request with a new session token', async () => {
+    const onAuthFailure = jest.fn();
+    setAuthFailureCallback(onAuthFailure);
+    // Sent in epoch N with the old token.
+    const config: any = await runRequestInterceptor({ url: '/scan', headers: {} });
+    expect(config.headers.Authorization).toBe('Bearer old-access');
+    const adapter = jest.fn((c: any) =>
+      Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config: c })
+    );
+    config.adapter = adapter;
+
+    // logout (N+1), then a fast login as another account (N+2).
+    gateStoredSession(Promise.resolve(false));
+    store[ACCESS_TOKEN_KEY] = 'other-user-access';
+    store[REFRESH_TOKEN_KEY] = 'other-user-refresh';
+    resumeStoredSession();
+
+    const err = { response: { status: 401 }, config };
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(adapter).not.toHaveBeenCalled();
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('never signs out a new session on a token_revoked 401 for an old session request', async () => {
+    const onAuthFailure = jest.fn();
+    setAuthFailureCallback(onAuthFailure);
+    const config: any = await runRequestInterceptor({ url: '/scan', headers: {} });
+    gateStoredSession(Promise.resolve(false));
+    store[ACCESS_TOKEN_KEY] = 'old-access'; // even if the stored token looks the same
+    resumeStoredSession();
+
+    const err = { response: { status: 401, data: { detail: TOKEN_REVOKED } }, config };
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('still retries a 401 for a request sent in the current session', async () => {
+    const config: any = await runRequestInterceptor({ url: '/scan', headers: {} });
+    const adapter = jest.fn((c: any) =>
+      Promise.resolve({
+        data: { auth: c.headers.Authorization },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: c,
+      })
+    );
+    config.adapter = adapter;
+
+    const response: any = await runResponseErrorInterceptor({ response: { status: 401 }, config });
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(response.data.auth).toBe('Bearer new-access');
+  });
 });

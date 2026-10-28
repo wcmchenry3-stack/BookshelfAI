@@ -54,6 +54,8 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+type SessionTagged = { _sessionEpoch?: number };
+
 // Inject access token on every request and add Sentry breadcrumb
 api.interceptors.request.use(async (config) => {
   Sentry.addBreadcrumb({
@@ -61,7 +63,10 @@ api.interceptors.request.use(async (config) => {
     message: `${(config.method ?? 'GET').toUpperCase()} ${config.url}`,
     level: 'info',
   });
-  if (await storedSession) {
+  const usable = await storedSession;
+  // The session this request is sent in; see the 401 handler.
+  (config as SessionTagged)._sessionEpoch = sessionEpoch;
+  if (usable) {
     const token = await storage.getItem(ACCESS_TOKEN_KEY);
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -156,6 +161,12 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
     if (NO_REFRESH_PATHS.includes(requestPath(original?.url)) || !(await storedSession)) {
+      return Promise.reject(error);
+    }
+    // Sent in an earlier session (a sign-out, and maybe a new sign-in, since):
+    // never retry it, or it would be replayed with the new session's token.
+    const sentEpoch = (original as SessionTagged | undefined)?._sessionEpoch;
+    if (sentEpoch !== undefined && sentEpoch !== sessionEpoch) {
       return Promise.reject(error);
     }
     const sent = sentAccessToken(original);
