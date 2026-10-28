@@ -21,9 +21,9 @@ before #572: an empty author is still a candidate (a title-only lookup).
 Since #746 a candidate with an empty or whitespace title is dropped (it is
 schema-valid, so it is not "broken" and a reply of only such items is ``ok``
 with no books), and an ISBN that is not a string or fails its check digit
-becomes None while the book is kept (the model can invent ISBNs). A genuine ``{"books": []}`` is ``ok`` with no candidates. A
-``length`` reply stays ``truncated`` here; with no books the gateway reports
-it as ``malformed``.
+becomes None while the book is kept (the model can invent ISBNs). A genuine
+``{"books": []}`` is ``ok`` with no candidates. A ``length`` reply stays
+``truncated`` here; with no books the gateway reports it as ``malformed``.
 """
 
 import base64
@@ -181,9 +181,8 @@ def _candidate(item: object) -> BookCandidate | None:
     :func:`_is_broken`) or has an empty or whitespace title (#746: dropped,
     not broken). An empty author is kept (a title-only lookup). An ISBN that
     is not a valid string becomes None; the book is kept."""
-    if _is_broken(item):
+    if _is_broken(item) or not isinstance(item, dict):
         return None
-    assert isinstance(item, dict)
     title = item["title"]
     if not title.strip():
         return None
