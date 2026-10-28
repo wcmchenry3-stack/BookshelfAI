@@ -7,6 +7,7 @@ import { useBanner } from '../../hooks/useBanner';
 import { useScanJobs } from '../../hooks/useScanJobs';
 
 const mockPost = jest.fn();
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/api', () => ({
   api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
 }));

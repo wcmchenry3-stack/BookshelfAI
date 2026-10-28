@@ -51,6 +51,16 @@ async function signOut() {
 // tokens the first one just stored. Cleared when it settles.
 let refreshInFlight: Promise<string | null> | null = null;
 
+// Resolves once any in-flight refresh has settled (errors swallowed), so a
+// caller can read the freshly rotated tokens, or know none will be written.
+export async function waitForPendingRefresh(): Promise<void> {
+  try {
+    await refreshInFlight;
+  } catch {
+    // Ignored: only settling matters.
+  }
+}
+
 // Resolves to the new access token, or null when there is none to retry
 // with. Signs out only when the server rejects the refresh (401, including
 // token_revoked); a 429, 5xx or network error keeps the stored tokens.

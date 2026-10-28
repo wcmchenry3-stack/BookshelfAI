@@ -1,4 +1,9 @@
 {
   "heading": "الإعدادات",
-  "scanUsageLabel": "استخدام المسح"
+  "scanUsageLabel": "استخدام المسح",
+  "signOut": "تسجيل الخروج",
+  "signOutConfirmTitle": "تسجيل الخروج؟",
+  "signOutConfirmBody": "ستحتاج إلى تسجيل الدخول مرة أخرى لاستخدام Bookshelf.",
+  "signOutConfirm": "تسجيل الخروج",
+  "signOutCancel": "إلغاء"
 }

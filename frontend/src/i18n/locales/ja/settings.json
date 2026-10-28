@@ -1,4 +1,9 @@
 {
   "heading": "設定",
-  "scanUsageLabel": "スキャン使用状況"
+  "scanUsageLabel": "スキャン使用状況",
+  "signOut": "ログアウト",
+  "signOutConfirmTitle": "ログアウトしますか?",
+  "signOutConfirmBody": "Bookshelfを使うには再度ログインが必要です。",
+  "signOutConfirm": "ログアウト",
+  "signOutCancel": "キャンセル"
 }

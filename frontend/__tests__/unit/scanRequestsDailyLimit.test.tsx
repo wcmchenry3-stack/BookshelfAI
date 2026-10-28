@@ -21,6 +21,7 @@ import path from 'path';
 // midnight, like daily_limit, but its own state and its own message.
 
 const mockPost = jest.fn();
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/api', () => ({
   api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
 }));
