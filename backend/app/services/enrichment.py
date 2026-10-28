@@ -41,6 +41,7 @@ catalog row.
 
 import asyncio
 import contextvars
+import dataclasses
 import logging
 import re
 import unicodedata
@@ -214,6 +215,11 @@ def _gb_full_title(info: dict) -> object:
     return _full_title(info)
 
 
+def _fold_all(values: object) -> object:
+    """:func:`_fold` on each item of a list (anything else unchanged)."""
+    return [_fold(v) for v in values] if isinstance(values, list) else values
+
+
 def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     """Whether an Open Library doc and a Google Books volume describe the
     same book: they share an ISBN, or their titles agree (:func:`titles_agree`:
@@ -222,13 +228,13 @@ def records_agree(ol_doc: dict, gb_volume: dict) -> bool:
     if _ol_isbns(ol_doc) & _gb_isbns(gb_volume):
         return True
     info = gb_volume.get("volumeInfo") or {}
-    ol_author, gb_author = _surname(ol_doc.get("author_name")), _surname(
-        info.get("authors")
-    )
+    # Diacritics ignored (#743): "Garcia Marquez" and "García Márquez" agree.
+    ol_author = _surname(_fold_all(ol_doc.get("author_name")))
+    gb_author = _surname(_fold_all(info.get("authors")))
     return (
         bool(ol_author)
         and ol_author == gb_author
-        and titles_agree(_full_title(ol_doc), _gb_full_title(info))
+        and titles_agree(_fold(_full_title(ol_doc)), _fold(_gb_full_title(info)))
     )
 
 
@@ -508,6 +514,13 @@ async def _lookup(call: Awaitable[object], source: str) -> object:
         return _FAILED
 
 
+def _isbn_digits(value: object) -> object:
+    """An ISBN without hyphens and spaces (anything else unchanged)."""
+    if not isinstance(value, str):
+        return value
+    return value.replace("-", "").replace(" ", "")
+
+
 def valid_isbn_13(value: object) -> bool:
     """Whether ``value`` is 13 digits with a valid check digit."""
     if not isinstance(value, str) or len(value) != 13 or not value.isdigit():
@@ -693,6 +706,10 @@ class EnrichmentService:
         return found if isinstance(found, dict) and score(found) > 0 else None
 
     async def _enrich_one(self, candidate: BookCandidate) -> EnrichedBook:
+        # "978-0-06-231609-7" is looked up, and confirmed, as its digits.
+        cleaned = _isbn_digits(candidate.isbn_13)
+        if cleaned != candidate.isbn_13 and valid_isbn_13(cleaned):
+            candidate = dataclasses.replace(candidate, isbn_13=cleaned)
         ol_doc, gb_volume = await self._find_records(candidate)
         return self._build(candidate, ol_doc, gb_volume)
 

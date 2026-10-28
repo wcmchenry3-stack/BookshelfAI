@@ -775,3 +775,64 @@ class TestNameAndAccentShapes:
     def test_other_authors_still_do_not(self, reading_author):
         reading = BookCandidate(title="Dune", author=reading_author, confidence=1)
         assert reading_match_score(reading, "Dune", ["Herbert, Frank"]) == 0
+
+    async def test_providers_agree_across_accents(self):
+        # Round 3: records_agree ignores diacritics too, so the Google Books
+        # volume is kept (no shared ISBN here).
+        doc = {
+            "key": "/works/OL274505W",
+            "title": "Cien anos de soledad",
+            "author_name": ["Gabriel Garcia Marquez"],
+        }
+        volume = {
+            "id": "gb_cien",
+            "volumeInfo": {
+                "title": "Cien años de soledad",
+                "authors": ["Gabriel García Márquez"],
+                "description": "Macondo.",
+            },
+        }
+        assert enrichment.records_agree(doc, volume)
+        service = _service(ol_title=doc, gb_title=volume)
+        book = await _enrich_one(
+            service,
+            BookCandidate(
+                title="Cien años de soledad", author="García Márquez", confidence=0.9
+            ),
+        )
+        assert book.open_library_work_id == "OL274505W"
+        assert (book.google_books_id, book.description) == ("gb_cien", "Macondo.")
+
+
+class TestIsbnSeparators:
+    """Round 3: a hyphenated or spaced ISBN is looked up as its digits."""
+
+    @pytest.mark.parametrize(
+        "isbn", ["978-0-06-231609-7", "978 0 06 231609 7", " 978-0062316097 "]
+    )
+    async def test_separated_isbn_is_looked_up_as_digits(self, isbn):
+        service = _service(ol_isbn=SAPIENS_DOC, gb_isbn=SAPIENS_VOLUME)
+        candidate = BookCandidate(
+            title="Sapiens", author="Yuval Noah Harari", confidence=0.9, isbn_13=isbn
+        )
+        book = await _enrich_one(service, candidate)
+        service.ol.search_by_isbn.assert_awaited_once_with(SAPIENS_ISBN)
+        service.gb.search_by_isbn.assert_awaited_once_with(SAPIENS_ISBN)
+        assert book.open_library_work_id == "OL17075811W"
+        assert book.google_books_id == "gb_sapiens"
+        # Confirmed by the records, in its digits-only form.
+        assert book.editions[0].isbn_13 == SAPIENS_ISBN
+
+    async def test_separated_invalid_isbn_is_not_looked_up(self):
+        service = _service(ol_title=SAPIENS_DOC, gb_title=SAPIENS_VOLUME)
+        candidate = BookCandidate(
+            title="Sapiens",
+            author="Harari",
+            confidence=0.9,
+            isbn_13="978-0-7864-1234-5",
+        )
+        book = await _enrich_one(service, candidate)
+        service.ol.search_by_isbn.assert_not_awaited()
+        service.gb.search_by_isbn.assert_not_awaited()
+        assert book.open_library_work_id == "OL17075811W"
+        assert book.editions[0].isbn_13 is None
