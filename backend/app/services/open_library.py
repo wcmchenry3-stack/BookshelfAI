@@ -32,7 +32,7 @@ class OpenLibraryService:
         params = {
             "title": title,
             "limit": max(1, min(limit, MAX_SEARCH_RESULTS)),
-            "fields": "key,title,author_name,isbn,subject",
+            "fields": "key,title,subtitle,author_name,isbn,subject",
         }
         if author:
             params["author"] = author
@@ -52,7 +52,7 @@ class OpenLibraryService:
                 params={
                     "isbn": isbn,
                     "limit": 1,
-                    "fields": "key,title,author_name,isbn,subject",
+                    "fields": "key,title,subtitle,author_name,isbn,subject",
                 },
             )
             resp.raise_for_status()

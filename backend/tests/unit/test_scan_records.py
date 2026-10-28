@@ -295,15 +295,18 @@ class TestEnrichmentCompleteness:
         assert service.last_complete is False
 
     async def test_concurrent_calls_do_not_share_failures(self, service):
+        # A valid ISBN-13 (#743: one with a bad check digit is not looked up).
+        bad_isbn = "9780000000002"
+
         async def search(isbn):
             await asyncio.sleep(0)
-            if isbn == "bad":
+            if isbn == bad_isbn:
                 raise ConnectionError("down")
 
         service.gb.search_by_isbn = AsyncMock(side_effect=search)
         good = EnrichmentService()
         good.ol, good.gb = service.ol, service.gb
-        bad_candidate = BookCandidate("X", "Y", 0.5, isbn_13="bad")
+        bad_candidate = BookCandidate("X", "Y", 0.5, isbn_13=bad_isbn)
         await asyncio.gather(
             service.enrich([bad_candidate], limit=15), good.enrich([DUNE], limit=15)
         )

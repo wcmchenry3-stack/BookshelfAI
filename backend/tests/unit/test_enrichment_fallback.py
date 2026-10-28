@@ -10,6 +10,8 @@ EnrichmentService runs. No network, no AI.
 """
 
 import asyncio
+import math
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -59,7 +61,8 @@ OTHER_VOLUME = {
     "id": "gb_other",
     "volumeInfo": {"title": "Alabama Birds", "authors": ["Thomas A. Imhof"]},
 }
-WRONG_ISBN = "9780817354361"
+# A misread ISBN with a valid check digit (so it is looked up).
+WRONG_ISBN = "9780817354367"
 
 
 def _reading(
@@ -112,13 +115,27 @@ class TestWrongIsbnFallsBackToTitle:
         )
         # The misread ISBN is no record's, so it is not kept.
         assert book.editions[0].isbn_13 is None
-        # The title search used the reading's title and surname.
+        # One ISBN lookup and one title search per provider (the cost bound).
+        assert _calls(service) == 4
         service.ol.search.assert_awaited_once()
-        args, kwargs = service.ol.search.await_args
-        assert args == ("The Impending Crisis", "potter")
-        assert kwargs["limit"] == TITLE_SEARCH_RESULTS
         service.gb.search.assert_awaited_once()
-        assert service.gb.search.await_args.args == ("The Impending Crisis", "potter")
+        assert service.last_complete is True
+
+    async def test_invalid_check_digit_is_not_looked_up(self):
+        # Both ISBNs logged for the #743 scans have a bad check digit.
+        for isbn in ("9780786412345", "9780817354368"):
+            service = _service(
+                ol_isbn=OTHER_DOC,
+                gb_isbn=OTHER_VOLUME,
+                ol_title=CRISIS_DOC,
+                gb_title=CRISIS_VOLUME,
+            )
+            book = await _enrich_one(service, _reading(isbn_13=isbn))
+            service.ol.search_by_isbn.assert_not_awaited()
+            service.gb.search_by_isbn.assert_not_awaited()
+            assert _calls(service) == 2
+            assert book.open_library_work_id == "OL1966510W"
+            assert book.editions[0].isbn_13 is None
 
     async def test_isbn_that_misses_falls_back_to_title(self):
         service = _service(ol_title=CRISIS_DOC, gb_title=CRISIS_VOLUME)
@@ -176,7 +193,6 @@ class TestImpendingCrisis:
         assert book.title == "The impending crisis, 1848-1861"
         assert book.author == "David Morris Potter"
         assert book.description == "Pulitzer Prize."
-        assert service.ol.search.await_args.args[1] == "potter"
 
 
 class TestIsbnOnlyReading:
@@ -260,27 +276,54 @@ class TestReadingMatchScore:
     def test_dates_or_edition_after_a_comma_fit(self, rest):
         assert reading_match_score(self.R, f"The Impending Crisis, {rest}", ["Potter"])
 
-    def test_another_subtitle_is_another_book(self):
-        assert (
-            reading_match_score(
-                self.R,
-                "The Impending Crisis: America Before the Civil War",
-                ["David M. Potter"],
-            )
-            == 0
+    @pytest.mark.parametrize(
+        "reading_title, title",
+        [
+            ("The Impending Crisis", "The Impending Crisis: America Before the War"),
+            ("The Impending Crisis: America Before the War", "The Impending Crisis"),
+        ],
+    )
+    def test_one_sided_subtitle_is_the_lowest_fit(self, reading_title, title):
+        # Round 2: a spine often leaves the subtitle out. It fits, below every
+        # other tier, and only with the author confirmed.
+        reading = BookCandidate(title=reading_title, author="Potter", confidence=1)
+        one_sided = reading_match_score(reading, title, ["David M. Potter"])
+        dated = reading_match_score(
+            reading, "The impending crisis, 1848-1861", ["David M. Potter"]
         )
+        assert 0 < one_sided
+        assert one_sided < reading_match_score(
+            reading, reading_title, ["David M. Potter"]
+        )
+        if ":" not in reading_title:
+            assert one_sided < dated
+        no_author = BookCandidate(title=reading_title, author="", confidence=1)
+        assert reading_match_score(no_author, title, ["David M. Potter"]) == 0
+
+    @pytest.mark.parametrize(
+        "main, subtitle, author",
+        [
+            ("Dune", "Messiah", "Frank Herbert"),
+            ("The Lord of the Rings", "The Two Towers", "J. R. R. Tolkien"),
+        ],
+    )
+    def test_another_work_with_the_main_title_ranks_below_the_exact_one(
+        self, main, subtitle, author
+    ):
+        # The one-sided-subtitle tier lets these fit when nothing better is
+        # found; a search result with the exact title always wins.
+        reading = BookCandidate(title=main, author=author, confidence=1)
+        other = reading_match_score(reading, f"{main}: {subtitle}", [author])
+        assert 0 < other < reading_match_score(reading, main, [author])
 
     @pytest.mark.parametrize(
         "reading_title, reading_author, title, authors",
         [
-            ("Dune", "Frank Herbert", "Dune: Messiah", ["Frank Herbert"]),
-            (
-                "The Lord of the Rings",
-                "J. R. R. Tolkien",
-                "The Lord of the Rings: The Two Towers",
-                ["J.R.R. Tolkien"],
-            ),
             ("Saga", "", "Saga: Book Two", ["Brian K. Vaughan"]),
+            ("Saga", "Brian K. Vaughan", "Saga: Book Two", ["Brian K. Vaughan"]),
+            ("Saga", "Vaughan", "Saga: Volume 3", ["Brian K. Vaughan"]),
+            ("Saga", "Vaughan", "Saga: Part II", ["Brian K. Vaughan"]),
+            ("Saga", "Vaughan", "Saga #2", ["Brian K. Vaughan"]),
             ("Dune", "Frank Herbert", "Dune: Part Two", ["Brian Herbert"]),
             ("Dune", "Frank Herbert", "Dune", ["Brian Herbert"]),
             ("Dune (Book 2)", "Frank Herbert", "Dune", ["Frank Herbert"]),
@@ -498,12 +541,43 @@ class TestDeadlines:
         assert book.google_books_id == "gb_crisis"
         assert service.last_complete is False
 
-    def test_worst_case_fits_the_deadline(self):
-        # Two sequential provider calls per candidate fit in the deadline,
-        # and with the vision call's timeout a scan stays well under
-        # Cloudflare's 100 s.
-        assert 2 * enrichment.PROVIDER_CALL_TIMEOUT_S < enrichment.ENRICHMENT_DEADLINE_S
+    def test_worst_case_timing(self):
+        # A candidate takes at most two sequential requests (each provider's
+        # ISBN lookup then title search; the two providers run concurrently),
+        # and candidates run in waves of MAX_CONCURRENT_ENRICHMENTS.
+        waves = math.ceil(
+            settings.scan_max_books / enrichment.MAX_CONCURRENT_ENRICHMENTS
+        )
+        per_candidate_max = 2 * enrichment.PROVIDER_CALL_TIMEOUT_S
+        assert per_candidate_max < enrichment.ENRICHMENT_DEADLINE_S
+        # A full scan whose every candidate needs its title search fits the
+        # deadline only for per-request latencies up to this; beyond it the
+        # deadline cuts the last wave (returned unsigned, never a timeout).
+        fits_latency = enrichment.ENRICHMENT_DEADLINE_S / (waves * 2)
+        assert fits_latency >= 3
+        # Either way the scan stays well under Cloudflare's 100 s.
         assert settings.scan_timeout_seconds + enrichment.ENRICHMENT_DEADLINE_S <= 70
+
+    async def test_provider_chains_run_concurrently(self):
+        # Open Library's ISBN lookup and Google Books' title search are slow:
+        # each chain waits only for its own provider.
+        async def slow_doc(*_args, **_kwargs):
+            await asyncio.sleep(0.3)
+            return CRISIS_DOC
+
+        async def slow_volume(*_args, **_kwargs):
+            await asyncio.sleep(0.3)
+            return CRISIS_VOLUME
+
+        service = _service(gb_isbn=None, ol_title=None)
+        service.ol.search_by_isbn = AsyncMock(side_effect=slow_doc)
+        service.gb.search = AsyncMock(side_effect=slow_volume)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        book = await _enrich_one(service, _reading(isbn_13=CRISIS_ISBN))
+        assert loop.time() - started < 0.5
+        assert book.open_library_work_id == "OL1966510W"
+        assert book.google_books_id == "gb_crisis"
 
     async def test_a_cancelled_scan_leaves_no_lookup_running(self):
         cancelled: list[str] = []
@@ -528,3 +602,176 @@ class TestDeadlines:
         for _ in range(10):
             await asyncio.sleep(0)
         assert sorted(cancelled) == ["gb", "ol"]
+
+
+SAPIENS_ISBN = "9780062316097"
+SAPIENS_DOC = {
+    "key": "/works/OL17075811W",
+    "title": "Sapiens",
+    "author_name": ["Yuval Noah Harari"],
+    "isbn": [SAPIENS_ISBN],
+}
+SAPIENS_VOLUME = {
+    "id": "gb_sapiens",
+    "volumeInfo": {
+        "title": "Sapiens",
+        "subtitle": "A Brief History of Humankind",
+        "authors": ["Yuval Noah Harari"],
+        "description": "Humankind.",
+        "industryIdentifiers": [{"type": "ISBN_13", "identifier": SAPIENS_ISBN}],
+    },
+}
+
+
+class TestOneSidedSubtitles:
+    """A subtitle on one side only (round 2, blocking 1): the spine, the
+    search candidate or one provider leaves it out."""
+
+    @pytest.mark.parametrize(
+        "reading_title", ["Sapiens", "Sapiens: A Brief History of Humankind"]
+    )
+    @pytest.mark.parametrize("author", ["Yuval Noah Harari", ""])
+    async def test_isbn_records_listing_the_isbn_are_used(self, reading_title, author):
+        service = _service(ol_isbn=SAPIENS_DOC, gb_isbn=SAPIENS_VOLUME)
+        candidate = BookCandidate(
+            title=reading_title, author=author, confidence=0.9, isbn_13=SAPIENS_ISBN
+        )
+        book = await _enrich_one(service, candidate)
+        assert book.open_library_work_id == "OL17075811W"
+        assert book.google_books_id == "gb_sapiens"
+        assert book.description == "Humankind."
+        assert book.editions[0].isbn_13 == SAPIENS_ISBN
+        assert _calls(service) == 2
+
+    async def test_isbn_record_by_another_author_is_not_used(self):
+        doc = {**SAPIENS_DOC, "author_name": ["Someone Else"]}
+        service = _service(ol_isbn=doc)
+        candidate = BookCandidate(
+            title="Sapiens: A Brief History of Humankind",
+            author="Yuval Noah Harari",
+            confidence=0.9,
+            isbn_13=SAPIENS_ISBN,
+        )
+        book = await _enrich_one(service, candidate)
+        assert book.open_library_work_id is None
+
+    @pytest.mark.parametrize(
+        "reading_title", ["Sapiens", "Sapiens: A Brief History of Humankind"]
+    )
+    async def test_title_search_fits_with_the_author(self, reading_title):
+        service = _service(ol_title=SAPIENS_DOC, gb_title=SAPIENS_VOLUME)
+        candidate = BookCandidate(title=reading_title, author="Harari", confidence=0.9)
+        book = await _enrich_one(service, candidate)
+        assert book.open_library_work_id == "OL17075811W"
+        assert book.google_books_id == "gb_sapiens"
+
+    async def test_open_library_subtitle_is_folded_in(self):
+        doc = {**SAPIENS_DOC, "subtitle": "A Brief History of Humankind"}
+        candidate = BookCandidate(
+            title="Sapiens: A Brief History of Humankind", author="", confidence=1
+        )
+        # With the subtitle folded in the titles agree, so even a reading
+        # without an author fits.
+        assert enrichment._scorer(candidate, enrichment._ol_parts)(doc) > 0
+        assert enrichment._scorer(candidate, enrichment._ol_parts)(SAPIENS_DOC) == 0
+        assert enrichment.records_agree(
+            {k: v for k, v in doc.items() if k != "isbn"},
+            {"volumeInfo": {**SAPIENS_VOLUME["volumeInfo"], "industryIdentifiers": []}},
+        )
+
+    async def test_open_library_is_asked_for_the_subtitle(self):
+        client = _http_client({"docs": []})
+        with patch("app.services.open_library.httpx.AsyncClient", return_value=client):
+            await OpenLibraryService().search("Sapiens", "harari")
+            await OpenLibraryService().search_by_isbn(SAPIENS_ISBN)
+        for call in client.get.await_args_list:
+            assert "subtitle" in call.kwargs["params"]["fields"].split(",")
+
+    async def test_saga_volume_is_not_the_series(self):
+        volume = {
+            "id": "gb_saga2",
+            "volumeInfo": {
+                "title": "Saga",
+                "subtitle": "Book Two",
+                "authors": ["Brian K. Vaughan"],
+            },
+        }
+        service = _service(gb_title=volume)
+        book = await _enrich_one(
+            service, BookCandidate(title="Saga", author="Vaughan", confidence=0.9)
+        )
+        assert book.google_books_id is None
+
+    def test_books_search_signs_a_volume_without_its_subtitle(self):
+        """/books/search builds its candidate from volumeInfo.title alone."""
+        from fastapi.testclient import TestClient
+
+        from app.api import books as books_api
+        from app.auth.dependencies import get_current_user
+        from app.main import app
+        from app.models.user import User
+
+        app.dependency_overrides[get_current_user] = lambda: User(
+            id=uuid.UUID(USER), email="s@x.io"
+        )
+        enrich = books_api._enrichment
+        try:
+            with (
+                patch.object(
+                    books_api._gb,
+                    "search_query",
+                    AsyncMock(return_value=[SAPIENS_VOLUME]),
+                ),
+                patch.object(
+                    enrich.ol, "search_by_isbn", AsyncMock(return_value=SAPIENS_DOC)
+                ),
+                patch.object(
+                    enrich.gb,
+                    "search_by_isbn",
+                    AsyncMock(return_value=SAPIENS_VOLUME),
+                ),
+                patch.object(enrich.ol, "search", AsyncMock(return_value=None)),
+                patch.object(enrich.gb, "search", AsyncMock(return_value=None)),
+            ):
+                resp = TestClient(app).get("/books/search?q=sapiens")
+        finally:
+            app.dependency_overrides.clear()
+        assert resp.status_code == 200, resp.text
+        (book,) = resp.json()
+        assert book["google_books_id"] == "gb_sapiens"
+        assert book["open_library_work_id"] == "OL17075811W"
+        assert book["description"] == "Humankind."
+        assert book["catalog_token"]
+
+
+class TestNameAndAccentShapes:
+    """Round 2, items 2 and 3."""
+
+    @pytest.mark.parametrize(
+        "reading_author, record_author",
+        [
+            ("Gabriel Garcia Marquez", "Gabriel García Márquez"),
+            ("Gabriel García Márquez", "Gabriel Garcia Marquez"),
+            ("Herbert, Frank", "Frank Herbert"),
+            ("Frank Herbert", "Herbert, Frank"),
+            ("Le Guin", "Ursula K. LeGuin"),
+            ("Ursula LeGuin", "Ursula K. Le Guin"),
+            ("Martin Luther King, Jr.", "Martin Luther King Jr."),
+        ],
+    )
+    def test_same_author_fits(self, reading_author, record_author):
+        reading = BookCandidate(title="Some Title", author=reading_author, confidence=1)
+        assert reading_match_score(reading, "Some Title", [record_author]) == 7
+
+    def test_accented_title_fits(self):
+        reading = BookCandidate(
+            title="Cien anos de soledad", author="Garcia Marquez", confidence=1
+        )
+        assert reading_match_score(
+            reading, "Cien años de soledad", ["Gabriel García Márquez"]
+        )
+
+    @pytest.mark.parametrize("reading_author", ["Herbert, Brian", "Brian Herbert"])
+    def test_other_authors_still_do_not(self, reading_author):
+        reading = BookCandidate(title="Dune", author=reading_author, confidence=1)
+        assert reading_match_score(reading, "Dune", ["Herbert, Frank"]) == 0
