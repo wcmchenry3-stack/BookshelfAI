@@ -27,6 +27,7 @@ from app.schemas.user_book import (
     WishlistRequest,
 )
 from app.services import catalog
+from app.services.edition_check import require_edition_of_book
 from app.services.unverified_books import (
     UnverifiedBookService,
     UnverifiedDuplicateError,
@@ -196,7 +197,11 @@ async def add_purchased(
     # A merged catalog row is never the target of a new entry (#682): a
     # stale book_id adds (or promotes) the surviving row instead.
     survivor = await catalog.resolve_survivor(db, book)
-    book_id = req.book_id if survivor is book else survivor.id
+    book_id = survivor.id
+
+    # A client-sent edition must be an edition of this book (#686): of the
+    # survivor, since a merge moves the merged row's editions to it (#682).
+    await require_edition_of_book(db, book_id, req.edition_id)
 
     # Resolve edition if ISBN provided
     edition_id: uuid.UUID | None = req.edition_id
