@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import { ScanJobProvider } from '../../contexts/ScanJobContext';
 import { BannerProvider } from '../../contexts/BannerContext';
+import { useBanner } from '../../hooks/useBanner';
 import { useScanJobs } from '../../hooks/useScanJobs';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
@@ -138,7 +139,10 @@ describe('ScanJobContext — startScan', () => {
     expect(job).toBeTruthy();
     expect(job?.status).toBe('complete');
     expect(job?.results).toHaveLength(1);
-    expect(mockGet).toHaveBeenCalledWith('/books/search', { params: { q: 'Dune' } });
+    expect(mockGet).toHaveBeenCalledWith('/books/search', {
+      params: { q: 'Dune' },
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it('creates a job and fires image scan API call', async () => {
@@ -535,7 +539,9 @@ describe('ScanJobContext — handleAddBooks', () => {
       await result.current.handleAddBooks([BOOK]);
     });
 
-    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
+    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }), {
+      signal: expect.any(AbortSignal),
+    });
     expect(result.current.reviewingJob).toBeNull();
   });
 
@@ -578,7 +584,9 @@ describe('ScanJobContext — handleAddBooks', () => {
       await result.current.handleAddBooks([BOOK]);
     });
 
-    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
+    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }), {
+      signal: expect.any(AbortSignal),
+    });
   });
 });
 
@@ -605,8 +613,12 @@ describe('ScanJobContext — multi-book review', () => {
       ]);
     });
 
-    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }));
-    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Emma' }));
+    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Dune' }), {
+      signal: expect.any(AbortSignal),
+    });
+    expect(mockPost).toHaveBeenCalledWith('/wishlist', expect.objectContaining({ title: 'Emma' }), {
+      signal: expect.any(AbortSignal),
+    });
     expect(result.current.jobs).toHaveLength(0);
     expect(result.current.reviewingJob).toBeNull();
     expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/photo.jpg');
@@ -853,5 +865,158 @@ describe('ScanJobContext — sign-out clears the queue (#723)', () => {
     });
     expect(hook.result.current.jobs.map((j) => j.id)).toEqual(['queued-1']);
     expect(mockClearJobs).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScanJobContext — sign-out aborts and checks every scan path (#723)', () => {
+  async function renderBoth() {
+    const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
+      wrapper,
+    });
+    await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
+    return hook;
+  }
+  async function signOutOf(hook: { rerender: (p: object) => void }) {
+    mockAuthed = false;
+    await act(async () => {
+      hook.rerender({});
+    });
+  }
+  const flush = () => act(async () => void (await new Promise((r) => setTimeout(r, 20))));
+
+  it('a successful send finishing after sign-out shows no banner or notice', async () => {
+    let finish: (v: unknown) => void = () => {};
+    mockPost.mockReturnValue(new Promise((r) => (finish = r)));
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.startScan('image', 'file:///docs/scan-queue/p.jpg');
+    });
+    await signOutOf(hook);
+    await act(async () => {
+      finish({ data: { books: [], enhanced_scans_remaining: 3 } });
+    });
+    await flush();
+    expect(hook.result.current.banner.banner).toBeNull();
+    expect(hook.result.current.scan.scanNotice).toBeNull();
+    expect(hook.result.current.scan.enhancedScansRemaining).toBeNull();
+    expect(hook.result.current.scan.jobs).toEqual([]);
+  });
+
+  it('a network-error send finishing after sign-out shows no banner', async () => {
+    let fail: (e: unknown) => void = () => {};
+    mockPost.mockReturnValue(new Promise((_, rej) => (fail = rej)));
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.startScan('image', 'file:///docs/scan-queue/p.jpg');
+    });
+    await signOutOf(hook);
+    await act(async () => {
+      fail({ request: {}, message: 'Network Error' });
+    });
+    await flush();
+    expect(hook.result.current.banner.banner).toBeNull();
+    expect(hook.result.current.scan.jobs).toEqual([]);
+  });
+
+  it('a failing text search finishing after sign-out shows no banner', async () => {
+    let fail: (e: unknown) => void = () => {};
+    mockGet.mockReturnValue(new Promise((_, rej) => (fail = rej)));
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.startScan('text', undefined, 'Dune');
+    });
+    await signOutOf(hook);
+    await act(async () => {
+      fail(new Error('boom'));
+    });
+    await flush();
+    expect(hook.result.current.banner.banner).toBeNull();
+    expect(hook.result.current.scan.jobs).toEqual([]);
+  });
+
+  it('aborts the in-flight request on sign-out', async () => {
+    mockPost.mockReturnValue(new Promise(() => {}));
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.startScan('image', 'file:///docs/scan-queue/p.jpg');
+    });
+    const signal = mockPost.mock.calls[0][2].signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    await signOutOf(hook);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it('does not re-post a scan_in_progress retry after sign-out', async () => {
+    mockPost.mockRejectedValue({
+      response: {
+        status: 429,
+        data: { detail: 'scan_in_progress' },
+        headers: { 'retry-after': '1' },
+      },
+    });
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.startScan('image', 'file:///docs/scan-queue/p.jpg');
+    });
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    await signOutOf(hook);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1300));
+    });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.banner.banner).toBeNull();
+  });
+
+  it('adding books: no banner after sign-out, and the requests are aborted', async () => {
+    let finish: (v: unknown) => void = () => {};
+    mockPost.mockReturnValue(new Promise((r) => (finish = r)));
+    const hook = await renderBoth();
+    await act(async () => {
+      void hook.result.current.scan.handleAddBooks([BOOK as never]);
+    });
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith('/wishlist', BOOK, expect.any(Object))
+    );
+    const signal = mockPost.mock.calls[0][2].signal as AbortSignal;
+    await signOutOf(hook);
+    expect(signal.aborted).toBe(true);
+    await act(async () => {
+      finish({});
+    });
+    await flush();
+    expect(hook.result.current.banner.banner).toBeNull();
+  });
+
+  it('a load finishing after sign-out does not repopulate the queue', async () => {
+    let finishLoad: (v: unknown) => void = () => {};
+    mockLoadJobs.mockReturnValue(new Promise((r) => (finishLoad = r)));
+    const hook = await renderHook(() => useScanJobs(), { wrapper });
+    await signOutOf(hook);
+    await act(async () => {
+      finishLoad([queuedJob(1)]);
+    });
+    await flush();
+    expect(hook.result.current.jobs).toEqual([]);
+    expect(mockSweep).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.anything()]),
+      expect.anything()
+    );
+  });
+
+  it('sweeps with the cutoff taken at sign-out, sparing later photos', async () => {
+    const hook = await renderScanJobs();
+    const realNow = Date.now;
+    const T = 1_700_000_000_000;
+    const spy = jest.spyOn(Date, 'now').mockReturnValue(T);
+    // A slow clear: the sweep runs well after sign-out, when the clock has moved.
+    mockClearJobs.mockImplementation(() => new Promise((r) => setTimeout(r, 30)));
+    try {
+      await signOutOf(hook);
+      spy.mockReturnValue(T + 60_000);
+      await waitFor(() => expect(mockSweep).toHaveBeenCalledWith([], T));
+    } finally {
+      spy.mockRestore();
+      Date.now = realNow;
+    }
   });
 });

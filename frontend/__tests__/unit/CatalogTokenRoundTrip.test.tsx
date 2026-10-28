@@ -133,7 +133,10 @@ describe('catalog_token round trip (#602)', () => {
 
     const posted = await addReviewedResults(hook);
 
-    expect(mockGet).toHaveBeenCalledWith('/books/search', { params: { q: 'Dune' } });
+    expect(mockGet).toHaveBeenCalledWith('/books/search', {
+      params: { q: 'Dune' },
+      signal: expect.any(AbortSignal),
+    });
     expect(posted).toEqual([dune]);
   });
 
