@@ -1,5 +1,14 @@
-import React, { useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useTranslation } from 'react-i18next';
@@ -17,6 +26,10 @@ import { ScanStatusPanel } from '../../components/ScanStatusPanel';
 
 type InputMode = 'camera' | 'search';
 type CameraFacing = 'back' | 'front';
+
+// Jobs created before this (restored from a previous launch) are never shown
+// as being sent until they really are ('searching').
+const LAUNCHED_AT = Date.now();
 
 export default function ScanScreen() {
   const { theme } = useTheme();
@@ -232,16 +245,25 @@ export default function ScanScreen() {
     </View>
   );
 
-  const failedCount = (jobs ?? []).filter((j) => j.status === 'failed').length;
+  const allJobs = jobs ?? [];
+  // A 'pending' job with no scheduled retry, created since this launch, is
+  // being sent right now (connectivity check). One restored from a previous
+  // launch (interrupted mid-scan) is waiting to be sent, not in progress.
+  const isStarting = (j: { status: string; nextAttemptAt?: number; createdAt: number }) =>
+    j.status === 'pending' && j.nextAttemptAt == null && j.createdAt >= LAUNCHED_AT;
+  const startingCount = allJobs.filter(isStarting).length;
+  // Jobs being sent right now are shown as progress, not as waiting.
+  const waitingCount = Math.max(0, pendingCount - startingCount);
+  const failedCount = allJobs.filter((j) => j.status === 'failed').length;
   const pendingBadge =
-    pendingCount > 0 ? (
+    waitingCount > 0 ? (
       <View
         style={[styles.pendingBadge, { backgroundColor: theme.colors.surfaceContainerHighest }]}
         accessibilityRole="text"
         accessibilityLiveRegion="polite"
       >
         <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
-          {t('pendingUploads', { count: pendingCount })}
+          {t('pendingUploads', { count: waitingCount })}
         </Text>
         <Pressable
           onPress={openScanQueue}
@@ -276,6 +298,51 @@ export default function ScanScreen() {
       </Pressable>
     ) : null;
 
+  // A scan is being uploaded / processed (#742): from the shutter press (photo
+  // being saved) through job status 'searching' until the result or an error
+  // arrives. A 'pending' job with no scheduled retry is being sent right now
+  // (connectivity check), not waiting, so it counts as in progress too. The
+  // client can't see the server's phase: one honest message, no percentage.
+  const imageInProgress =
+    capturing ||
+    allJobs.some((j) => (j.status === 'searching' || isStarting(j)) && j.type !== 'text');
+  const inProgress = imageInProgress || allJobs.some((j) => j.status === 'searching');
+  const progressText = t(imageInProgress ? 'scanInProgress' : 'searchInProgress');
+  const wasInProgress = useRef(false);
+  useEffect(() => {
+    // accessibilityLiveRegion is Android-only: announce on iOS too.
+    if (inProgress && !wasInProgress.current) {
+      AccessibilityInfo.announceForAccessibility(progressText);
+    }
+    wasInProgress.current = inProgress;
+  }, [inProgress, progressText]);
+  // The live-region container stays mounted so Android announces its content.
+  const scanProgress = (
+    <View accessibilityLiveRegion="polite" testID="scan-progress-region">
+      {inProgress ? (
+        <View
+          style={[styles.progressRow, { backgroundColor: theme.colors.surfaceContainerHighest }]}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={progressText}
+          testID="scan-progress"
+        >
+          <ActivityIndicator
+            size="small"
+            color={theme.colors.primary}
+            importantForAccessibility="no"
+          />
+          <Text
+            style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}
+            importantForAccessibility="no"
+          >
+            {progressText}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
   const statusPanel = (
     <ScanStatusPanel
       usage={usage}
@@ -295,6 +362,7 @@ export default function ScanScreen() {
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
         {modeToggle}
         {pendingBadge}
+        {scanProgress}
         {statusPanel}
         <View style={styles.searchContainer}>
           <TextInput
@@ -345,6 +413,7 @@ export default function ScanScreen() {
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
           {modeToggle}
           {pendingBadge}
+          {scanProgress}
           {statusPanel}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
@@ -414,6 +483,7 @@ export default function ScanScreen() {
         <View style={styles.topGroup}>
           {modeToggle}
           {pendingBadge}
+          {scanProgress}
           {statusPanel}
         </View>
 
@@ -471,6 +541,16 @@ export default function ScanScreen() {
 }
 
 const styles = StyleSheet.create({
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
   container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   camera: { flex: 1, width: '100%' },
   overlay: {

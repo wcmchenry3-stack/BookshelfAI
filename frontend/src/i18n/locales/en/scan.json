@@ -106,5 +106,7 @@
   "notSavedOnlyMessage": "{{notSaved}} not saved.",
   "ownedNotSavedRetryMessage": "{{owned}} already in your library, {{failed}} not saved. Tap Add to retry.",
   "addItYourself": "Add it yourself",
-  "unverifiedSavedMessage": "Added {{title}} to your wishlist as unverified."
+  "unverifiedSavedMessage": "Added {{title}} to your wishlist as unverified.",
+  "scanInProgress": "Reading your books and looking up matches…",
+  "searchInProgress": "Searching…"
 }

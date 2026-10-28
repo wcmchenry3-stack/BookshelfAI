@@ -106,5 +106,7 @@
   "notSavedOnlyMessage": "{{notSaved}} não salvos.",
   "ownedNotSavedRetryMessage": "{{owned}} já na sua biblioteca, {{failed}} não salvos. Toque em Adicionar.",
   "addItYourself": "Adicionar você mesmo",
-  "unverifiedSavedMessage": "{{title}} foi adicionado à sua lista de desejos como não verificado."
+  "unverifiedSavedMessage": "{{title}} foi adicionado à sua lista de desejos como não verificado.",
+  "scanInProgress": "Lendo seus livros e procurando correspondências…",
+  "searchInProgress": "Pesquisando…"
 }

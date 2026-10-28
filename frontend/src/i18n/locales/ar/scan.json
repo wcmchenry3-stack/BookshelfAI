@@ -110,5 +110,7 @@
   "notSavedOnlyMessage": "لم يُحفظ: {{notSaved}}.",
   "ownedNotSavedRetryMessage": "موجودة في مكتبتك: {{owned}}، ولم يُحفظ: {{failed}}. اضغط إضافة للمحاولة مجددًا.",
   "addItYourself": "أضِفه بنفسك",
-  "unverifiedSavedMessage": "تمت إضافة {{title}} إلى قائمة رغباتك بعلامة «غير موثّق»."
+  "unverifiedSavedMessage": "تمت إضافة {{title}} إلى قائمة رغباتك بعلامة «غير موثّق».",
+  "scanInProgress": "جارٍ قراءة كتبك والبحث عن النتائج المطابقة…",
+  "searchInProgress": "جارٍ البحث…"
 }
