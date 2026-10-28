@@ -418,8 +418,12 @@ async def restore_user_book(
     # Serialise with this user's other restores and unverified adds: the
     # checks below read the user's live entries.
     await lock_user(db, user_id)
+    # Row-locked, so a restore racing the purge waits for it and then finds
+    # the row gone (404) rather than updating a deleted row.
     result = await db.execute(
-        _user_book_query(user_id, trashed=True).where(UserBook.id == user_book_id)
+        _user_book_query(user_id, trashed=True)
+        .where(UserBook.id == user_book_id)
+        .with_for_update(of=UserBook)
     )
     user_book = result.scalar_one_or_none()
     if not user_book:
