@@ -51,6 +51,18 @@ import * as storage from './storage';
 // If writing '1' fails after a good wipe, the marker stays 'pending' and the
 // next launch wipes again (fail closed: at worst one more sign-in).
 //
+// Signing in during the launch supersedes the check (supersedeInstallCheck):
+// - The check is capped at 5 s (AuthContext), so it may still be running when
+//   the user signs in. Once superseded it starts no more token deletes and
+//   writes no more 'pending' markers, and login waits for deletes already
+//   started, so the new session's tokens are never deleted by it.
+// - After login has written both new tokens, the marker is set to '1'
+//   (markInstallDone): the previous install's tokens were overwritten, so the
+//   next launch has nothing to wipe. Without this, a 'pending' left by a failed
+//   check, wipe or sign-out would wipe the new session on the next launch.
+// Marker writes run one at a time in the order they are issued, so a sign-out
+// after that login still leaves 'pending' as the last write.
+//
 // The check starts with one getAllKeys call. AsyncStorage runs calls in the
 // order they are issued, and AuthProvider starts this check while it renders,
 // before any child effect (such as ScanJobProvider's) can write a key on a
@@ -75,6 +87,32 @@ export function storedTokensUsable(result: InstallCheckResult): boolean {
   return result === 'no_change' || result === 'cleared';
 }
 
+// Set when a login supersedes this launch's install check.
+let superseded = false;
+// The check's token deletes, while they run; login waits for them.
+let deletesInFlight: Promise<unknown> | null = null;
+// Marker writes, run one at a time in the order issued.
+let markerWrites: Promise<void> = Promise.resolve();
+
+// Best effort, never rejects. `fromCheck` writes are skipped once a login has
+// superseded the check.
+function writeMarker(value: string, fromCheck: boolean): Promise<void> {
+  markerWrites = markerWrites.then(async () => {
+    if (fromCheck && superseded) return;
+    try {
+      await AsyncStorage.setItem(INSTALL_MARKER_KEY, value);
+    } catch {
+      // See the known gaps above.
+    }
+  });
+  return markerWrites;
+}
+
+async function deleteBothTokens(): Promise<void> {
+  await storage.deleteItem(ACCESS_TOKEN_KEY);
+  await storage.deleteItem(REFRESH_TOKEN_KEY);
+}
+
 async function wipeTokens(): Promise<InstallCheckResult> {
   let hadTokens: boolean;
   try {
@@ -83,8 +121,15 @@ async function wipeTokens(): Promise<InstallCheckResult> {
       storage.getItem(REFRESH_TOKEN_KEY),
     ]);
     hadTokens = access !== null || refresh !== null;
-    await storage.deleteItem(ACCESS_TOKEN_KEY);
-    await storage.deleteItem(REFRESH_TOKEN_KEY);
+    // A login took over while the tokens were read: the stored tokens are
+    // now (or are about to be) the new session's, so delete nothing.
+    if (superseded) return 'check_failed';
+    deletesInFlight = deleteBothTokens();
+    try {
+      await deletesInFlight;
+    } finally {
+      deletesInFlight = null;
+    }
   } catch {
     Sentry.addBreadcrumb({
       category: 'auth',
@@ -100,11 +145,8 @@ async function wipeTokens(): Promise<InstallCheckResult> {
       level: 'info',
     });
   }
-  try {
-    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
-  } catch {
-    // The marker stays 'pending', so the next launch wipes again.
-  }
+  // If this fails, the marker stays 'pending' and the next launch wipes again.
+  await writeMarker(MARKER_DONE, true);
   return hadTokens ? 'cleared' : 'no_change';
 }
 
@@ -124,7 +166,7 @@ async function runInstallCheck(): Promise<InstallCheckResult> {
       message: 'install check: storage unreadable',
       level: 'warning',
     });
-    await markWipePending();
+    await writeMarker(MARKER_PENDING, true);
     return 'check_failed';
   }
 
@@ -132,24 +174,18 @@ async function runInstallCheck(): Promise<InstallCheckResult> {
   if (keys.includes(INSTALL_MARKER_KEY)) return wipeTokens();
 
   if (keys.length > 0) {
-    try {
-      await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_DONE);
-      Sentry.addBreadcrumb({
-        category: 'auth',
-        message: 'upgrade: install marker set',
-        level: 'info',
-      });
-    } catch {
-      // Tried again on the next launch, which still sees the other keys.
-    }
+    // If this fails, the next launch still sees the other keys and retries.
+    await writeMarker(MARKER_DONE, true);
+    Sentry.addBreadcrumb({
+      category: 'auth',
+      message: 'upgrade: install marker set',
+      level: 'info',
+    });
     return 'no_change';
   }
 
-  try {
-    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_PENDING);
-  } catch {
-    // Wipe anyway; see the known gaps above.
-  }
+  // Wipe even if this write fails; see the known gaps above.
+  await writeMarker(MARKER_PENDING, true);
   return wipeTokens();
 }
 
@@ -160,11 +196,27 @@ async function runInstallCheck(): Promise<InstallCheckResult> {
  */
 export async function markWipePending(): Promise<void> {
   if (Platform.OS === 'web') return;
-  try {
-    await AsyncStorage.setItem(INSTALL_MARKER_KEY, MARKER_PENDING);
-  } catch {
-    // See the known gaps above.
-  }
+  await writeMarker(MARKER_PENDING, false);
+}
+
+/**
+ * Called by login before it writes the new tokens. From now on this launch's
+ * install check deletes nothing and writes no marker; resolves once any
+ * token delete it already started has settled. Never rejects.
+ */
+export async function supersedeInstallCheck(): Promise<void> {
+  superseded = true;
+  if (deletesInFlight) await deletesInFlight.catch(() => {});
+}
+
+/**
+ * Called by login after both new tokens are written: the previous install's
+ * tokens are gone, so a 'pending' marker must not wipe the new session on the
+ * next launch. Best effort, never rejects.
+ */
+export async function markInstallDone(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  await writeMarker(MARKER_DONE, false);
 }
 
 let installCheck: Promise<InstallCheckResult> | null = null;
@@ -185,4 +237,7 @@ export function clearTokensIfFreshInstall(): Promise<InstallCheckResult> {
 /** Test-only: forget the memoised result so the next call checks again. */
 export function resetInstallCheckForTests(): void {
   installCheck = null;
+  superseded = false;
+  deletesInFlight = null;
+  markerWrites = Promise.resolve();
 }

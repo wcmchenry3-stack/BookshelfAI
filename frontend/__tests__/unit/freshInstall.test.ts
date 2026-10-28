@@ -6,8 +6,10 @@ import {
   MARKER_DONE,
   MARKER_PENDING,
   clearTokensIfFreshInstall,
+  markInstallDone,
   markWipePending,
   resetInstallCheckForTests,
+  supersedeInstallCheck,
 } from '../../lib/freshInstall';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -258,3 +260,104 @@ describe('clearTokensIfFreshInstall', () => {
     expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBeNull();
   });
 });
+
+// What AuthContext's login does around writing the new session's tokens.
+async function signIn() {
+  await supersedeInstallCheck();
+  mockKeychain.set('bookshelf_access_token', 'new-access');
+  mockKeychain.set('bookshelf_refresh_token', 'new-refresh');
+  await markInstallDone();
+}
+
+function newSessionKept() {
+  expect(mockKeychain.get('bookshelf_access_token')).toBe('new-access');
+  expect(mockKeychain.get('bookshelf_refresh_token')).toBe('new-refresh');
+}
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+describe('signing in during or after the install check', () => {
+  it('a login after a failed check is kept on the next launch', async () => {
+    (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('check_failed');
+
+    await signIn();
+
+    nextLaunch();
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('no_change');
+    newSessionKept();
+  });
+
+  it('a login after a failed wipe is kept on the next launch', async () => {
+    mockDeleteItem.mockRejectedValueOnce(new Error('keychain'));
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('wipe_failed');
+
+    await signIn();
+
+    nextLaunch();
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('no_change');
+    newSessionKept();
+  });
+
+  it('a check still running when the user signs in never deletes the new tokens', async () => {
+    // getAllKeys is slow (past the 5 s cap), then reports a fresh install.
+    const keys = deferred<string[]>();
+    (AsyncStorage.getAllKeys as jest.Mock).mockReturnValueOnce(keys.promise);
+    const check = clearTokensIfFreshInstall();
+
+    await signIn();
+    keys.resolve([]);
+    await check;
+
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    newSessionKept();
+    expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe(MARKER_DONE);
+    nextLaunch();
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('no_change');
+    newSessionKept();
+  });
+
+  it('login waits for deletes the check already started before writing the new tokens', async () => {
+    const firstDelete = deferred<void>();
+    mockDeleteItem.mockImplementationOnce(async (key: string) => {
+      await firstDelete.promise;
+      mockKeychain.delete(key);
+    });
+    const check = clearTokensIfFreshInstall();
+    await waitForDeleteStarted();
+
+    const login = signIn();
+    firstDelete.resolve();
+    await Promise.all([check, login]);
+
+    newSessionKept();
+    nextLaunch();
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('no_change');
+    newSessionKept();
+  });
+
+  it('a sign-out after that login still makes the next launch wipe', async () => {
+    (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+    await clearTokensIfFreshInstall();
+    await signIn();
+
+    await markWipePending();
+
+    nextLaunch();
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('cleared');
+    expect(mockKeychain.size).toBe(0);
+  });
+});
+
+async function waitForDeleteStarted() {
+  for (let i = 0; i < 50 && mockDeleteItem.mock.calls.length === 0; i++) {
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  expect(mockDeleteItem).toHaveBeenCalled();
+}

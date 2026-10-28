@@ -11,7 +11,11 @@ import {
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { INSTALL_MARKER_KEY, resetInstallCheckForTests } from '../../lib/freshInstall';
+import {
+  INSTALL_MARKER_KEY,
+  clearTokensIfFreshInstall,
+  resetInstallCheckForTests,
+} from '../../lib/freshInstall';
 
 const mockPost = jest.fn();
 const mockGet = jest.fn();
@@ -436,6 +440,77 @@ describe('AuthProvider install check timeout (#722 review round 3)', () => {
     expect(gateValue).toBe(false);
     expect(mockGet).not.toHaveBeenCalled();
     expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
+  });
+});
+
+describe('AuthProvider login during the install check (#729 review)', () => {
+  it.each(['login', 'testLogin'] as const)(
+    '%s while a slow check is still running stays signed in and keeps the new tokens',
+    async (method) => {
+      mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
+      const keychain = useKeychain(BOTH_TOKENS);
+      // A slow getAllKeys that, once it answers, reports a fresh install.
+      let answerKeys!: (keys: string[]) => void;
+      (AsyncStorage.getAllKeys as jest.Mock).mockReturnValueOnce(
+        new Promise<string[]>((res) => {
+          answerKeys = res;
+        })
+      );
+      let ctx!: React.ContextType<typeof AuthContext>;
+      function Capture() {
+        // eslint-disable-next-line react-hooks/globals
+        ctx = useContext(AuthContext);
+        return null;
+      }
+      const { getByTestId } = await render(
+        <AuthProvider>
+          <AuthDisplay />
+          <Capture />
+        </AuthProvider>
+      );
+
+      await act(async () => {
+        if (method === 'login') await ctx.login('google-id-token');
+        else await ctx.testLogin('acc', 'ref');
+      });
+      await act(async () => {
+        answerKeys([]);
+      });
+
+      await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+      expect(keychain.get('bookshelf_access_token')).toBe('acc');
+      expect(keychain.get('bookshelf_refresh_token')).toBe('ref');
+      expect(await AsyncStorage.getItem(INSTALL_MARKER_KEY)).toBe('1');
+    }
+  );
+
+  it('a login after a failed check is not wiped on the next launch', async () => {
+    mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
+    const keychain = useKeychain(BOTH_TOKENS);
+    (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
+    let ctx!: React.ContextType<typeof AuthContext>;
+    function Capture() {
+      // eslint-disable-next-line react-hooks/globals
+      ctx = useContext(AuthContext);
+      return null;
+    }
+    const { getByTestId } = await render(
+      <AuthProvider>
+        <AuthDisplay />
+        <Capture />
+      </AuthProvider>
+    );
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    await act(async () => {
+      await ctx.login('google-id-token');
+    });
+    expect(getByTestId('state').props.children).toBe('authed');
+
+    // The next launch's install check keeps the new session.
+    resetInstallCheckForTests();
+    await expect(clearTokensIfFreshInstall()).resolves.toBe('no_change');
+    expect(keychain.get('bookshelf_access_token')).toBe('acc');
+    expect(keychain.get('bookshelf_refresh_token')).toBe('ref');
   });
 });
 

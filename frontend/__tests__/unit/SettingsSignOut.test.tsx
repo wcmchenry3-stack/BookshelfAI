@@ -27,8 +27,10 @@ jest.mock('../../lib/api', () => ({
 const mockMarkWipePending = jest.fn();
 jest.mock('../../lib/freshInstall', () => ({
   clearTokensIfFreshInstall: () => Promise.resolve('no_change'),
+  markInstallDone: () => Promise.resolve(),
   markWipePending: () => mockMarkWipePending(),
   storedTokensUsable: () => true,
+  supersedeInstallCheck: () => Promise.resolve(),
 }));
 jest.mock('../../lib/sentry', () => ({
   Sentry: { addBreadcrumb: (...a: unknown[]) => mockBreadcrumb(...a) },

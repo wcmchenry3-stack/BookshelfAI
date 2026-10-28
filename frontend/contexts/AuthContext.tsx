@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSegments } from 'expo-router';
 
 import {
@@ -12,8 +12,10 @@ import {
 import {
   type InstallCheckResult,
   clearTokensIfFreshInstall,
+  markInstallDone,
   markWipePending,
   storedTokensUsable,
+  supersedeInstallCheck,
 } from '../lib/freshInstall';
 import { Sentry } from '../lib/sentry';
 import * as storage from '../lib/storage';
@@ -127,6 +129,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // makes a request (see lib/freshInstall.ts). Memoised, so a repeat render
   // reuses it.
   const [tokensUsable] = useState(startInstallCheck);
+  // Set by login, testLogin and logout. The launch check below may still be
+  // running (the install check alone can take 5 s); once the user has signed
+  // in or out, its result must not overwrite theirs.
+  const sessionChangedRef = useRef(false);
 
   // On mount: clear tokens left in the Keychain by a previous install, then
   // confirm any stored session with the server before leaving the loading
@@ -158,7 +164,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
       } finally {
         if (!cancelled) {
-          setIsAuthenticated(authed);
+          if (!sessionChangedRef.current) setIsAuthenticated(authed);
           setIsLoading(false);
         }
       }
@@ -168,20 +174,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [tokensUsable]);
 
-  const login = useCallback(async (idToken: string) => {
-    const { data } = await api.post('/auth/google', { id_token: idToken });
-    await storage.setItem(ACCESS_TOKEN_KEY, data.access_token);
-    await storage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+  // Stores a new session. The install check is superseded first, so a check
+  // still running (past its 5 s cap) cannot delete the new tokens; once both
+  // are written the install is marked done, so a 'pending' marker left by a
+  // failed check, wipe or sign-out does not wipe them on the next launch.
+  const storeSession = useCallback(async (accessToken: string, refreshToken: string) => {
+    await supersedeInstallCheck();
+    await storage.setItem(ACCESS_TOKEN_KEY, accessToken);
+    await storage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    await markInstallDone();
+    sessionChangedRef.current = true;
     resumeStoredSession();
     setIsAuthenticated(true);
   }, []);
 
-  const testLogin = useCallback(async (accessToken: string, refreshToken: string) => {
-    await storage.setItem(ACCESS_TOKEN_KEY, accessToken);
-    await storage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-    resumeStoredSession();
-    setIsAuthenticated(true);
-  }, []);
+  const login = useCallback(
+    async (idToken: string) => {
+      const { data } = await api.post('/auth/google', { id_token: idToken });
+      await storeSession(data.access_token, data.refresh_token);
+    },
+    [storeSession]
+  );
+
+  const testLogin = useCallback(
+    (accessToken: string, refreshToken: string) => storeSession(accessToken, refreshToken),
+    [storeSession]
+  );
 
   // Signs out even if SecureStore throws: the request gate is closed first
   // (so a refresh landing during the deletes is dropped), both deletes are
@@ -202,6 +220,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Close the request gate even if a delete failed, so any token left
       // behind is not sent, and a refresh already in flight is dropped.
       gateStoredSession(Promise.resolve(false));
+      sessionChangedRef.current = true;
       setIsAuthenticated(false);
     }
   }, []);
