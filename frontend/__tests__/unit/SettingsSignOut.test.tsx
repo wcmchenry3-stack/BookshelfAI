@@ -44,7 +44,11 @@ jest.mock('../../lib/storage', () => ({
 }));
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
-    theme: { colors: { background: '#fff', text: '#000', error: '#f00' }, spacing: { md: 16 } },
+    theme: {
+      colors: { background: '#fff', text: '#000', error: '#f00' },
+      spacing: { md: 16 },
+      typography: { fontSizeBase: 16, fontSizeXS: 12 },
+    },
   }),
 }));
 jest.mock('../../hooks/useScanJobs', () => ({ useScanJobs: () => ({ usageRefreshKey: 0 }) }));

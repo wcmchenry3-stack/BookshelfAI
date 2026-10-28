@@ -42,7 +42,7 @@
     "intro": "Verwijderde boeken blijven 30 dagen bewaard en worden daarna definitief verwijderd. Als je een boek opnieuw verwijdert, vervangt dat oudere kopieën zonder notities of beoordeling. Alleen de nieuwste 1.000 blijven bewaard.",
     "emptyTitle": "De prullenbak is leeg",
     "emptyBody": "Boeken die je uit je bibliotheek verwijdert, staan hier 30 dagen. Tot die tijd kun je ze herstellen.",
-    "dates": "Verwijderd {{deleted}} · definitief weg {{purge}}",
+    "dates": "Verwijderd {{deleted}} · definitief weg op {{purge}}",
     "restore": "Herstellen",
     "restoreA11y": "{{title}} herstellen",
     "restored": "{{title}} is hersteld in je bibliotheek.",
@@ -50,6 +50,7 @@
     "restoreNotFound": "Dit boek staat niet meer in de prullenbak.",
     "restoreFailed": "Dit boek kon niet worden hersteld. Probeer het opnieuw.",
     "errorLoad": "De prullenbak kon niet worden geladen.",
-    "retry": "Opnieuw proberen"
+    "retry": "Opnieuw proberen",
+    "errorRefresh": "De prullenbak kon niet worden vernieuwd."
   }
 }

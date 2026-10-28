@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -18,6 +18,7 @@ import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { useBanner } from '../../hooks/useBanner';
 import { useOnlineOnly } from '../../hooks/useOnlineOnly';
+import { onLibraryChanged } from '../../lib/libraryChanged';
 import { openTrash } from '../../lib/trash';
 import { UnverifiedBadge } from '../../components/UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
@@ -103,6 +104,9 @@ export default function WishlistScreen() {
       fetchWishlist();
     }, [])
   );
+
+  // A restore from the Trash (#683) can finish after this screen's focus reload.
+  useEffect(() => onLibraryChanged(() => void fetchWishlist()), []);
 
   async function handleMarkPurchased(item: UserBook) {
     if (!requireOnline() || !beginMutating(item.id)) return;

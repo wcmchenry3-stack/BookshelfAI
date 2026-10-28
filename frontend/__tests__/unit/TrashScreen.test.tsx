@@ -1,8 +1,8 @@
 import React from 'react';
-import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import TrashScreen from '../../app/trash';
+import { onLibraryChanged } from '../../lib/libraryChanged';
 
 // #683: the Trash screen (list, restore, errors, empty / loading / error).
 
@@ -88,14 +88,11 @@ function apiError(status: number, detail?: string) {
   return { response: { status, data: detail ? { detail } : {} } };
 }
 
-let alertSpy: jest.SpyInstance;
-
 beforeEach(() => {
   jest.clearAllMocks();
   mockConnected = true;
   mockListTrash.mockResolvedValue([DUNE, FOUNDATION]);
   mockRestore.mockResolvedValue({});
-  alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 });
 
 describe('TrashScreen', () => {
@@ -183,9 +180,12 @@ describe('TrashScreen', () => {
     await act(async () => {
       await fireEvent.press(getByLabelText('Restore Dune'));
     });
-    expect(alertSpy).toHaveBeenCalledWith('Error', 'This book is already in your library.');
+    expect(mockShowBanner).toHaveBeenCalledWith({
+      message: 'This book is already in your library.',
+      type: 'error',
+    });
     expect(getByText('Dune')).toBeTruthy();
-    expect(mockShowBanner).not.toHaveBeenCalled();
+    expect(mockShowBanner).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
   });
 
   it('the unverified limit shows the existing limit message', async () => {
@@ -195,10 +195,10 @@ describe('TrashScreen', () => {
     await act(async () => {
       await fireEvent.press(getByLabelText('Restore Foundation'));
     });
-    expect(alertSpy).toHaveBeenCalledWith(
-      'Error',
-      "You've reached the limit of books you can add yourself."
-    );
+    expect(mockShowBanner).toHaveBeenCalledWith({
+      message: "You've reached the limit of books you can add yourself.",
+      type: 'error',
+    });
   });
 
   it('a 404 refreshes the list', async () => {
@@ -211,7 +211,10 @@ describe('TrashScreen', () => {
     });
     await waitFor(() => expect(mockListTrash).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(queryByText('Dune')).toBeNull());
-    expect(alertSpy).toHaveBeenCalledWith('Error', 'This book is no longer in the trash.');
+    expect(mockShowBanner).toHaveBeenCalledWith({
+      message: 'This book is no longer in the trash.',
+      type: 'error',
+    });
   });
 
   it('a 5xx shows the generic error', async () => {
@@ -221,7 +224,10 @@ describe('TrashScreen', () => {
     await act(async () => {
       await fireEvent.press(getByLabelText('Restore Dune'));
     });
-    expect(alertSpy).toHaveBeenCalledWith('Error', "Couldn't restore this book. Try again.");
+    expect(mockShowBanner).toHaveBeenCalledWith({
+      message: "Couldn't restore this book. Try again.",
+      type: 'error',
+    });
   });
 
   it('disables Restore while offline', async () => {
@@ -229,6 +235,10 @@ describe('TrashScreen', () => {
     const { findByText, getByLabelText } = await render(<TrashScreen />);
     await findByText('Dune');
     expect(getByLabelText('Restore Dune').props.accessibilityState.disabled).toBe(true);
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Restore Dune'));
+    });
+    expect(mockRestore).not.toHaveBeenCalled();
   });
 
   it('Back leaves the screen', async () => {
@@ -236,5 +246,70 @@ describe('TrashScreen', () => {
     await findByText('Dune');
     await fireEvent.press(getByLabelText('Back'));
     expect(mockBack).toHaveBeenCalled();
+  });
+
+  it('fires the library-changed signal after a successful restore only', async () => {
+    const changed = jest.fn();
+    const off = onLibraryChanged(changed);
+    mockRestore.mockRejectedValueOnce(apiError(500));
+    const { findByText, getByLabelText } = await render(<TrashScreen />);
+    await findByText('Dune');
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Restore Dune'));
+    });
+    expect(changed).not.toHaveBeenCalled();
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Restore Dune'));
+    });
+    expect(changed).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it('can retry after a failed restore', async () => {
+    mockRestore.mockRejectedValueOnce(apiError(500)).mockResolvedValueOnce({});
+    const { findByText, getByLabelText, queryByText } = await render(<TrashScreen />);
+    await findByText('Dune');
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Restore Dune'));
+    });
+    expect(getByLabelText('Restore Dune').props.accessibilityState.disabled).toBe(false);
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Restore Dune'));
+    });
+    expect(mockRestore).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(queryByText('Dune')).toBeNull());
+  });
+
+  it('a refresh that was in flight during a restore does not bring the row back', async () => {
+    const { findByText, getByLabelText, queryByText, getByTestId } = await render(<TrashScreen />);
+    await findByText('Dune');
+    let resolveStale!: (rows: unknown[]) => void;
+    mockListTrash.mockReturnValueOnce(new Promise((r) => (resolveStale = r)));
+    await act(async () => {
+      getByTestId('trash-list').props.refreshControl.props.onRefresh();
+    });
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Restore Dune'));
+    });
+    await waitFor(() => expect(queryByText('Dune')).toBeNull());
+    await act(async () => resolveStale([DUNE, FOUNDATION]));
+    expect(queryByText('Dune')).toBeNull();
+    expect(queryByText('Foundation')).toBeTruthy();
+  });
+
+  it('shows an error banner when a refresh fails while rows are shown', async () => {
+    const { findByText, getByTestId, getByText } = await render(<TrashScreen />);
+    await findByText('Dune');
+    mockListTrash.mockRejectedValueOnce(apiError(500));
+    await act(async () => {
+      getByTestId('trash-list').props.refreshControl.props.onRefresh();
+    });
+    await waitFor(() =>
+      expect(mockShowBanner).toHaveBeenCalledWith({
+        message: "Couldn't refresh the trash.",
+        type: 'error',
+      })
+    );
+    expect(getByText('Dune')).toBeTruthy();
   });
 });

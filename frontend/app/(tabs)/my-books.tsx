@@ -22,6 +22,7 @@ import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { useBanner } from '../../hooks/useBanner';
 import { useOnlineOnly } from '../../hooks/useOnlineOnly';
+import { onLibraryChanged } from '../../lib/libraryChanged';
 import { openTrash } from '../../lib/trash';
 import { UnverifiedBadge } from '../../components/UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
@@ -136,6 +137,9 @@ export default function MyBooksScreen() {
       fetchBooks(activeTab);
     }, [activeTab])
   );
+
+  // A restore from the Trash (#683) can finish after this screen's focus reload.
+  useEffect(() => onLibraryChanged(() => void fetchBooks(activeTabRef.current)), []);
 
   function handleTabChange(tab: Status) {
     setActiveTab(tab);

@@ -3,6 +3,8 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import MyBooksScreen from '../../app/(tabs)/my-books';
 import SettingsScreen from '../../app/(tabs)/settings';
+import WishlistScreen from '../../app/(tabs)/wishlist';
+import { notifyLibraryChanged } from '../../lib/libraryChanged';
 import en from '../../src/i18n/locales/en/my-books.json';
 import * as trashNav from '../../lib/trash';
 
@@ -89,6 +91,44 @@ describe('delete copy (#683)', () => {
       await fireEvent.press(await findByLabelText('Remove Dune'));
     });
     expect(mockShowBanner).not.toHaveBeenCalled();
+  });
+});
+
+describe('Wishlist delete (#683)', () => {
+  it('tells the user the entry is in the Trash and offers View trash', async () => {
+    const { findByLabelText } = await render(<WishlistScreen />);
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Remove Dune from wishlist'));
+    });
+    await waitFor(() => expect(mockShowBanner).toHaveBeenCalled());
+    const config = mockShowBanner.mock.calls[0][0];
+    expect(config.message).toBe('Moved to Trash. You can restore it within 30 days.');
+    config.actions[0].onPress();
+    expect(mockPush).toHaveBeenCalledWith('/trash');
+  });
+});
+
+describe('library-changed signal (#683)', () => {
+  it('makes My Books reload', async () => {
+    await render(<MyBooksScreen />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+    await act(async () => notifyLibraryChanged());
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+  });
+
+  it('makes Wishlist reload', async () => {
+    await render(<WishlistScreen />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+    await act(async () => notifyLibraryChanged());
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+  });
+
+  it('stops reloading once the screen is gone', async () => {
+    const { unmount } = await render(<MyBooksScreen />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+    await unmount();
+    notifyLibraryChanged();
+    expect(mockGet).toHaveBeenCalledTimes(1);
   });
 });
 

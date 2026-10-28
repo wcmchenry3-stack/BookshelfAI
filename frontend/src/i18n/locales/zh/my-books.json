@@ -50,6 +50,7 @@
     "restoreNotFound": "这本书已不在回收站中。",
     "restoreFailed": "无法恢复这本书，请重试。",
     "errorLoad": "无法加载回收站。",
-    "retry": "重试"
+    "retry": "重试",
+    "errorRefresh": "无法刷新回收站。"
   }
 }

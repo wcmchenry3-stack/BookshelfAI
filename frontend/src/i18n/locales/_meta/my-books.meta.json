@@ -219,5 +219,10 @@
     "description": "Retry button after the trash list fails to load",
     "tone": "neutral",
     "characterLimit": 20
+  },
+  "trash.errorRefresh": {
+    "description": "Error banner when refreshing the trash list fails while entries are shown",
+    "tone": "neutral",
+    "characterLimit": 60
   }
 }

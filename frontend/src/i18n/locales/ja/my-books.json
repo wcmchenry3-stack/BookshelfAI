@@ -50,6 +50,7 @@
     "restoreNotFound": "この本はもうゴミ箱にありません。",
     "restoreFailed": "この本を元に戻せませんでした。もう一度お試しください。",
     "errorLoad": "ゴミ箱を読み込めませんでした。",
-    "retry": "再試行"
+    "retry": "再試行",
+    "errorRefresh": "ゴミ箱を更新できませんでした。"
   }
 }

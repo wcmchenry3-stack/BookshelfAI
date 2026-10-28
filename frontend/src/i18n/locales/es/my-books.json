@@ -42,7 +42,7 @@
     "intro": "Los libros eliminados se conservan 30 días y después se borran para siempre. Si eliminas un libro otra vez, se sustituyen las copias antiguas sin notas ni valoración. Solo se conservan las 1.000 más recientes.",
     "emptyTitle": "La papelera está vacía",
     "emptyBody": "Los libros que quitas de tu biblioteca aparecen aquí durante 30 días. Puedes restaurarlos hasta entonces.",
-    "dates": "Eliminado {{deleted}} · borrado definitivamente {{purge}}",
+    "dates": "Eliminado {{deleted}} · se borrará definitivamente el {{purge}}",
     "restore": "Restaurar",
     "restoreA11y": "Restaurar {{title}}",
     "restored": "Se restauró {{title}} en tu biblioteca.",
@@ -50,6 +50,7 @@
     "restoreNotFound": "Este libro ya no está en la papelera.",
     "restoreFailed": "No se pudo restaurar este libro. Inténtalo de nuevo.",
     "errorLoad": "No se pudo cargar la papelera.",
-    "retry": "Reintentar"
+    "retry": "Reintentar",
+    "errorRefresh": "No se pudo actualizar la papelera."
   }
 }

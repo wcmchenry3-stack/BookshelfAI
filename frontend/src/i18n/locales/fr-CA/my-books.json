@@ -50,6 +50,7 @@
     "restoreNotFound": "Ce livre n'est plus dans la corbeille.",
     "restoreFailed": "Impossible de restaurer ce livre. Réessayez.",
     "errorLoad": "Impossible de charger la corbeille.",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "errorRefresh": "Impossible d'actualiser la corbeille."
   }
 }

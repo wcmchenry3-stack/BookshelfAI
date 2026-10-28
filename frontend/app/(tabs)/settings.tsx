@@ -87,8 +87,20 @@ export default function SettingsScreen() {
         accessibilityLabel={t('trashA11y')}
         testID="settings-trash"
       >
-        <Text style={[styles.trashText, { color: theme.colors.text }]}>{t('trash')}</Text>
-        <Text style={[styles.trashHint, { color: theme.colors.textSecondary }]}>
+        <Text
+          style={[
+            styles.trashText,
+            { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
+          ]}
+        >
+          {t('trash')}
+        </Text>
+        <Text
+          style={[
+            styles.trashHint,
+            { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeXS },
+          ]}
+        >
           {t('trashHint')}
         </Text>
       </Pressable>
@@ -111,8 +123,8 @@ const styles = StyleSheet.create({
   usageRow: { alignItems: 'center', marginBottom: 16 },
   usageLabel: { fontSize: 12 },
   trash: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
-  trashText: { fontSize: 16, fontWeight: '600' },
-  trashHint: { fontSize: 12, textAlign: 'center' },
+  trashText: { fontWeight: '600' },
+  trashHint: { textAlign: 'center' },
   signOut: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, marginTop: 16 },
   signOutBusy: { opacity: 0.5 },
   signOutText: { fontSize: 16, fontWeight: '600' },

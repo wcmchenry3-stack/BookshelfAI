@@ -42,7 +42,7 @@
     "intro": "Os livros removidos ficam guardados por 30 dias e depois são excluídos de vez. Remover um livro de novo substitui cópias mais antigas sem notas nem avaliação. Só os 1.000 mais recentes são mantidos.",
     "emptyTitle": "A lixeira está vazia",
     "emptyBody": "Os livros que você remove da biblioteca aparecem aqui por 30 dias. Você pode restaurá-los até lá.",
-    "dates": "Excluído em {{deleted}} · removido de vez em {{purge}}",
+    "dates": "Excluído em {{deleted}} · será removido de vez em {{purge}}",
     "restore": "Restaurar",
     "restoreA11y": "Restaurar {{title}}",
     "restored": "{{title}} foi restaurado na sua biblioteca.",
@@ -50,6 +50,7 @@
     "restoreNotFound": "Este livro não está mais na lixeira.",
     "restoreFailed": "Não foi possível restaurar este livro. Tente novamente.",
     "errorLoad": "Não foi possível carregar a lixeira.",
-    "retry": "Tentar novamente"
+    "retry": "Tentar novamente",
+    "errorRefresh": "Não foi possível atualizar a lixeira."
   }
 }

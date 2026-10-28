@@ -9,6 +9,7 @@ jest.mock('../../hooks/useTheme', () => ({
     theme: {
       colors: { background: '#fff', text: '#000' },
       spacing: { md: 16 },
+      typography: { fontSizeBase: 16, fontSizeXS: 12 },
     },
   }),
 }));

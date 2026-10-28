@@ -42,7 +42,7 @@
     "intro": "Removed books are kept for 30 days, then deleted for good. Removing a book again replaces older copies that have no notes or rating. Only the newest 1,000 are kept.",
     "emptyTitle": "Trash is empty",
     "emptyBody": "Books you remove from your library appear here for 30 days. You can restore them until then.",
-    "dates": "Deleted {{deleted}} · permanently removed {{purge}}",
+    "dates": "Deleted {{deleted}} · permanently removed on {{purge}}",
     "restore": "Restore",
     "restoreA11y": "Restore {{title}}",
     "restored": "Restored {{title}} to your library.",
@@ -50,6 +50,7 @@
     "restoreNotFound": "This book is no longer in the trash.",
     "restoreFailed": "Couldn't restore this book. Try again.",
     "errorLoad": "Could not load the trash.",
-    "retry": "Try again"
+    "retry": "Try again",
+    "errorRefresh": "Couldn't refresh the trash."
   }
 }

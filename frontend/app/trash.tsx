@@ -20,6 +20,7 @@ import { useOnlineOnly } from '../hooks/useOnlineOnly';
 import { useTheme } from '../hooks/useTheme';
 import { listTrash, restoreUserBook, type TrashedUserBook } from '../lib/api';
 import { isServiceUnavailable } from '../lib/apiErrorReporting';
+import { notifyLibraryChanged } from '../lib/libraryChanged';
 import { formatLocalDate, leaveTrash, restoreFailure } from '../lib/trash';
 
 // The trash (#683): entries removed from the library, kept 30 days, newest
@@ -30,7 +31,7 @@ export default function TrashScreen() {
   const { theme } = useTheme();
   const { t, i18n } = useTranslation('my-books');
   const { showBanner } = useBanner();
-  const { isConnected, requireOnline } = useOnlineOnly();
+  const { isConnected } = useOnlineOnly();
   const [items, setItems] = useState<TrashedUserBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -40,17 +41,40 @@ export default function TrashScreen() {
   const restoringRef = useRef<Set<string>>(new Set());
   const [restoringIds, setRestoringIds] = useState<ReadonlySet<string>>(new Set());
 
+  // The latest load wins, and an id restored in this session never comes back
+  // from a load that was already in flight when the restore succeeded.
+  const loadIdRef = useRef(0);
+  const restoredRef = useRef<Set<string>>(new Set());
+  const itemsRef = useRef<TrashedUserBook[]>([]);
+
   const load = useCallback(async () => {
+    const loadId = ++loadIdRef.current;
     try {
       const data = await listTrash();
-      setItems(data.filter((i) => i.book != null));
+      // A newer load is under way and will set the state (and clear the flags).
+      if (loadId !== loadIdRef.current) return;
+      const next = data.filter((i) => i.book != null && !restoredRef.current.has(i.id));
+      itemsRef.current = next;
+      setItems(next);
       setLoadError(null);
     } catch (err) {
-      setLoadError(isServiceUnavailable(err) ? 'unavailable' : 'failed');
+      if (loadId !== loadIdRef.current) return;
+      if (itemsRef.current.length > 0) {
+        // The list on screen stays; say that it could not be refreshed.
+        showBanner({
+          message: isServiceUnavailable(err)
+            ? t('serviceUnavailable', { ns: 'common' })
+            : t('trash.errorRefresh'),
+          type: 'error',
+        });
+      } else {
+        setLoadError(isServiceUnavailable(err) ? 'unavailable' : 'failed');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useFocusEffect(
@@ -66,11 +90,18 @@ export default function TrashScreen() {
   }
 
   async function handleRestore(item: TrashedUserBook) {
-    if (!requireOnline() || restoringRef.current.has(item.id)) return;
+    if (restoringRef.current.has(item.id)) return;
+    if (!isConnected) {
+      showBanner({ message: t('requiresConnection', { ns: 'common' }), type: 'error' });
+      return;
+    }
     setRestoring(item.id, true);
     try {
       await restoreUserBook(item.id);
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      restoredRef.current.add(item.id);
+      itemsRef.current = itemsRef.current.filter((i) => i.id !== item.id);
+      setItems(itemsRef.current);
+      notifyLibraryChanged();
       showBanner({
         message: t('trash.restored', { title: item.book.title }),
         type: 'success',
@@ -89,7 +120,7 @@ export default function TrashScreen() {
               : failure === 'unavailable'
                 ? t('serviceUnavailable', { ns: 'common' })
                 : t('trash.restoreFailed');
-      Alert.alert(t('errorTitle', { ns: 'common' }), message);
+      showBanner({ message, type: 'error' });
     } finally {
       setRestoring(item.id, false);
     }
@@ -103,7 +134,14 @@ export default function TrashScreen() {
         accessibilityRole="button"
         accessibilityLabel={t('trash.back')}
       >
-        <Text style={[styles.backText, { color: theme.colors.primary }]}>{t('trash.back')}</Text>
+        <Text
+          style={[
+            styles.backText,
+            { color: theme.colors.primary, fontSize: theme.typography.fontSizeBase },
+          ]}
+        >
+          {t('trash.back')}
+        </Text>
       </Pressable>
       <Text
         style={[
@@ -161,7 +199,12 @@ export default function TrashScreen() {
             accessibilityRole="button"
             accessibilityLabel={t('trash.retry')}
           >
-            <Text style={[styles.retryText, { color: theme.colors.onPrimary }]}>
+            <Text
+              style={[
+                styles.retryText,
+                { color: theme.colors.onPrimary, fontSize: theme.typography.fontSizeBase },
+              ]}
+            >
               {t('trash.retry')}
             </Text>
           </Pressable>
@@ -174,6 +217,7 @@ export default function TrashScreen() {
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       {!isConnected && <OfflineNotice />}
       <FlatList
+        testID="trash-list"
         data={items}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
@@ -225,7 +269,8 @@ export default function TrashScreen() {
                   source={{ uri: item.book.cover_url }}
                   style={styles.cover}
                   resizeMode="cover"
-                  accessibilityLabel={t('coverAlt', { ns: 'common', title: item.book.title })}
+                  accessible={false}
+                  importantForAccessibility="no"
                 />
               ) : (
                 <View
@@ -234,7 +279,8 @@ export default function TrashScreen() {
                     styles.coverPlaceholder,
                     { backgroundColor: theme.colors.border },
                   ]}
-                  accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
+                  accessible={false}
+                  importantForAccessibility="no"
                 />
               )}
               <View style={styles.content}>
@@ -300,7 +346,7 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
   header: { gap: 6, marginBottom: 8 },
   back: { minHeight: 44, minWidth: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-  backText: { fontSize: 16, fontWeight: '600' },
+  backText: { fontWeight: '600' },
   title: { fontWeight: '700', lineHeight: 48, letterSpacing: -0.5 },
   intro: { lineHeight: 20 },
   centered: { alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
@@ -313,7 +359,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  retryText: { fontWeight: '600', fontSize: 16 },
+  retryText: { fontWeight: '600' },
   card: { flexDirection: 'row', borderRadius: 12, overflow: 'hidden', minHeight: 120 },
   cover: { width: 90, alignSelf: 'stretch' },
   coverPlaceholder: { opacity: 0.4 },
