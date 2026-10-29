@@ -57,12 +57,12 @@ For each book return:
 - title: string
 - author: string
 - confidence: float between 0 and 1 (how sure you are of this identification)
-- isbn_13: string or null (any valid 13-digit ISBN for this book — any edition is fine)
-- isbn_10: string or null (any valid 10-digit ISBN for this book — any edition is fine)
+- isbn_13: string or null (only if a 13-digit ISBN is printed and legible in the photo)
+- isbn_10: string or null (only if a 10-digit ISBN is printed and legible in the photo)
 
-Provide at least one ISBN whenever you can identify the book, even if you are not certain which specific edition is shown. The ISBN will only be used as a search hint.
+Give an ISBN only when you can read it on that book in the photo; otherwise use null (most photos show no ISBN). Never guess or recall an ISBN from memory: the book is looked up by its title and author.
 Return ONLY a JSON object of the form {{"books": [...]}}. Return {{"books": []}} if no book is readable. Example:
-{{"books":[{{"title":"Dune","author":"Frank Herbert","confidence":0.97,"isbn_13":"9780441013593","isbn_10":null}}]}}"""
+{{"books":[{{"title":"Dune","author":"Frank Herbert","confidence":0.97,"isbn_13":null,"isbn_10":null}}]}}"""
 
 
 def _message_content(body: object) -> tuple[str | None, str | None]:
