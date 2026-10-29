@@ -240,6 +240,44 @@ touches the DB itself (no separate `/health/db` exists yet).
   deploy. Its `if:` still runs when `deploy-api` was merely *skipped* (blank
   service-ID var) — only an actual API deploy failure blocks it.
 
+## Re-enabling `TURNSTILE_REQUIRED`
+
+`POST /scan` runs with `TURNSTILE_REQUIRED=false` in production because, before
+#740, no client sent a Turnstile token. The app now sends one per scan request
+when it is built with a site key (see [`security.md` → Turnstile on
+/scan](security.md#turnstile-on-scan)). To turn the check back on:
+
+1. **Create the widget** in the Cloudflare dashboard (Turnstile → Add widget):
+   widget mode **Invisible** (the native widget runs in a hidden WebView and
+   cannot show a challenge). Allowed hostnames:
+   - `bookshelfapi.buffingchi.com` and `bookshelfapi-dev.buffingchi.com`: the
+     hostname the native app's hidden WebView page claims (`baseUrl`, the
+     origin of `EXPO_PUBLIC_API_URL` unless `EXPO_PUBLIC_TURNSTILE_BASE_URL`
+     overrides it);
+   - the web app's own hostnames (the `bookshelf-web` / `bookshelf-web-dev`
+     custom domains or `*.onrender.com` names users open).
+2. **Site key (public):** set `EXPO_PUBLIC_TURNSTILE_SITE_KEY` on
+   `bookshelf-web` and `bookshelf-web-dev` in the Render dashboard
+   (`sync: false` in `render.yaml`), and in `frontend/.env.production` / the
+   Xcode Cloud and Android build environment for native builds. Rebuild and
+   ship the web app and the native apps.
+3. **Secret key:** paste the widget's secret into `TURNSTILE_SECRET_KEY` on
+   `bookshelf-api-dev` (dashboard only, per the secrets policy above).
+4. **Dev first:** set `TURNSTILE_REQUIRED=true` on `bookshelf-api-dev`. Scan
+   from the web app and an iOS and an Android build that has the site key.
+   Every scan must succeed; Sentry must show no `turnstile` breadcrumbs with
+   `timeout`/`error` on them and no `403` on `POST /scan`.
+5. **Wait for the app update:** builds from before #740 send no token and
+   treat a `400 "Missing Turnstile token"` as a generic failure: with the check
+   on, every scan from them fails at once ("Scan failed", no automatic
+   retry). Turn production on only once those builds are no longer in use (or
+   are blocked by a forced update).
+6. **Production:** set `TURNSTILE_SECRET_KEY` and then `TURNSTILE_REQUIRED=true`
+   on `bookshelf-api` (boot fails if the secret is missing while required).
+   Watch `400`/`403` rates on `POST /scan` for the first day.
+7. **Rollback:** set `TURNSTILE_REQUIRED=false` again; clients keep sending
+   tokens, which the server then ignores.
+
 ## Resolving a sign-in `account_conflict` (409)
 
 `POST /auth/google` answers `409 account_conflict` when a Google account the

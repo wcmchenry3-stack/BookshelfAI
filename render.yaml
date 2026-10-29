@@ -112,7 +112,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -125,6 +125,10 @@ services:
       - key: EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
         sync: false
       - key: EXPO_PUBLIC_SENTRY_DSN
+        sync: false
+      # Cloudflare Turnstile site key for POST /scan (#740). Public, but set in
+      # the dashboard; unset = no widget, /scan is sent without a token.
+      - key: EXPO_PUBLIC_TURNSTILE_SITE_KEY
         sync: false
       - key: EXPO_PUBLIC_ENVIRONMENT
         value: production
@@ -217,7 +221,7 @@ services:
         value: 'max-age=31536000; includeSubDomains'
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        value: "default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com"
       - path: /*
         name: Cache-Control
         value: no-cache
@@ -230,6 +234,9 @@ services:
       - key: EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
         sync: false
       - key: EXPO_PUBLIC_SENTRY_DSN
+        sync: false
+      # Cloudflare Turnstile site key for POST /scan (#740); see bookshelf-web.
+      - key: EXPO_PUBLIC_TURNSTILE_SITE_KEY
         sync: false
       # staging, not development — see the ENVIRONMENT comment on
       # bookshelf-api-dev above; dev should exercise the hardened path.

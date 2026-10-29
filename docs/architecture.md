@@ -13,7 +13,9 @@ flowchart LR
   end
 
   subgraph CF["Cloudflare (buffingchi.com)"]
-    DNS["DNS + WAF + Turnstile"]
+    DNS["DNS + WAF"]
+    Turnstile["Turnstile
+(challenges.cloudflare.com)"]
   end
 
   subgraph Render["Render (prod)"]
@@ -46,13 +48,15 @@ bookshelf-db")]
   API -- enrich metadata --> GoogleBooks
   API -- work_id lookup --> OpenLib
   API -- errors + traces --> Sentry
-  DNS -. verify CAPTCHA .-> CF
-  iOS -- Turnstile --> CF
+  iOS -. Turnstile token (hidden WebView) .-> Turnstile
+  Android -. Turnstile token (hidden WebView) .-> Turnstile
+  Web -. Turnstile token (invisible widget) .-> Turnstile
+  API -- siteverify --> Turnstile
 ```
 
 **Components:**
 - **Frontend** (Expo SDK 55): one TypeScript codebase ships native iOS, native Android, and web. Runs on Hermes JS engine on native. Uses `expo-router` for file-based navigation.
-- **Cloudflare**: DNS + WAF + Turnstile for `bookshelfapi.buffingchi.com`. Bot Fight Mode is on; health-check CI bypasses this entirely by hitting the Render origin directly (see [ADR: CI health checks bypass Cloudflare](#adr-ci-health-checks-bypass-cloudflare)).
+- **Cloudflare**: DNS + WAF for `bookshelfapi.buffingchi.com`, and Turnstile for `POST /scan` (#740): each client gets a fresh token per scan request from an invisible widget (a hidden `react-native-webview` on iOS/Android, Cloudflare's script on web), sends it as `cf-turnstile-response`, and the API verifies it with siteverify when `TURNSTILE_REQUIRED=true` (production runs `false` until the site key ships; see [`security.md` → Turnstile on /scan](security.md#turnstile-on-scan)). Bot Fight Mode is on; health-check CI bypasses this entirely by hitting the Render origin directly (see [ADR: CI health checks bypass Cloudflare](#adr-ci-health-checks-bypass-cloudflare)).
 - **Backend** (FastAPI on Render): Python 3.12, async end-to-end (SQLAlchemy async sessions, httpx for outbound). Auto-deploys from `dev` per `render.yaml`.
 - **Database**: production runs on Supabase Postgres, reached through the Supabase session pooler via `DATABASE_URL`; the dev environment uses a Render Postgres instance. Nightly encrypted backups: see [backups](backups.md).
 - **External APIs**: called server-side only from the FastAPI backend — the frontend never holds OpenAI, Anthropic or Google Books keys.
