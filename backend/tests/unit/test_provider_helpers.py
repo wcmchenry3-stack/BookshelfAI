@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.ai.providers import anthropic_vision as av
+from app.ai.providers.isbn import clean_isbn_10
 from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FEATURES
 from app.services.book_identifier import ScanUnavailableError
@@ -49,10 +50,10 @@ class TestBookValidators:
         assert book.isbn_10 == "0441013597"
 
     def test_isbn_10_with_x_check_digit(self):
-        assert av._isbn_10("080442957X") == "080442957X"
+        assert clean_isbn_10("080442957X") == "080442957X"
 
     def test_isbn_10_bad_checksum(self):
-        assert av._isbn_10("0441013598") is None
+        assert clean_isbn_10("0441013598") is None
 
 
 class TestCompleteItems:

@@ -300,20 +300,21 @@ _MIXED = [
 # non-None value is what the parser on ``dev`` before #572 returned; where
 # the old parser returned [] for a reply that is now malformed, the
 # candidates are the same (none). The old OpenAI parser crashed on a null
-# author (in the de-duplication), now that item is broken and dropped.
+# author (in the de-duplication), now that item is broken and dropped. Since
+# #746 OpenAI also drops an empty or whitespace title (it kept it before).
 COMPARISON = {
     "empty_author": ([{"title": "Dune", "author": ""}], [], [("Dune", "")]),
     "whitespace_title": (
         [{"title": "   ", "author": "Frank Herbert"}],
         [],
-        [("   ", "Frank Herbert")],
+        [],  # #746: an empty or whitespace title is dropped
     ),
     "title_over_500": ([{"title": _LONG, "author": "A"}], None, [(_LONG, "A")]),
     "null_author": ([{"title": "Dune", "author": None}], None, None),
     "mixed": (
         _MIXED,
         [("Dune", "Frank Herbert")],
-        [("Dune", ""), ("   ", "Frank Herbert"), ("Dune", "Frank Herbert")],
+        [("Dune", ""), ("Dune", "Frank Herbert")],  # #746: blank title dropped
     ),
 }
 

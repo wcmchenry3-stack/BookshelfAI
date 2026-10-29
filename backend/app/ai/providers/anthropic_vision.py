@@ -76,6 +76,7 @@ from app.ai.providers.base import (
     ProviderResult,
     ProviderTimeoutError,
 )
+from app.ai.providers.isbn import clean_isbn_10, clean_isbn_13
 from app.ai.providers.openai_vision import SYSTEM_PROMPT
 from app.ai.registry import FeatureSpec
 from app.core.config import settings
@@ -138,37 +139,6 @@ def output_schema(max_books: int) -> dict[str, Any]:
     }
 
 
-_ISBN_SEPARATORS = re.compile(r"[\s-]")
-
-
-def _isbn_13(value: str | None) -> str | None:
-    """``value`` as 13 digits with a valid checksum, else None."""
-    if not isinstance(value, str):
-        return None
-    digits = _ISBN_SEPARATORS.sub("", value)
-    if len(digits) != 13 or not digits.isascii() or not digits.isdigit():
-        return None
-    total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(digits))
-    return digits if total % 10 == 0 else None
-
-
-def _isbn_10(value: str | None) -> str | None:
-    """``value`` as 10 characters (last may be ``X``) with a valid checksum,
-    else None."""
-    if not isinstance(value, str):
-        return None
-    chars = _ISBN_SEPARATORS.sub("", value).upper()
-    if (
-        len(chars) != 10
-        or not chars.isascii()
-        or not chars[:9].isdigit()
-        or not (chars[9].isdigit() or chars[9] == "X")
-    ):
-        return None
-    total = sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(chars))
-    return chars if total % 11 == 0 else None
-
-
 class _Book(BaseModel):
     """One book in the model's reply. Extra keys are ignored; a bad ISBN is
     dropped (None), never the book."""
@@ -204,12 +174,12 @@ class _Book(BaseModel):
     @field_validator("isbn_13", mode="before")
     @classmethod
     def _valid_isbn_13(cls, value: Any) -> str | None:
-        return _isbn_13(value)
+        return clean_isbn_13(value)
 
     @field_validator("isbn_10", mode="before")
     @classmethod
     def _valid_isbn_10(cls, value: Any) -> str | None:
-        return _isbn_10(value)
+        return clean_isbn_10(value)
 
 
 def _complete_items(text: str) -> list[Any]:
