@@ -5,14 +5,11 @@
   "feedback.type_label": "human",
   "feedback.type_bug": "human",
   "feedback.type_feature": "human",
-  "feedback.label_title": "human",
   "feedback.label_description": "human",
-  "feedback.placeholder_title": "human",
   "feedback.placeholder_description": "human",
   "feedback.submit": "human",
   "feedback.submit_success": "human",
   "feedback.submit_error": "human",
   "feedback.submit_error_rate_limit": "human",
-  "feedback.error_title_required": "human",
   "feedback.error_description_required": "human"
 }

@@ -5,14 +5,11 @@
   "type_label": "Tipo",
   "type_bug": "Error",
   "type_feature": "Solicitud de función",
-  "label_title": "Título",
   "label_description": "Descripción",
-  "placeholder_title": "Breve resumen del problema o idea",
   "placeholder_description": "Describe qué ocurrió o qué te gustaría ver...",
   "submit": "Enviar",
   "submit_success": "¡Gracias por tus comentarios!",
   "submit_error": "Algo salió mal. Por favor, inténtalo de nuevo.",
   "submit_error_rate_limit": "Demasiados envíos. Por favor, espera {{seconds}} segundos.",
-  "error_title_required": "El título es obligatorio.",
   "error_description_required": "La descripción es obligatoria."
 }

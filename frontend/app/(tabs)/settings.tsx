@@ -10,6 +10,7 @@ import { useScanJobs } from '../../hooks/useScanJobs';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { noMatchRemainingToday, remainingToday } from '../../components/ScanStatusPanel';
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
+import { useFeedback } from '../../components/FeedbackWidget/FeedbackContext';
 import { openTrash } from '../../lib/trash';
 
 export default function SettingsScreen() {
@@ -20,6 +21,8 @@ export default function SettingsScreen() {
   const usage = useScanUsage(usageRefreshKey ?? 0);
   const noMatchLeft = usage ? noMatchRemainingToday(usage) : null;
   const { logout } = useAuth();
+  const { openFeedback } = useFeedback();
+  const { t: tFeedback } = useTranslation('feedback');
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const signingOutRef = useRef(false);
@@ -105,6 +108,22 @@ export default function SettingsScreen() {
         </Text>
       </Pressable>
       <Pressable
+        onPress={openFeedback}
+        style={styles.feedback}
+        accessibilityRole="button"
+        accessibilityLabel={tFeedback('title')}
+        testID="settings-feedback"
+      >
+        <Text
+          style={[
+            styles.trashText,
+            { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
+          ]}
+        >
+          {tFeedback('title')}
+        </Text>
+      </Pressable>
+      <Pressable
         onPress={confirmSignOut}
         style={[styles.signOut, isSigningOut && styles.signOutBusy]}
         accessibilityRole="button"
@@ -123,6 +142,7 @@ const styles = StyleSheet.create({
   usageRow: { alignItems: 'center', marginBottom: 16 },
   usageLabel: { fontSize: 12 },
   trash: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
+  feedback: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
   trashText: { fontWeight: '600' },
   trashHint: { textAlign: 'center' },
   signOut: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, marginTop: 16 },

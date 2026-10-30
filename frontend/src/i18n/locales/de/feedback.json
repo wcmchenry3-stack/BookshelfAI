@@ -5,14 +5,11 @@
   "type_label": "Typ",
   "type_bug": "Fehler",
   "type_feature": "Funktionsanfrage",
-  "label_title": "Titel",
   "label_description": "Beschreibung",
-  "placeholder_title": "Kurze Zusammenfassung des Problems oder der Idee",
   "placeholder_description": "Beschreibe, was passiert ist, oder was du dir wünschst...",
   "submit": "Absenden",
   "submit_success": "Danke für dein Feedback!",
   "submit_error": "Etwas ist schiefgelaufen. Bitte versuche es erneut.",
   "submit_error_rate_limit": "Zu viele Einsendungen. Bitte warte {{seconds}} Sekunden.",
-  "error_title_required": "Titel ist erforderlich.",
   "error_description_required": "Beschreibung ist erforderlich."
 }

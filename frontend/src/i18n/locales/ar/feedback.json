@@ -5,14 +5,11 @@
   "type_label": "النوع",
   "type_bug": "خطأ",
   "type_feature": "طلب ميزة",
-  "label_title": "العنوان",
   "label_description": "الوصف",
-  "placeholder_title": "ملخص موجز للمشكلة أو الفكرة",
   "placeholder_description": "صف ما حدث أو ما تودّ رؤيته...",
   "submit": "إرسال",
   "submit_success": "شكرًا على ملاحظاتك!",
   "submit_error": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
   "submit_error_rate_limit": "طلبات كثيرة جدًا. يرجى الانتظار {{seconds}} ثانية.",
-  "error_title_required": "العنوان مطلوب.",
   "error_description_required": "الوصف مطلوب."
 }

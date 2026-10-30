@@ -5,14 +5,11 @@
   "type_label": "種類",
   "type_bug": "バグ",
   "type_feature": "機能リクエスト",
-  "label_title": "タイトル",
   "label_description": "説明",
-  "placeholder_title": "問題やアイデアの簡単な概要",
   "placeholder_description": "何が起きたか、または何を見たいかを説明してください...",
   "submit": "送信",
   "submit_success": "フィードバックありがとうございます！",
   "submit_error": "エラーが発生しました。もう一度お試しください。",
   "submit_error_rate_limit": "送信が多すぎます。{{seconds}}秒お待ちください。",
-  "error_title_required": "タイトルは必須です。",
   "error_description_required": "説明は必須です。"
 }

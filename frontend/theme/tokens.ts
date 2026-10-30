@@ -56,6 +56,8 @@ export const tokens = {
     inverseSurface: { light: '#30312e', dark: '#e2e2e8' },
     inverseOnSurface: { light: '#f2f0ed', dark: '#2f3035' },
     surfaceTint: { light: '#35618f', dark: '#bdc7db' },
+    // Modal backdrop behind bottom sheets (8-digit hex: ~55% black).
+    scrim: { light: '#0000008c', dark: '#0000008c' },
 
     // ── Outline ────────────────────────────────────────────────────────────
     outline: { light: '#737780', dark: '#8f9096' },

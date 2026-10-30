@@ -5,14 +5,11 @@
   "type_label": "Type",
   "type_bug": "Fout",
   "type_feature": "Functieverzoek",
-  "label_title": "Titel",
   "label_description": "Beschrijving",
-  "placeholder_title": "Korte samenvatting van het probleem of idee",
   "placeholder_description": "Beschrijf wat er is gebeurd, of wat je graag zou willen zien...",
   "submit": "Versturen",
   "submit_success": "Bedankt voor je feedback!",
   "submit_error": "Er is iets misgegaan. Probeer het opnieuw.",
   "submit_error_rate_limit": "Te veel inzendingen. Wacht {{seconds}} seconden.",
-  "error_title_required": "Titel is verplicht.",
   "error_description_required": "Beschrijving is verplicht."
 }

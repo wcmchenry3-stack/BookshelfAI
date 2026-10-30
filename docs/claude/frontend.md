@@ -49,13 +49,20 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 #### Icons
 - Library: **MaterialIcons** from `@expo/vector-icons`
 - Tab icons: `document-scanner` (Scan) · `auto-stories` (Wishlist) · `library-books` (My Books) · `settings` (Settings)
-- Header: `dark-mode` for theme toggle
+- Header (`headerRight` in `InnerStack`): `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
 - Do **not** use Ionicons — it has been replaced
 
 #### Logo / App Icon
 - Source asset: `frontend/assets/logo.png` (chihuahua + open book on navy, 1024×1024)
 - Configured in `app.json` as iOS icon, Android adaptive foreground (`backgroundColor: #0f426f`), and web favicon
 - Rendered in-app via `<Image source={require('../assets/logo.png')} />` in the header (`app/_layout.tsx`)
+
+### Feedback flow
+- Entry points: the header "?" button (`HeaderFeedbackButton`, on every Stack screen) and the "Send feedback" row in Settings. Both call `useFeedback().openFeedback()` from `FeedbackProvider` (`components/FeedbackWidget/FeedbackContext.tsx`, mounted in `app/_layout.tsx`), which owns the single bottom-sheet `FeedbackWidget` and the `FeedbackThanksBanner`.
+- Sheet: Bug / Feature request chips + description only (max 2000). On success it closes itself and the banner (4 s, non-interactive, below the header) confirms.
+- Submission goes to Sentry User Feedback (`captureFeedback`, `source: 'in_app_feedback'`, tag `feedback.type`); session logs are attached for bug reports only. Throttled per install to 5 submissions / 10 min.
+- Sheet colours come from `useTheme()`; the backdrop uses the `scrim` token. Keep the sheet/body `flexShrink: 1` (not `flex: 1`) or the body collapses to zero height and the sheet renders blank.
+- There is no floating button; do not add one over the tab bar.
 
 ### Accessibility
 See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md). WCAG 2.2 AA required on every interactive element. React Native: `accessibilityLabel`, `accessibilityRole`, `accessibilityHint` (if non-obvious), `minWidth/minHeight: 44` on all `Pressable`.

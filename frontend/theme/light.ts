@@ -52,6 +52,7 @@ export const lightTheme = {
     inverseSurface: c.inverseSurface.light,
     inverseOnSurface: c.inverseOnSurface.light,
     surfaceTint: c.surfaceTint.light,
+    scrim: c.scrim.light,
 
     outline: c.outline.light,
     outlineVariant: c.outlineVariant.light,
