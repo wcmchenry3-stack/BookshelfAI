@@ -9,6 +9,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useBanner } from '../hooks/useBanner';
 import { useTurnstile } from '../hooks/useTurnstile';
 import { api } from '../lib/api';
+import { SCAN_UPLOAD_TIMEOUT_MS } from '../lib/apiTimeouts';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
 import {
@@ -1262,6 +1263,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             if (signedOutSince() || signal.aborted) return null;
             return api.post<ScanResponse>('/scan', buildFormData(turnstileToken), {
               signal,
+              timeout: SCAN_UPLOAD_TIMEOUT_MS,
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               transformRequest: [
                 (data: FormData, headers: any) => {
