@@ -431,7 +431,7 @@ The `EnrichedBook` returned by `/scan` or `/books/search`, posted back as receiv
 ```
 
 **Errors:**
-- `422` — validation failure (`detail` is a list). `cover_url` must be `https` with a real host that is not `localhost` or a private, loopback or link-local IP address; the host is never resolved (#747: the server does not fetch the cover, and a lookup would block the worker), and every refusal gives the same message
+- `422` — validation failure (`detail` is a list). `cover_url` must be a single URL (no whitespace, control or format characters) using `https`, with a host that is not `localhost` (or `*.localhost`), not an IP address in a private or reserved range, not a numeric spelling of an IP (`2130706433`, `0x7f.1`, `127.1`) and without a trailing dot; the host is never resolved (#747: the server does not fetch the cover, and a lookup would block the worker), and every refusal gives the same message
 - `422 catalog_token_invalid` — the book is not in the catalog yet and the body has no valid `catalog_token` (#602); nothing was written. The app shows its "couldn't save" message
 - `422 book_not_in_catalog` — the book has no `open_library_work_id` and no `google_books_id` (no provider matched it), so it can never be in the catalog (#602); nothing was written. The app shows the same "couldn't save" message
 - `409 owned_same_edition` / `409 owned_other_edition` / `409 owned_edition_unknown` — the user already has this book (#587, see above); nothing was written. The app treats it as "already in your library", not as a failure: no retry, no error report

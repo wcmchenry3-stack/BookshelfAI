@@ -60,6 +60,8 @@ class WishlistRequest(BaseModel):
         # renders it), and ``getaddrinfo`` would block the event loop. One
         # message for every reason, so validation reveals nothing about DNS.
         try:
+            if _CONTROL.search(v) or _WHITESPACE.search(v) or _has_format_char(v):
+                raise ValueError("not a single URL")
             return validate_safe_url(v, resolve=False)
         except ValueError:
             raise ValueError(COVER_URL_INVALID) from None

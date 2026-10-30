@@ -3,6 +3,10 @@
 A lookup of any non-local host fails the test instead of hitting the network
 (which only fails when the machine is offline). Tests that need a lookup patch
 ``socket.getaddrinfo`` themselves; that patch replaces this guard.
+
+It patches ``socket.getaddrinfo``, which also catches ``create_connection``,
+asyncio, httpx and anyio lookups, but not ``gethostbyname`` /
+``gethostbyname_ex`` or C-level resolvers.
 """
 
 import ipaddress

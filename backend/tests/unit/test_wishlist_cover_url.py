@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.main import app
 from app.models.user import User
-from app.schemas.user_book import COVER_URL_INVALID, WishlistRequest
+from app.schemas.user_book import COVER_URL_INVALID, UserBookUpdate, WishlistRequest
 
 BAD_URLS = [
     "http://covers.example.com/a.jpg",
@@ -94,6 +94,60 @@ def test_endpoint_bad_cover_url_is_422(client, no_dns, url):
     assert resp.status_code == 422
     assert COVER_URL_INVALID in resp.json()["detail"][0]["msg"]
     no_dns.assert_not_called()
+
+
+NUMERIC_OR_DOTTED_HOSTS = [
+    "https://2130706433/a.jpg",
+    "https://0/a.jpg",
+    "https://0x7f.1/a.jpg",
+    "https://0x7f000001/a.jpg",
+    "https://0177.0.0.1/a.jpg",
+    "https://127.1/a.jpg",
+    "https://127.0.0.1./a.jpg",
+    "https://localhost./a.jpg",
+    "https://app.localhost./a.jpg",
+]
+GOOD_HOSTS = [
+    "https://covers.openlibrary.org/b/id/1-L.jpg",
+    "https://books.google.com/books/content?id=x",
+    "https://8.8.8.8/a.jpg",
+    "https://1password.example.com/a.jpg",
+]
+
+
+@pytest.mark.parametrize("url", NUMERIC_OR_DOTTED_HOSTS)
+def test_odd_ip_spellings_and_trailing_dots_rejected_cover_url(url):
+    with pytest.raises(ValidationError) as exc:
+        _build(url)
+    assert COVER_URL_INVALID in exc.value.errors()[0]["msg"]
+
+
+@pytest.mark.parametrize("url", NUMERIC_OR_DOTTED_HOSTS)
+def test_odd_ip_spellings_and_trailing_dots_rejected_override(url):
+    with pytest.raises(ValidationError):
+        UserBookUpdate(cover_url_override=url)
+
+
+@pytest.mark.parametrize("url", GOOD_HOSTS)
+def test_normal_hosts_still_accepted(url):
+    assert _build(url).cover_url == url
+    assert UserBookUpdate(cover_url_override=url).cover_url_override == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://a.example.com/a b.jpg",
+        "https://a.example.com/a\n.jpg",
+        "https://a.example.com/\x00",
+        " https://a.example.com/a.jpg",
+        "https://a.example.com/\u202ea.jpg",
+    ],
+)
+def test_whitespace_control_and_format_chars_rejected_cover_url(url):
+    with pytest.raises(ValidationError) as exc:
+        _build(url)
+    assert COVER_URL_INVALID in exc.value.errors()[0]["msg"]
 
 
 def test_endpoint_still_requires_auth():
