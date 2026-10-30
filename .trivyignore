@@ -2,6 +2,8 @@
 # Every entry MUST carry an `exp:` date: Trivy reports the finding again
 # once it passes, so a suppression can never become permanent by accident.
 # Only dev / build-time tooling may be listed here, never shipped code.
+# Exception: shipped-code entries only by an explicit owner decision, short
+# expiry, with the fix tracked in an open issue (see decode-uri-component, #776).
 
 # body-parser 2.3.0 (frontend/package-lock.json), DoS via an unhandled
 # decompression stream error. Pulled in by @react-native-community/cli-server-api
@@ -15,3 +17,11 @@ CVE-2026-111181 exp:2026-11-06
 # which @expo/cli ^3.25.76 does not accept; fix with the next Expo SDK
 # upgrade. Expires after 90 days so it is reviewed again.
 CVE-2023-54404 exp:2027-01-24
+
+# decode-uri-component 0.2.2 (frontend/package-lock.json, via query-string@7 /
+# React Navigation), DoS via quadratic replacement of percent-encoded runs.
+# SHIPPED app code (deep-link / URL parsing). Owner decision on #776
+# (2026-10-30): suppress for now, keep #776 open for the real fix (npm
+# override to >=0.5.1 or a navigation upgrade with SDK 58, #712). Short expiry
+# on purpose: if #776 isn't fixed by then, Trivy fails again.
+CVE-2026-118664 exp:2026-11-29
