@@ -398,6 +398,24 @@ describe('round 2 scrub rules', () => {
     expect(out.extra.keep).toBe('ok');
   });
 
+  it('redacts bare token, jwt and camelCase token keys', () => {
+    const out = scrubSentryEvent({
+      extra: {
+        token: 'opaque1',
+        Token: 'opaque2',
+        jwt: 'opaque3',
+        accessToken: 'o4',
+        refreshToken: 'o5',
+        idToken: 'o6',
+        keep: 'ok',
+      },
+    }) as Scrubbed;
+    for (const k of ['token', 'Token', 'jwt', 'accessToken', 'refreshToken', 'idToken']) {
+      expect(out.extra?.[k]).toBe('[Filtered]');
+    }
+    expect(out.extra?.keep).toBe('ok');
+  });
+
   it('redacts a bare extra.access_token', () => {
     const out = scrubSentryEvent({ extra: { access_token: TOKEN } }) as Scrubbed;
     expect(out.extra?.access_token).toBe('[Filtered]');
