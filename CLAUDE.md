@@ -24,6 +24,9 @@ Monorepo: `backend/` · `frontend/` · `.github/` · `docs/`
 8. Every API endpoint must have a `@limiter.limit(settings.rate_limit_*)` decorator — import `limiter` from `app.main`; use `rate_limit_auth` for auth, `rate_limit_writes` for mutations, `rate_limit_reads` for reads.
 9. i18n required on all user-facing strings — use i18next + react-i18next + `i18next-resources-to-backend` (bundled locales for Expo/native); no hardcoded copy in components.
 
+## Hooks (`.claude/hooks/`, details in docs/claude/git.md)
+**One rule: `git commit` / `git push` run alone** (only `git add/status/diff/log` may share the command; no `cd`, env prefixes, `bash -c`, branch switches, or chained commit+push), and push only the branch you're on (`git push`, `origin HEAD`, `origin <current-branch>`). Gates: `commit-gate` (Conventional Commits, no commits on dev/main) · `pr-title-gate` (Conventional title, base `dev`) · `precheck-gate` (cached lint/typecheck before push) · `lint-gate` · `policy-gate` · `lint-on-edit`. These are guardrails for Claude sessions; CI commitlint and branch protection remain the real enforcement. A block means fix the cause, don't bypass.
+
 ## Native Build Rules — iOS and Android
 **Neither platform uses EAS Build. Do not suggest `eas build`, `eas submit`, or EAS-specific config.**
 - iOS: built and submitted via **Xcode Cloud** + direct App Store Connect upload. See `docs/claude/ios-ci.md`.
