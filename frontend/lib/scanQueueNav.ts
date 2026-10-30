@@ -8,7 +8,7 @@ function getRouter(): RouterModule['router'] {
   return (require('expo-router') as RouterModule).router;
 }
 
-export const SCAN_QUEUE_ROUTE = '/scan-queue';
+const SCAN_QUEUE_ROUTE = '/scan-queue';
 
 export function openScanQueue(): void {
   getRouter().push(SCAN_QUEUE_ROUTE);
