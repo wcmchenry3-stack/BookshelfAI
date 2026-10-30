@@ -1,0 +1,27 @@
+{
+  "path": [
+    "backend/app",
+    "frontend/app",
+    "frontend/components",
+    "frontend/contexts",
+    "frontend/hooks",
+    "frontend/lib"
+  ],
+  "format": ["python", "typescript", "tsx"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/locales/**",
+    "**/*.json"
+  ],
+  "minLines": 5,
+  "minTokens": 50,
+  "threshold": 1.6,
+  "reporters": ["console", "json"],
+  "output": "./jscpd-report",
+  "gitignore": true,
+  "absolute": false
+}
