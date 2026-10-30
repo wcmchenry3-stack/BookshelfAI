@@ -221,11 +221,15 @@ jobs:
       - name: Integration tests (real Postgres)
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
+          # Abort (instead of silently skipping) if no real DB is configured (#760).
+          REQUIRE_DB_TESTS: '1'
         run: |
           pip install -r requirements-dev.txt
           alembic upgrade head
-          # tests/limits: the scan limits matrix (#584), every row on every PR.
-          pytest -m integration tests/integration tests/limits -q
+          # Every integration-marked test in every folder (tests/integration,
+          # tests/limits, tests/security, tests/unit, ...). -rs lists skips and the
+          # summary line shows how many ran, so a mass skip is visible (#760).
+          pytest -m integration tests -q -rs
 
   # --- Podfile.lock staleness check -------------------------------------------
   # If Podfile was modified but Podfile.lock was not, the developer forgot to
