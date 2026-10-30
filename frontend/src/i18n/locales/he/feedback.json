@@ -5,14 +5,11 @@
   "type_label": "סוג",
   "type_bug": "באג",
   "type_feature": "בקשת תכונה",
-  "label_title": "כותרת",
   "label_description": "תיאור",
-  "placeholder_title": "סיכום קצר של הבעיה או הרעיון",
   "placeholder_description": "תאר מה קרה, או מה היית רוצה לראות...",
   "submit": "שלח",
   "submit_success": "תודה על המשוב!",
   "submit_error": "משהו השתבש. אנא נסה שוב.",
   "submit_error_rate_limit": "יותר מדי הגשות. אנא המתן {{seconds}} שניות.",
-  "error_title_required": "כותרת היא שדה חובה.",
   "error_description_required": "תיאור הוא שדה חובה."
 }

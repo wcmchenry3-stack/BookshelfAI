@@ -37,7 +37,8 @@ import { useModalHandoff } from '../hooks/useModalHandoff';
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
 import { ThemeProvider } from '../theme';
-import { FeedbackButton } from '../components/FeedbackWidget/FeedbackButton';
+import { FeedbackProvider } from '../components/FeedbackWidget/FeedbackContext';
+import { HeaderFeedbackButton } from '../components/FeedbackWidget/HeaderFeedbackButton';
 import { SessionLogger } from '../components/FeedbackWidget/SessionLogger';
 
 function HeaderLogo() {
@@ -67,7 +68,12 @@ function InnerStack() {
     <Stack
       screenOptions={{
         headerLeft: () => <HeaderLogo />,
-        headerRight: () => <ThemeToggleButton />,
+        headerRight: () => (
+          <View style={headerStyles.right}>
+            <ThemeToggleButton />
+            <HeaderFeedbackButton />
+          </View>
+        ),
         headerStyle: { backgroundColor: headerBg, ...webStyle },
         headerShadowVisible: false,
         headerTransparent: theme.isDark,
@@ -83,6 +89,8 @@ function InnerStack() {
 
 const headerStyles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // gap 16: each button has hitSlop 8, so a smaller gap makes the targets overlap.
+  right: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   logo: { width: 40, height: 40, borderRadius: 8 },
   wordmark: {
     fontSize: 20,
@@ -183,10 +191,11 @@ function RootLayout() {
             {/* One hidden Turnstile widget for every POST /scan (#740). */}
             <TurnstileProvider>
               <ScanJobProvider>
-                <InAppBanner />
-                <InnerStack />
-                <GlobalScanModals />
-                <FeedbackButton />
+                <FeedbackProvider>
+                  <InAppBanner />
+                  <InnerStack />
+                  <GlobalScanModals />
+                </FeedbackProvider>
               </ScanJobProvider>
             </TurnstileProvider>
           </AuthProvider>

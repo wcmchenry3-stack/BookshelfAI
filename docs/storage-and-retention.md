@@ -49,7 +49,7 @@ Notes on the photo size:
 | `MAX_IN_PROGRESS_RETRIES` | 3 | `scanErrors.ts:99` | silent retries of `429 scan_in_progress` |
 | `MAX_DRAIN_PASSES` | 3 | `ScanJobContext.tsx:46` | passes of the upload drain per trigger |
 | `MAX_ENTRIES` (log buffer) | 200 | `SessionLogger.ts:9` | lines kept for a bug report |
-| `SUBMIT_COOLDOWN_MS` (feedback) | 60 s | `components/FeedbackWidget/useFeedbackSubmit.ts:29` | rate of feedback submissions; limits how often logs are sent, not their size |
+| `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` (feedback) | 5 submissions per 10 min, per install (module memory, reset on app restart) | `components/FeedbackWidget/useFeedbackSubmit.ts:34-35` | rate of feedback submissions; limits how often logs are sent, not their size |
 | Server image cap | 5 MB | `backend/app/api/scan.py:53` | one upload; larger gets `413 Image must be 5MB or smaller` |
 
 There is **no total-bytes cap** and no free-space check anywhere in `frontend/` (no `getFreeDiskStorage`, no handling of a full disk).
@@ -113,7 +113,7 @@ Trade-offs:
 
 ### Logs and caches on the device
 
-- **Session log buffer** (#523): memory only, 200 lines, sent as an attachment `session-logs.txt` to Sentry only when the user files a bug report (`useFeedbackSubmit.ts:65-76`). Lines are not truncated, so one huge `console.error` can be a large attachment (G6).
+- **Session log buffer** (#523): memory only, 200 lines, sent as an attachment `session-logs.txt` to Sentry only when the user files a bug report (`useFeedbackSubmit.ts:76-90`). Lines are not truncated, so one huge `console.error` can be a large attachment (G6).
 - **Sentry** (`frontend/lib/sentry.ts:22-28`): `tracesSampleRate` 0.2 in production, 1.0 elsewhere, `sendDefaultPii: false`. Offline cache and retention are SDK defaults.
 - **AsyncStorage** holds only the job list. On Android the library's default database limit is 6 MB (library default, to confirm for the pinned version); the job list needs about 0.1 MB for 300 jobs, so there is no risk today.
 - **SecureStore** holds only the two tokens (`frontend/lib/storage.ts`); web uses an in-memory map. Expo has warned about values over 2,048 bytes; the tokens are well under that (estimate, to confirm).

@@ -5,14 +5,11 @@
   "type_label": "类型",
   "type_bug": "错误",
   "type_feature": "功能请求",
-  "label_title": "标题",
   "label_description": "描述",
-  "placeholder_title": "问题或想法的简要摘要",
   "placeholder_description": "描述发生了什么，或者您希望看到什么...",
   "submit": "提交",
   "submit_success": "感谢您的反馈！",
   "submit_error": "出现了问题。请重试。",
   "submit_error_rate_limit": "提交次数过多。请等待 {{seconds}} 秒。",
-  "error_title_required": "标题为必填项。",
   "error_description_required": "描述为必填项。"
 }

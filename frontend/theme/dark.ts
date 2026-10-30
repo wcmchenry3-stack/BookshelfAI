@@ -53,6 +53,7 @@ export const darkTheme: Theme = {
     inverseSurface: c.inverseSurface.dark,
     inverseOnSurface: c.inverseOnSurface.dark,
     surfaceTint: c.surfaceTint.dark,
+    scrim: c.scrim.dark,
 
     outline: c.outline.dark,
     outlineVariant: c.outlineVariant.dark,

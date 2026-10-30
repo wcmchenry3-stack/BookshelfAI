@@ -4,7 +4,8 @@ import {
   type FeedbackPayload,
   _resetFeedbackThrottle,
   DESCRIPTION_MAX,
-  SUBMIT_COOLDOWN_MS,
+  FEEDBACK_RATE_LIMIT_MAX,
+  FEEDBACK_RATE_LIMIT_WINDOW_MS,
 } from '../../components/FeedbackWidget/useFeedbackSubmit';
 import { SessionLogger } from '../../components/FeedbackWidget/SessionLogger';
 import { Sentry } from '../../lib/sentry';
@@ -29,17 +30,17 @@ afterEach(() => {
 });
 
 const basePayload: FeedbackPayload = {
-  title: 'Test title',
   description: 'Test description',
   type: 'bug',
 };
 
 async function submitOnce(payload = basePayload) {
   const hook = await renderHook(() => useFeedbackSubmit());
+  let ok = false;
   await act(async () => {
-    await hook.result.current.submit(payload);
+    ok = await hook.result.current.submit(payload);
   });
-  return hook;
+  return { ...hook, ok };
 }
 
 describe('useFeedbackSubmit', () => {
@@ -50,15 +51,17 @@ describe('useFeedbackSubmit', () => {
   });
 
   describe('successful submission', () => {
-    it('sends title, description and type to Sentry and reports success', async () => {
-      const { result } = await submitOnce();
+    it('resolves true and sends description, source and type tag to Sentry', async () => {
+      const { result, ok } = await submitOnce();
 
+      expect(ok).toBe(true);
       expect(result.current.status).toBe('success');
       expect(result.current.error).toBeNull();
       expect(mockCaptureFeedback).toHaveBeenCalledTimes(1);
       const [params] = mockCaptureFeedback.mock.calls[0];
-      expect(params.message).toBe('Test title\n\nTest description');
-      expect(params.tags).toEqual({ feedback_type: 'bug' });
+      expect(params.message).toBe('Test description');
+      expect(params.source).toBe('in_app_feedback');
+      expect(params.tags).toEqual({ 'feedback.type': 'bug' });
     });
 
     it('sends no name or email', async () => {
@@ -71,10 +74,10 @@ describe('useFeedbackSubmit', () => {
     it('truncates the description to DESCRIPTION_MAX', async () => {
       await submitOnce({ ...basePayload, description: 'x'.repeat(DESCRIPTION_MAX + 500) });
       const [params] = mockCaptureFeedback.mock.calls[0];
-      expect(params.message).toBe(`Test title\n\n${'x'.repeat(DESCRIPTION_MAX)}`);
+      expect(params.message).toBe('x'.repeat(DESCRIPTION_MAX));
     });
 
-    it('attaches session logs when present', async () => {
+    it('attaches session logs to a bug report', async () => {
       SessionLogger.init();
       console.warn('captured log');
 
@@ -92,66 +95,80 @@ describe('useFeedbackSubmit', () => {
 
       await submitOnce({ ...basePayload, type: 'feature' });
 
-      const [, hint] = mockCaptureFeedback.mock.calls[0];
-      expect(hint.attachments).toBeUndefined();
+      const [params, hint] = mockCaptureFeedback.mock.calls[0];
+      expect(params.tags).toEqual({ 'feedback.type': 'feature' });
+      expect(hint?.attachments).toBeUndefined();
     });
 
     it('omits the attachment when the log buffer is empty', async () => {
       await submitOnce();
       const [, hint] = mockCaptureFeedback.mock.calls[0];
-      expect(hint.attachments).toBeUndefined();
+      expect(hint?.attachments).toBeUndefined();
     });
   });
 
-  describe('client throttle', () => {
-    it('rejects a second submission inside the cooldown with rate_limit', async () => {
+  describe('client throttle (5 per 10 minutes)', () => {
+    async function submitN(
+      result: { current: ReturnType<typeof useFeedbackSubmit> },
+      n: number
+    ): Promise<boolean> {
+      let ok = false;
+      for (let i = 0; i < n; i++) {
+        await act(async () => {
+          ok = await result.current.submit(basePayload);
+        });
+      }
+      return ok;
+    }
+
+    it('allows 5 submissions then rejects the 6th with retry seconds', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
-      const { result } = await submitOnce();
-      expect(result.current.status).toBe('success');
+      const { result } = await renderHook(() => useFeedbackSubmit());
 
-      jest.setSystemTime(new Date('2026-01-01T00:00:20Z'));
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
+      expect(await submitN(result, FEEDBACK_RATE_LIMIT_MAX)).toBe(true);
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(FEEDBACK_RATE_LIMIT_MAX);
 
+      jest.setSystemTime(new Date('2026-01-01T00:04:00Z'));
+      expect(await submitN(result, 1)).toBe(false);
       expect(result.current.status).toBe('error');
-      expect(result.current.error).toEqual({ kind: 'rate_limit', retryAfterSeconds: 40 });
-      expect(mockCaptureFeedback).toHaveBeenCalledTimes(1);
+      // Oldest submission was at t=0, so 10 min - 4 min = 360 s remain.
+      expect(result.current.error).toEqual({ kind: 'rate_limit', retryAfterSeconds: 360 });
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(FEEDBACK_RATE_LIMIT_MAX);
     });
 
-    it('allows another submission after the cooldown', async () => {
+    it('allows another submission once the window has passed', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'));
-      const { result } = await submitOnce();
+      const { result } = await renderHook(() => useFeedbackSubmit());
+      await submitN(result, FEEDBACK_RATE_LIMIT_MAX);
 
-      jest.setSystemTime(Date.now() + SUBMIT_COOLDOWN_MS + 1);
-      await act(async () => {
-        await result.current.submit(basePayload);
-      });
-
+      jest.setSystemTime(Date.now() + FEEDBACK_RATE_LIMIT_WINDOW_MS + 1);
+      expect(await submitN(result, 1)).toBe(true);
       expect(result.current.status).toBe('success');
-      expect(mockCaptureFeedback).toHaveBeenCalledTimes(2);
+      expect(mockCaptureFeedback).toHaveBeenCalledTimes(FEEDBACK_RATE_LIMIT_MAX + 1);
     });
   });
 
   describe('failure', () => {
-    it('reports an error and does not send when Sentry is not initialised', async () => {
+    it('resolves false and does not send when Sentry is not initialised', async () => {
       mockGetClient.mockReturnValue(undefined);
 
-      const { result } = await submitOnce();
+      const { result, ok } = await submitOnce();
 
+      expect(ok).toBe(false);
       expect(result.current.status).toBe('error');
-      expect(result.current.error).toEqual({ kind: 'unknown' });
+      expect(result.current.error).toEqual({ kind: 'unavailable' });
       expect(mockCaptureFeedback).not.toHaveBeenCalled();
     });
 
-    it('reports an error and skips the throttle when captureFeedback throws', async () => {
+    it('resolves false and skips the throttle when captureFeedback throws', async () => {
       mockCaptureFeedback.mockImplementationOnce(() => {
         throw new Error('boom');
       });
 
-      const { result } = await submitOnce();
+      const { result, ok } = await submitOnce();
+      expect(ok).toBe(false);
       expect(result.current.status).toBe('error');
-      expect(result.current.error).toEqual({ kind: 'unknown' });
+      expect(result.current.error).toEqual({ kind: 'unavailable' });
 
       await act(async () => {
         await result.current.submit(basePayload);

@@ -5,14 +5,11 @@
   "type_label": "Type",
   "type_bug": "Bogue",
   "type_feature": "Demande de fonctionnalité",
-  "label_title": "Titre",
   "label_description": "Description",
-  "placeholder_title": "Bref résumé du problème ou de l'idée",
   "placeholder_description": "Décrivez ce qui s'est passé ou ce que vous aimeriez voir...",
   "submit": "Envoyer",
   "submit_success": "Merci pour vos commentaires !",
   "submit_error": "Une erreur s'est produite. Veuillez réessayer.",
   "submit_error_rate_limit": "Trop de soumissions. Veuillez patienter {{seconds}} secondes.",
-  "error_title_required": "Le titre est obligatoire.",
   "error_description_required": "La description est obligatoire."
 }
