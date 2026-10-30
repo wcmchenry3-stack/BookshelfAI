@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "__tests__/**/*.{ts,tsx}",
+    "plugins/*.js",
+    "scripts/*.js",
+    "components/*.web.tsx"
+  ],
+  "project": ["**/*.{ts,tsx,js}", "!android/**", "!ios/**"],
+  // Read at runtime via fs by scripts/translate.js (not imported), so knip sees no importer.
+  "ignore": ["src/i18n/glossary.ts"],
+  // expo-status-bar: unused in code but part of the Expo template (uncertain, kept).
+  // @babel/core, react-test-renderer: peer deps of babel-preset-expo / @testing-library/react-native.
+  // jest-environment-jsdom: referenced via @jest-environment docblocks in tests.
+  // expo-updates, expo-system-ui: implied by app.json fields (not installed, reported as unlisted; uncertain).
+  "ignoreDependencies": [
+    "expo-status-bar",
+    "@babel/core",
+    "react-test-renderer",
+    "jest-environment-jsdom",
+    "expo-updates",
+    "expo-system-ui"
+  ],
+  // Test asserts this removed module can no longer be resolved.
+  "ignoreUnresolved": ["../../components/FeedbackWidget/FeedbackButton"],
+  // i18n.ts default/i18nReady, theme barrel re-exports (ThemeContext, Theme, ColorKey): public module surface, uncertain, kept.
+  "ignoreIssues": {
+    "src/i18n/i18n.ts": ["exports"],
+    "theme/index.ts": ["exports", "types"],
+    "theme/tokens.ts": ["types"]
+  }
+}

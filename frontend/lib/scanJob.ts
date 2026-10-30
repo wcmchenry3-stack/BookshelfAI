@@ -10,7 +10,7 @@ export const MAX_QUEUE_SIZE = 50;
 export const FAILED_SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ScanJobType = 'image' | 'text';
-export type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'queued';
+type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'queued';
 
 /** Body of POST /scan — every distinct book the AI found in the photo. */
 export interface ScanResponse {
