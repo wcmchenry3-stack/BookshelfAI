@@ -16,7 +16,5 @@ export const LOCALES = [
   { code: 'ru', label: 'Russian', nativeLabel: 'Русский', flag: '🇷🇺', dir: 'ltr' },
 ] as const;
 
-export type LocaleCode = (typeof LOCALES)[number]['code'];
-
 const isRtl = (dir: string) => dir === 'rtl';
 export const RTL_LOCALES = new Set<string>(LOCALES.filter((l) => isRtl(l.dir)).map((l) => l.code));

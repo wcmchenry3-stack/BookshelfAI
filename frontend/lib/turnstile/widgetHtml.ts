@@ -1,7 +1,7 @@
 import { TURNSTILE_ORIGIN, TURNSTILE_SCRIPT_URL } from './config';
 
 /** The bridge object the inline page puts on `window` for injected calls. */
-export const TURNSTILE_BRIDGE = '__bookshelfTurnstile';
+const TURNSTILE_BRIDGE = '__bookshelfTurnstile';
 
 /**
  * Error codes meaning the page itself is broken (Turnstile's script did not

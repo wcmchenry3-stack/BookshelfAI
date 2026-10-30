@@ -21,7 +21,7 @@
 import { Sentry } from './sentry';
 
 /** 403 detail the edge/origin lockdown sends (backend/app/core/origin_auth.py). */
-export const FORBIDDEN = 'forbidden';
+const FORBIDDEN = 'forbidden';
 
 /** Short machine codes safe to send as the `api.detail` tag. */
 const KNOWN_DETAILS: ReadonlySet<string> = new Set([
@@ -78,7 +78,7 @@ function statusOf(err: unknown): number | undefined {
 }
 
 /** The response `detail` when it is a known short machine code, else undefined. */
-export function knownDetail(err: unknown): string | undefined {
+function knownDetail(err: unknown): string | undefined {
   const d = (err as ApiErrorLike | null)?.response?.data?.detail;
   return typeof d === 'string' && KNOWN_DETAILS.has(d) ? d : undefined;
 }

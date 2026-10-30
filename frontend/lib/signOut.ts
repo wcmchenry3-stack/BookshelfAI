@@ -1,7 +1,7 @@
 import { REFRESH_TOKEN_KEY, api, waitForPendingRefresh } from './api';
 import * as storage from './storage';
 
-export const SERVER_LOGOUT_TIMEOUT_MS = 5000;
+const SERVER_LOGOUT_TIMEOUT_MS = 5000;
 
 /**
  * Best-effort server-side logout: revokes the refresh token so it can't be
