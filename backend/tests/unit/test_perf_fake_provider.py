@@ -290,6 +290,7 @@ class TestServerIdentityOnRealPostgres:
 
         return (
             make_url(os.environ["DATABASE_URL"])
+            .set(drivername="postgresql+asyncpg")
             .set(database=name)
             .render_as_string(hide_password=False)
         )
