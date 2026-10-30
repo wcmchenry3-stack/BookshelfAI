@@ -59,7 +59,7 @@ function readHeader(headers: unknown, name: string): string | undefined {
  * `Retry-After` is delta-seconds or an HTTP-date. Returns ms (>= 0), or
  * undefined when absent or unparseable. `now` is injectable for tests.
  */
-export function parseRetryAfterMs(
+function parseRetryAfterMs(
   value: string | undefined,
   now: number = Date.now()
 ): number | undefined {

@@ -58,10 +58,10 @@ function requestPath(url: string | undefined): string {
 // attempts in all), waiting RETRY_BASE_DELAY_MS * 2^n (1 s, 2 s) plus up to
 // 25% jitter, or the server's Retry-After (capped at MAX_RETRY_AFTER_MS).
 export const MAX_RETRIES = 2;
-export const RETRY_BASE_DELAY_MS = 1_000;
-export const RETRY_JITTER_RATIO = 0.25;
+const RETRY_BASE_DELAY_MS = 1_000;
+const RETRY_JITTER_RATIO = 0.25;
 /** Statuses worth retrying; a network error with no response is too (a timeout is not). */
-export const RETRYABLE_STATUSES: readonly number[] = [408, 429, 502, 503, 504];
+const RETRYABLE_STATUSES: readonly number[] = [408, 429, 502, 503, 504];
 // TODO(#685): POST and PATCH retry only once the server honours an
 // Idempotency-Key; until then a retried write could be applied twice.
 const IDEMPOTENT_METHODS: readonly string[] = ['get', 'head', 'put', 'delete', 'options'];
@@ -82,7 +82,7 @@ export function configureRetry(opts?: {
 }
 
 /** Wait before retry number `attempt` (0-based): Retry-After if sent, else backoff + jitter. */
-export function retryDelayMs(attempt: number, retryAfterMs?: number): number {
+function retryDelayMs(attempt: number, retryAfterMs?: number): number {
   if (retryAfterMs !== undefined) return Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
   const base = RETRY_BASE_DELAY_MS * 2 ** attempt;
   return Math.round(base * (1 + retryRandom() * RETRY_JITTER_RATIO));
