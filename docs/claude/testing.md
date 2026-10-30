@@ -8,6 +8,7 @@ See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for univers
   - It also sets `precision = 2`. pytest-cov rounds the total to that precision before comparing it with `--cov-fail-under`, and the default of 0 let 79.7% pass an 80% gate with exit 0 (#621). `tests/unit/test_coverage_gate.py` guards this.
 - Frontend: `npx jest --coverage` from `frontend/` (what CI's `test-frontend` job runs). The gate is the Jest `coverageThreshold` in `frontend/package.json` (95/90/92/97, #764), which only goes up. Also `npm run typecheck` (`tsc --noEmit`, the `typecheck-frontend` CI job).
 - E2E: none runs in CI today. Web e2e (Playwright, #470) and Maestro (Phase 4) are planned. `frontend/.maestro/` holds Maestro flows, but no workflow runs them.
+- Integration tests (`@pytest.mark.integration`, any folder) run only in CI's `test-migrations` job: `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1`, which errors instead of skipping when there is no real `DATABASE_URL` (#760); see `docs/testing.md`.
 - DB isolation: rollback fixture in `backend/tests/conftest.py` — do NOT mock the database
 - Cost guard: no test may call a real AI provider. `backend/tests/_network_guard.py` (installed for every run by `backend/tests/conftest.py`) blocks any request to an Anthropic or OpenAI API host and fails the test. Fake providers at the gateway boundary (`backend/tests/limits/_harness.py`) or with `backend/tests/_claude_fake.py`.
 - AI scan evaluation (`backend/eval/ai_scan/`, #536): runs a real model only from the on-demand `ai-eval.yml` workflow, never in tests. Its tests use `backend/tests/_ai_eval_fakes.py` (fake R2 client, scripted adapter). Re-run the eval when a scan prompt, model or `max_tokens` changes; see `docs/testing.md`.
@@ -20,7 +21,7 @@ Taken from `.github/workflows/` (`ci.yml`, `security.yml`, `migration-guard.yml`
 |---|---|---|
 | Backend unit tests, `pytest --cov=. --cov-fail-under=90` (app code only) | `ci.yml` `test-python` | every PR to `dev` or `main` |
 | Backend security suite, `pytest -m security` | runs inside `test-python` on every PR (no marker filter in `pytest.ini`); also on its own in `security.yml` `pytest-security` | separate run: PRs to `dev` that touch `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `security.yml` or `.zap/**`; weekly (Monday 08:00 UTC); manual |
-| Backend integration, `pytest -m integration tests/integration tests/limits` on real Postgres 16 | `ci.yml` `test-migrations`, after `alembic upgrade head`, `alembic check` and `downgrade -1` | every PR to `dev` or `main` |
+| Backend integration, `pytest -m integration tests -q -rs` (every folder, `REQUIRE_DB_TESTS=1`) on real Postgres 16 | `ci.yml` `test-migrations`, after `alembic upgrade head`, `alembic check` and `downgrade -1` | every PR to `dev` or `main` |
 | Scan limits matrix (`backend/tests/limits/`) | Its `integration`-marked files run in `test-migrations`. `test_no_real_provider.py` has no marker and runs in `test-python`. | every PR to `dev` or `main` |
 | Frontend Jest + coverage, `npx jest --coverage` | `ci.yml` `test-frontend` | every PR to `dev` or `main` |
 | Type check, `npm run typecheck` (`tsc --noEmit`, covers tests too) | `ci.yml` `typecheck-frontend` | every PR to `dev` or `main` |
