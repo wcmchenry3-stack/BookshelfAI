@@ -21,6 +21,7 @@
     "@react-native-community/netinfo": "12.0.1",
     "@sentry/react-native": "~7.11.0",
     "axios": "^1.20.0",
+    "decode-uri-component": "file:./vendor/decode-uri-component",
     "expo": "~56.0.23",
     "expo-auth-session": "~56.0.20",
     "expo-camera": "~56.0.8",
@@ -90,6 +91,7 @@
     "npm": ">=10 <11"
   },
   "overrides": {
+    "decode-uri-component": "$decode-uri-component",
     "fast-xml-builder": ">=1.1.7",
     "fast-xml-parser": ">=5.5.6",
     "tar": ">=7.5.10",
