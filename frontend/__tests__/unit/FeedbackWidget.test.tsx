@@ -205,6 +205,23 @@ describe('FeedbackWidget', () => {
   });
 });
 
+describe('safe-area padding', () => {
+  it('adds the bottom inset to the body padding so content clears the home indicator', async () => {
+    const safeArea = require('react-native-safe-area-context');
+    const spy = jest
+      .spyOn(safeArea, 'useSafeAreaInsets')
+      .mockReturnValue({ top: 0, bottom: 34, left: 0, right: 0 });
+    try {
+      const { getByTestId } = await renderWidget();
+      const { StyleSheet } = require('react-native');
+      const flat = StyleSheet.flatten(getByTestId('feedback-body').props.contentContainerStyle);
+      expect(flat.paddingBottom).toBe(70);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('keyboard avoidance', () => {
   const { Platform } = require('react-native');
   const original = Platform.OS;

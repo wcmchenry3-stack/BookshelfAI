@@ -99,6 +99,13 @@ describe('RootLayout header wiring (#756)', () => {
     expect(right).toContainElement(getByTestId('header-feedback-button'));
   });
 
+  it('spaces the headerRight buttons 16 apart so their hitSlop targets do not overlap', async () => {
+    const { getByTestId } = await render(<RootLayoutDefault />);
+    const wrapper = getByTestId('theme-toggle').parent;
+    const { StyleSheet } = require('react-native');
+    expect(StyleSheet.flatten(wrapper?.props.style).gap).toBe(16);
+  });
+
   it('renders the feedback button exactly once (no floating duplicate outside the header)', async () => {
     const { getAllByTestId } = await render(<RootLayoutDefault />);
     expect(getAllByTestId('header-feedback-button')).toHaveLength(1);

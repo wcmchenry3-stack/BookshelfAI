@@ -45,16 +45,21 @@ describe('FeedbackWidget close-during-submit guard', () => {
     const onSubmitted = jest.fn();
     const r = await render(<FeedbackWidget visible onClose={onClose} onSubmitted={onSubmitted} />);
     await fireEvent.changeText(r.getByPlaceholderText(/Describe what happened/), 'Desc');
-    // fireEvent awaits the handler, which is pending until we resolve it.
-    const pressing = fireEvent.press(r.getByText('Submit'));
+    // fireEvent awaits the handler, which is pending until we resolve it. Start the
+    // press inside its own act and await only the (synchronous) start of it, so the
+    // later act() calls do not overlap with this one.
+    let pressing: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      pressing = fireEvent.press(r.getByText('Submit'));
+    });
 
     await fireEvent.press(r.getByLabelText('Close'));
     expect(onClose).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       resolveSubmit(true);
-      await pressing;
     });
+    await pressing;
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSubmitted).toHaveBeenCalledTimes(1);
   });
