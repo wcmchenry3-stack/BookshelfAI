@@ -1,10 +1,14 @@
 import axios from 'axios';
 
+import { MAX_RETRY_AFTER_MS, isTimeoutError, toApiError } from './apiError';
+import { DEFAULT_TIMEOUT_MS } from './apiTimeouts';
 import { reportApiError } from './apiErrorReporting';
 import { Sentry } from './sentry';
 import * as storage from './storage';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8001';
+
+export { DEFAULT_TIMEOUT_MS, SCAN_UPLOAD_TIMEOUT_MS, SEARCH_TIMEOUT_MS } from './apiTimeouts';
 
 export const ACCESS_TOKEN_KEY = 'bookshelf_access_token';
 export const REFRESH_TOKEN_KEY = 'bookshelf_refresh_token';
@@ -50,12 +54,69 @@ function requestPath(url: string | undefined): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
+// Retry policy (#766): at most MAX_RETRIES retries after the first attempt (3
+// attempts in all), waiting RETRY_BASE_DELAY_MS * 2^n (1 s, 2 s) plus up to
+// 25% jitter, or the server's Retry-After (capped at MAX_RETRY_AFTER_MS).
+export const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 1_000;
+const RETRY_JITTER_RATIO = 0.25;
+/** Statuses worth retrying; a network error with no response is too (a timeout is not). */
+const RETRYABLE_STATUSES: readonly number[] = [408, 429, 502, 503, 504];
+// TODO(#685): POST and PATCH retry only once the server honours an
+// Idempotency-Key; until then a retried write could be applied twice.
+const IDEMPOTENT_METHODS: readonly string[] = ['get', 'head', 'put', 'delete', 'options'];
+// Never retried here: the scan queue (#604) owns the /scan retry schedule.
+const NO_RETRY_PATHS = ['/scan'];
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+let retrySleep: (ms: number) => Promise<void> = defaultSleep;
+let retryRandom: () => number = Math.random;
+
+/** Test hook: replace the retry sleeper and/or jitter source. No args resets both. */
+export function configureRetry(opts?: {
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+}) {
+  retrySleep = opts?.sleep ?? defaultSleep;
+  retryRandom = opts?.random ?? Math.random;
+}
+
+/** Wait before retry number `attempt` (0-based): Retry-After if sent, else backoff + jitter. */
+function retryDelayMs(attempt: number, retryAfterMs?: number): number {
+  if (retryAfterMs !== undefined) return Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
+  const base = RETRY_BASE_DELAY_MS * 2 ** attempt;
+  return Math.round(base * (1 + retryRandom() * RETRY_JITTER_RATIO));
+}
+
 export const api = axios.create({
   baseURL: BASE_URL,
+  timeout: DEFAULT_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json' },
 });
 
 type SessionTagged = { _sessionEpoch?: number };
+type RetryTagged = { _retryCount?: number };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function shouldRetry(
+  error: unknown,
+  config: (RetryTagged & SessionTagged & Record<string, any>) | undefined
+) {
+  if (!config) return false;
+  if (axios.isCancel(error) || config.signal?.aborted) return false;
+  if (!IDEMPOTENT_METHODS.includes(String(config.method ?? 'get').toLowerCase())) return false;
+  if (NO_RETRY_PATHS.includes(requestPath(config.url))) return false;
+  if ((config._retryCount ?? 0) >= MAX_RETRIES) return false;
+  // A request from an earlier session is never replayed with the new session's token.
+  if (config._sessionEpoch !== undefined && config._sessionEpoch !== sessionEpoch) return false;
+  // A timeout is never retried: it means the server may still be working (a
+  // search runs provider calls for up to ~30 s), not that the request was
+  // lost, and a re-send would multiply the load. Other network errors
+  // (connection refused/reset, offline) are retried.
+  if (isTimeoutError(error)) return false;
+  const status = toApiError(error).status;
+  return status === undefined || RETRYABLE_STATUSES.includes(status);
+}
 
 // Inject access token on every request and add Sentry breadcrumb
 api.interceptors.request.use(async (config) => {
@@ -170,6 +231,23 @@ api.interceptors.response.use(
   async (error) => {
     const original = error.config;
     if (error.response?.status !== 401) {
+      // #766: transient failures of idempotent calls are retried here. Only
+      // the final failure is reported below (the replayed request passes
+      // through this handler again), so Sentry sees one event per request.
+      if (shouldRetry(error, original)) {
+        const attempt = original._retryCount ?? 0;
+        original._retryCount = attempt + 1;
+        await retrySleep(retryDelayMs(attempt, toApiError(error).retryAfterMs));
+        // Signed out, switched account or aborted while waiting: the request
+        // belongs to a session that is gone, so never replay it (the request
+        // interceptor would send it with the new session's token). Like the
+        // stale-401 path below, it is rejected unreported.
+        const sentEpoch = (original as SessionTagged)._sessionEpoch;
+        if (original.signal?.aborted || (sentEpoch !== undefined && sentEpoch !== sessionEpoch)) {
+          return Promise.reject(error);
+        }
+        return api(original);
+      }
       // #724: a 403 (incl. `forbidden`) is not an auth failure; it never
       // signs the user out. Report unexpected failures once per session.
       reportApiError(error);

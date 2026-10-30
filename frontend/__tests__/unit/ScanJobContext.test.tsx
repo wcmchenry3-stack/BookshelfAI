@@ -142,6 +142,7 @@ describe('ScanJobContext — startScan', () => {
     expect(mockGet).toHaveBeenCalledWith('/books/search', {
       params: { q: 'Dune' },
       signal: expect.any(AbortSignal),
+      timeout: 45_000,
     });
   });
 
