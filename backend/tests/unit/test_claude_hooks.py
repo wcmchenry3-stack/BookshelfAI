@@ -126,6 +126,10 @@ class TestCommitGate:
             'git commit -m "' + "feat: " + "x" * 100 + '"',
             'git commit -m "bad header" -m "feat: fine second paragraph"',
             'git add . && git commit -am "wip"',
+            # Codex round 20: other options' values are consumed, never re-read.
+            "git commit --trailer '-mfix: valid' -m invalid",
+            "git commit --author '-mfix: ok <a@b>' -m invalid",
+            "git commit -m invalid -- '-mfix: valid'",
             # Codex round 17: message attached inside a short-option cluster.
             "git commit --allow-empty -aminvalid",
             "git commit -avminvalid",

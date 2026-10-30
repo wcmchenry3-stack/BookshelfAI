@@ -163,6 +163,10 @@ def restore(text, bodies):
 
 # git commit short options that take a value (git commit -h).
 COMMIT_SHORT_VALUE = set("mFCct")
+# Long options whose value is a separate argument; it is consumed so a value
+# like `--trailer "-mfix: x"` is never read as a message option.
+COMMIT_LONG_VALUE = {"--trailer", "--author", "--date", "--cleanup", "--template",
+                     "--pathspec-from-file", "--fixup", "--squash"}
 
 
 def parse_commit(args, cwd, bodies, stdin_body):
@@ -175,6 +179,13 @@ def parse_commit(args, cwd, bodies, stdin_body):
         if t in ("-m", "--message"):
             if nxt is not None:
                 msgs.append(nxt)
+            i += 2
+            continue
+        if t == "--":
+            break  # the rest are pathspecs
+        if t in COMMIT_LONG_VALUE:
+            if t in ("--fixup", "--squash"):
+                reuse = True
             i += 2
             continue
         if t.startswith("--message="):
