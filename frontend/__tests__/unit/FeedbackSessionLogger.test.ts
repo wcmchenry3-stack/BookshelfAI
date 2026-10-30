@@ -103,4 +103,143 @@ describe('SessionLogger', () => {
       expect(SessionLogger.size).toBe(1);
     });
   });
+
+  describe('robustness (#758)', () => {
+    let spies: jest.SpyInstance[] = [];
+    beforeEach(() => {
+      spies = [
+        jest.spyOn(console, 'warn').mockImplementation(() => {}),
+        jest.spyOn(console, 'error').mockImplementation(() => {}),
+      ];
+    });
+    afterEach(() => {
+      SessionLogger._reset();
+      spies.forEach((sp) => sp.mockRestore());
+    });
+
+    it('does not throw on circular objects and still calls the original console', () => {
+      const spy = spies[0];
+      SessionLogger.init();
+      const circ: Record<string, unknown> = {};
+      circ.self = circ;
+      expect(() => console.warn(circ)).not.toThrow();
+      expect(spy).toHaveBeenCalledWith(circ);
+      expect(SessionLogger.getLogs()).toMatch(/\[unserializable\]/);
+    });
+
+    it('handles BigInt without throwing', () => {
+      const spy = spies[1];
+      SessionLogger.init();
+      expect(() => console.error(BigInt(123))).not.toThrow();
+      expect(spy).toHaveBeenCalledWith(BigInt(123));
+      expect(SessionLogger.size).toBe(1);
+    });
+
+    it('handles throwing getters', () => {
+      const spy = spies[0];
+      SessionLogger.init();
+      const bad = {
+        get boom(): string {
+          throw new Error('nope');
+        },
+      };
+      expect(() => console.warn(bad)).not.toThrow();
+      expect(spy).toHaveBeenCalledWith(bad);
+      expect(SessionLogger.getLogs()).toMatch(/\[unserializable\]/);
+    });
+  });
+
+  describe('redaction (#758)', () => {
+    let spies: jest.SpyInstance[] = [];
+    beforeEach(() => {
+      spies = [
+        jest.spyOn(console, 'warn').mockImplementation(() => {}),
+        jest.spyOn(console, 'error').mockImplementation(() => {}),
+      ];
+    });
+    afterEach(() => {
+      SessionLogger._reset();
+      spies.forEach((sp) => sp.mockRestore());
+    });
+
+    it('redacts Bearer tokens', () => {
+      SessionLogger.init();
+      console.warn('auth failed Authorization: Bearer abc.DEF-123_xyz== end');
+      const logs = SessionLogger.getLogs();
+      expect(logs).toMatch(/Bearer \[redacted\] end/);
+      expect(logs).not.toMatch(/abc\.DEF/);
+    });
+
+    it('redacts JWT-shaped strings', () => {
+      SessionLogger.init();
+      console.error('token eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl ok');
+      const logs = SessionLogger.getLogs();
+      expect(logs).toMatch(/token \[jwt\] ok/);
+      expect(logs).not.toMatch(/eyJ/);
+    });
+
+    it('redacts email addresses', () => {
+      SessionLogger.init();
+      console.warn('user jane.doe+x@example.co.uk failed');
+      const logs = SessionLogger.getLogs();
+      expect(logs).toMatch(/user \[email\] failed/);
+      expect(logs).not.toMatch(/jane/);
+    });
+
+    it('completes quickly on adversarial input', () => {
+      SessionLogger.init();
+      const inputs = [
+        'a'.repeat(200000),
+        'eyJ'.repeat(100000),
+        'Bearer ' + 'a.'.repeat(100000),
+        'a@' + 'b.'.repeat(100000),
+        ' '.repeat(200000) + 'Bearer',
+      ];
+      const start = Date.now();
+      for (const input of inputs) console.warn(input);
+      expect(Date.now() - start).toBeLessThan(1000);
+    });
+  });
+
+  describe('size caps (#671)', () => {
+    let spies: jest.SpyInstance[] = [];
+    beforeEach(() => {
+      spies = [
+        jest.spyOn(console, 'warn').mockImplementation(() => {}),
+        jest.spyOn(console, 'error').mockImplementation(() => {}),
+      ];
+    });
+    afterEach(() => {
+      SessionLogger._reset();
+      spies.forEach((sp) => sp.mockRestore());
+    });
+
+    it('caps a 5,000-char line at 1,000 chars plus the marker', () => {
+      SessionLogger.init();
+      console.warn('x'.repeat(5000));
+      const line = SessionLogger.getLogs().split('\n')[0];
+      const msg = line.slice(line.indexOf('WARN ') + 5);
+      expect(msg).toBe('x'.repeat(1000) + '…[truncated]');
+    });
+
+    it('keeps getLogs() within 100 KB, dropping oldest lines first', () => {
+      SessionLogger.init();
+      for (let i = 0; i < 200; i++) {
+        console.warn(`${String(i).padStart(3, '0')}` + 'y'.repeat(997));
+      }
+      expect(SessionLogger.size).toBe(200);
+      const logs = SessionLogger.getLogs();
+      expect(Buffer.byteLength(logs, 'utf8')).toBeLessThanOrEqual(100 * 1024);
+      expect(logs).toMatch(/WARN 199y/);
+      expect(logs).not.toMatch(/WARN 000y/);
+      const first = Number(/WARN (\d{3})y/.exec(logs)![1]);
+      expect(first).toBeGreaterThan(0);
+    });
+
+    it('measures multi-byte characters as UTF-8 bytes', () => {
+      SessionLogger.init();
+      for (let i = 0; i < 100; i++) console.warn('é'.repeat(1000));
+      expect(Buffer.byteLength(SessionLogger.getLogs(), 'utf8')).toBeLessThanOrEqual(100 * 1024);
+    });
+  });
 });

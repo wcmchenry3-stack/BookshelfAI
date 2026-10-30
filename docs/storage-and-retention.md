@@ -26,7 +26,7 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 | Job metadata | AsyncStorage key `scan_job_queue` (`scanJobStorage.ts:7,29-35`) | the `ScanJob` list as one JSON string; `results` are stripped before saving | about 250 to 400 bytes per job | follows the job count (below) |
 | Auth tokens | SecureStore keys `bookshelf_access_token`, `bookshelf_refresh_token` (`frontend/lib/api.ts:8-9`, `frontend/lib/storage.ts`) | two RS256 JWTs | about 0.5 to 1 KB each | two values |
 | Install marker | AsyncStorage key `bookshelf_install_marker` (`frontend/lib/freshInstall.ts`) | `"1"` (done) or `"pending"` (a wipe is owed: a fresh-install wipe that did not finish, a launch whose check could not read AsyncStorage, or a sign-out whose delete failed; the next launch wipes first, as for any other value). Absent with no other AsyncStorage keys means a fresh install, so Keychain tokens left by a previous install are deleted; absent with other keys means an upgrade, so `"1"` is written and the tokens kept (#722) | a few bytes | one value |
-| Session log buffer | memory only (`frontend/components/FeedbackWidget/SessionLogger.ts:9,28-32`) | the last 200 `console.warn` / `console.error` lines | each line unbounded in length; typically under 300 bytes | 200 entries, gone when the app closes |
+| Session log buffer | memory only (`frontend/components/FeedbackWidget/SessionLogger.ts`) | the last 200 `console.warn` / `console.error` lines | each line cut at 1,000 characters (`…[truncated]` marker); `getLogs()` capped at 100 KB (UTF-8) | 200 entries, gone when the app closes |
 | Book covers | the OS image cache for `<Image>` (`app/(tabs)/my-books.tsx`, `wishlist.tsx`, `components/BookCandidatePicker.tsx`) | remote cover thumbnails | tens of KB each | none set by the repo; the OS manages it |
 | Sentry | native SDK offline cache | queued error events | not configured by the repo | SDK default; plan limit to confirm |
 
@@ -48,7 +48,8 @@ Notes on the photo size:
 | `MAX_RETRIES` | 3 | `ScanJobContext.tsx:43`, used `:532` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
 | `MAX_IN_PROGRESS_RETRIES` | 3 | `scanErrors.ts:99` | silent retries of `429 scan_in_progress` |
 | `MAX_DRAIN_PASSES` | 3 | `ScanJobContext.tsx:46` | passes of the upload drain per trigger |
-| `MAX_ENTRIES` (log buffer) | 200 | `SessionLogger.ts:9` | lines kept for a bug report |
+| `MAX_ENTRIES` (log buffer) | 200 | `SessionLogger.ts` | lines kept for a bug report |
+| `MAX_LINE_CHARS` / `MAX_LOG_BYTES` (log buffer) | 1,000 characters / 100 KB | `SessionLogger.ts` | one stored line / the whole `session-logs.txt` attachment (oldest lines dropped first) |
 | `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` (feedback) | 5 submissions per 10 min, per install (module memory, reset on app restart) | `components/FeedbackWidget/useFeedbackSubmit.ts:34-35` | rate of feedback submissions; limits how often logs are sent, not their size |
 | Server image cap | 5 MB | `backend/app/api/scan.py:53` | one upload; larger gets `413 Image must be 5MB or smaller` |
 
@@ -113,7 +114,7 @@ Trade-offs:
 
 ### Logs and caches on the device
 
-- **Session log buffer** (#523): memory only, 200 lines, sent as an attachment `session-logs.txt` to Sentry only when the user files a bug report (`useFeedbackSubmit.ts:76-90`). Lines are not truncated, so one huge `console.error` can be a large attachment (G6).
+- **Session log buffer** (#523): memory only, 200 lines, sent as an attachment `session-logs.txt` to Sentry only when the user files a bug report (`useFeedbackSubmit.ts:76-90`). Each line is cut at 1,000 characters with a `…[truncated]` marker, and `getLogs()` returns at most 100 KB of UTF-8 (oldest lines dropped first), so the attachment is bounded (G6, fixed by #671). Lines are redacted before they are stored: `Bearer <token>` becomes `Bearer [redacted]`, JWT-shaped strings become `[jwt]`, email addresses become `[email]`. Serialising arguments never throws (circular, BigInt or throwing getters give `[unserializable]`). Lines are cut before redaction, so a token cut at the limit loses its tail but the pattern still matches Bearer tokens; a JWT split by the cut may leave a partial prefix.
 - **Sentry** (`frontend/lib/sentry.ts:22-28`): `tracesSampleRate` 0.2 in production, 1.0 elsewhere, `sendDefaultPii: false`. Offline cache and retention are SDK defaults.
 - **AsyncStorage** holds only the job list. On Android the library's default database limit is 6 MB (library default, to confirm for the pinned version); the job list needs about 0.1 MB for 300 jobs, so there is no risk today.
 - **SecureStore** holds only the two tokens (`frontend/lib/storage.ts`); web uses an in-memory map. Expo has warned about values over 2,048 bytes; the tokens are well under that (estimate, to confirm).
@@ -233,7 +234,7 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 | G3 | Failed jobs have no count cap; refused (`queued`) jobs have no age cap; completed-but-unreviewed jobs keep their photo, uncapped, until the next launch | `scanJob.ts:7-10,60`, `ScanJobContext.tsx:1261-1263` |
 | G4 | The camera original in the cache is never deleted; queued photos are not deleted on sign-out | `scan.tsx:159`, `AuthContext` |
 | G5 | No free-space check and no storage-full message | `frontend/` |
-| G6 | Session log lines are unbounded in length | `SessionLogger.ts:11-33` |
+| G6 | ~~Session log lines are unbounded in length~~ Fixed by #671/#758: 1,000-character lines, 100 KB attachment, redaction | `SessionLogger.ts` |
 | G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others; doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
 | G8 | `scan_records` dominates the database and `docs/backups.md` sizes backups on the dump size; neither production size nor plan limit is recorded | `docs/RENDER.md`, `docs/backups.md` |
 | G9 | Log and Sentry retention are not documented anywhere | n/a |
@@ -258,7 +259,7 @@ Sizes: S under half a day, M about a day, L several days.
 - Why: no table of a departed user is ever purged, `data-model.md` says "Phase 2 account deletion ... must include" six tables, and the app stores account data (stores require in-app deletion where an account can be created; confirm the current store rule).
 - AC: `DELETE /auth/me` (rate limited with `rate_limit_writes`) removes the user and, by cascade, all per-user rows; `ai_usage` rows keep their cost with `user_id` NULL; refresh tokens revoked; a test per table (using the test added with this page to list them); the app has a confirm step and signs out; privacy page updated. Needs an owner decision on export. Check first whether an issue already exists.
 
-**5. Truncate session log lines (G6) - S**
+**5. Truncate session log lines (G6) - S** (done in #671/#758)
 - Why: the 200-line buffer is attached to Sentry, and one line can be arbitrarily large.
 - AC: each line is cut at 1,000 characters with a marker; total attachment at most 100 KB; unit tests in `SessionLogger` tests.
 
