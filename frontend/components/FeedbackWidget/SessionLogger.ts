@@ -74,8 +74,12 @@ const isTailChar = (c: number): boolean => isLocal(c) || c === 64;
 // quadratic on inputs like 'a'.repeat(n). The key is NOT anchored with a
 // leading `[A-Za-z0-9_-]*` prefix (that would be quadratic); matching the
 // keyword anywhere also catches `client_secret=`, `authToken=` and so on.
+// AUTH_RE also covers `Proxy-Authorization` (it contains the keyword). A quoted
+// or JSON value is replaced inside its quotes; an unquoted value, whatever its
+// scheme (Bearer, Basic, Digest, AWS4-HMAC-SHA256, anything custom), is replaced
+// up to the end of the line or to `&` in a URL query.
 const AUTH_RE =
-  /(Authorization["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|Digest\s+[^\r\n}\uE000]*|(?:(?:Basic|Bearer|Token|Negotiate|NTLM|ApiKey)\s+)?[^\s"',;}\uE000]+)/gi;
+  /(Authorization["']?[ \t]*[:=][ \t]*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|[^\r\n&\uE000]+)/gi;
 const BEARER_RE = /\b(Bearer)(?:\s*:\s*|\s+)["']?[A-Za-z0-9\-._~+/]{8,}=*["']?/gi;
 const KEY_RE =
   /(token|secret(?:[_-]?key)?|password|passwd|api[_-]?key)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|[^,}&;\s"'\uE000]+)/gi;

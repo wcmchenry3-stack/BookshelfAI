@@ -435,8 +435,8 @@ describe('SessionLogger', () => {
       });
 
       it('redacts authorization=Basic abc', () => {
-        console.warn('authorization=Basic abc rest');
-        expect(lastMsg()).toBe('authorization=[redacted] rest');
+        console.warn('authorization=Basic abc');
+        expect(lastMsg()).toBe('authorization=[redacted]');
       });
 
       it('redacts an axios-config-shaped object', () => {
@@ -474,6 +474,53 @@ describe('SessionLogger', () => {
         expect(lastMsg()).toBe('Bearer abcdefg');
         console.warn('Bearer abcdefgh');
         expect(lastMsg()).toBe('Bearer [redacted]');
+      });
+    });
+
+    describe('unquoted Authorization values, any scheme', () => {
+      it.each(['Custom abcdefghijklmnop', 'Bearer abcdefghijklmnop', 'Negotiate YIIabc'])(
+        'redacts %s to the end of the line',
+        (value) => {
+          console.warn(`Authorization: ${value}`);
+          expect(lastMsg()).toBe('Authorization: [redacted]');
+        }
+      );
+
+      it('redacts an AWS4-HMAC-SHA256 header completely', () => {
+        const cred = ['AKIA', 'EXAMPLE'].join('');
+        console.warn(
+          `Authorization: AWS4-HMAC-SHA256 Credential=${cred}/20260101/us-east-1/s3/aws4_request, ` +
+            'SignedHeaders=host;x-amz-date, Signature=deadbeef01'
+        );
+        const msg = lastMsg();
+        expect(msg).toBe('Authorization: [redacted]');
+      });
+
+      it('redacts a Negotiate token built at runtime', () => {
+        const blob = Buffer.from('negotiate-ticket-bytes-0123456789').toString('base64');
+        console.warn(`Authorization: Negotiate ${blob}`);
+        expect(lastMsg()).toBe('Authorization: [redacted]');
+      });
+
+      it('redacts Proxy-Authorization too', () => {
+        console.warn('Proxy-Authorization: Custom abc123');
+        expect(lastMsg()).toBe('Proxy-Authorization: [redacted]');
+      });
+
+      it('keeps the next line of multi-line text', () => {
+        console.warn('Authorization: Custom abc\nnext line');
+        const logs = SessionLogger.getLogs();
+        expect(logs.endsWith('WARN Authorization: [redacted]\nnext line')).toBe(true);
+      });
+
+      it('stops at & in a URL query', () => {
+        console.warn('?Authorization=Custom%20abc&x=1');
+        expect(lastMsg()).toBe('?Authorization=[redacted]&x=1');
+      });
+
+      it('still replaces quoted and JSON values inside their quotes', () => {
+        console.warn({ Authorization: 'Custom abcdefghijklmnop', other: 1 });
+        expect(lastMsg()).toBe('{"Authorization":"[redacted]","other":1}');
       });
     });
 
@@ -636,6 +683,9 @@ describe('SessionLogger', () => {
         "secret: '",
         'Authorization: ',
         'Authorization: Digest ',
+        'Authorization: x ',
+        'Authorization: a,',
+        'Proxy-Authorization:\n',
         'Bearer ',
         'bearer: x',
         'Basic ',
