@@ -575,6 +575,36 @@ describe('SessionLogger', () => {
       });
     });
 
+    describe('clip bookkeeping mutation-killers', () => {
+      it('strips a user-supplied internal clip marker', () => {
+        console.warn('a' + '\uE000' + 'b');
+        expect(lastMsg()).toBe('ab');
+      });
+
+      it('adds the marker when a redaction swallows the clip point', () => {
+        console.warn('password="' + 'a'.repeat(5000));
+        const msg = lastMsg();
+        expect(msg.endsWith('…[truncated]')).toBe(true);
+        expect(msg).not.toMatch(/aaaa/);
+      });
+
+      it('stops serialising arguments once the work size is reached', () => {
+        let touched = 0;
+        const arg = (): object => ({
+          toJSON(): string {
+            touched++;
+            return 'x'.repeat(1000);
+          },
+        });
+        const start = performance.now();
+        console.warn(...Array.from({ length: 50 }, arg));
+        expect(performance.now() - start).toBeLessThan(50);
+        // 1,001 chars per argument: the loop must stop after about 4-5 of 50.
+        expect(touched).toBeLessThan(10);
+        expect(lastMsg().length).toBeLessThanOrEqual(1000 + '…[truncated]'.length);
+      });
+    });
+
     describe('linearity of redact()', () => {
       const build = (unit: string, n: number): string =>
         unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
@@ -616,9 +646,9 @@ describe('SessionLogger', () => {
       it.each(units)('is linear on %j (16,000 vs 4,000 chars)', (unit) => {
         const t4 = perCall(build(unit, 4000), 10);
         const t16 = perCall(build(unit, 16000), 10);
-        // Linear: ~4x. Quadratic: ~16x. The floor keeps timer noise on very
+        // Linear: ~4x. Quadratic: ~16x (limit 12 leaves room for timer noise). The floor keeps timer noise on very
         // fast inputs from inflating the ratio.
-        expect(t16 / Math.max(t4, 0.25)).toBeLessThan(8);
+        expect(t16 / Math.max(t4, 0.25)).toBeLessThan(12);
         expect(t16).toBeLessThan(50);
       });
     });

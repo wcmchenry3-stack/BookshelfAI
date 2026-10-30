@@ -26,7 +26,7 @@ const MAX_LOG_BYTES = 100 * 1024;
 const UNSERIALIZABLE = '[unserializable]';
 const MAX_ARRAY_ITEMS = 100;
 /** Private-use character inserted where an argument or the joined text was clipped. */
-const CLIP = '';
+const CLIP = '\uE000';
 
 interface LogEntry {
   level: 'warn' | 'error';
@@ -75,10 +75,10 @@ const isTailChar = (c: number): boolean => isLocal(c) || c === 64;
 // leading `[A-Za-z0-9_-]*` prefix (that would be quadratic); matching the
 // keyword anywhere also catches `client_secret=`, `authToken=` and so on.
 const AUTH_RE =
-  /(Authorization["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|Digest\s+[^\r\n}]*|(?:(?:Basic|Bearer|Token|Negotiate|NTLM|ApiKey)\s+)?[^\s"',;}]+)/gi;
+  /(Authorization["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|Digest\s+[^\r\n}\uE000]*|(?:(?:Basic|Bearer|Token|Negotiate|NTLM|ApiKey)\s+)?[^\s"',;}\uE000]+)/gi;
 const BEARER_RE = /\b(Bearer)(?:\s*:\s*|\s+)["']?[A-Za-z0-9\-._~+/]{8,}=*["']?/gi;
 const KEY_RE =
-  /(token|secret(?:[_-]?key)?|password|passwd|api[_-]?key)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|[^,}&;\s"']+)/gi;
+  /(token|secret(?:[_-]?key)?|password|passwd|api[_-]?key)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|[^,}&;\s"'\uE000]+)/gi;
 const JWT_FRAGMENT_RE = /eyJ[A-Za-z0-9_-]{10,}/g;
 
 /** Replace a matched value with [redacted], keeping surrounding quotes. */
