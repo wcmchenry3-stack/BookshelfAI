@@ -146,6 +146,8 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Filtering (#701):** `beforeSend` drops two narrow, user-environment web network signatures (font-loader `<n>ms timeout exceeded`, stackless `NetworkError` DOMException); see `docs/claude/frontend.md` ("Sentry noise filter").
 
+**Scrubbing (#736):** after the filter, `beforeSend` replaces an unhandled AxiosError with a sanitized `ApiError` and redacts `Authorization`/`config`/`headers`/`request`/`response.data` keys and `Bearer <token>` strings from `extra`, `contexts` and exception mechanism data (`frontend/lib/sentryScrub.ts`; see `docs/claude/frontend.md`, "Sentry event scrubbing").
+
 **API failures (#724):** `lib/api.ts` reports unexpected API failures (403, 5xx) once per (method, path template, status, detail) per app session, with tags `http.status`, `http.method`, `api.path` and (allowlisted codes only) `api.detail`; no tokens, headers or bodies. See `docs/claude/frontend.md` ("API error reporting").
 
 **Breadcrumb categories:**
