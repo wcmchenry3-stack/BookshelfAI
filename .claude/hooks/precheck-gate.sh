@@ -149,12 +149,27 @@ run_check() { # run_check <label> <dir> <cmd...> — working-copy command
 }
 command -v timeout &>/dev/null || timeout() { shift; "$@"; }
 
+# Linters read their config from the working copy even when the source comes
+# from HEAD via stdin, so a dirty config would vouch for a tree it never checked.
+# config_dirty <pathspec>... : prints the dirty/untracked config files, if any.
+config_dirty() {
+  git status --porcelain --untracked-files=all -- "$@" 2>/dev/null
+}
+BACKEND_CONFIG=(':(glob)backend/pyproject.toml' ':(glob)backend/ruff.toml' ':(glob)backend/.ruff.toml'
+  ':(glob)backend/setup.cfg' ':(glob)pyproject.toml' ':(glob)ruff.toml' ':(glob).ruff.toml')
+FRONTEND_CONFIG=(':(glob)frontend/.eslintrc*' ':(glob)frontend/eslint.config.*' ':(glob)frontend/.eslintignore'
+  ':(glob)frontend/.prettierrc*' ':(glob)frontend/prettier.config.*' ':(glob)frontend/.prettierignore'
+  ':(glob)frontend/package.json' ':(glob)frontend/tsconfig*.json' ':(glob).editorconfig')
+
 # ── Backend ──────────────────────────────────────────────────────
 PY_FILES=()
 while IFS= read -r -d '' f; do
   case "$f" in backend/*.py) PY_FILES+=("${f#backend/}") ;; esac
 done < <(changed_files)
-if [ "${#PY_FILES[@]}" -gt 0 ]; then
+if [ "${#PY_FILES[@]}" -gt 0 ] && DIRTY=$(config_dirty "${BACKEND_CONFIG[@]}") && [ -n "$DIRTY" ]; then
+  _record "backend config" 1 "uncommitted lint/format config; commit or stash it before pushing:
+$DIRTY"
+elif [ "${#PY_FILES[@]}" -gt 0 ]; then
   if command -v ruff &>/dev/null; then
     for f in "${PY_FILES[@]}"; do
       snap_check "ruff" backend "backend/$f" ruff check --no-fix --stdin-filename "$f" -
@@ -179,7 +194,10 @@ while IFS= read -r -d '' f; do
     ;;
   esac
 done < <(changed_files)
-if [ "${#FE_FILES[@]}" -gt 0 ]; then
+if [ "${#FE_FILES[@]}" -gt 0 ] && DIRTY=$(config_dirty "${FRONTEND_CONFIG[@]}") && [ -n "$DIRTY" ]; then
+  _record "frontend config" 1 "uncommitted lint/format config; commit or stash it before pushing:
+$DIRTY"
+elif [ "${#FE_FILES[@]}" -gt 0 ]; then
   if [ -x frontend/node_modules/.bin/eslint ]; then
     for f in "${FE_FILES[@]}"; do
       snap_check "eslint" frontend "frontend/$f" node_modules/.bin/eslint --stdin --stdin-filename "$f"

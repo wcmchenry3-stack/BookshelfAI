@@ -56,7 +56,9 @@ check_pr() {
 if [ "$TOOL" = "mcp__github__create_pull_request" ]; then
   check_pr "$(hook_jq '.tool_input.title // empty')" "$(hook_jq '.tool_input.base // empty')" "$(hook_jq '.tool_input.head // empty')"
 elif [ -n "$COMMAND" ]; then
-  printf '%s' "$COMMAND" | grep -Eq 'pr[[:space:]](.*[[:space:]])?(create|new)' || hook_allow
+  # Quick filter only; newlines and line continuations are folded first so a
+  # `gh pr \<newline>create` still reaches the parser.
+  printf '%s' "$COMMAND" | tr '\n\\' '  ' | grep -Eq 'pr[[:space:]](.*[[:space:]])?(create|new)' || hook_allow
   command -v python3 &>/dev/null || hook_block "couldn't parse this command safely; run git commit / git push on its own, without comments or unusual quoting"
   PARSED=$(printf '%s' "$COMMAND" | python3 "$HOOK_DIR/lib/parse_cmd.py" pr 2>/dev/null) || hook_block "couldn't parse this command safely; run git commit / git push on its own, without comments or unusual quoting"
   if [ "$(printf '%s' "$PARSED" | jq -r '.unparseable // false')" = "true" ]; then

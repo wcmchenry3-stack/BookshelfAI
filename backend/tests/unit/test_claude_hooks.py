@@ -354,6 +354,17 @@ class TestPrecheckGate:
         _git(pre_repo, "commit", "-qm", "feat: change")
         assert_block(self.gate(pre_repo), "Pre-push checks failed")
 
+    def test_dirty_formatter_config_blocks(self, pre_repo):
+        # Codex round 19: committed code checked with uncommitted config.
+        (pre_repo / "backend" / "pyproject.toml").write_text("[tool.black]\n")
+        _git(pre_repo, "add", "-A")
+        _git(pre_repo, "commit", "-qm", "chore: config")
+        self.commit_py(pre_repo, "X = 1\n")
+        (pre_repo / "backend" / "pyproject.toml").write_text(
+            "[tool.black]\nline-length = 120\n"
+        )
+        assert_block(self.gate(pre_repo), "uncommitted lint/format config")
+
     def test_no_python_changes_allows(self, pre_repo):
         (pre_repo / "notes.txt").write_text("hi\n")
         _git(pre_repo, "add", "-A")
@@ -820,6 +831,13 @@ class TestGhInheritedFlags:
         assert_block(
             run_hook("pr-title-gate.sh", bash_payload(cmd), repo), "base 'main'"
         )
+
+    def test_line_continuation_between_pr_and_create(self, repo):
+        # Codex round 19.
+        cmd = (
+            "gh pr \\\ncreate --base main --head feature/x --title invalid --body test"
+        )
+        assert_block(run_hook("pr-title-gate.sh", bash_payload(cmd), repo), "title")
 
     def test_inherited_repo_flag_valid_create_allowed(self, repo):
         cmd = 'gh -R owner/repo pr create --base dev --title "fix: ok"'
