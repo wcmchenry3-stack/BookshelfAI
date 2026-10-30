@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { useFeedbackSubmit, FeedbackType, DESCRIPTION_MAX } from './useFeedbackSubmit';
 
@@ -25,6 +26,7 @@ interface Props {
 export function FeedbackWidget({ visible, onClose, onSubmitted }: Props) {
   const { t } = useTranslation('feedback');
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { colors } = theme;
   const { status, error, submit, reset } = useFeedbackSubmit();
 
@@ -100,7 +102,7 @@ export function FeedbackWidget({ visible, onClose, onSubmitted }: Props) {
           <ScrollView
             testID="feedback-body"
             style={styles.body}
-            contentContainerStyle={styles.bodyContent}
+            contentContainerStyle={[styles.bodyContent, { paddingBottom: 36 + insets.bottom }]}
             keyboardShouldPersistTaps="handled"
           >
             <>

@@ -89,7 +89,8 @@ function InnerStack() {
 
 const headerStyles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  right: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // gap 16: each button has hitSlop 8, so a smaller gap makes the targets overlap.
+  right: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   logo: { width: 40, height: 40, borderRadius: 8 },
   wordmark: {
     fontSize: 20,

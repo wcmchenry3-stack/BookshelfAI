@@ -37,6 +37,19 @@ jest.mock('../../hooks/useTheme', () => ({
   }),
 }));
 
+// Records the props KeyboardAvoidingView receives (its host output does not expose `behavior`).
+const mockKavProps: { behavior?: string }[] = [];
+jest.mock('react-native/Libraries/Components/Keyboard/KeyboardAvoidingView', () => {
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: (props: { behavior?: string; children?: React.ReactNode }) => {
+      mockKavProps.push({ behavior: props.behavior });
+      return <View>{props.children}</View>;
+    },
+  };
+});
+
 const DESC_PLACEHOLDER = "Describe what happened, or what you'd like to see...";
 
 beforeEach(() => {
@@ -189,5 +202,27 @@ describe('FeedbackWidget', () => {
       await fireEvent.press(featureChip);
       expect(featureChip.props.accessibilityState?.selected).toBe(true);
     });
+  });
+});
+
+describe('keyboard avoidance', () => {
+  const { Platform } = require('react-native');
+  const original = Platform.OS;
+  afterEach(() => {
+    Platform.OS = original;
+  });
+
+  it('pads above the keyboard on iOS so the description field stays visible', async () => {
+    Platform.OS = 'ios';
+    mockKavProps.length = 0;
+    await renderWidget();
+    expect(mockKavProps.at(-1)?.behavior).toBe('padding');
+  });
+
+  it('leaves behavior unset on Android (the window resizes itself)', async () => {
+    Platform.OS = 'android';
+    mockKavProps.length = 0;
+    await renderWidget();
+    expect(mockKavProps.at(-1)?.behavior).toBeUndefined();
   });
 });
