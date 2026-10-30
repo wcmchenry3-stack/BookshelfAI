@@ -431,7 +431,7 @@ The `EnrichedBook` returned by `/scan` or `/books/search`, posted back as receiv
 ```
 
 **Errors:**
-- `422` — validation failure (`detail` is a list)
+- `422` — validation failure (`detail` is a list). `cover_url` must be `https` with a real host that is not `localhost` or a private, loopback or link-local IP address; the host is never resolved (#747: the server does not fetch the cover, and a lookup would block the worker), and every refusal gives the same message
 - `422 catalog_token_invalid` — the book is not in the catalog yet and the body has no valid `catalog_token` (#602); nothing was written. The app shows its "couldn't save" message
 - `422 book_not_in_catalog` — the book has no `open_library_work_id` and no `google_books_id` (no provider matched it), so it can never be in the catalog (#602); nothing was written. The app shows the same "couldn't save" message
 - `409 owned_same_edition` / `409 owned_other_edition` / `409 owned_edition_unknown` — the user already has this book (#587, see above); nothing was written. The app treats it as "already in your library", not as a failure: no retry, no error report
@@ -557,7 +557,7 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 - `status`: one of `wishlisted` / `purchased` / `reading` / `read`
 - `rating`: 1..5
 - `title_override`, `author_override`: 1–500 characters after trimming, no control characters and no Unicode format characters (bidi controls such as U+202E, zero-width characters)
-- `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, with a host that is not `localhost` or an IP address in a private or reserved range. The host is not resolved: the server never fetches the override (only the owner's app shows it), so the DNS step of `POST /wishlist`'s `cover_url` check would only block the server
+- `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, with a host that is not `localhost` or an IP address in a private or reserved range. The host is not resolved: the server never fetches the override (only the owner's app shows it), so a DNS step would only block the server (`POST /wishlist`'s `cover_url` is checked the same way since #747)
 
 **Response `200`:** the updated `UserBookRead`.
 

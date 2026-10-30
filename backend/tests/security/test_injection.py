@@ -460,6 +460,7 @@ class TestInputLengthLimits:
             )
 
     def test_wishlist_cover_url_at_limit_accepted(self) -> None:
+        # No DNS lookup (#747/#778): passes offline.
         url = "https://x.com/" + "a" * (2048 - len("https://x.com/"))
         req = WishlistRequest(title="Title", author="Author", cover_url=url)
         assert req.cover_url is not None and len(req.cover_url) == 2048
