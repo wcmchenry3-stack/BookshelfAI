@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 import { MAX_RETRY_AFTER_MS, isTimeoutError, toApiError } from './apiError';
-import { DEFAULT_TIMEOUT_MS } from './apiTimeouts';
+import { DEFAULT_TIMEOUT_MS, PATH_TIMEOUTS_MS } from './apiTimeouts';
 import { reportApiError } from './apiErrorReporting';
 import { Sentry } from './sentry';
 import * as storage from './storage';
@@ -125,6 +125,11 @@ api.interceptors.request.use(async (config) => {
     message: `${(config.method ?? 'GET').toUpperCase()} ${config.url}`,
     level: 'info',
   });
+  // Slow endpoints get their own timeout unless the caller set one.
+  const pathTimeout = PATH_TIMEOUTS_MS[requestPath(config.url)];
+  if (pathTimeout !== undefined && config.timeout === DEFAULT_TIMEOUT_MS) {
+    config.timeout = pathTimeout;
+  }
   const usable = await storedSession;
   // The session this request is sent in; see the 401 handler.
   (config as SessionTagged)._sessionEpoch = sessionEpoch;

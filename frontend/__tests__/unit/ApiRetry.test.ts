@@ -124,8 +124,31 @@ describe('timeouts', () => {
       seen = config.timeout;
       return { status: 200, data: [], headers: {}, config, statusText: 'OK' };
     };
-    await api.get('/books/search', { params: { q: 'x' }, timeout: SEARCH_TIMEOUT_MS });
+    await api.get('/books/search', { params: { q: 'x' } });
     expect(seen).toBe(SEARCH_TIMEOUT_MS);
+  });
+
+  it.each([
+    ['post', '/scan', SCAN_UPLOAD_TIMEOUT_MS],
+    ['get', '/user-books', DEFAULT_TIMEOUT_MS],
+  ] as const)('%s %s gets its path timeout', async (method, url, expected) => {
+    let seen: number | undefined;
+    api.defaults.adapter = async (config) => {
+      seen = config.timeout;
+      return { status: 200, data: {}, headers: {}, config, statusText: 'OK' };
+    };
+    await api[method](url);
+    expect(seen).toBe(expected);
+  });
+
+  it('a caller-set timeout wins over the path timeout', async () => {
+    let seen: number | undefined;
+    api.defaults.adapter = async (config) => {
+      seen = config.timeout;
+      return { status: 200, data: [], headers: {}, config, statusText: 'OK' };
+    };
+    await api.get('/books/search', { timeout: 5_000 });
+    expect(seen).toBe(5_000);
   });
 });
 

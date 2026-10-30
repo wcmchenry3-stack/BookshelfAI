@@ -25,3 +25,9 @@ export const SEARCH_TIMEOUT_MS = 45_000;
  * = 140 s, plus a photo upload over a slow mobile link: 180 s.
  */
 export const SCAN_UPLOAD_TIMEOUT_MS = 180_000;
+
+/** Per-path timeouts the client applies when a request sets none of its own. */
+export const PATH_TIMEOUTS_MS: Readonly<Record<string, number>> = {
+  '/books/search': SEARCH_TIMEOUT_MS,
+  '/scan': SCAN_UPLOAD_TIMEOUT_MS,
+};
