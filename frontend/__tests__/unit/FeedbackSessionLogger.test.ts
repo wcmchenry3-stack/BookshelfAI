@@ -1,5 +1,11 @@
 import { SessionLogger, redact } from '../../components/FeedbackWidget/SessionLogger';
 
+/** A JWT-shaped string for redaction tests, assembled at runtime. */
+function fakeJwt(payload: string, signature: string): string {
+  const b64 = (text: string) => Buffer.from(text).toString('base64url');
+  return [b64('{"alg":"RS256"}'), b64(payload), b64(signature)].join('.');
+}
+
 beforeEach(() => {
   SessionLogger._reset();
 });
@@ -172,7 +178,7 @@ describe('SessionLogger', () => {
 
     it('redacts JWT-shaped strings', () => {
       SessionLogger.init();
-      console.error('token eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl ok');
+      console.error(`token ${fakeJwt('{"sub":"123"}', 'signature')} ok`);
       const logs = SessionLogger.getLogs();
       expect(logs).toMatch(/token \[jwt\] ok/);
       expect(logs).not.toMatch(/eyJ/);
@@ -220,8 +226,8 @@ describe('SessionLogger', () => {
 
     it('redacts a JWT straddling the 1,000-char cut', () => {
       SessionLogger.init();
-      const jwt =
-        'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJTRUNSRVRQQVlMT0FEIiwiZXhwIjoxfQ.c2lnbmF0dXJlc2lnbmF0dXJl';
+      // Built at runtime so no JWT literal sits in the source (gitleaks).
+      const jwt = fakeJwt('{"sub":"SECRETPAYLOAD","exp":1}', 'signaturesignature');
       console.warn('a'.repeat(980) + ' ' + jwt);
       const logs = SessionLogger.getLogs();
       expect(logs).not.toMatch(/eyJ|SRUNSRVRQ|U1NiJ9|c2lnbmF0/);
