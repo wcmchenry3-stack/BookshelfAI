@@ -289,7 +289,7 @@ See "Auth Bypass Test Cases" section below.
 - [ ] Magic bytes check catches polyglot: submit JPEG magic + PHP body → forwarded to OpenAI (bytes never executed server-side; acceptable)
 
 **A10 — SSRF**
-- [ ] All outbound URLs are hardcoded constants (Google Books, Open Library, JWKS, OpenAI, Turnstile) — no user-supplied URL parameter accepted anywhere
+- [ ] All outbound URLs are hardcoded constants (Google Books, Open Library, JWKS, OpenAI, Turnstile). The only user-supplied URLs are `cover_url` (wishlist add) and `cover_url_override`; the server never fetches them (the client renders them). Both are validated with `validate_safe_url(..., resolve=False)` (#747): https, a real hostname, no `localhost`, no IP-literal host in a private or reserved range, no numeric host spellings (`2130706433`, `0x7f.1`, `127.1`) and no trailing dot. `cover_url` on wishlist add is also HMAC-bound by the `catalog_token`
 
 ---
 

@@ -32,6 +32,9 @@ from app.services.enrichment import isbn_10_to_13
 BookStatus = Literal["wishlisted", "purchased", "reading", "read"]
 
 
+COVER_URL_INVALID = "cover_url must be an https URL with a public host"
+
+
 class WishlistRequest(BaseModel):
     """Body for POST /wishlist — an ``EnrichedBook`` from /scan or
     /books/search, posted back with its ``catalog_token`` (#602). Only a
@@ -50,8 +53,18 @@ class WishlistRequest(BaseModel):
 
     @field_validator("cover_url", mode="before")
     @classmethod
-    def cover_url_must_be_safe(cls, v: str | None) -> str | None:
-        return validate_safe_url(v)
+    def cover_url_must_be_safe(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v  # None, or a wrong type the str field refuses
+        # No DNS lookup (#747): the server never fetches the cover (the app
+        # renders it), and ``getaddrinfo`` would block the event loop. One
+        # message for every reason, so validation reveals nothing about DNS.
+        try:
+            if _CONTROL.search(v) or _WHITESPACE.search(v) or _has_format_char(v):
+                raise ValueError("not a single URL")
+            return validate_safe_url(v, resolve=False)
+        except ValueError:
+            raise ValueError(COVER_URL_INVALID) from None
 
 
 # Control characters (C0, DEL, C1): never part of a title, author or ISBN;
