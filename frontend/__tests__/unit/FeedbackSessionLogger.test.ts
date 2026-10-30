@@ -1,4 +1,4 @@
-import { SessionLogger } from '../../components/FeedbackWidget/SessionLogger';
+import { SessionLogger, redact } from '../../components/FeedbackWidget/SessionLogger';
 
 beforeEach(() => {
   SessionLogger._reset();
@@ -164,7 +164,7 @@ describe('SessionLogger', () => {
 
     it('redacts Bearer tokens', () => {
       SessionLogger.init();
-      console.warn('auth failed Authorization: Bearer abc.DEF-123_xyz== end');
+      console.warn('auth failed with Bearer abc.DEF-123_xyz== end');
       const logs = SessionLogger.getLogs();
       expect(logs).toMatch(/Bearer \[redacted\] end/);
       expect(logs).not.toMatch(/abc\.DEF/);
@@ -186,18 +186,116 @@ describe('SessionLogger', () => {
       expect(logs).not.toMatch(/jane/);
     });
 
-    it('completes quickly on adversarial input', () => {
+    it('redacts Bearer case-insensitively, keeping the keyword case, only for token-like values', () => {
       SessionLogger.init();
-      const inputs = [
-        'a'.repeat(200000),
-        'eyJ'.repeat(100000),
-        'Bearer ' + 'a.'.repeat(100000),
-        'a@' + 'b.'.repeat(100000),
-        ' '.repeat(200000) + 'Bearer',
+      console.warn('BEARER abcdefgh12345 and bearer of bad news');
+      const logs = SessionLogger.getLogs();
+      expect(logs).toMatch(/BEARER \[redacted\] and bearer of bad news/);
+    });
+
+    it('redacts Authorization headers with any scheme', () => {
+      SessionLogger.init();
+      console.warn('Authorization: Basic dXNlcjpwYXNz');
+      console.warn('authorization: rawtoken123');
+      const logs = SessionLogger.getLogs();
+      expect(logs).toMatch(/Authorization: \[redacted\]/);
+      expect(logs).toMatch(/authorization: \[redacted\]/);
+      expect(logs).not.toMatch(/dXNlcjpwYXNz|rawtoken123/);
+    });
+
+    it('redacts sensitive URL / query params', () => {
+      SessionLogger.init();
+      console.warn('GET /x?access_token=abc123&Api_Key=zzz&ok=1 password=hunter2 token=t1');
+      const logs = SessionLogger.getLogs();
+      expect(logs).toMatch(/access_token=\[redacted\]&Api_Key=\[redacted\]&ok=1/);
+      expect(logs).toMatch(/password=\[redacted\] token=\[redacted\]/);
+      expect(logs).not.toMatch(/abc123|zzz|hunter2|t1\b/);
+    });
+
+    it('redacts emails with an apostrophe in the local part', () => {
+      SessionLogger.init();
+      console.warn("mail o'brien@example.com now");
+      expect(SessionLogger.getLogs()).toMatch(/mail \[email\] now/);
+    });
+
+    it('redacts a JWT straddling the 1,000-char cut', () => {
+      SessionLogger.init();
+      const jwt =
+        'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJTRUNSRVRQQVlMT0FEIiwiZXhwIjoxfQ.c2lnbmF0dXJlc2lnbmF0dXJl';
+      console.warn('a'.repeat(980) + ' ' + jwt);
+      const logs = SessionLogger.getLogs();
+      expect(logs).not.toMatch(/eyJ|SRUNSRVRQ|U1NiJ9|c2lnbmF0/);
+      expect(logs).toMatch(/\[jwt\]|…\[truncated\]/);
+    });
+
+    it('redacts an email cut before its TLD at the 1,000-char boundary', () => {
+      SessionLogger.init();
+      console.warn('a'.repeat(985) + ' jane.doe@example.com tail');
+      const logs = SessionLogger.getLogs();
+      expect(logs).not.toMatch(/jane|doe|@|exam/);
+    });
+
+    it('drops a partial token left at the cut when redaction did not match', () => {
+      SessionLogger.init();
+      console.warn('a'.repeat(990) + ' ab12.cd34ef56gh78ij90');
+      const logs = SessionLogger.getLogs();
+      expect(logs).not.toMatch(/ab12/);
+      expect(logs).toMatch(/…\[truncated\]/);
+    });
+
+    it.each([
+      ['a repeated', 'a'.repeat(4000)],
+      ['a. repeated', 'a.'.repeat(2000)],
+      ['eyJ repeated', 'eyJ'.repeat(1333)],
+      ['eyJ. repeated', 'eyJ.'.repeat(1000)],
+      ['at signs', 'a@'.repeat(2000)],
+      ['domain run', 'a@' + 'b.'.repeat(1998)],
+      ['Bearer spaces', 'Bearer' + ' '.repeat(3990)],
+      ['Authorization spaces', 'Authorization:' + ' '.repeat(3980)],
+    ])('redact() is linear on pathological input: %s', (_name, input) => {
+      redact(input); // warm up the JIT
+      // Best of 5 so a GC pause or scheduler hiccup cannot fail the test; the
+      // old quadratic regexes took 7-21 ms on these inputs every time.
+      let best = Infinity;
+      for (let i = 0; i < 5; i++) {
+        const start = performance.now();
+        redact(input);
+        best = Math.min(best, performance.now() - start);
+      }
+      expect(best).toBeLessThan(5);
+    });
+  });
+
+  describe('bounded serialisation (#758)', () => {
+    let spies: jest.SpyInstance[] = [];
+    beforeEach(() => {
+      spies = [
+        jest.spyOn(console, 'warn').mockImplementation(() => {}),
+        jest.spyOn(console, 'error').mockImplementation(() => {}),
       ];
+    });
+    afterEach(() => {
+      SessionLogger._reset();
+      spies.forEach((sp) => sp.mockRestore());
+    });
+
+    it('serialises a 200k-element array quickly and bounded', () => {
+      SessionLogger.init();
+      const big = new Array(200000).fill(1);
       const start = Date.now();
-      for (const input of inputs) console.warn(input);
-      expect(Date.now() - start).toBeLessThan(1000);
+      console.warn(big);
+      expect(Date.now() - start).toBeLessThan(100);
+      const line = SessionLogger.getLogs();
+      expect(line.length).toBeLessThan(1200);
+      expect(line).toMatch(/\+199900/);
+    });
+
+    it('bounds a huge object with many keys', () => {
+      SessionLogger.init();
+      const obj: Record<string, string> = {};
+      for (let i = 0; i < 20000; i++) obj[`k${i}`] = 'v'.repeat(50);
+      console.warn(obj);
+      expect(SessionLogger.getLogs().length).toBeLessThan(1200);
     });
   });
 
@@ -240,6 +338,25 @@ describe('SessionLogger', () => {
       SessionLogger.init();
       for (let i = 0; i < 100; i++) console.warn('é'.repeat(1000));
       expect(Buffer.byteLength(SessionLogger.getLogs(), 'utf8')).toBeLessThanOrEqual(100 * 1024);
+    });
+
+    it('counts lone surrogates as 3 bytes and keeps getLogs() within 100 KB', () => {
+      SessionLogger.init();
+      const unit = '\ud800€';
+      console.warn(unit.repeat(100));
+      const line = SessionLogger.getLogs();
+      const msg = line.slice(line.indexOf('WARN ') + 5);
+      // 100 x (lone surrogate 3 bytes + euro 3 bytes) = 600 bytes
+      expect(msg.length).toBe(200);
+      expect(Buffer.byteLength(msg, 'utf8')).toBe(
+        Buffer.byteLength(msg.replace(/\ud800/g, '�'), 'utf8')
+      );
+      expect(Buffer.byteLength(msg.replace(/\ud800/g, '�'), 'utf8')).toBe(600);
+      for (let i = 0; i < 150; i++) console.warn(unit.repeat(160));
+      const logs = SessionLogger.getLogs();
+      expect(Buffer.byteLength(logs.replace(/\ud800/g, '�'), 'utf8')).toBeLessThanOrEqual(
+        100 * 1024
+      );
     });
   });
 });

@@ -4,13 +4,20 @@
  *
  * Call `SessionLogger.init()` once at app startup (before any other imports
  * that might log). The buffer wraps at MAX_ENTRIES so memory use is bounded.
- * Lines are cut at MAX_LINE_CHARS, secrets (Bearer tokens, JWTs, emails) are
- * redacted before storage, and getLogs() is capped at MAX_LOG_BYTES.
+ * Pipeline per line: bounded serialise -> cut to MAX_WORK_CHARS -> redact ->
+ * cut to MAX_LINE_CHARS (dropping any partial token left at the cut). getLogs()
+ * is capped at MAX_LOG_BYTES.
  */
 
 const MAX_ENTRIES = 200;
 /** Each stored line (message part) is cut at this many characters. */
 const MAX_LINE_CHARS = 1000;
+/**
+ * Redaction runs on at most this many characters (before the final cut to
+ * MAX_LINE_CHARS), so a secret that straddles the 1,000-char cut is already
+ * fully redacted, and the scanners never see a huge string.
+ */
+const MAX_WORK_CHARS = 4000;
 const TRUNCATION_MARKER = '…[truncated]';
 /** getLogs() never returns more than this many UTF-8 bytes (100 KB). */
 const MAX_LOG_BYTES = 100 * 1024;
@@ -27,28 +34,127 @@ let initialised = false;
 // Save originals so _reset() can fully undo the patch (used in tests)
 let originalWarn: typeof console.warn | null = null;
 let originalError: typeof console.error | null = null;
+const MAX_ARRAY_ITEMS = 100;
 
-// All patterns are linear-time: single character classes with no nested or
-// overlapping quantifiers. They only ever run on text already cut to
-// MAX_LINE_CHARS, which bounds worst-case work.
-const BEARER_RE = /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi;
-const JWT_RE = /eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+const isTok = (c: number): boolean =>
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 45 || c === 95;
+const isLocal = (c: number): boolean => isTok(c) || c === 46 || c === 37 || c === 43 || c === 39; // . % + '
+const isDomain = (c: number): boolean => isTok(c) || c === 46;
 
-function redact(text: string): string {
-  return text
-    .replace(BEARER_RE, 'Bearer [redacted]')
-    .replace(JWT_RE, '[jwt]')
-    .replace(EMAIL_RE, '[email]');
+// AUTH, BEARER and PARAM start on a fixed keyword followed by single character
+// classes with no nested quantifiers, so they are linear. JWT and email are
+// manual scans, because "class+ then literal" regexes are quadratic on inputs
+// like 'a'.repeat(n).
+const AUTH_RE =
+  /(Authorization\s*:\s*)(?:(?:Basic|Bearer|Digest|Token|Negotiate|NTLM|ApiKey)\s+)?[^\s"',;]+/gi;
+const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9\-._~+/]{8,}=*/gi;
+const PARAM_RE =
+  /\b(access_token|refresh_token|id_token|token|api[_-]?key|password|secret)=[^&\s"']+/gi;
+
+/** Replace JWT-shaped tokens (eyJ.seg.seg). Linear: one pass, candidates must start at a token boundary. */
+function redactJwt(text: string): string {
+  let out = '';
+  let last = 0;
+  let from = 0;
+  for (;;) {
+    const i = text.indexOf('eyJ', from);
+    if (i === -1) break;
+    from = i + 3;
+    if (i > 0 && isTok(text.charCodeAt(i - 1))) continue; // inside a longer run
+    let p = i + 3;
+    while (p < text.length && isTok(text.charCodeAt(p))) p++;
+    if (text.charCodeAt(p) !== 46) continue;
+    let q = p + 1;
+    while (q < text.length && isTok(text.charCodeAt(q))) q++;
+    if (q === p + 1 || text.charCodeAt(q) !== 46) continue;
+    let r = q + 1;
+    while (r < text.length && isTok(text.charCodeAt(r))) r++;
+    out += text.slice(last, i) + '[jwt]';
+    last = r;
+    from = r;
+  }
+  return last === 0 ? text : out + text.slice(last);
+}
+
+const DOMAIN_RE = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/; // classes are disjoint: linear
+
+/** Replace email addresses by expanding left/right from each '@'. Linear overall. */
+function redactEmail(text: string): string {
+  let out = '';
+  let last = 0;
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf('@', from);
+    if (at === -1) break;
+    from = at + 1;
+    let s = at;
+    while (s > last && isLocal(text.charCodeAt(s - 1))) s--;
+    if (s === at) continue;
+    let e = at + 1;
+    while (e < text.length && isDomain(text.charCodeAt(e))) e++;
+    while (e > at + 1 && text.charCodeAt(e - 1) === 46) e--;
+    if (!DOMAIN_RE.test(text.slice(at + 1, e))) continue;
+    out += text.slice(last, s) + '[email]';
+    last = e;
+    from = e;
+  }
+  return last === 0 ? text : out + text.slice(last);
+}
+
+/**
+ * @internal exported for tests. Input should already be bounded
+ * (MAX_WORK_CHARS); every step is linear in its length.
+ */
+export function redact(text: string): string {
+  const t = text
+    .replace(AUTH_RE, '$1[redacted]')
+    .replace(BEARER_RE, '$1 [redacted]')
+    .replace(PARAM_RE, '$1=[redacted]');
+  return redactEmail(redactJwt(t));
+}
+
+/** Characters that can be part of a token / email that a cut may have split. */
+const isTailChar = (c: number): boolean => isLocal(c) || c === 64 || c === 47 || c === 61;
+
+/**
+ * Drop a trailing run of token characters that was cut off mid-token. Plain
+ * words are kept: only runs containing a digit or one of . @ % + / = - or an
+ * `eyJ` prefix are treated as possible token fragments.
+ */
+function dropPartialTail(text: string): string {
+  let i = text.length;
+  while (i > 0 && isTailChar(text.charCodeAt(i - 1))) i--;
+  const run = text.slice(i);
+  if (run.length > 0 && (/[0-9.@%+/=-]/.test(run) || run.startsWith('eyJ'))) {
+    return text.slice(0, i);
+  }
+  return text;
+}
+
+/** JSON.stringify with a size budget: arrays are capped and containers stop being expanded once the budget is spent. */
+function boundedJson(a: unknown): string | undefined {
+  let size = 0;
+  const json = JSON.stringify(a, (key, value: unknown) => {
+    if (size > MAX_WORK_CHARS) return typeof value === 'object' && value !== null ? '…' : undefined;
+    size += key.length + (typeof value === 'string' ? value.length : 8);
+    if (Array.isArray(value) && value.length > MAX_ARRAY_ITEMS) {
+      return [...value.slice(0, MAX_ARRAY_ITEMS), `…[+${value.length - MAX_ARRAY_ITEMS}]`];
+    }
+    return value;
+  });
+  return json === undefined ? undefined : json.slice(0, MAX_WORK_CHARS);
 }
 
 function serialiseArg(a: unknown): string {
   try {
-    if (typeof a === 'string') return a;
-    if (a instanceof Error) return `${a.name}: ${a.message}`;
+    if (typeof a === 'string') return a.slice(0, MAX_WORK_CHARS);
+    if (a instanceof Error) return `${a.name}: ${a.message}`.slice(0, MAX_WORK_CHARS);
     if (typeof a === 'bigint') return `${a.toString()}n`;
-    const json = JSON.stringify(a);
-    return json === undefined ? String(a) : json;
+    if (typeof a === 'object' && a !== null) {
+      const json = boundedJson(a);
+      if (json !== undefined) return json;
+    }
+    return String(a).slice(0, MAX_WORK_CHARS);
   } catch {
     return UNSERIALIZABLE;
   }
@@ -61,9 +167,12 @@ function utf8Bytes(str: string): number {
     const c = str.charCodeAt(i);
     if (c < 0x80) bytes += 1;
     else if (c < 0x800) bytes += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
-      bytes += 4; // surrogate pair
-      i++;
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      const n = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+      if (n >= 0xdc00 && n <= 0xdfff) {
+        bytes += 4; // valid surrogate pair
+        i++;
+      } else bytes += 3; // lone high surrogate
     } else bytes += 3;
   }
   return bytes;
@@ -71,11 +180,24 @@ function utf8Bytes(str: string): number {
 
 function push(level: LogEntry['level'], args: unknown[]): void {
   try {
-    let msg = args.map(serialiseArg).join(' ');
-    // Truncate first so the regexes never see a huge string.
-    const truncated = msg.length > MAX_LINE_CHARS;
-    if (truncated) msg = msg.slice(0, MAX_LINE_CHARS);
-    msg = redact(msg);
+    const parts: string[] = [];
+    let len = 0;
+    for (const a of args) {
+      if (len > MAX_WORK_CHARS) break;
+      const part = serialiseArg(a);
+      parts.push(part);
+      len += part.length + 1;
+    }
+    let msg = parts.join(' ');
+    let truncated = msg.length > MAX_WORK_CHARS;
+    if (truncated) msg = dropPartialTail(redact(msg.slice(0, MAX_WORK_CHARS)));
+    else msg = redact(msg);
+    if (msg.length > MAX_LINE_CHARS) {
+      const continues = isTailChar(msg.charCodeAt(MAX_LINE_CHARS));
+      msg = msg.slice(0, MAX_LINE_CHARS);
+      if (continues) msg = dropPartialTail(msg);
+      truncated = true;
+    }
     if (truncated) msg += TRUNCATION_MARKER;
 
     if (buffer.length >= MAX_ENTRIES) {
@@ -100,21 +222,13 @@ export const SessionLogger = {
     originalError = console.error.bind(console);
 
     console.warn = (...args: unknown[]) => {
-      try {
-        push('warn', args);
-      } catch {
-        // never let logging interfere with the original call
-      }
-      originalWarn!(...args);
+      push('warn', args); // never throws
+      originalWarn?.(...args);
     };
 
     console.error = (...args: unknown[]) => {
-      try {
-        push('error', args);
-      } catch {
-        // never let logging interfere with the original call
-      }
-      originalError!(...args);
+      push('error', args); // never throws
+      originalError?.(...args);
     };
   },
 
