@@ -633,6 +633,9 @@ class TestCommitIsolation:
             'git worktree add ../wt && git commit -m "fix: x"',
             'git stash branch b && git commit -m "fix: x"',
             'git commit -m "fix: one" && git commit -m "fix: two"',
+            # Codex round 18: shell conditionals and loops.
+            'if true; then git commit -m "fix: x"; fi',
+            'while true; do git commit -m "fix: x"; done',
             'git commit -m "fix: one" && git push',
             'git commit -m "fix: x" && git checkout dev',
         ],
@@ -677,6 +680,7 @@ class TestPushIsolationAndRefs:
             "git push && git push origin --delete old",
             "bash -c 'git push'",
             "command git push",
+            "if true; then git push origin bad; fi",
             "git -c remote.origin.push=bad push origin",  # round 9
             "git --config-env=remote.origin.push=X push origin",
             "env git push origin other",
@@ -799,6 +803,23 @@ class TestGhInheritedFlags:
     def test_inherited_repo_flag_still_validated(self, repo, prefix):
         cmd = f"{prefix} --title invalid --base main --head feature/x"
         assert_block(run_hook("pr-title-gate.sh", bash_payload(cmd), repo), "title")
+
+    @pytest.mark.parametrize(
+        "hook, cmd, needle",
+        [
+            ("commit-gate.sh", '{ git commit -m "bad"; }', "Conventional"),
+            ("commit-gate.sh", 'until false; do git commit -m "bad"; done', ""),
+        ],
+    )
+    def test_grouped_commands_are_still_validated(self, repo, hook, cmd, needle):
+        assert_block(run_hook(hook, bash_payload(cmd), repo), needle)
+
+    def test_pr_create_inside_conditional_is_checked(self, repo):
+        # Codex round 18.
+        cmd = 'if true; then gh pr create --base main --head feature/x --title "x"; fi'
+        assert_block(
+            run_hook("pr-title-gate.sh", bash_payload(cmd), repo), "base 'main'"
+        )
 
     def test_inherited_repo_flag_valid_create_allowed(self, repo):
         cmd = 'gh -R owner/repo pr create --base dev --title "fix: ok"'

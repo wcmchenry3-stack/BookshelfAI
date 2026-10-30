@@ -74,15 +74,29 @@ def tokenize(cmd):
     return list(lex)
 
 
+# Shell reserved words that can start a segment before the real command
+# (`if true; then git commit ...; fi`); they are stripped so the command is seen.
+LEADING_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"}
+CLOSING_KEYWORDS = {"fi", "done", "esac", "}"}
+
+
+def _strip_keywords(seg):
+    while seg and seg[0] in LEADING_KEYWORDS:
+        seg = seg[1:]
+    return [] if seg and all(t in CLOSING_KEYWORDS for t in seg) else seg
+
+
 def segments(tokens):
     seg = []
     for t in tokens:
         if t in OPS:
+            seg = _strip_keywords(seg)
             if seg:
                 yield seg
             seg = []
         else:
             seg.append(t)
+    seg = _strip_keywords(seg)
     if seg:
         yield seg
 
