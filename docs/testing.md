@@ -279,6 +279,49 @@ test('renders and responds to tap', async () => {
 2. `getByText` — for visible text content
 3. `getByTestId` — last resort, needs an explicit `testID` prop
 
+## Web e2e (Playwright, #470)
+
+`frontend/e2e/` is a Playwright suite (Chromium) that drives the **static web export** of the app against a **real backend on a scratch Postgres**. It is not part of Jest (`*.e2e.ts`, outside Jest's test patterns) and is **not a required check**: `.github/workflows/e2e-web.yml` runs it on pull requests to `dev` that touch `frontend/**`, `backend/**` or the workflow, and on demand (`workflow_dispatch`). On failure the HTML report and traces are uploaded as the `e2e-web-report` artifact.
+
+| Scenario (file) | What it checks |
+|---|---|
+| Auth (`auth.e2e.ts`) | The login screen's dev **Test Login** signs in and lands on My Books |
+| Scan upload (`scan.e2e.ts`) | A photo upload shows progress, then the two books the fake provider "reads"; `POST /scan` reaches the fake provider exactly once |
+| My Books (`my-books.e2e.ts`) | The library loads, the status and text filters work, a book opens its details |
+| Add, delete, restore (`add-and-trash.e2e.ts`) | Search, add, remove (banner), restore from Trash |
+| Wishlist (`wishlist.e2e.ts`) | Add from a search, remove |
+| Settings (`settings.e2e.ts`) | The scan allowance is shown (the screen has no email today), sign out returns to login |
+
+Every scenario also runs `@axe-core/playwright` with the tags `wcag2a, wcag2aa, wcag21aa, wcag22aa` on each screen it visits (`expectNoA11yViolations` in `e2e/support/fixtures.ts`).
+
+**How it avoids real services**
+
+- **Sign-in:** the web build keeps tokens in memory only (`lib/storage.ts`), so seeding tokens is not possible. The suite clicks the login screen's **Test Login** button, which calls `POST /auth/test-login` (dev only: the route does not exist when hardened, #688). That button exists only when `__DEV__` is true, so the export is a development bundle (`npm run e2e:build` runs `expo export --platform web --dev`) with the test secret and email baked in through `EXPO_PUBLIC_TEST_AUTH_SECRET` / `EXPO_PUBLIC_TEST_EMAIL`. All tests share that one user; each starts by removing its library entries (`Backend.resetLibrary`).
+- **AI provider:** `e2e/stack/run_backend.py` starts the API with `AI_ANTHROPIC_BASE_URL` pointing at a fake server (`e2e/stack/fake_services.py`, which reuses `backend/perf/fake_provider.py` from the nightly load run, #539), a dummy `ANTHROPIC_API_KEY`, no OpenAI key, and `scan.standard` switched to the Anthropic adapter. No real model is called and no key is needed. `TURNSTILE_REQUIRED=false`, `CLAMAV_ENABLED=false`.
+- **Book catalog (search and enrichment):** the same fake server answers Open Library (`OPEN_LIBRARY_BASE_URL`) and Google Books from a four-book catalog (Dune, The Great Gatsby, Emma, Frankenstein). Google Books has no base-URL setting (the URL is a constant in `app/services/google_books.py`), so the launcher rebinds that constant in its own process; no app code changed. The search-and-add scenarios therefore use the real search, enrichment, catalog-token and `POST /wishlist` code with no public network. `HTTPS_PROXY` is pointed at a dead port in that process, so a call that escapes the fakes fails instead of leaving the machine.
+- **Rate limits** are switched off in that process (`/auth/test-login` is 2/minute per IP and every test signs in); limits are covered by the backend tests.
+- Saved scan records (#585) answer a repeated photo without calling the provider, so scan tests first call the fake's `POST /__forget_scans`.
+
+**Run it locally** (Node 22, Python 3.12 with `backend/requirements.txt`, a scratch Postgres 16):
+
+```bash
+createdb bookshelf_e2e
+cd backend && DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e alembic upgrade head
+cd ../frontend
+npm ci
+npx playwright install chromium        # once
+npm run e2e:build                       # the web export into dist/ (about a minute)
+DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e npm run e2e
+```
+
+`playwright.config.ts` starts the backend (`:8001`, fakes on `:18080`) and a static server for `dist/` (`:8081`), and reuses them when they are already running (outside CI). Without a Playwright-managed browser, set `E2E_CHROMIUM_PATH` to a Chromium binary. `npx playwright test e2e/wishlist.e2e.ts --headed` runs one file; `npx playwright show-report` opens the report. Rebuild the export after changing app code. The database must be **throwaway**, and this is enforced (`e2e/stack/db_guard.py`, unit tested by `backend/tests/unit/test_e2e_db_guard.py`): the launcher writes `ai_settings` rows and `/__forget_scans` deletes every scan record, so it exits before the app starts unless `DATABASE_URL` is a local host (`localhost`, `127.0.0.1`, `::1`) with no query parameters and a database name containing `e2e` (CI uses `e2e`), `ENVIRONMENT` is not staging or production, and the URL does not look hosted (`supabase`, `render.com`, `pooler`). `E2E_ALLOW_DB=<exact database name>` allows one other local name; it never lifts the host, query, hosted or environment checks. The connected `current_database()` is checked again before the first write, and `/__forget_scans` refuses to run unless the guard passed.
+
+**Known app defects the suite carries** (each is a real finding, kept visible rather than hidden):
+
+- *Scan upload on web fails.* `ScanJobContext` appends the photo's blob URL string to the form data, which browsers reject (`parameter 2 is not of type 'Blob'`), so no `POST /scan` is sent. The scan UI test is marked `test.fail(...)`: it passes as an expected failure now and turns red once the upload works, which is the cue to remove that line (with the upload fixed it passes as written).
+- *Accessibility.* A scenario tolerates a violation only through `KNOWN_VIOLATIONS` in `e2e/support/fixtures.ts`: one rule on the matching nodes, every other rule still runs, and the call fails when axe stops reporting it (so a fix has to remove the entry). Never add one without an issue. Today: book cards that are buttons containing buttons (`nested-interactive`), picker rows with `role="checkbox"` and no `aria-checked`, the wishlist cover placeholder's `aria-label` on a role-less div, the success banner's white-on-green contrast (3.29:1), and the scan spinner as an unnamed progressbar.
+- The development bundle's LogBox toast (`#error-toast`) covers the tab bar, so the fixtures hide it; it is not app UI.
+
 ## CI test jobs
 
 Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-frontend`, `js-bundle-check` and the other bundle/build checks are defined inline in `ci.yml`:
@@ -315,6 +358,8 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 
 Required checks are listed in `.github/rulesets/protect-main-dev.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
 
+Not a required check: `.github/workflows/e2e-web.yml` runs the Playwright web e2e suite (see "Web e2e (Playwright, #470)") on pull requests to `dev` that touch the frontend, the backend or the workflow.
+
 Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` and `workflow_dispatch`, not a required check) runs the scan abuse load run described under "Nightly scan abuse load run" above, and `.github/workflows/ai-eval.yml` (`workflow_dispatch` only) runs the AI scan evaluation described under "AI scan evaluation" above.
 
 ## Repo hygiene checks
@@ -331,12 +376,10 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 - **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `coverage-threshold: 80` input in `.github/workflows/ci.yml` must stay at or below this floor.
   - **Ratchet:** the Jest `coverageThreshold` is the floor and it only goes up. Any PR that raises a metric by 1 point or more may bump that floor (rounded down to the whole percent). Never lower it without an owner decision.
 
-## End-to-end (planned, not in CI yet)
+## End-to-end
 
-No end-to-end test runs in CI today. Two are planned:
-
-- **Web e2e:** Playwright against the web export (#470).
-- **Native flows:** Maestro (Phase 4). The Maestro flows under `frontend/.maestro/` are not run by any workflow yet.
+- **Web e2e:** Playwright against the web export runs in CI (`e2e-web.yml`, not a required check). See "Web e2e (Playwright, #470)" above.
+- **Native flows:** Maestro (Phase 4) is planned. The Maestro flows under `frontend/.maestro/` are not run by any workflow yet.
 
 ## Rule + memory references
 
