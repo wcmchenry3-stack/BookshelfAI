@@ -14,15 +14,19 @@ content (and no refusal), content that is not JSON, JSON that is not a
 ``{"books": [...]}`` object (a bare list is still accepted, as before), a
 non-empty list in which every item is structurally broken (not an object, a
 title or author missing or not a string, or a confidence that is not a
-number, or a title or author over 500 characters, #754), or an unexpected ``finish_reason`` (anything but ``stop``,
-``length`` or ``content_filter``; a missing one is judged on the content
-alone). Otherwise the reply is ``ok`` with its well-formed items, kept as
-before #572: an empty author is still a candidate (a title-only lookup).
-Since #746 a candidate with an empty or whitespace title is dropped (it is
-schema-valid, so it is not "broken" and a reply of only such items is ``ok``
-with no books), and an ISBN that is not a string or fails its check digit
-becomes None while the book is kept (the model can invent ISBNs). Since #754 a confidence is
-clamped to 0-1 (NaN becomes 0.5), as in the Claude adapter. A genuine
+number, or a title or author over 500 characters, #754), or an unexpected
+``finish_reason`` (anything but ``stop``, ``length`` or ``content_filter``; a
+missing one is judged on the content alone). Otherwise the reply is ``ok``
+with its well-formed items, kept as before #572: an empty author is still a
+candidate (a title-only lookup). Since #746 a candidate with an empty or
+whitespace title is dropped (it is schema-valid, so it is not "broken" and a
+reply of only such items is ``ok`` with no books), and an ISBN that is not a
+string or fails its check digit becomes None while the book is kept (the
+model can invent ISBNs). Since #754 a confidence is clamped to 0-1 (NaN
+becomes 0.5; an integer too large for a float clamps to 1 or 0), as in the
+Claude adapter. Unlike Claude, which gives 0.5 for any string, a numeric
+string ("1.5", " 0.9 ") parses and clamps here, and null, a list, an object or
+a non-numeric string is broken (kept from #572). A genuine
 ``{"books": []}`` is ``ok`` with no candidates. A ``length`` reply stays
 ``truncated`` here; with no books the gateway reports it as ``malformed``.
 """
@@ -184,6 +188,8 @@ def _is_broken(item: object) -> bool:
         return True
     try:
         float(item.get("confidence", 0.5))
+    except OverflowError:
+        pass  # an integer too large for a float: clamped, not broken
     except (TypeError, ValueError):
         return True
     return False
@@ -196,6 +202,9 @@ def _confidence(value: object) -> float:
     the Claude adapter defaults it to 0.5.)"""
     if isinstance(value, bool):
         return 0.5
+    if isinstance(value, int):
+        # Exact compare: float() overflows on an integer past ~1e308.
+        return float(min(max(value, 0), 1))
     number = float(value)  # type: ignore[arg-type]  # checked by _is_broken
     if math.isnan(number):
         return 0.5

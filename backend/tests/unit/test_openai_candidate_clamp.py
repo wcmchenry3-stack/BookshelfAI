@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.ai.providers.anthropic_vision import parse_reply
 from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FEATURES
 
@@ -79,3 +80,35 @@ async def test_exactly_500_characters_is_accepted(field):
     result = await _identify([_item(**{field: "x" * 500})])
     assert result.outcome == "ok"
     assert len(getattr(result.candidates[0], field)) == 500
+
+
+async def test_numeric_string_confidence_parses_and_clamps():
+    result = await _identify(
+        [_item(confidence="1.5"), _item(title="Emma", confidence=" 0.9 ")]
+    )
+    assert [c.confidence for c in result.candidates] == [1.0, 0.9]
+
+
+def _huge_reply(literal: str) -> str:
+    # Raw JSON text: json.loads turns the digits into an int past float range.
+    return (
+        '{"books":[{"title":"Dune","author":"Frank Herbert","confidence":'
+        + literal
+        + "}]}"
+    )
+
+
+HUGE = [("1" + "0" * 399, 1.0), ("-1" + "0" * 399, 0.0)]
+
+
+@pytest.mark.parametrize("literal,expected", HUGE)
+def test_openai_huge_integer_confidence_clamps(literal, expected):
+    provider = OpenAIVisionProvider(FEATURES["scan.standard"])
+    candidates = provider._parse_reply(_huge_reply(literal), "stop", 15)
+    assert [c.confidence for c in candidates] == [expected]
+
+
+@pytest.mark.parametrize("literal,expected", HUGE)
+def test_claude_huge_integer_confidence_clamps(literal, expected):
+    candidates = parse_reply(_huge_reply(literal), "end_turn", 15)
+    assert [c.confidence for c in candidates] == [expected]

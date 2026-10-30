@@ -167,6 +167,9 @@ class _Book(BaseModel):
     def _confidence(cls, value: Any) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return 0.5
+        if isinstance(value, int):
+            # Exact compare: math.isnan/float() overflow on a huge integer.
+            return float(min(max(value, 0), 1))
         if math.isnan(value):
             return 0.5
         return min(max(float(value), 0.0), 1.0)
