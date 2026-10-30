@@ -5,14 +5,11 @@
   "type_label": "Tipo",
   "type_bug": "Erro",
   "type_feature": "Solicitação de recurso",
-  "label_title": "Título",
   "label_description": "Descrição",
-  "placeholder_title": "Breve resumo do problema ou ideia",
   "placeholder_description": "Descreva o que aconteceu ou o que gostaria de ver...",
   "submit": "Enviar",
   "submit_success": "Obrigado pelo seu feedback!",
   "submit_error": "Algo deu errado. Por favor, tente novamente.",
   "submit_error_rate_limit": "Muitas submissões. Por favor, aguarde {{seconds}} segundos.",
-  "error_title_required": "O título é obrigatório.",
   "error_description_required": "A descrição é obrigatória."
 }

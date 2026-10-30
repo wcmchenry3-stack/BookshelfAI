@@ -5,14 +5,11 @@
   "type_label": "Тип",
   "type_bug": "Ошибка",
   "type_feature": "Запрос функции",
-  "label_title": "Заголовок",
   "label_description": "Описание",
-  "placeholder_title": "Краткое описание проблемы или идеи",
   "placeholder_description": "Опишите, что произошло или что вы хотели бы увидеть...",
   "submit": "Отправить",
   "submit_success": "Спасибо за ваш отзыв!",
   "submit_error": "Что-то пошло не так. Пожалуйста, попробуйте ещё раз.",
   "submit_error_rate_limit": "Слишком много отправок. Пожалуйста, подождите {{seconds}} секунд.",
-  "error_title_required": "Заголовок обязателен.",
   "error_description_required": "Описание обязательно."
 }

@@ -5,14 +5,11 @@
   "type_label": "유형",
   "type_bug": "버그",
   "type_feature": "기능 요청",
-  "label_title": "제목",
   "label_description": "설명",
-  "placeholder_title": "문제 또는 아이디어에 대한 간단한 요약",
   "placeholder_description": "무슨 일이 있었는지, 또는 무엇을 원하는지 설명해 주세요...",
   "submit": "제출",
   "submit_success": "피드백을 주셔서 감사합니다!",
   "submit_error": "오류가 발생했습니다. 다시 시도해 주세요.",
   "submit_error_rate_limit": "제출이 너무 많습니다. {{seconds}}초 후에 다시 시도해 주세요.",
-  "error_title_required": "제목은 필수입니다.",
   "error_description_required": "설명은 필수입니다."
 }
