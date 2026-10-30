@@ -6,7 +6,7 @@ See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for univers
 - Backend: `pytest --cov=. --cov-fail-under=90` from `backend/` (what CI's `test-python` job runs). The backend gate is 90%, not the universal 80%.
   - `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` and `eval/`, so only `app/` is measured.
   - It also sets `precision = 2`. pytest-cov rounds the total to that precision before comparing it with `--cov-fail-under`, and the default of 0 let 79.7% pass an 80% gate with exit 0 (#621). `tests/unit/test_coverage_gate.py` guards this.
-- Frontend: `npx jest --coverage` from `frontend/` (what CI's `test-frontend` job runs). The gate is 80% (`coverage-threshold: 80` in `ci.yml`). Also `npm run typecheck` (`tsc --noEmit`, the `typecheck-frontend` CI job).
+- Frontend: `npx jest --coverage` from `frontend/` (what CI's `test-frontend` job runs). The gate is the Jest `coverageThreshold` in `frontend/package.json` (95/90/92/97, #764), which only goes up. Also `npm run typecheck` (`tsc --noEmit`, the `typecheck-frontend` CI job).
 - E2E: none runs in CI today. Web e2e (Playwright, #470) and Maestro (Phase 4) are planned. `frontend/.maestro/` holds Maestro flows, but no workflow runs them.
 - DB isolation: rollback fixture in `backend/tests/conftest.py` — do NOT mock the database
 - Cost guard: no test may call a real AI provider. `backend/tests/_network_guard.py` (installed for every run by `backend/tests/conftest.py`) blocks any request to an Anthropic or OpenAI API host and fails the test. Fake providers at the gateway boundary (`backend/tests/limits/_harness.py`) or with `backend/tests/_claude_fake.py`.

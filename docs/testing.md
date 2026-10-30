@@ -281,7 +281,7 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | Job | What it runs |
 |---|---|
 | `test-python` | `pytest` with coverage (default, no integration) |
-| `test-frontend` | `npx jest --coverage`, gate 80% (`coverage-threshold: 80`) |
+| `test-frontend` | `npx jest --coverage`; fails below the Jest `coverageThreshold` floor (see Coverage targets) |
 | `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests/integration tests/limits` (the real-DB integration suite and the scan limits matrix) |
 | `pytest -m security` (`security.yml`, job `pytest-security`) | Separate run of the security marker (security tests also run in `test-python` on every PR). Only on PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
 | `lint-python` | `black --check` + `ruff` |
@@ -304,7 +304,8 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 ## Coverage targets
 
 - **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
-- **Frontend:** 80%, enforced by CI's `test-frontend` job (`coverage-threshold: 80` in `.github/workflows/ci.yml`) on `npx jest --coverage`. If the number changes, change it in `ci.yml` and in this section and the CI table together.
+- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `coverage-threshold: 80` input in `.github/workflows/ci.yml` must stay at or below this floor.
+  - **Ratchet:** the Jest `coverageThreshold` is the floor and it only goes up. Any PR that raises a metric by 1 point or more may bump that floor (rounded down to the whole percent). Never lower it without an owner decision.
 
 ## End-to-end (planned, not in CI yet)
 
