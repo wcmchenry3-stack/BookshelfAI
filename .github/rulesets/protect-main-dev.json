@@ -47,7 +47,7 @@
           { "context": "test-migrations" },
           { "context": "sast-python" },
           { "context": "js-bundle-check" },
-          { "context": "ios-build-check / Xcode Build (no signing)" },
+          { "context": "native-build-gate" },
           { "context": "expo-compat / Expo Compatibility Check" },
           { "context": "local-path-check / Local Path Detection" },
           { "context": "podfile-lock-check" },
