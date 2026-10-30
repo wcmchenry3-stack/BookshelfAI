@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 OPS = {"&&", "||", ";", "|", "&", "(", ")", "\n"}
@@ -169,13 +170,26 @@ COMMIT_LONG_VALUE = {"--trailer", "--author", "--date", "--cleanup", "--template
                      "--pathspec-from-file", "--fixup", "--squash"}
 
 
+def _git_config(cwd, key):
+    try:
+        out = subprocess.run(["git", "-C", cwd, "config", "--get", key],
+                             capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    return out.stdout.strip() or None
+
+
 def parse_commit(args, cwd, bodies, stdin_body):
     """Return the commit message, or None if it cannot be determined."""
-    msgs, file_arg, reuse = [], None, False
+    msgs, file_arg, reuse, cleanup = [], None, False, None
     i = 0
     while i < len(args):
         t = args[i]
         nxt = args[i + 1] if i + 1 < len(args) else None
+        if t == "--cleanup" and nxt is not None:
+            cleanup = nxt
+        elif t.startswith("--cleanup="):
+            cleanup = t.split("=", 1)[1]
         if t in ("-m", "--message"):
             if nxt is not None:
                 msgs.append(nxt)
@@ -234,7 +248,13 @@ def parse_commit(args, cwd, bodies, stdin_body):
                 return None
         if text is None:
             return None
-        return "\n".join(ln for ln in text.splitlines() if not ln.startswith("#"))
+        # Git keeps `#` lines in a -F / stdin message unless the cleanup mode
+        # is `strip` (flag, else commit.cleanup), so only then drop them here.
+        if cleanup is None:
+            cleanup = _git_config(cwd, "commit.cleanup")
+        if cleanup == "strip":
+            text = "\n".join(ln for ln in text.splitlines() if not ln.startswith("#"))
+        return text
     return None
 
 

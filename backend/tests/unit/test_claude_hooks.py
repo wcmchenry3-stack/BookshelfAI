@@ -158,10 +158,19 @@ class TestCommitGate:
     def test_file_form(self, repo):
         (repo / "msg.txt").write_text("bad message\n")
         assert_block(self.gate(repo, "git commit -F msg.txt"), "Conventional Commit")
-        (repo / "msg.txt").write_text("# comment\nfix(api): good one\n\nbody\n")
+        (repo / "msg.txt").write_text("fix(api): good one\n\nbody\n")
         assert_allow(self.gate(repo, "git commit -F msg.txt"))
         assert_allow(self.gate(repo, "git commit --file=msg.txt"))
         assert_allow(self.gate(repo, "git commit -F missing.txt"))
+
+    def test_file_comment_lines_kept_unless_cleanup_strip(self, repo):
+        # Codex round 21: git keeps `#` lines in -F messages by default.
+        (repo / "msg.txt").write_text("# invalid subject\nfix: valid\n")
+        assert_block(self.gate(repo, "git commit -F msg.txt"), "Conventional Commit")
+        assert_allow(self.gate(repo, "git commit --cleanup=strip -F msg.txt"))
+        assert_allow(self.gate(repo, "git commit --cleanup strip -F msg.txt"))
+        _git(repo, "config", "commit.cleanup", "strip")
+        assert_allow(self.gate(repo, "git commit -F msg.txt"))
 
     def test_stdin_heredoc_form(self, repo):
         bad = "git commit -F - <<'EOF'\nnope\nEOF\n"
