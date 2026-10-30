@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/react-native';
 import type { EventHint } from '@sentry/core';
 import { filterExpectedNetworkNoise } from './sentryFilter';
-import { scrubSentryEvent } from './sentryScrub';
+import { scrubBreadcrumb, scrubSentryEvent } from './sentryScrub';
 
 const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 
@@ -21,6 +21,14 @@ export function sentryBeforeSend<T extends Sentry.ErrorEvent>(event: T, hint: Ev
     })
   );
   return kept ? scrubSentryEvent(kept, hint) : null;
+}
+
+/**
+ * #736: breadcrumbs (including the #701 `sentry.filter` one) get the same
+ * scrub, so tokens in an http breadcrumb's url/data never reach Sentry.
+ */
+export function sentryBeforeBreadcrumb<T extends Sentry.Breadcrumb>(breadcrumb: T): T | null {
+  return scrubBreadcrumb(breadcrumb);
 }
 
 /**
@@ -48,6 +56,7 @@ export function initSentry(): void {
       sendDefaultPii: false,
       enabled: !!DSN,
       beforeSend: sentryBeforeSend,
+      beforeBreadcrumb: sentryBeforeBreadcrumb,
     });
 
     Sentry.addBreadcrumb({

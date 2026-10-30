@@ -1,9 +1,9 @@
 import { AxiosError, AxiosHeaders } from 'axios';
 import { BrowserClient, defaultStackParser } from '@sentry/browser';
 import { Scope, type Envelope } from '@sentry/core';
-import { sentryBeforeSend } from '../../lib/sentry';
+import { sentryBeforeBreadcrumb, sentryBeforeSend } from '../../lib/sentry';
 import * as scrubModule from '../../lib/sentryScrub';
-import { redactString, scrubSentryEvent } from '../../lib/sentryScrub';
+import { redactString, scrubBreadcrumb, scrubSentryEvent } from '../../lib/sentryScrub';
 
 // A JWT-shaped fixture assembled at runtime, so no JWT literal sits in the source (gitleaks).
 const b64 = (text: string) => Buffer.from(text).toString('base64url');
@@ -247,12 +247,45 @@ describe('scrubSentryEvent', () => {
       expect(redactString('page=2&tokens=none')).toBe('page=2&tokens=none');
     });
 
-    it('is linear on pathological input', () => {
-      const t = Date.now();
-      redactString('Bearer ' + 'a'.repeat(200000) + '!');
-      redactString('eyJ' + 'a'.repeat(200000) + '!');
-      redactString('token=' + 'x'.repeat(200000));
-      expect(Date.now() - t).toBeLessThan(1000);
+    // Time at ~40k vs ~10k chars: linear gives a ratio near 4, quadratic near 16.
+    const time = (s: string) => {
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const t = performance.now();
+        redactString(s);
+        best = Math.min(best, performance.now() - t);
+      }
+      return best;
+    };
+    const cases: [string, (n: number) => string][] = [
+      ['eyJ', (n) => 'eyJ'.repeat(Math.ceil(n / 3))],
+      ['eyJa.', (n) => 'eyJa.'.repeat(Math.ceil(n / 5))],
+      ['eyJa.eyJb.', (n) => 'eyJa.eyJb.'.repeat(Math.ceil(n / 10))],
+      ['Bearer ', (n) => 'Bearer '.repeat(Math.ceil(n / 7))],
+      ['Bearer + token', (n) => 'Bearer ' + 'a'.repeat(n) + '!'],
+      ['token=', (n) => 'token=' + 'x'.repeat(n)],
+      ['Authorization:', (n) => 'Authorization: '.repeat(Math.ceil(n / 15))],
+      ['Cookie:', (n) => 'Cookie: '.repeat(Math.ceil(n / 8))],
+    ];
+    it.each(cases)('is linear on %s repeated', (_name, make) => {
+      const small = time(make(10000));
+      const big = time(make(40000));
+      expect(big).toBeLessThan(1000);
+      expect(big / Math.max(small, 1)).toBeLessThan(8);
+    });
+
+    it('redacts JWTs in the scanned forms and leaves look-alikes', () => {
+      expect(redactString(`a ${JWT} b`)).toBe('a [jwt] b');
+      expect(redactString(`(${JWT}) and ${JWT}.`)).toBe('([jwt]) and [jwt].');
+      expect(redactString(`x${JWT}`)).toBe(`x${JWT}`); // mid-token: not a JWT start
+      expect(redactString('eyJonly.twoparts')).toBe('eyJonly.twoparts');
+    });
+
+    it('masks Authorization / Cookie / Set-Cookie header lines', () => {
+      expect(redactString('Authorization: Bearer abc.def')).toBe('Authorization: [Filtered]');
+      expect(redactString('authorization:Basic dXNlcjpwYXNz')).toBe('authorization: [Filtered]');
+      expect(redactString('Cookie: sid=1; other=2\nnext')).toBe('Cookie: [Filtered]\nnext');
+      expect(redactString('Set-Cookie: sid=1; HttpOnly')).toBe('Set-Cookie: [Filtered]');
     });
   });
 
@@ -328,5 +361,152 @@ describe('sentryBeforeSend ordering', () => {
     const spy = jest.spyOn(scrubModule, 'scrubSentryEvent');
     sentryBeforeSend({ extra: { a: 1 } } as never, {});
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('round 2 scrub rules', () => {
+  const TOKEN = b64('runtime-access-token-value');
+
+  it('redacts response.data / headers unconditionally, even with no status', () => {
+    const out = scrubSentryEvent({
+      extra: { response: { data: { access_token: TOKEN }, headers: { a: 'b' }, note: 'ok' } },
+    }) as { extra: { response: Record<string, unknown> } };
+    expect(JSON.stringify(out)).not.toContain(TOKEN);
+    expect(out.extra.response.data).toBe('[Filtered]');
+    expect(out.extra.response.headers).toBe('[Filtered]');
+    expect(out.extra.response.note).toBe('ok');
+  });
+
+  it('always redacts secret-looking keys, case-insensitively', () => {
+    const extra: Record<string, unknown> = {};
+    for (const k of [
+      'access_token',
+      'Refresh_Token',
+      'id_token',
+      'PASSWORD',
+      'passwd',
+      'secret',
+      'api_key',
+      'apiKey',
+      'api-key',
+    ]) {
+      extra[k] = TOKEN;
+    }
+    extra.keep = 'ok';
+    const out = scrubSentryEvent({ extra }) as { extra: Record<string, unknown> };
+    expect(JSON.stringify(out)).not.toContain(TOKEN);
+    expect(out.extra.keep).toBe('ok');
+  });
+
+  it('redacts a bare extra.access_token', () => {
+    const out = scrubSentryEvent({ extra: { access_token: TOKEN } }) as Scrubbed;
+    expect(out.extra?.access_token).toBe('[Filtered]');
+  });
+
+  it('redacts config wholesale when it has data, baseURL or method', () => {
+    for (const config of [{ data: 'd' }, { baseURL: 'b' }, { method: 'get' }]) {
+      const out = scrubSentryEvent({ extra: { config } }) as Scrubbed;
+      expect(out.extra?.config).toBe('[Filtered]');
+    }
+  });
+
+  it('treats an XHR-like request with _header as sensitive', () => {
+    const out = scrubSentryEvent({
+      extra: { request: { _header: 'h', readyState: 4 } },
+    }) as Scrubbed;
+    expect(out.extra?.request).toBe('[Filtered]');
+  });
+
+  describe('fail closed at the event level', () => {
+    it('returns null when the event cannot be copied', () => {
+      const evil = new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new Error('nope');
+          },
+        }
+      );
+      expect(scrubSentryEvent(evil)).toBeNull();
+    });
+
+    it('drops exception when its values cannot be read', () => {
+      const exception = new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('nope');
+          },
+        }
+      );
+      const out = scrubSentryEvent({ message: 'm', exception }) as Record<string, unknown>;
+      expect('exception' in out).toBe(false);
+      expect(out.message).toBe('m');
+    });
+  });
+
+  describe('message, logentry and request', () => {
+    it('scrubs event.message and logentry message/params', () => {
+      const out = scrubSentryEvent({
+        message: `failed Bearer ${JWT}`,
+        logentry: { message: 'got %s', params: [`Bearer ${JWT}`, 3], formatted: `x ${JWT}` },
+      }) as { message: string; logentry: { params: unknown[]; formatted: string } };
+      expect(JSON.stringify(out)).not.toContain(JWT);
+      expect(out.logentry.params[1]).toBe(3);
+    });
+
+    it('scrubs event.request headers, url, query_string and cookies', () => {
+      const out = scrubSentryEvent({
+        request: {
+          url: 'https://h/p?access_token=abc&x=1',
+          query_string: 'token=abc&x=1',
+          method: 'GET',
+          headers: { Authorization: `Bearer ${JWT}`, Accept: 'json' },
+          cookies: { sid: '1' },
+        },
+      }) as unknown as {
+        request: {
+          url: string;
+          query_string: string;
+          method: string;
+          headers: Record<string, string>;
+          cookies: string;
+        };
+      };
+      expect(out.request.url).toBe('https://h/p?access_token=[Filtered]&x=1');
+      expect(out.request.query_string).toBe('token=[Filtered]&x=1');
+      expect(out.request.method).toBe('GET');
+      expect(out.request.headers).toEqual({ Authorization: '[Filtered]', Accept: 'json' });
+      expect(out.request.cookies).toBe('[Filtered]');
+    });
+  });
+
+  describe('scrubBreadcrumb / beforeBreadcrumb', () => {
+    it('masks tokens in data and message', () => {
+      const out = scrubBreadcrumb({
+        category: 'http',
+        message: `GET with Bearer ${JWT}`,
+        data: { url: 'https://h/p?api_key=k1&a=1', Authorization: 'x', status_code: 200 },
+      }) as { message: string; data: Record<string, unknown> };
+      expect(JSON.stringify(out)).not.toContain(JWT);
+      expect(out.data.url).toBe('https://h/p?api_key=[Filtered]&a=1');
+      expect(out.data.Authorization).toBe('[Filtered]');
+      expect(out.data.status_code).toBe(200);
+    });
+
+    it('returns a clean breadcrumb as the same object', () => {
+      const b = { category: 'ui', message: 'tap', data: { n: 1 } };
+      expect(scrubBreadcrumb(b)).toBe(b);
+    });
+
+    it('is wired into Sentry.init and keeps the #701 sentry.filter breadcrumb', () => {
+      expect(typeof sentryBeforeBreadcrumb).toBe('function');
+      const filterCrumb = {
+        category: 'sentry.filter',
+        message: 'Dropped expected client network error',
+        level: 'info',
+      };
+      expect(sentryBeforeBreadcrumb(filterCrumb as never)).toBe(filterCrumb);
+    });
   });
 });
