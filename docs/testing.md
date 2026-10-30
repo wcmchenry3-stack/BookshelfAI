@@ -6,7 +6,7 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 
 - **Unit tests mock the DB** — they're fast and run on every PR.
 - **Integration tests hit a real Postgres** and are auto-skipped when `DATABASE_URL` points at the dummy URL used by CI's default config. CI runs them in the `test-migrations` job, which has a Postgres 16 service.
-- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own workflow (`security.yml`), not in every PR run. See "When the security suite runs" below.
+- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own workflow (`security.yml`). `pytest.ini` has no marker filter, so they also run with everything else in `test-python` on every PR. See "When the security suite runs" below.
 - **Accuracy and performance suites** live beside the core tests but run opt-in (benchmarks are skipped by default).
 - **Don't mock what you can rollback** — when testing DB interactions, prefer the savepoint-based `db_session` fixture over mock sessions. Feedback memory flagged a real production incident where mocked DB tests passed and the actual migration broke prod.
 
@@ -74,13 +74,13 @@ DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_test pytest -m integration
 
 ### When the security suite runs
 
-`pytest -m security` is not part of every PR's checks. It runs in `.github/workflows/security.yml` (job `pytest-security`, with `TURNSTILE_REQUIRED=false`) when:
+`security`-marked tests run on every PR as part of the plain `pytest` in `test-python` (`backend/pytest.ini` sets no marker filter). They also run on their own, as `pytest -m security`, in `.github/workflows/security.yml` (job `pytest-security`, with `TURNSTILE_REQUIRED=false`, next to Bandit and ZAP) when:
 
 - a pull request targets `dev` and changes `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `.github/workflows/security.yml` or `.zap/**`;
 - on the weekly schedule (Monday 08:00 UTC); or
 - on manual dispatch.
 
-A PR that changes none of those paths does not run it, and a PR to `main` does not run it. Any PR still runs the rest of the backend suite in `test-python`.
+A PR that changes none of those paths, or a PR to `main`, skips the separate `security.yml` run, but still runs the security tests in `test-python`.
 
 ### Nightly scan abuse load run (#539)
 
@@ -283,7 +283,7 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `test-python` | `pytest` with coverage (default, no integration) |
 | `test-frontend` | `npx jest --coverage`, gate 80% (`coverage-threshold: 80`) |
 | `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests/integration tests/limits` (the real-DB integration suite and the scan limits matrix) |
-| `pytest -m security` (`security.yml`, job `pytest-security`) | Security-suite run. Not on every PR: only PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
+| `pytest -m security` (`security.yml`, job `pytest-security`) | Separate run of the security marker (security tests also run in `test-python` on every PR). Only on PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
 | `lint-python` | `black --check` + `ruff` |
 | `lint-frontend` | `eslint` + `prettier --check` |
 | `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |

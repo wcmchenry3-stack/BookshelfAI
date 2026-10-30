@@ -19,7 +19,7 @@ Taken from `.github/workflows/` (`ci.yml`, `security.yml`, `migration-guard.yml`
 | Check | Where | When |
 |---|---|---|
 | Backend unit tests, `pytest --cov=. --cov-fail-under=90` (app code only) | `ci.yml` `test-python` | every PR to `dev` or `main` |
-| Backend security suite, `pytest -m security` | `security.yml` `pytest-security` | PRs to `dev` that touch `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `security.yml` or `.zap/**`; weekly (Monday 08:00 UTC); manual |
+| Backend security suite, `pytest -m security` | runs inside `test-python` on every PR (no marker filter in `pytest.ini`); also on its own in `security.yml` `pytest-security` | separate run: PRs to `dev` that touch `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `security.yml` or `.zap/**`; weekly (Monday 08:00 UTC); manual |
 | Backend integration, `pytest -m integration tests/integration tests/limits` on real Postgres 16 | `ci.yml` `test-migrations`, after `alembic upgrade head`, `alembic check` and `downgrade -1` | every PR to `dev` or `main` |
 | Scan limits matrix (`backend/tests/limits/`) | Its `integration`-marked files run in `test-migrations`. `test_no_real_provider.py` has no marker and runs in `test-python`. | every PR to `dev` or `main` |
 | Frontend Jest + coverage, `npx jest --coverage` | `ci.yml` `test-frontend` | every PR to `dev` or `main` |
