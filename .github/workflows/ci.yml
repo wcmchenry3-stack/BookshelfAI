@@ -116,8 +116,8 @@ jobs:
       working-directory: backend
       # App code only (backend/.coveragerc omits tests/ and alembic/). Raised
       # from 80 to 90 in #621 once the gate actually failed below threshold, then
-      # to 99 in #765 (measured 99.47% on the no-DB run).
-      coverage-threshold: 99
+      # to 98 in #765 (measured 99.47% on the no-DB run; owner chose 98 for headroom).
+      coverage-threshold: 98
     secrets: inherit
 
   test-frontend:

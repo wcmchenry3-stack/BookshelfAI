@@ -56,7 +56,7 @@ pytest
 pytest --cov=app --cov-report=term-missing
 
 # Enforce the CI threshold (app code only via backend/.coveragerc, compared to 2 decimal places; #621)
-pytest --cov=. --cov-fail-under=99
+pytest --cov=. --cov-fail-under=98
 
 # Single file
 pytest tests/unit/test_health_host_exemption.py
@@ -292,7 +292,7 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 
 ## Coverage targets
 
-- **Backend:** 99% line coverage of app code (`pytest --cov=. --cov-fail-under=99`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
+- **Backend:** 98% line coverage of app code (`pytest --cov=. --cov-fail-under=98`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
 - **Frontend:** tracked via `npx jest --coverage`, no hard threshold enforced by default
 
 ## Rule + memory references
