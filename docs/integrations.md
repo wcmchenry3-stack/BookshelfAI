@@ -146,7 +146,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Filtering (#701):** `beforeSend` drops two narrow, user-environment web network signatures (font-loader `<n>ms timeout exceeded`, stackless `NetworkError` DOMException); see `docs/claude/frontend.md` ("Sentry noise filter").
 
-**Scrubbing (#736):** after the filter, `beforeSend` replaces an unhandled AxiosError with a sanitized `ApiError` and redacts `Authorization`/`config`/`headers`/`request`/`response.data` keys and `Bearer <token>` strings from `extra`, `contexts` and exception mechanism data (`frontend/lib/sentryScrub.ts`; see `docs/claude/frontend.md`, "Sentry event scrubbing").
+**Scrubbing (#736):** after the filter, `beforeSend` replaces an unhandled AxiosError's own exception entry with a sanitized `ApiError`, and rebuilds `extra`, `contexts` and exception mechanism data with `authorization`/`cookie`/`set-cookie`/`proxy-authorization` (any depth) and Axios/XHR-shaped `config`/`request`/`response` `headers`/`data` redacted, plus bearer tokens, raw JWTs and token query params masked in strings. It fails closed: a field that cannot be scrubbed is dropped. Web caveat: the top-level `event.request` (page URL, Referer) is not scrubbed; no tokens travel in page URLs today. Code: `frontend/lib/sentryScrub.ts`; details in `docs/claude/frontend.md` ("Sentry event scrubbing").
 
 **API failures (#724):** `lib/api.ts` reports unexpected API failures (403, 5xx) once per (method, path template, status, detail) per app session, with tags `http.status`, `http.method`, `api.path` and (allowlisted codes only) `api.detail`; no tokens, headers or bodies. See `docs/claude/frontend.md` ("API error reporting").
 

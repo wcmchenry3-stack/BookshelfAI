@@ -19,6 +19,10 @@
  *    `config.headers.Authorization` and request/response bodies.
  */
 import { Sentry } from './sentry';
+import { pathTemplate, sanitizeApiError, statusOf, type ApiErrorLike } from './apiErrorSanitize';
+
+// Re-exported so existing importers keep working; the leaf module owns them (#736).
+export { pathTemplate, sanitizeApiError };
 
 /** 403 detail the edge/origin lockdown sends (backend/app/core/origin_auth.py). */
 export const FORBIDDEN = 'forbidden';
@@ -42,39 +46,11 @@ const HANDLED_DETAILS: ReadonlySet<string> = new Set(
   [...KNOWN_DETAILS].filter((d) => d !== FORBIDDEN)
 );
 
-type ApiErrorLike = {
-  config?: { method?: string; url?: string };
-  response?: { status?: number; data?: { detail?: unknown } | null };
-};
-
 const reported = new Set<string>();
 
 /** Test helper: forget what was reported this session. */
 export function resetApiErrorReporting(): void {
   reported.clear();
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** `/user-books/<uuid>?x=1` -> `/user-books/:id`. No origin, query or IDs. */
-export function pathTemplate(url: string | undefined): string {
-  if (!url) return 'unknown';
-  const noOrigin = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '');
-  const path = noOrigin.split(/[?#]/)[0] || '/';
-  return (
-    path
-      .split('/')
-      // Safe by default: anything that could be an identifier (UUID, ISBN, hash,
-      // slug, any segment with a digit, or a long one) becomes `:id`. Static
-      // route words (user-books, scan, usage, wishlist, books, search, auth, me,
-      // unverified) have no digits and are short, so they stay.
-      .map((seg) => (UUID_RE.test(seg) || /\d/.test(seg) || seg.length > 24 ? ':id' : seg))
-      .join('/')
-  );
-}
-
-function statusOf(err: unknown): number | undefined {
-  return (err as ApiErrorLike | null)?.response?.status;
 }
 
 /** The response `detail` when it is a known short machine code, else undefined. */
@@ -116,23 +92,6 @@ function isUnexpected(err: unknown): boolean {
  */
 export function isReportedCentrally(err: unknown): boolean {
   return isUnexpected(err);
-}
-
-/**
- * A capture-safe stand-in for an axios error: name, method, path template and
- * status only. The AxiosError itself carries `config.headers.Authorization`
- * and bodies. Non-axios errors are returned unchanged.
- */
-export function sanitizeApiError(err: unknown): unknown {
-  const e = err as (ApiErrorLike & { isAxiosError?: boolean }) | null;
-  if (!e || typeof e !== 'object' || !(e.isAxiosError || e.config || e.response)) return err;
-  const method = (e.config?.method ?? 'get').toUpperCase();
-  const status = statusOf(err);
-  const out = new Error(
-    `API ${method} ${pathTemplate(e.config?.url)} ${status ?? 'no response'}`.trim()
-  );
-  out.name = 'ApiError';
-  return out;
 }
 
 /** Report an unexpected API failure once per session. Never throws. */
