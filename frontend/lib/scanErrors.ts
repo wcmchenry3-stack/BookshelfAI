@@ -105,12 +105,12 @@ export function hasRefusedJobs(jobs: readonly { status: string; error?: string }
 /** Silent retries for 429 scan_in_progress before showing "Still processing". */
 export const MAX_IN_PROGRESS_RETRIES = 3;
 /** Used when Retry-After is missing or unusable. */
-export const DEFAULT_IN_PROGRESS_RETRY_SECONDS = 2;
+const DEFAULT_IN_PROGRESS_RETRY_SECONDS = 2;
 /** Cap so a bad header can't stall the job for long. */
-export const MAX_IN_PROGRESS_RETRY_SECONDS = 10;
+const MAX_IN_PROGRESS_RETRY_SECONDS = 10;
 
 /** Backend 503 `detail` codes that all mean "scanning is off right now". */
-export const PAUSED_CODES: readonly string[] = [
+const PAUSED_CODES: readonly string[] = [
   'scan_disabled',
   'enhanced_scan_disabled',
   'scan_capacity',
@@ -127,7 +127,7 @@ export const PAUSED_CODES: readonly string[] = [
  * only outcomes the app retries on its schedule. Kill switches, the AI budget
  * and capacity stay `paused` (not retried).
  */
-export const RETRYABLE_CODES: readonly string[] = ['scan_unavailable'];
+const RETRYABLE_CODES: readonly string[] = ['scan_unavailable'];
 
 /**
  * The server's Turnstile refusals (#740, backend/app/api/scan.py), by status
@@ -135,7 +135,7 @@ export const RETRYABLE_CODES: readonly string[] = ['scan_unavailable'];
  * missing (the widget timed out or failed) or rejected (expired, already
  * used), and the next attempt gets a fresh one.
  */
-export const TURNSTILE_REFUSALS: readonly {
+const TURNSTILE_REFUSALS: readonly {
   status: number;
   detail: string;
   code: 'turnstile_missing' | 'turnstile_failed';
