@@ -3,7 +3,7 @@
 See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for universal conventions including 80% coverage threshold, rollback fixture pattern, and accessible query priority.
 
 ## book_app specific
-- Backend: `pytest --cov=. --cov-fail-under=90` from `backend/` (what CI's `test-python` job runs). The backend gate is 90%, not the universal 80%.
+- Backend: `pytest --cov=. --cov-fail-under=98` from `backend/` (what CI's `test-python` job runs). The backend gate is 98%, not the universal 80%.
   - `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` and `eval/`, so only `app/` is measured.
   - It also sets `precision = 2`. pytest-cov rounds the total to that precision before comparing it with `--cov-fail-under`, and the default of 0 let 79.7% pass an 80% gate with exit 0 (#621). `tests/unit/test_coverage_gate.py` guards this.
 - Frontend: `npx jest --coverage` from `frontend/` (what CI's `test-frontend` job runs). The gate is the Jest `coverageThreshold` in `frontend/package.json` (95/90/92/97, #764), which only goes up. Also `npm run typecheck` (`tsc --noEmit`, the `typecheck-frontend` CI job).
