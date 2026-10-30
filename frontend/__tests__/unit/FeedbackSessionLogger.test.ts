@@ -6,6 +6,12 @@ function fakeJwt(payload: string, signature: string): string {
   return [b64('{"alg":"RS256"}'), b64(payload), b64(signature)].join('.');
 }
 
+/** The message part of the newest stored line (without timestamp and level). */
+function lastMsg(): string {
+  const lines = SessionLogger.getLogs().split('\n');
+  return lines[lines.length - 1].replace(/^\[[^\]]+\] (?:WARN|ERROR) /, '');
+}
+
 beforeEach(() => {
   SessionLogger._reset();
 });
@@ -229,9 +235,7 @@ describe('SessionLogger', () => {
       // Built at runtime so no JWT literal sits in the source (gitleaks).
       const jwt = fakeJwt('{"sub":"SECRETPAYLOAD","exp":1}', 'signaturesignature');
       console.warn('a'.repeat(980) + ' ' + jwt);
-      const logs = SessionLogger.getLogs();
-      expect(logs).not.toMatch(/eyJ|SRUNSRVRQ|U1NiJ9|c2lnbmF0/);
-      expect(logs).toMatch(/\[jwt\]|…\[truncated\]/);
+      expect(lastMsg()).toBe('a'.repeat(980) + ' [jwt]');
     });
 
     it('redacts an email cut before its TLD at the 1,000-char boundary', () => {
@@ -247,28 +251,6 @@ describe('SessionLogger', () => {
       const logs = SessionLogger.getLogs();
       expect(logs).not.toMatch(/ab12/);
       expect(logs).toMatch(/…\[truncated\]/);
-    });
-
-    it.each([
-      ['a repeated', 'a'.repeat(4000)],
-      ['a. repeated', 'a.'.repeat(2000)],
-      ['eyJ repeated', 'eyJ'.repeat(1333)],
-      ['eyJ. repeated', 'eyJ.'.repeat(1000)],
-      ['at signs', 'a@'.repeat(2000)],
-      ['domain run', 'a@' + 'b.'.repeat(1998)],
-      ['Bearer spaces', 'Bearer' + ' '.repeat(3990)],
-      ['Authorization spaces', 'Authorization:' + ' '.repeat(3980)],
-    ])('redact() is linear on pathological input: %s', (_name, input) => {
-      redact(input); // warm up the JIT
-      // Best of 5 so a GC pause or scheduler hiccup cannot fail the test; the
-      // old quadratic regexes took 7-21 ms on these inputs every time.
-      let best = Infinity;
-      for (let i = 0; i < 5; i++) {
-        const start = performance.now();
-        redact(input);
-        best = Math.min(best, performance.now() - start);
-      }
-      expect(best).toBeLessThan(5);
     });
   });
 
@@ -363,6 +345,282 @@ describe('SessionLogger', () => {
       expect(Buffer.byteLength(logs.replace(/\ud800/g, '�'), 'utf8')).toBeLessThanOrEqual(
         100 * 1024
       );
+    });
+  });
+
+  describe('review hardening', () => {
+    let spies: jest.SpyInstance[] = [];
+    beforeEach(() => {
+      spies = [
+        jest.spyOn(console, 'warn').mockImplementation(() => {}),
+        jest.spyOn(console, 'error').mockImplementation(() => {}),
+      ];
+      SessionLogger.init();
+    });
+    afterEach(() => {
+      SessionLogger._reset();
+      spies.forEach((sp) => sp.mockRestore());
+    });
+
+    describe('clip at the 4,000-char work size', () => {
+      it('drops a partial email left by the work-size clip and adds the marker', () => {
+        console.warn('token=' + 'k'.repeat(3983) + ' jsmith@exa' + 'mple.com');
+        expect(lastMsg()).toBe('token=[redacted] …[truncated]');
+      });
+
+      it('marks a clipped single string argument as truncated', () => {
+        console.warn('token=' + 'k'.repeat(5000));
+        expect(lastMsg()).toBe('token=[redacted]…[truncated]');
+      });
+
+      it('drops a partial token at the clip of a non-last argument', () => {
+        console.warn('y'.repeat(3990) + ' jsmith@exa'.padEnd(11) + 'x'.repeat(100), 'tail');
+        const msg = lastMsg();
+        expect(msg).not.toMatch(/jsmith/);
+        expect(msg).toMatch(/…\[truncated\]/);
+      });
+
+      it('does not store text from past the work size and stays fast on 1 MB', () => {
+        const start = performance.now();
+        console.warn('y'.repeat(3990) + ' jsmith@example.com' + 'z'.repeat(1000000));
+        expect(performance.now() - start).toBeLessThan(50);
+        const msg = lastMsg();
+        expect(msg.length).toBeLessThanOrEqual(1000 + '…[truncated]'.length);
+        expect(msg).not.toMatch(/jsmith|zzzz/);
+      });
+    });
+
+    describe('keyed credentials', () => {
+      it.each([
+        ['client_secret=s3cr3t', /client_secret=\[redacted\]/, /s3cr3t/],
+        ['auth_token=t0k3n', /auth_token=\[redacted\]/, /t0k3n/],
+        ['session_token=t0k3n', /session_token=\[redacted\]/, /t0k3n/],
+        ['db_password=hunter2', /db_password=\[redacted\]/, /hunter2/],
+        ['authToken=t0k3n', /authToken=\[redacted\]/, /t0k3n/],
+        ['passwd=hunter2', /passwd=\[redacted\]/, /hunter2/],
+        ['x-api-key: k3y', /x-api-key: \[redacted\]/, /k3y/],
+        ['refresh_token=r3fr3sh&a=1', /refresh_token=\[redacted\]&a=1/, /r3fr3sh/],
+        ['TOKEN=UPPER', /TOKEN=\[redacted\]/, /UPPER/],
+      ])('redacts %s', (input, expected, secret) => {
+        console.warn(input);
+        expect(lastMsg()).toMatch(expected);
+        expect(lastMsg()).not.toMatch(secret);
+      });
+
+      it('leaves similar words alone', () => {
+        console.warn('tokenizer = fast, max_tokens 5, secretive');
+        expect(lastMsg()).toBe('tokenizer = fast, max_tokens 5, secretive');
+      });
+    });
+
+    describe('JSON-shaped and quoted credentials', () => {
+      it('redacts a JSON Authorization header value', () => {
+        console.error({ Authorization: 'Basic zzzzzz' });
+        expect(lastMsg()).toBe('{"Authorization":"[redacted]"}');
+      });
+
+      it('redacts a JSON password', () => {
+        console.error({ password: 'hunter2', user: 'u' });
+        expect(lastMsg()).toBe('{"password":"[redacted]","user":"u"}');
+      });
+
+      it('redacts a JSON token', () => {
+        console.error({ token: 'abc123' });
+        expect(lastMsg()).toBe('{"token":"[redacted]"}');
+      });
+
+      it('redacts a single-quoted Authorization value', () => {
+        console.warn("Authorization: 'Basic abc'");
+        expect(lastMsg()).toBe("Authorization: '[redacted]'");
+      });
+
+      it('redacts authorization=Basic abc', () => {
+        console.warn('authorization=Basic abc rest');
+        expect(lastMsg()).toBe('authorization=[redacted] rest');
+      });
+
+      it('redacts an axios-config-shaped object', () => {
+        console.error({
+          url: '/x',
+          headers: { Accept: 'json', Authorization: 'Basic zzzzzz' },
+          data: { password: 'hunter2' },
+        });
+        const msg = lastMsg();
+        expect(msg).not.toMatch(/zzzzzz|hunter2/);
+        expect(msg).toMatch(/"Authorization":"\[redacted\]"/);
+        expect(msg).toMatch(/"password":"\[redacted\]"/);
+      });
+
+      it('redacts a Digest header to the end of the line', () => {
+        console.warn('Authorization: Digest username="x", response="y"');
+        expect(lastMsg()).toBe('Authorization: [redacted]');
+      });
+
+      it('redacts a Digest value inside JSON, escaped quotes included', () => {
+        console.warn({ Authorization: 'Digest username="x", response="y"' });
+        const msg = lastMsg();
+        expect(msg).toBe('{"Authorization":"[redacted]"}');
+      });
+
+      it('redacts a quoted Bearer value and "bearer:"', () => {
+        console.warn('a Bearer "abcdefgh12345" b');
+        expect(lastMsg()).toBe('a Bearer [redacted] b');
+        console.warn('bearer: abcdefgh12345 c');
+        expect(lastMsg()).toBe('bearer [redacted] c');
+      });
+
+      it('keeps a 7-char Bearer value but redacts 8 chars', () => {
+        console.warn('Bearer abcdefg');
+        expect(lastMsg()).toBe('Bearer abcdefg');
+        console.warn('Bearer abcdefgh');
+        expect(lastMsg()).toBe('Bearer [redacted]');
+      });
+    });
+
+    describe('JWT boundaries and fragments', () => {
+      const jwt = (): string => fakeJwt('{"sub":"PAYLOADX"}', 'signaturesig');
+
+      it('redacts a JWT after - and _', () => {
+        console.warn(`jwt-${jwt()} auth_${jwt()}`);
+        expect(lastMsg()).toBe('jwt-[jwt] auth_[jwt]');
+      });
+
+      it('does not treat eyJ inside a longer alphanumeric run as a JWT start', () => {
+        console.warn('abceyJ.x.y');
+        expect(lastMsg()).toBe('abceyJ.x.y');
+      });
+
+      it('redacts two glued JWTs', () => {
+        console.warn(jwt() + jwt());
+        expect(lastMsg()).toBe('[jwt][jwt]');
+      });
+
+      it('redacts a dotless eyJ fragment', () => {
+        console.warn('frag ' + Buffer.from('{"alg":"HS256"}').toString('base64url') + ' end');
+        expect(lastMsg()).not.toMatch(/eyJ/);
+      });
+    });
+
+    describe('email local part', () => {
+      it.each([
+        ["o'brien@example.com", '[email]'],
+        ['jane/doe@x.com', '[email]'],
+        ['first!last#x$y@x.com', '[email]'],
+        ['a=jane@x.com', 'a=[email]'],
+        ['?email=jane@x.com&b=1', '?email=[email]&b=1'],
+        ['a@b.c.', '[email].'],
+        ['user@localhost', 'user@localhost'],
+      ])('%s -> %s', (input, expected) => {
+        console.warn(input);
+        expect(lastMsg()).toBe(expected);
+      });
+    });
+
+    describe('budgeted serialisation', () => {
+      it('stops walking a 300k-key object once the budget is spent', () => {
+        const obj: Record<string, number> = {};
+        for (let i = 0; i < 300000; i++) obj['k' + i] = i;
+        // The engine itself needs ~100 ms just to enumerate 300k keys (V8
+        // builds the key list up front, for-in and Object.keys alike), so a
+        // fixed 50 ms ceiling cannot hold. The serialiser must cost no more
+        // than that enumeration, i.e. it must not walk or stringify the values.
+        let t = performance.now();
+        Object.keys(obj);
+        const enumerate = performance.now() - t;
+        t = performance.now();
+        console.warn(obj);
+        const logged = performance.now() - t;
+        expect(logged).toBeLessThan(enumerate * 3 + 25);
+        const msg = lastMsg();
+        expect(msg.length).toBeLessThanOrEqual(1000 + '…[truncated]'.length);
+        expect(msg.startsWith('{"k0":0,"k1":1')).toBe(true);
+      });
+
+      it('still reports circular and BigInt-containing objects as unserializable', () => {
+        const c: Record<string, unknown> = {};
+        c.self = c;
+        console.warn(c);
+        expect(lastMsg()).toBe('[unserializable]');
+        console.warn({ n: BigInt(1) });
+        expect(lastMsg()).toBe('[unserializable]');
+      });
+
+      it('matches JSON.stringify for ordinary values', () => {
+        const v = { a: [1, 'x', null, undefined, () => 1], b: undefined, c: new Date(0), d: NaN };
+        console.warn(v);
+        expect(lastMsg()).toBe(JSON.stringify(v));
+      });
+    });
+
+    describe('exact 100 KB boundary', () => {
+      // "[<24-char ISO ts>] WARN " is 32 chars, so a line is 32 + msg length.
+      const fill = (firstLen: number): void => {
+        console.warn('F' + 'y'.repeat(firstLen - 1));
+        for (let i = 0; i < 99; i++) console.warn('y'.repeat(991));
+      };
+
+      it('keeps every line when the total is exactly 102,400 bytes', () => {
+        fill(992);
+        const logs = SessionLogger.getLogs();
+        expect(Buffer.byteLength(logs, 'utf8')).toBe(102400);
+        expect(logs).toMatch(/WARN Fy/);
+      });
+
+      it('drops the oldest line when the total would be 102,401 bytes', () => {
+        fill(993);
+        const logs = SessionLogger.getLogs();
+        expect(Buffer.byteLength(logs, 'utf8')).toBeLessThanOrEqual(102400);
+        expect(logs).not.toMatch(/WARN Fy/);
+        expect(logs.split('\n')).toHaveLength(99);
+      });
+    });
+
+    describe('linearity of redact()', () => {
+      const build = (unit: string, n: number): string =>
+        unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
+      const perCall = (input: string, reps: number): number => {
+        redact(input); // warm up
+        const times: number[] = [];
+        for (let i = 0; i < 5; i++) {
+          const start = performance.now();
+          for (let r = 0; r < reps; r++) redact(input);
+          times.push((performance.now() - start) / reps);
+        }
+        return times.sort((x, y) => x - y)[2]; // median
+      };
+      const units = [
+        'a',
+        'a.',
+        'a_',
+        'a.@',
+        'a@',
+        'a=',
+        'eyJ',
+        'eyJ.',
+        'eyJ-',
+        'eyJ.a.',
+        'token',
+        'a_token',
+        'token=',
+        'password="',
+        "secret: '",
+        'Authorization: ',
+        'Authorization: Digest ',
+        'Bearer ',
+        'bearer: x',
+        'Basic ',
+        '\\"',
+        'Authorization: token=a@b.c eyJ.a.b Bearer x_',
+      ];
+
+      it.each(units)('is linear on %j (16,000 vs 4,000 chars)', (unit) => {
+        const t4 = perCall(build(unit, 4000), 10);
+        const t16 = perCall(build(unit, 16000), 10);
+        // Linear: ~4x. Quadratic: ~16x. The floor keeps timer noise on very
+        // fast inputs from inflating the ratio.
+        expect(t16 / Math.max(t4, 0.25)).toBeLessThan(8);
+        expect(t16).toBeLessThan(50);
+      });
     });
   });
 });
