@@ -44,6 +44,8 @@ async def test_create_user(db_session: AsyncSession):
 
 **DB guard** — `pytest_collection_modifyitems` auto-skips tests tagged `@pytest.mark.integration` when `DATABASE_URL` isn't a real Postgres URL. That keeps CI fast on the default Python-test job while the integration job passes its own real DB URL.
 
+Integration tests can live in any folder (`tests/integration/`, `tests/limits/`, `tests/security/`, `tests/unit/`); the marker, not the folder, decides. The `test-migrations` job runs `pytest -m integration tests -q -rs` (all folders), so the summary line shows how many ran and `-rs` lists every skip. It also sets `REQUIRE_DB_TESTS=1`: with that variable set, `tests/_db_guard.py` makes `conftest.py` abort the run with an error if `DATABASE_URL` is missing or the dummy URL, so a mass skip can never pass (#760). `tests/unit/test_db_guard.py` covers the guard.
+
 ### Running
 
 ```bash
@@ -271,7 +273,7 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 |---|---|
 | `test-python` | `pytest` with coverage (default, no integration) |
 | `test-frontend` | `npx jest` with coverage |
-| `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests/integration` (the real-DB integration suite) |
+| `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres) |
 | `pytest -m security` | Separate security-suite run (on every PR) |
 | `lint-python` | `black --check` + `ruff` |
 | `lint-frontend` | `eslint` + `prettier --check` |
@@ -293,7 +295,8 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 ## Coverage targets
 
 - **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
-- **Frontend:** tracked via `npx jest --coverage`, no hard threshold enforced by default
+- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97 when set, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `coverage-threshold: 80` input in `.github/workflows/ci.yml` must stay at or below this floor.
+  - **Ratchet:** the Jest `coverageThreshold` is the floor and it only goes up. Any PR that raises a metric by 1 point or more may bump that floor (rounded down to the whole percent). Never lower it without an owner decision.
 
 ## Rule + memory references
 
