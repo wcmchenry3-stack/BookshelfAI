@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-import { MAX_RETRY_AFTER_MS, toApiError } from './apiError';
+import { MAX_RETRY_AFTER_MS, isTimeoutError, toApiError } from './apiError';
 import { DEFAULT_TIMEOUT_MS } from './apiTimeouts';
 import { reportApiError } from './apiErrorReporting';
 import { Sentry } from './sentry';
@@ -8,7 +8,7 @@ import * as storage from './storage';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8001';
 
-export { DEFAULT_TIMEOUT_MS, SCAN_UPLOAD_TIMEOUT_MS } from './apiTimeouts';
+export { DEFAULT_TIMEOUT_MS, SCAN_UPLOAD_TIMEOUT_MS, SEARCH_TIMEOUT_MS } from './apiTimeouts';
 
 export const ACCESS_TOKEN_KEY = 'bookshelf_access_token';
 export const REFRESH_TOKEN_KEY = 'bookshelf_refresh_token';
@@ -60,7 +60,7 @@ function requestPath(url: string | undefined): string {
 export const MAX_RETRIES = 2;
 export const RETRY_BASE_DELAY_MS = 1_000;
 export const RETRY_JITTER_RATIO = 0.25;
-/** Statuses worth retrying; a missing response (network error, timeout) is too. */
+/** Statuses worth retrying; a network error with no response is too (a timeout is not). */
 export const RETRYABLE_STATUSES: readonly number[] = [408, 429, 502, 503, 504];
 // TODO(#685): POST and PATCH retry only once the server honours an
 // Idempotency-Key; until then a retried write could be applied twice.
@@ -109,6 +109,11 @@ function shouldRetry(
   if ((config._retryCount ?? 0) >= MAX_RETRIES) return false;
   // A request from an earlier session is never replayed with the new session's token.
   if (config._sessionEpoch !== undefined && config._sessionEpoch !== sessionEpoch) return false;
+  // A timeout is never retried: it means the server may still be working (a
+  // search runs provider calls for up to ~30 s), not that the request was
+  // lost, and a re-send would multiply the load. Other network errors
+  // (connection refused/reset, offline) are retried.
+  if (isTimeoutError(error)) return false;
   const status = toApiError(error).status;
   return status === undefined || RETRYABLE_STATUSES.includes(status);
 }

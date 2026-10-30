@@ -136,6 +136,7 @@ describe('catalog_token round trip (#602)', () => {
     expect(mockGet).toHaveBeenCalledWith('/books/search', {
       params: { q: 'Dune' },
       signal: expect.any(AbortSignal),
+      timeout: 45_000,
     });
     expect(posted).toEqual([dune]);
   });

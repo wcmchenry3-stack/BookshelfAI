@@ -34,12 +34,19 @@ import {
   DEFAULT_TIMEOUT_MS,
   MAX_RETRIES,
   SCAN_UPLOAD_TIMEOUT_MS,
+  SEARCH_TIMEOUT_MS,
   setAuthFailureCallback,
 } from '../../lib/api';
 import { MAX_RETRY_AFTER_MS, toApiError } from '../../lib/apiError';
 import { resetApiErrorReporting } from '../../lib/apiErrorReporting';
 
-type Step = { status?: number; headers?: Record<string, string>; data?: unknown; ok?: boolean };
+type Step = {
+  timeout?: boolean;
+  status?: number;
+  headers?: Record<string, string>;
+  data?: unknown;
+  ok?: boolean;
+};
 
 /** Adapter that plays `steps` in order (the last repeats) and counts calls. */
 function script(steps: Step[]) {
@@ -49,6 +56,14 @@ function script(steps: Step[]) {
     const step = steps[Math.min(calls.length - 1, steps.length - 1)];
     if (step.ok) {
       return { status: 200, data: { ok: true }, headers: {}, config, statusText: 'OK' };
+    }
+    if (step.timeout) {
+      throw Object.assign(new Error('timeout exceeded'), {
+        isAxiosError: true,
+        config,
+        code: 'ECONNABORTED',
+        request: {},
+      });
     }
     if (step.status === undefined) {
       throw Object.assign(new Error('Network Error'), { isAxiosError: true, config, request: {} });
@@ -87,13 +102,28 @@ beforeEach(() => {
 afterAll(() => configureRetry());
 
 describe('timeouts', () => {
-  it('sets a default timeout on the instance', () => {
+  it('sets a default timeout on the instance, above the slowest normal endpoint', () => {
     expect(api.defaults.timeout).toBe(DEFAULT_TIMEOUT_MS);
-    expect(DEFAULT_TIMEOUT_MS).toBe(15_000);
+    expect(DEFAULT_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
   });
 
-  it('gives scan uploads a longer timeout', () => {
-    expect(SCAN_UPLOAD_TIMEOUT_MS).toBeGreaterThan(DEFAULT_TIMEOUT_MS);
+  it('gives search a longer timeout than the server worst case (10 s + 20 s)', () => {
+    expect(SEARCH_TIMEOUT_MS).toBeGreaterThan(DEFAULT_TIMEOUT_MS);
+    expect(SEARCH_TIMEOUT_MS).toBeGreaterThanOrEqual(40_000);
+  });
+
+  it('scan upload timeout covers the AI bound (120 s) + enrichment (20 s)', () => {
+    expect(SCAN_UPLOAD_TIMEOUT_MS).toBeGreaterThanOrEqual(140_000);
+  });
+
+  it('search is sent with the search timeout', async () => {
+    let seen: number | undefined;
+    api.defaults.adapter = async (config) => {
+      seen = config.timeout;
+      return { status: 200, data: [], headers: {}, config, statusText: 'OK' };
+    };
+    await api.get('/books/search', { params: { q: 'x' }, timeout: SEARCH_TIMEOUT_MS });
+    expect(seen).toBe(SEARCH_TIMEOUT_MS);
   });
 });
 
@@ -103,6 +133,15 @@ describe('retry', () => {
     await expect(api.get('/user-books')).resolves.toMatchObject({ status: 200 });
     expect(calls).toHaveLength(3);
     expect(sleeps).toEqual([1000, 2000]);
+  });
+
+  it('does not retry a timeout (the server may still be working)', async () => {
+    const calls = script([{ timeout: true }, { ok: true }]);
+    await expect(api.get('/books/search', { timeout: SEARCH_TIMEOUT_MS })).rejects.toMatchObject({
+      code: 'ECONNABORTED',
+    });
+    expect(calls).toHaveLength(1);
+    expect(sleeps).toEqual([]);
   });
 
   it('gives up after MAX_RETRIES retries and rejects with the last error', async () => {

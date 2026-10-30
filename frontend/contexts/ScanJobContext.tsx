@@ -9,7 +9,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useBanner } from '../hooks/useBanner';
 import { useTurnstile } from '../hooks/useTurnstile';
 import { api } from '../lib/api';
-import { SCAN_UPLOAD_TIMEOUT_MS } from '../lib/apiTimeouts';
+import { SCAN_UPLOAD_TIMEOUT_MS, SEARCH_TIMEOUT_MS } from '../lib/apiTimeouts';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { openScanQueue } from '../lib/scanQueueNav';
 import {
@@ -1231,6 +1231,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
           const response = await api.get<EnrichedBook[]>('/books/search', {
             params: { q: job.query },
             signal,
+            timeout: SEARCH_TIMEOUT_MS,
           });
           if (signedOutSince()) return;
           results = response.data ?? [];
