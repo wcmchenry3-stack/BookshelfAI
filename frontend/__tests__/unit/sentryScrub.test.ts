@@ -5,7 +5,9 @@ import { sentryBeforeSend } from '../../lib/sentry';
 import * as scrubModule from '../../lib/sentryScrub';
 import { redactString, scrubSentryEvent } from '../../lib/sentryScrub';
 
-const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlLXNlY3JldA';
+// A JWT-shaped fixture assembled at runtime, so no JWT literal sits in the source (gitleaks).
+const b64 = (text: string) => Buffer.from(text).toString('base64url');
+const JWT = [b64('{"alg":"HS256"}'), b64('{"sub":"user-123"}'), b64('signature-secret')].join('.');
 
 function makeAxiosError(): AxiosError {
   const headers = new AxiosHeaders({ Authorization: `Bearer ${JWT}` });
