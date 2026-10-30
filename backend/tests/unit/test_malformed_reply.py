@@ -302,6 +302,7 @@ _MIXED = [
 # candidates are the same (none). The old OpenAI parser crashed on a null
 # author (in the de-duplication), now that item is broken and dropped. Since
 # #746 OpenAI also drops an empty or whitespace title (it kept it before).
+# Since #754 OpenAI treats an over-500-character title as broken, like Claude.
 COMPARISON = {
     "empty_author": ([{"title": "Dune", "author": ""}], [], [("Dune", "")]),
     "whitespace_title": (
@@ -309,7 +310,7 @@ COMPARISON = {
         [],
         [],  # #746: an empty or whitespace title is dropped
     ),
-    "title_over_500": ([{"title": _LONG, "author": "A"}], None, [(_LONG, "A")]),
+    "title_over_500": ([{"title": _LONG, "author": "A"}], None, None),
     "null_author": ([{"title": "Dune", "author": None}], None, None),
     "mixed": (
         _MIXED,

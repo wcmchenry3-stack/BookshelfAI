@@ -45,7 +45,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 - Non-2xx (including 429 rate limit) → `ScanUnavailableError` → 503
 - Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
 - No content, not JSON, the wrong shape (a bare list is still accepted), or a non-empty list in which every entry is structurally broken → ledger `malformed`, `503 scan_unavailable`, refunded (#572)
-- Structurally broken entries (not an object, a title or author missing or not a string, a confidence that is not a number) are skipped individually; an empty or whitespace title is dropped (#746; schema-valid, so a reply of only such entries is `ok` with no books, not `malformed`), an empty author is kept (a title-only lookup)
+- Structurally broken entries (not an object, a title or author missing or not a string or over 500 characters after strip, a confidence that is not a number) are skipped individually (#754); a numeric confidence is clamped to 0–1 (NaN and bool become 0.5, an integer too large for a float clamps to 1 or 0), as in the Claude adapter; an empty or whitespace title is dropped (#746; schema-valid, so a reply of only such entries is `ok` with no books, not `malformed`), an empty author is kept (a title-only lookup)
 - `isbn_13` / `isbn_10` are cleaned by `app/ai/providers/isbn.py` (#746): spaces and hyphens stripped; a non-string, non-ASCII-digit or bad-check-digit value becomes null and the book is kept (the model can invent ISBNs, e.g. #743)
 - `finish_reason: length` → ledger `truncated` with the parsed books; with none, `malformed` (503, refunded; #572)
 
