@@ -8,6 +8,7 @@ behaviour is in tests/integration/test_scan_records_db.py."""
 import asyncio
 import hashlib
 import io
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -549,6 +550,42 @@ class TestNewPhoto:
         assert [b["title"] for b in row["enrichment"]] == ["Dune"]
         # The normal path charged one unit.
         assert store.count() == 1
+
+    def test_out_of_range_openai_confidence_still_saves_the_record(
+        self, client, store, records, provider
+    ):
+        """#754: the real OpenAI adapter (HTTP mocked, the gateway's provider
+        class swapped for it) clamps confidence 1.5 to 1.0, so the record is
+        valid and saved."""
+        from app.ai.providers.openai_vision import OpenAIVisionProvider
+
+        book = {"title": "Dune", "author": "Frank Herbert", "confidence": 1.5}
+        reply = {
+            "choices": [
+                {
+                    "message": {"content": json.dumps({"books": [book]})},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        http_resp = MagicMock()
+        http_resp.raise_for_status = MagicMock()
+        http_resp.json.return_value = reply
+        http = MagicMock()
+        http.post = AsyncMock(return_value=http_resp)
+        http.__aenter__ = AsyncMock(return_value=http)
+        http.__aexit__ = AsyncMock(return_value=False)
+        real = OpenAIVisionProvider(FEATURES["scan.standard"])
+        provider.identify.side_effect = real.identify
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=http
+        ):
+            resp = _post(client)
+        assert resp.status_code == 200
+        row = records.only()
+        assert row["ai_done"]
+        assert [c["confidence"] for c in row["candidates"]] == [1.0]
 
     def test_fingerprint_is_of_the_normalised_bytes(
         self, client, store, records, provider

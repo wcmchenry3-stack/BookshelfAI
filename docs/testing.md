@@ -6,7 +6,7 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 
 - **Unit tests mock the DB** — they're fast and run on every PR.
 - **Integration tests hit a real Postgres** and are auto-skipped when `DATABASE_URL` points at the dummy URL used by CI's default config. CI runs them in the `test-migrations` job, which has a Postgres 16 service.
-- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own CI job.
+- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own workflow (`security.yml`). `pytest.ini` has no marker filter, so they also run with everything else in `test-python` on every PR. See "When the security suite runs" below.
 - **Accuracy and performance suites** live beside the core tests but run opt-in (benchmarks are skipped by default).
 - **Don't mock what you can rollback** — when testing DB interactions, prefer the savepoint-based `db_session` fixture over mock sessions. Feedback memory flagged a real production incident where mocked DB tests passed and the actual migration broke prod.
 
@@ -23,6 +23,7 @@ backend/tests/
 ├── conftest.py          DATABASE_URL guard, rate-limit reset fixture, db_session fixture
 ├── unit/                Per-module tests — mock DB via fixtures
 ├── integration/         Real-DB tests — @pytest.mark.integration, auto-skipped w/o DATABASE_URL
+├── limits/              Scan limits matrix on real Postgres — @pytest.mark.integration (test_no_real_provider.py is unmarked)
 ├── security/            OWASP tests — @pytest.mark.security
 ├── accuracy/            Dedup + enrichment correctness benchmarks
 └── performance/         @pytest.mark.benchmark (pytest-benchmark)
@@ -66,12 +67,22 @@ pytest tests/unit/test_health_host_exemption.py
 # Single test
 pytest tests/unit/test_health_host_exemption.py::test_health_accepts_untrusted_host_header
 
-# Security suite only
+# Security suite only (the marker run in security.yml)
 pytest -m security
 
 # Integration tests (against a real DB)
 DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_test pytest -m integration
 ```
+
+### When the security suite runs
+
+`security`-marked tests run on every PR as part of the plain `pytest` in `test-python` (`backend/pytest.ini` sets no marker filter). They also run on their own, as `pytest -m security`, in `.github/workflows/security.yml` (job `pytest-security`, with `TURNSTILE_REQUIRED=false`, next to Bandit and ZAP) when:
+
+- a pull request targets `dev` and changes `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `.github/workflows/security.yml` or `.zap/**`;
+- on the weekly schedule (Monday 08:00 UTC); or
+- on manual dispatch.
+
+A PR that changes none of those paths, or a PR to `main`, skips the separate `security.yml` run, but still runs the security tests in `test-python`.
 
 ### Nightly scan abuse load run (#539)
 
@@ -239,6 +250,9 @@ npx jest __tests__/unit/useScanJobs.test.tsx
 # Type-check (tsc --noEmit; also the typecheck-frontend CI job)
 npm run typecheck
 
+# Unused files, exports and dependencies (knip; also the static-frontend CI job)
+npm run knip
+
 # Watch mode
 npx jest --watch
 
@@ -272,9 +286,9 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | Job | What it runs |
 |---|---|
 | `test-python` | `pytest` with coverage (default, no integration) |
-| `test-frontend` | `npx jest` with coverage |
+| `test-frontend` | `npx jest --coverage`; fails below the Jest `coverageThreshold` floor (see Coverage targets) |
 | `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres) |
-| `pytest -m security` | Separate security-suite run (on every PR) |
+| `pytest -m security` (`security.yml`, job `pytest-security`) | Separate run of the security marker (security tests also run in `test-python` on every PR). Only on PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
 | `lint-python` | `black --check` + `ruff` |
 | `lint-frontend` | `eslint` + `prettier --check` |
 | `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
@@ -286,17 +300,43 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `android-bundle-check` | Metro bundle compiles for Android |
 | `ios-build-check` | Full `xcodebuild archive` (no signing) |
 | `android-build-check` | Full `./gradlew assembleDebug` |
+| `repo-hygiene` | Own workflow (`repo-hygiene.yml`): jscpd copy-paste threshold, 600-line file cap, offline docs link and anchor check. A weekly `external-links` job checks external URLs (not a PR gate). See "Repo hygiene checks" below |
+| `static-frontend` | Own workflow (`static-frontend.yml`; PRs to `dev`/`main` touching `frontend/**`, and pushes to `dev`): `npm ci` then `npm run knip` (#768) |
+| `design-token-check` | Own workflow (`design-token-check.yml`, calls the shared `called-design-token-check.yml`): the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. Runs on every PR to `dev`/`main` (opened, edited, synchronize, reopened), so it covers all frontend paths. It stays a separate workflow; do not fold it into `static-frontend.yml` |
 | `migration-guard` | Own workflow (`migration-guard.yml`, re-runs on label changes): `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`). Listed in the required checks of `.github/rulesets/protect-main-dev.json`; the owner must apply the ruleset in GitHub settings. On PRs into `main` it passes without scanning (already scanned on the feature PRs into `dev`) |
+
+### Fixing or ignoring a knip finding (#768)
+
+`frontend/knip.json` configures knip: entry points are `app/**` (Expo Router), `__tests__/**` (Jest), `plugins/*.js`, `scripts/*.js` and `components/*.web.tsx` (platform files); the Jest, Babel and Expo plugins add `jest.setup.ts`, `babel.config.js` and the `app.json` plugin references.
+
+- Unused file, export or type: delete it, or drop the `export` keyword if the symbol is still used in its own file. A test counts as a user, so an export used only by tests is not reported.
+- Unused or unlisted dependency: remove it from `package.json`, or add it to `package.json` if it is really imported.
+- False positive (read at runtime, a native or config-only reference, a dynamic `require`): add it to `ignore`, `ignoreDependencies`, `ignoreUnresolved` or `ignoreIssues` in `knip.json` with a `//` comment saying why. No blanket globs.
 
 Required checks are listed in `.github/rulesets/protect-main-dev.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
 
 Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` and `workflow_dispatch`, not a required check) runs the scan abuse load run described under "Nightly scan abuse load run" above, and `.github/workflows/ai-eval.yml` (`workflow_dispatch` only) runs the AI scan evaluation described under "AI scan evaluation" above.
 
+## Repo hygiene checks
+
+`.github/workflows/repo-hygiene.yml` (job `repo-hygiene`, on every PR and push to `dev`/`main`) runs three checks (#769). It is a separate workflow from `ci.yml`. The tools run by exact version (`JSCPD_VERSION`, `LYCHEE_VERSION` in the workflow), not through third-party actions; the lychee tarball is checked against a pinned sha256 (`LYCHEE_SHA256`). Bump the version and the checksum together.
+
+- **Copy-paste detection (jscpd).** `.jscpd.json` at the repo root scans `backend/app` and `frontend/{app,components,contexts,hooks,lib}` (tests and locales excluded). The `threshold` is a percentage of duplicated lines, set just above the measured level (1.42% when added, threshold 1.6). New duplication that pushes the total over it fails the job. The JSON report is uploaded as the `jscpd-report` artifact. To run it locally: `npx jscpd@5.4.0 --config .jscpd.json` from the repo root; the report lands in `jscpd-report/` (gitignored). When you remove duplication, lower `threshold` to just above the new measured percentage so the gain is kept. Never raise it to fit new copy-pasted code; extract the shared code instead.
+- **File-length cap.** `python3 scripts/check_file_length.py` fails when a `.py`, `.ts` or `.tsx` file is over 600 lines. Tests, `__tests__`, locales, generated files, `backend/alembic/versions`, `node_modules`, `ios/` and `android/` are not counted. Files that were already over the cap are in `scripts/file_length_allowlist.txt` (`path max_lines`), each capped at its length when it was listed: it can shrink but not grow. When you shrink one, lower its number (the script warns about stale entries; `--strict` makes that an error); delete the line once the file is under 600. Do not add a file to the allowlist to make a new long file pass; split it. Tested by `backend/tests/unit/test_check_file_length.py`.
+- **Docs links (lychee).** `lychee.toml` at the repo root. On PRs: `lychee --config lychee.toml --offline --include-fragments 'docs/**/*.md' README.md CLAUDE.md`, i.e. relative links and `#anchors` only, no network. External URLs are checked only by the `external-links` job, which runs weekly (Monday 06:17 UTC) and on manual dispatch and is not a PR gate. A link that cannot resolve in CI on purpose (for example the owner's `~/.claude/standards/` files) goes in `exclude` in `lychee.toml`, with a comment.
+
 ## Coverage targets
 
 - **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
-- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97 when set, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `coverage-threshold: 80` input in `.github/workflows/ci.yml` must stay at or below this floor.
+- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `coverage-threshold: 80` input in `.github/workflows/ci.yml` must stay at or below this floor.
   - **Ratchet:** the Jest `coverageThreshold` is the floor and it only goes up. Any PR that raises a metric by 1 point or more may bump that floor (rounded down to the whole percent). Never lower it without an owner decision.
+
+## End-to-end (planned, not in CI yet)
+
+No end-to-end test runs in CI today. Two are planned:
+
+- **Web e2e:** Playwright against the web export (#470).
+- **Native flows:** Maestro (Phase 4). The Maestro flows under `frontend/.maestro/` are not run by any workflow yet.
 
 ## Rule + memory references
 

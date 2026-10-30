@@ -101,3 +101,4 @@ backend/eval/**/*.[aA][vV][iI][fF]
 backend/eval/**/manifest.json
 backend/eval/**/ground_truth*.jsonl
 backend/ai-eval-report*.json
+jscpd-report/

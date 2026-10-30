@@ -45,7 +45,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 - Non-2xx (including 429 rate limit) → `ScanUnavailableError` → 503
 - Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
 - No content, not JSON, the wrong shape (a bare list is still accepted), or a non-empty list in which every entry is structurally broken → ledger `malformed`, `503 scan_unavailable`, refunded (#572)
-- Structurally broken entries (not an object, a title or author missing or not a string, a confidence that is not a number) are skipped individually; an empty or whitespace title is dropped (#746; schema-valid, so a reply of only such entries is `ok` with no books, not `malformed`), an empty author is kept (a title-only lookup)
+- Structurally broken entries (not an object, a title or author missing or not a string or over 500 characters after strip, a confidence that is not a number) are skipped individually (#754); a numeric confidence is clamped to 0–1 (NaN and bool become 0.5, an integer too large for a float clamps to 1 or 0), as in the Claude adapter; an empty or whitespace title is dropped (#746; schema-valid, so a reply of only such entries is `ok` with no books, not `malformed`), an empty author is kept (a title-only lookup)
 - `isbn_13` / `isbn_10` are cleaned by `app/ai/providers/isbn.py` (#746): spaces and hyphens stripped; a non-string, non-ASCII-digit or bad-check-digit value becomes null and the book is kept (the model can invent ISBNs, e.g. #743)
 - `finish_reason: length` → ledger `truncated` with the parsed books; with none, `malformed` (503, refunded; #572)
 
@@ -145,6 +145,8 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Init:** `frontend/lib/sentry.ts`. Imported as the **first import in `app/_layout.tsx`** (rule #13) — the module self-initializes so the native crash reporter is up before any other module can throw.
 
 **Filtering (#701):** `beforeSend` drops two narrow, user-environment web network signatures (font-loader `<n>ms timeout exceeded`, stackless `NetworkError` DOMException); see `docs/claude/frontend.md` ("Sentry noise filter").
+
+**Scrubbing (#736):** after the filter, `beforeSend` replaces an unhandled AxiosError's own exception entry with a sanitized `ApiError`, and rebuilds `extra`, `contexts`, `logentry`, `message`, `event.request` and exception mechanism data: auth/cookie/secret-named keys (`authorization`, `cookie`, `access_token`, `password`, `api_key`, ...) at any depth and Axios/XHR-shaped `config`/`request`/`response` `headers`/`data` are redacted, and bearer tokens, raw JWTs, `Authorization`/`Cookie` header lines and token query params are masked in strings (all linear-time). `beforeBreadcrumb` applies the same scrub to breadcrumb `message`/`data`. It fails closed: a field that cannot be scrubbed is dropped, and an event that cannot be copied is dropped (`null`). Web caveat: `event.request`'s page URL gets query-param redaction only; no tokens travel in page URLs today. Code: `frontend/lib/sentryScrub.ts`; details in `docs/claude/frontend.md` ("Sentry event scrubbing").
 
 **API failures (#724):** `lib/api.ts` reports unexpected API failures (403, 5xx) once per (method, path template, status, detail) per app session, with tags `http.status`, `http.method`, `api.path` and (allowlisted codes only) `api.detail`; no tokens, headers or bodies. See `docs/claude/frontend.md` ("API error reporting").
 

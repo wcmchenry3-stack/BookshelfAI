@@ -14,9 +14,9 @@ export interface FeedbackPayload {
   type: FeedbackType;
 }
 
-export type SubmitStatus = 'idle' | 'submitting' | 'success' | 'error';
+type SubmitStatus = 'idle' | 'submitting' | 'success' | 'error';
 
-export interface SubmitError {
+interface SubmitError {
   /** `unavailable`: Sentry is not initialised in this build (no DSN). */
   kind: 'rate_limit' | 'unavailable';
   retryAfterSeconds?: number;

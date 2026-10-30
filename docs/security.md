@@ -23,7 +23,7 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Request size limit | `RequestSizeLimitMiddleware` (pure ASGI, #557) caps every request body: 6 MB on `POST /scan` (`MAX_SCAN_REQUEST_BYTES` = the 5 MB image limit + 1 MB multipart overhead), 10 MB elsewhere. A declared `Content-Length` over the cap → 413 without reading the body; otherwise the bytes are counted as they arrive, so a chunked body (no `Content-Length`) is cut off with 413 as soon as it passes the cap and no handler runs on it. A malformed `Content-Length` (non-numeric, negative, conflicting values) → 400 |
 | DDoS / Bot protection | Cloudflare free tier (Bot Fight Mode, HTTP DDoS protection) |
 | Bot protection on /scan | Cloudflare Turnstile. When `TURNSTILE_REQUIRED=true` (the default; boot fails without `TURNSTILE_SECRET_KEY`), every `POST /scan` must carry `cf-turnstile-response`, verified against Cloudflare siteverify with a 5 s timeout (missing → `400 "Missing Turnstile token"`, rejected or siteverify unreachable → `403 "Turnstile verification failed"`). The check runs after the per-user daily request count and before the upload is read. Production currently runs `TURNSTILE_REQUIRED=false` until the app's site key is live; see [Turnstile on /scan](#turnstile-on-scan) |
-| CORS | Explicit method/header allowlist; wildcard origins rejected at config validation; only `Retry-After` is exposed to scripts (`expose_headers`), for the scan 429s |
+| CORS | Explicit method/header allowlist; wildcard origins rejected at config validation; only `Retry-After` is exposed to scripts (`expose_headers`): the scan 429s and the API client's retry backoff (#766) read it; asserted by `tests/unit/test_cors_expose_headers.py` |
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
 | Upload normalisation | Every `/scan` image is fully decoded, bomb-checked, stripped of metadata, downscaled and re-encoded as JPEG before any paid call. See [Upload pipeline](#upload-pipeline-post-scan) |
 | SQL injection | SQLAlchemy ORM throughout; no raw SQL |
@@ -289,7 +289,7 @@ See "Auth Bypass Test Cases" section below.
 - [ ] Magic bytes check catches polyglot: submit JPEG magic + PHP body → forwarded to OpenAI (bytes never executed server-side; acceptable)
 
 **A10 — SSRF**
-- [ ] All outbound URLs are hardcoded constants (Google Books, Open Library, JWKS, OpenAI, Turnstile) — no user-supplied URL parameter accepted anywhere
+- [ ] All outbound URLs are hardcoded constants (Google Books, Open Library, JWKS, OpenAI, Turnstile). The only user-supplied URLs are `cover_url` (wishlist add) and `cover_url_override`; the server never fetches them (the client renders them). Both are validated with `validate_safe_url(..., resolve=False)` (#747): https, a real hostname, no `localhost`, no IP-literal host in a private or reserved range, no numeric host spellings (`2130706433`, `0x7f.1`, `127.1`) and no trailing dot. `cover_url` on wishlist add is also HMAC-bound by the `catalog_token`
 
 ---
 
