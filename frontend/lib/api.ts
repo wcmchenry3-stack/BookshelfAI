@@ -238,7 +238,15 @@ api.interceptors.response.use(
         const attempt = original._retryCount ?? 0;
         original._retryCount = attempt + 1;
         await retrySleep(retryDelayMs(attempt, toApiError(error).retryAfterMs));
-        if (!original.signal?.aborted) return api(original);
+        // Signed out, switched account or aborted while waiting: the request
+        // belongs to a session that is gone, so never replay it (the request
+        // interceptor would send it with the new session's token). Like the
+        // stale-401 path below, it is rejected unreported.
+        const sentEpoch = (original as SessionTagged)._sessionEpoch;
+        if (original.signal?.aborted || (sentEpoch !== undefined && sentEpoch !== sessionEpoch)) {
+          return Promise.reject(error);
+        }
+        return api(original);
       }
       // #724: a 403 (incl. `forbidden`) is not an auth failure; it never
       // signs the user out. Report unexpected failures once per session.

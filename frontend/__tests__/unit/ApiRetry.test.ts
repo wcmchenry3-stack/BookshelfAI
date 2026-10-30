@@ -31,6 +31,8 @@ jest.mock('axios', () => {
 import {
   api,
   configureRetry,
+  gateStoredSession,
+  resumeStoredSession,
   DEFAULT_TIMEOUT_MS,
   MAX_RETRIES,
   SCAN_UPLOAD_TIMEOUT_MS,
@@ -50,9 +52,9 @@ type Step = {
 
 /** Adapter that plays `steps` in order (the last repeats) and counts calls. */
 function script(steps: Step[]) {
-  const calls: { method?: string; url?: string }[] = [];
+  const calls: { method?: string; url?: string; auth?: unknown }[] = [];
   api.defaults.adapter = async (config) => {
-    calls.push({ method: config.method, url: config.url });
+    calls.push({ method: config.method, url: config.url, auth: config.headers?.Authorization });
     const step = steps[Math.min(calls.length - 1, steps.length - 1)];
     if (step.ok) {
       return { status: 200, data: { ok: true }, headers: {}, config, statusText: 'OK' };
@@ -242,6 +244,42 @@ describe('Retry-After', () => {
     script([{ status: 503, headers: { 'retry-after': 'soon' } }, { ok: true }]);
     await api.get('/user-books');
     expect(sleeps).toEqual([1000]);
+  });
+});
+
+describe('session change during the retry wait', () => {
+  it.each([
+    ['sign-out', () => gateStoredSession(Promise.resolve(false))],
+    ['new sign-in', () => resumeStoredSession()],
+  ])('does not replay after a %s, and does not report', async (_name, changeSession) => {
+    mockGetItem.mockResolvedValue('OLD');
+    const calls = script([{ status: 503, headers: { 'retry-after': '5' } }, { ok: true }]);
+    configureRetry({
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        changeSession();
+      },
+      random: () => 0,
+    });
+    await expect(api.get('/user-books')).rejects.toMatchObject({ response: { status: 503 } });
+    expect(calls).toHaveLength(1);
+    expect(sleeps).toEqual([5000]);
+    expect(mockCapture).not.toHaveBeenCalled();
+    resumeStoredSession();
+  });
+
+  it('a request started before an account switch never goes out with the new token', async () => {
+    mockGetItem.mockResolvedValue('OLD');
+    const calls = script([{ status: 503 }, { ok: true }]);
+    configureRetry({
+      sleep: async () => {
+        mockGetItem.mockResolvedValue('NEW');
+        resumeStoredSession();
+      },
+      random: () => 0,
+    });
+    await expect(api.get('/user-books')).rejects.toBeTruthy();
+    expect(calls.map((c) => c.auth)).toEqual(['Bearer OLD']);
   });
 });
 
