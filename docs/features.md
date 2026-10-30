@@ -18,9 +18,13 @@ Navigation is file-based via `expo-router`. Two route groups:
   sign-out (confirm prompt; best-effort `POST /auth/logout` with the refresh token, then local
   sign-out and redirect to login). Server-side revocation is best-effort: if it times out (5 s)
   or the device is offline, the refresh token stays valid server-side until it expires
-  (7 days). "Sign out of all devices" is the remedy and does not exist yet.
+  (7 days). "Sign out of all devices" is the remedy and does not exist yet. A **Send feedback** row opens the feedback sheet (see Feedback below).
 
 ## Core flows
+
+### Feedback
+
+A header "?" button (next to the theme toggle, on every Stack screen) and the Settings **Send feedback** row open the same bottom sheet. The user picks Bug or Feature request and writes a description (max 2000 characters). Submit sends via Sentry User Feedback (`source: in_app_feedback`, tag `feedback.type`); session logs are attached for bugs only. Submissions are limited to 5 per 10 minutes per install. On success the sheet closes and a 4 s "Thanks for your feedback!" banner shows. Strings live in the `feedback` namespace.
 
 ### Scan flow — camera → identification → wishlist
 
@@ -227,7 +231,7 @@ pending ─▶ searching ─▶ complete
 | `ar` | Arabic | Translations present, **disabled until RTL layout mirroring lands** |
 | `he` | Hebrew | Translations present, **disabled until RTL layout mirroring lands** |
 
-**Namespaces** (8): `common`, `auth`, `tabs`, `my-books`, `scan`, `settings`, `wishlist`, `components`. Each screen/context pulls only what it needs.
+**Namespaces** (9): `common`, `auth`, `tabs`, `my-books`, `scan`, `settings`, `wishlist`, `components`, `feedback`. Each screen/context pulls only what it needs.
 
 **Loading strategy:**
 - `en` is a static import — always in the initial bundle, no flash-of-keys on first render, tests work without async setup.

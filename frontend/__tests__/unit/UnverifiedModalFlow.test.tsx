@@ -120,14 +120,15 @@ jest.mock('../../components/AddUnverifiedBookSheet', () => {
   };
 });
 
-// The layout renders <FeedbackButton /> inside the real ScanJobProvider: use
+// The layout renders <FeedbackProvider> inside the real ScanJobProvider: use
 // it as the probe that hands the test the live context.
 let ctx: ScanJobContextValue;
-jest.mock('../../components/FeedbackWidget/FeedbackButton', () => ({
-  FeedbackButton: () => {
+jest.mock('../../components/FeedbackWidget/FeedbackContext', () => ({
+  FeedbackProvider: ({ children }: { children: React.ReactNode }) => {
     ctx = jest.requireActual('../../hooks/useScanJobs').useScanJobs();
-    return null;
+    return <>{children}</>;
   },
+  useFeedback: () => ({ openFeedback: () => {} }),
 }));
 
 import RootLayout from '../../app/_layout';

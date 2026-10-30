@@ -5,14 +5,11 @@
   "type_label": "Type",
   "type_bug": "Bug",
   "type_feature": "Feature request",
-  "label_title": "Title",
   "label_description": "Description",
-  "placeholder_title": "Brief summary of the issue or idea",
   "placeholder_description": "Describe what happened, or what you'd like to see...",
   "submit": "Submit",
   "submit_success": "Thanks for your feedback!",
   "submit_error": "Something went wrong. Please try again.",
   "submit_error_rate_limit": "Too many submissions. Please wait {{seconds}} seconds.",
-  "error_title_required": "Title is required.",
   "error_description_required": "Description is required."
 }
