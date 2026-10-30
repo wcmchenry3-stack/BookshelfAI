@@ -57,6 +57,28 @@ describe('query-string parse', () => {
   });
 });
 
+// Inputs that separate 0.2.2 from the fix: on 0.2.2 the first takes ~10 s and
+// then throws RangeError (stack overflow); the fixed build takes milliseconds.
+const ADVERSARIAL: [string, string, string][] = [
+  ['%41 run + malformed tail', '%41'.repeat(30000) + '%E0%A4%A', 'A'.repeat(30000) + '%E0%A4%A'],
+  ['%80 run + bare %', '%80'.repeat(30000) + '%', '%80'.repeat(30000) + '%'],
+  ['%C0%80 run + bare %', '%C0%80'.repeat(15000) + '%', '%C0%80'.repeat(15000) + '%'],
+];
+
+describe.each(ADVERSARIAL)('adversarial input: %s', (_name, input, expected) => {
+  it('decodeUriComponent returns the expected string without throwing', () => {
+    const start = Date.now();
+    expect(decodeUriComponent(input)).toBe(expected);
+    expect(Date.now() - start).toBeLessThan(5000); // backstop only
+  });
+
+  it('queryString.parse returns the expected string without throwing', () => {
+    const start = Date.now();
+    expect(queryString.parse('q=' + input).q).toBe(expected);
+    expect(Date.now() - start).toBeLessThan(5000); // backstop only
+  });
+});
+
 describe('query-string parseUrl', () => {
   it('decodes the query and keeps the url', () => {
     expect(queryString.parseUrl('https://example.com/p?a=hello%20world&b=%E2%9C%93')).toEqual({

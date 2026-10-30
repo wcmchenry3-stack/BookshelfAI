@@ -62,7 +62,7 @@ function isContinuationByte(byte) {
 function decode(input) {
 	try {
 		return decodeURIComponent(input);
-	} catch (error) {
+	} catch {
 		let output = '';
 		let position = 0;
 
@@ -121,7 +121,7 @@ function decode(input) {
 					output += decodeURIComponent(encodedSequence);
 					position = end;
 					continue;
-				} catch (error) {
+				} catch {
 					// Invalid UTF-8 despite correct structure — emit the first byte literally.
 				}
 			}
@@ -151,7 +151,7 @@ function decodeUriComponent(encodedURI) {
 	try {
 		// Try the built in decoder first
 		return decodeURIComponent(encodedURI);
-	} catch (error) {
+	} catch {
 		// Fallback to a more advanced decoder
 		return customDecodeURIComponent(encodedURI);
 	}

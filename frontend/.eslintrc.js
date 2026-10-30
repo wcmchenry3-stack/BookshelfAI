@@ -1,5 +1,6 @@
 module.exports = {
   extends: ['expo'],
+  ignorePatterns: ['vendor/'],
   plugins: ['react-native-a11y'],
   rules: {
     'react-native-a11y/has-accessibility-props': 'error',
