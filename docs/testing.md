@@ -6,7 +6,7 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 
 - **Unit tests mock the DB** — they're fast and run on every PR.
 - **Integration tests hit a real Postgres** and are auto-skipped when `DATABASE_URL` points at the dummy URL used by CI's default config. CI runs them in the `test-migrations` job, which has a Postgres 16 service.
-- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own CI job.
+- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own workflow (`security.yml`), not in every PR run. See "When the security suite runs" below.
 - **Accuracy and performance suites** live beside the core tests but run opt-in (benchmarks are skipped by default).
 - **Don't mock what you can rollback** — when testing DB interactions, prefer the savepoint-based `db_session` fixture over mock sessions. Feedback memory flagged a real production incident where mocked DB tests passed and the actual migration broke prod.
 
@@ -23,6 +23,7 @@ backend/tests/
 ├── conftest.py          DATABASE_URL guard, rate-limit reset fixture, db_session fixture
 ├── unit/                Per-module tests — mock DB via fixtures
 ├── integration/         Real-DB tests — @pytest.mark.integration, auto-skipped w/o DATABASE_URL
+├── limits/              Scan limits matrix on real Postgres — @pytest.mark.integration (test_no_real_provider.py is unmarked)
 ├── security/            OWASP tests — @pytest.mark.security
 ├── accuracy/            Dedup + enrichment correctness benchmarks
 └── performance/         @pytest.mark.benchmark (pytest-benchmark)
@@ -64,12 +65,22 @@ pytest tests/unit/test_health_host_exemption.py
 # Single test
 pytest tests/unit/test_health_host_exemption.py::test_health_accepts_untrusted_host_header
 
-# Security suite only
+# Security suite only (the marker run in security.yml)
 pytest -m security
 
 # Integration tests (against a real DB)
 DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_test pytest -m integration
 ```
+
+### When the security suite runs
+
+`pytest -m security` is not part of every PR's checks. It runs in `.github/workflows/security.yml` (job `pytest-security`, with `TURNSTILE_REQUIRED=false`) when:
+
+- a pull request targets `dev` and changes `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `.github/workflows/security.yml` or `.zap/**`;
+- on the weekly schedule (Monday 08:00 UTC); or
+- on manual dispatch.
+
+A PR that changes none of those paths does not run it, and a PR to `main` does not run it. Any PR still runs the rest of the backend suite in `test-python`.
 
 ### Nightly scan abuse load run (#539)
 
@@ -270,9 +281,9 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | Job | What it runs |
 |---|---|
 | `test-python` | `pytest` with coverage (default, no integration) |
-| `test-frontend` | `npx jest` with coverage |
-| `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests/integration` (the real-DB integration suite) |
-| `pytest -m security` | Separate security-suite run (on every PR) |
+| `test-frontend` | `npx jest --coverage`, gate 80% (`coverage-threshold: 80`) |
+| `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests/integration tests/limits` (the real-DB integration suite and the scan limits matrix) |
+| `pytest -m security` (`security.yml`, job `pytest-security`) | Security-suite run. Not on every PR: only PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
 | `lint-python` | `black --check` + `ruff` |
 | `lint-frontend` | `eslint` + `prettier --check` |
 | `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
@@ -293,7 +304,14 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 ## Coverage targets
 
 - **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
-- **Frontend:** tracked via `npx jest --coverage`, no hard threshold enforced by default
+- **Frontend:** 80%, enforced by CI's `test-frontend` job (`coverage-threshold: 80` in `.github/workflows/ci.yml`) on `npx jest --coverage`. If the number changes, change it in `ci.yml` and in this section and the CI table together.
+
+## End-to-end (planned, not in CI yet)
+
+No end-to-end test runs in CI today. Two are planned:
+
+- **Web e2e:** Playwright against the web export (#470).
+- **Native flows:** Maestro (Phase 4). The Maestro flows under `frontend/.maestro/` are not run by any workflow yet.
 
 ## Rule + memory references
 
