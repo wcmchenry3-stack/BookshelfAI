@@ -14,14 +14,15 @@ content (and no refusal), content that is not JSON, JSON that is not a
 ``{"books": [...]}`` object (a bare list is still accepted, as before), a
 non-empty list in which every item is structurally broken (not an object, a
 title or author missing or not a string, or a confidence that is not a
-number), or an unexpected ``finish_reason`` (anything but ``stop``,
+number, or a title or author over 500 characters, #754), or an unexpected ``finish_reason`` (anything but ``stop``,
 ``length`` or ``content_filter``; a missing one is judged on the content
 alone). Otherwise the reply is ``ok`` with its well-formed items, kept as
 before #572: an empty author is still a candidate (a title-only lookup).
 Since #746 a candidate with an empty or whitespace title is dropped (it is
 schema-valid, so it is not "broken" and a reply of only such items is ``ok``
 with no books), and an ISBN that is not a string or fails its check digit
-becomes None while the book is kept (the model can invent ISBNs). A genuine
+becomes None while the book is kept (the model can invent ISBNs). Since #754 a confidence is
+clamped to 0-1 (NaN becomes 0.5), as in the Claude adapter. A genuine
 ``{"books": []}`` is ``ok`` with no candidates. A ``length`` reply stays
 ``truncated`` here; with no books the gateway reports it as ``malformed``.
 """
@@ -30,6 +31,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 
 import httpx
 
@@ -44,6 +46,11 @@ from app.core.config import settings
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 logger = logging.getLogger(__name__)
+
+# Title/author are search keys; anything longer is not a real title. Same
+# limit as the Claude adapter (``anthropic_vision.MAX_TEXT_LENGTH``), repeated
+# here so this module does not import the Anthropic SDK.
+MAX_TEXT_LENGTH = 500
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -169,11 +176,30 @@ def _is_broken(item: object) -> bool:
         item.get("author"), str
     ):
         return True
+    # Same rule as the Claude adapter (#754): over-long text is broken.
+    if (
+        len(item["title"].strip()) > MAX_TEXT_LENGTH
+        or len(item["author"].strip()) > MAX_TEXT_LENGTH
+    ):
+        return True
     try:
         float(item.get("confidence", 0.5))
     except (TypeError, ValueError):
         return True
     return False
+
+
+def _confidence(value: object) -> float:
+    """The confidence clamped to 0-1, as the Claude adapter does (#754): NaN
+    and a boolean become 0.5, infinity clamps to 0 or 1. (A non-number such as
+    ``"high"`` is broken here, see :func:`_is_broken`, a rule kept from #572;
+    the Claude adapter defaults it to 0.5.)"""
+    if isinstance(value, bool):
+        return 0.5
+    number = float(value)  # type: ignore[arg-type]  # checked by _is_broken
+    if math.isnan(number):
+        return 0.5
+    return min(max(number, 0.0), 1.0)
 
 
 def _candidate(item: object) -> BookCandidate | None:
@@ -189,7 +215,7 @@ def _candidate(item: object) -> BookCandidate | None:
     return BookCandidate(
         title=title,
         author=item["author"],
-        confidence=float(item.get("confidence", 0.5)),
+        confidence=_confidence(item.get("confidence", 0.5)),
         isbn_13=clean_isbn_13(item.get("isbn_13")),
         isbn_10=clean_isbn_10(item.get("isbn_10")),
     )
