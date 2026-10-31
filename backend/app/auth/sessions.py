@@ -1,4 +1,4 @@
-"""Revoking every session a user holds (#689)."""
+"""Issuing (#844) and revoking (#689) a user's sessions."""
 
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple

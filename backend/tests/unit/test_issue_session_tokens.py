@@ -41,7 +41,8 @@ async def test_returns_valid_pair_with_matching_claims():
     assert access["sub"] == refresh["sub"] == str(user.id)
     assert access["email"] == user.email
     assert access["tv"] == refresh["tv"] == 3
-    assert access["exp"] > 0
+    assert access["type"] == "access" and refresh["type"] == "refresh"
+    assert access["exp"] - access["iat"] == access_token_ttl_seconds()
     assert refresh["exp"] > access["exp"]
 
 
@@ -93,11 +94,15 @@ def _function(path: str, name: str) -> ast.AST:
 
 
 def _called_names(fn: ast.AST) -> set[str]:
-    return {
-        n.func.id
-        for n in ast.walk(fn)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-    }
+    """Names of every call, bare (``f()``) or attribute (``mod.f()``)."""
+    names = set()
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call):
+            if isinstance(n.func, ast.Name):
+                names.add(n.func.id)
+            elif isinstance(n.func, ast.Attribute):
+                names.add(n.func.attr)
+    return names
 
 
 def test_both_sign_in_routes_use_the_helper_not_inline_issuing():
@@ -113,4 +118,5 @@ def test_both_sign_in_routes_use_the_helper_not_inline_issuing():
             "create_refresh_token",
             "new_family_row",
             "access_token_ttl_seconds",
+            "RefreshToken",
         }, name
