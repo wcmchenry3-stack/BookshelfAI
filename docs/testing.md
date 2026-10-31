@@ -350,6 +350,13 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `design-token-check` | Own workflow (`design-token-check.yml`, calls the shared `called-design-token-check.yml`): the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. Runs on every PR to `dev`/`main` (opened, edited, synchronize, reopened), so it covers all frontend paths. It stays a separate workflow; do not fold it into `static-frontend.yml` |
 | `migration-guard` | Own workflow (`migration-guard.yml`, re-runs on label changes): `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`). Listed in the required checks of `.github/rulesets/protect-main-dev.json`; the owner must apply the ruleset in GitHub settings. On PRs into `main` it passes without scanning (already scanned on the feature PRs into `dev`) |
 
+### Composite setup actions (#770)
+
+Jobs that set up Node or Python use two local composite actions instead of repeating `setup-node`/`setup-python` steps. Pins and cache settings live only in these files. Each one needs `actions/checkout` first.
+
+- `.github/actions/setup-frontend/action.yml`: `actions/setup-node` with the npm cache (`frontend/package-lock.json`), then `npm ci` in `frontend/`. Inputs: `node-version` (default `'22'`; pass `'20'` only where a job pins 20, as `npm audit` in `security.yml` does) and `install` (default `'true'`; `'false'` sets up Node and the cache only).
+- `.github/actions/setup-backend/action.yml`: `actions/setup-python` (`python-version` default `'3.12'`) with the pip cache (`backend/requirements*.txt`), then `pip install -r` for each file in `requirements`. Inputs: `requirements` (space-separated, relative to `backend/`, default `'requirements.txt'`; `''` installs nothing) and `python-version`.
+
 ### Conditional bundle and native build checks
 
 The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff --name-only <base>...HEAD`, no third-party action) decides:
