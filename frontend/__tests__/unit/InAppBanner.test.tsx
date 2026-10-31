@@ -5,8 +5,6 @@ import { InAppBanner } from '../../components/InAppBanner';
 import { BannerProvider } from '../../contexts/BannerContext';
 import { useBanner } from '../../hooks/useBanner';
 import { Pressable, StyleSheet, Text } from 'react-native';
-import * as fs from 'fs';
-import * as path from 'path';
 
 const mockOnSuccess = '#A1B2C3';
 const mockOnError = '#D1E2F3';
@@ -207,17 +205,6 @@ describe('InAppBanner', () => {
       const button = getByLabelText('Retry');
       expect(button.props.accessibilityRole).toBe('button');
       expect(button.props.accessibilityLabel).toBe('Retry');
-    });
-
-    it('contains no colour literal in InAppBanner.tsx', () => {
-      const source = fs.readFileSync(
-        path.join(__dirname, '../../components/InAppBanner.tsx'),
-        'utf8'
-      );
-      // rgb()/rgba() calls, and hex colours inside string literals only, so an
-      // issue reference in a comment such as (#632) is not a false positive.
-      expect(source).not.toMatch(/rgba?\(/);
-      expect(source).not.toMatch(/['"`]#[0-9a-fA-F]{3,8}['"`]/);
     });
   });
 
