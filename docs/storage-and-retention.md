@@ -45,9 +45,9 @@ Notes on the photo size:
 | `SCAN_RETRY_DELAYS_MS` | 30 s, 10 min, 1 h, 4 h | `frontend/lib/scanErrors.ts:130-135` | waits before attempts 2 to 5 of a photo after `503 scan_unavailable` (#604) |
 | `MAX_SCAN_ATTEMPTS` | 5 | `scanErrors.ts:145` | attempts per photo; after the 5th the job is `failed` (`ScanJobContext.tsx:1006-1012`). Total wait on the schedule: 4 h 40 min 30 s |
 | `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `scanErrors.ts:142` | no retry is scheduled further ahead than this; also applied to saved times on launch (`ScanJobContext.tsx:240`) |
-| `MAX_RETRIES` | 3 | `ScanJobContext.tsx:43`, used `:532` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
+| `MAX_RETRIES` | 3 | `hooks/useScanQueue.ts:18`, used `:343` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
 | `MAX_IN_PROGRESS_RETRIES` | 3 | `scanErrors.ts:99` | silent retries of `429 scan_in_progress` |
-| `MAX_DRAIN_PASSES` | 3 | `ScanJobContext.tsx:46` | passes of the upload drain per trigger |
+| `MAX_DRAIN_PASSES` | 3 | `hooks/useScanQueue.ts:21` | passes of the upload drain per trigger |
 | `MAX_ENTRIES` (log buffer) | 200 | `SessionLogger.ts` | lines kept for a bug report |
 | `MAX_LINE_CHARS` / `MAX_LOG_BYTES` (log buffer) | 1,000 characters / 100 KB | `SessionLogger.ts` | one stored line / the whole `session-logs.txt` attachment (oldest lines dropped first) |
 | `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` (feedback) | 5 submissions per 10 min, per install (module memory, reset on app restart) | `components/FeedbackWidget/useFeedbackSubmit.ts:34-35` | rate of feedback submissions; limits how often logs are sent, not their size |
