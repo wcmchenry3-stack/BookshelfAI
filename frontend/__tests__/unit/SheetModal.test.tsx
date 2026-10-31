@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Text } from 'react-native';
+import { Text } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
 import SheetModal from '../../components/SheetModal';
@@ -12,6 +12,28 @@ jest.mock('../../hooks/useTheme', () => ({
     },
   }),
 }));
+
+// Capture the props SheetModal passes to RN's Modal. The real jest mock still
+// does the rendering (children only when visible), so behaviour is unchanged.
+type ModalProps = {
+  presentationStyle?: string;
+  animationType?: string;
+  accessibilityViewIsModal?: boolean;
+  onRequestClose: () => void;
+  onDismiss: () => void;
+};
+const mockModalProps: { current: ModalProps | null } = { current: null };
+jest.mock('react-native/Libraries/Modal/Modal', () => {
+  const React = jest.requireActual('react');
+  const Actual = jest.requireActual('@react-native/jest-preset/jest/mocks/Modal').default;
+  return {
+    __esModule: true,
+    default: function MockModal(props: ModalProps) {
+      mockModalProps.current = props;
+      return React.createElement(Actual, props);
+    },
+  };
+});
 
 async function setup(overrides: Partial<React.ComponentProps<typeof SheetModal>> = {}) {
   const onDismiss = jest.fn();
@@ -50,20 +72,16 @@ describe('SheetModal', () => {
     const onHidden = jest.fn();
     const { getByText, onDismiss } = await setup({ onHidden });
 
-    // The test renderer only exposes host nodes, so walk up from the title to the
-    // composite Modal fiber and read the props it was rendered with.
-    let fiber = getByText('Sheet title').unstable_fiber;
-    while (fiber && fiber.type !== Modal) fiber = fiber.return;
-    expect(fiber).not.toBeNull();
-    const modal = { props: fiber!.memoizedProps };
-    expect(modal.props.presentationStyle).toBe('pageSheet');
-    expect(modal.props.animationType).toBe('slide');
-    expect(modal.props.accessibilityViewIsModal).toBe(true);
+    const modal = mockModalProps.current;
+    expect(modal).not.toBeNull();
+    expect(modal!.presentationStyle).toBe('pageSheet');
+    expect(modal!.animationType).toBe('slide');
+    expect(modal!.accessibilityViewIsModal).toBe(true);
 
-    modal.props.onRequestClose();
+    modal!.onRequestClose();
     expect(onDismiss).toHaveBeenCalledTimes(1);
 
-    modal.props.onDismiss();
+    modal!.onDismiss();
     expect(onHidden).toHaveBeenCalledTimes(1);
 
     expect(getByText('Sheet title').props.accessibilityRole).toBe('header');
