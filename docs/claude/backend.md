@@ -72,6 +72,9 @@ pytest tests/ --cov=app --cov-fail-under=80
 ruff check .
 black --check .
 
+# Dead code (vulture, #813; config and whitelist in pyproject.toml [tool.vulture])
+vulture app --min-confidence 60
+
 # Migrations
 alembic revision --autogenerate -m "description"
 alembic upgrade head

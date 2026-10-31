@@ -56,6 +56,17 @@ export const lightTheme = {
 
     outline: c.outline.light,
     outlineVariant: c.outlineVariant.light,
+    headerOverlay: c.headerOverlay.light,
+    tabBarOverlay: c.tabBarOverlay.light,
+    outlineVariantFaint: c.outlineVariantFaint.light,
+    shadow: c.shadow.light,
+    errorBoundarySurface: c.errorBoundarySurface.light,
+    errorBoundaryTitle: c.errorBoundaryTitle.light,
+    errorBoundaryBody: c.errorBoundaryBody.light,
+    errorBoundaryDetail: c.errorBoundaryDetail.light,
+    errorBoundaryDetailSurface: c.errorBoundaryDetailSurface.light,
+    errorBoundaryAction: c.errorBoundaryAction.light,
+    errorBoundaryOnAction: c.errorBoundaryOnAction.light,
 
     // Convenience aliases
     background: c.background.light,

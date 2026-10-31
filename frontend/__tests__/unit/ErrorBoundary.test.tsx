@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import { Sentry } from '../../lib/sentry';
 
 import { ErrorBoundary } from '../../components/ErrorBoundary';
+import { ThemeContext, lightTheme, darkTheme } from '../../theme';
 
 jest.mock('@sentry/react-native', () => ({
   init: jest.fn(),
@@ -88,5 +89,56 @@ describe('ErrorBoundary', () => {
     await fireEvent.press(getByText('Try again'));
 
     expect(() => getByText('Something went wrong')).toThrow();
+  });
+
+  describe('theme', () => {
+    const renderIn = (theme: unknown) =>
+      render(
+        <ThemeContext.Provider value={theme as never}>
+          <ErrorBoundary>
+            <Bomb shouldThrow={true} />
+          </ErrorBoundary>
+        </ThemeContext.Provider>
+      );
+
+    it('renders the fallback with no ThemeProvider', async () => {
+      const { getByText } = await render(
+        <ErrorBoundary>
+          <Bomb shouldThrow={true} />
+        </ErrorBoundary>
+      );
+      expect(getByText('Something went wrong')).toBeTruthy();
+      expect(getByText('Try again')).toBeTruthy();
+    });
+
+    it('renders the fallback when the theme context value is null', async () => {
+      const { getByText } = await renderIn(null);
+      expect(getByText('Something went wrong')).toBeTruthy();
+    });
+
+    it('renders the fallback when the theme has no colors', async () => {
+      const { getByText } = await renderIn({ theme: {}, mode: 'light', toggleTheme: jest.fn() });
+      expect(getByText('Try again')).toBeTruthy();
+    });
+
+    it.each([
+      ['light', lightTheme],
+      ['dark', darkTheme],
+    ])('uses the same fixed error palette in %s mode', async (_m, theme) => {
+      const { getByText, getByLabelText, getByTestId } = await renderIn({
+        theme,
+        mode: _m,
+        toggleTheme: jest.fn(),
+      });
+      const flat = (el: { props: Record<string, any> }) =>
+        Object.assign({}, ...[el.props.style].flat(Infinity).filter(Boolean));
+      expect(flat(getByText('Something went wrong')).color).toBe('#111');
+      expect(flat(getByText('The app ran into an unexpected error.')).color).toBe('#555');
+      expect(flat(getByText('Try again')).color).toBe('#fff');
+      expect(flat(getByLabelText('Try again')).backgroundColor).toBe('#007AFF');
+      expect(flat(getByTestId('eb-root')).backgroundColor).toBe('#fff');
+      expect(flat(getByTestId('eb-detail')).color).toBe('#c00');
+      expect(flat(getByTestId('eb-detail')).backgroundColor).toBe('#fff0f0');
+    });
   });
 });

@@ -26,6 +26,7 @@ from app.services.enrichment import (
     EnrichmentService,
     reading_match_score,
 )
+from app.services.enrichment import service as enrichment_service
 from app.services.google_books import GoogleBooksService
 from app.services.open_library import OpenLibraryService
 
@@ -504,7 +505,7 @@ class TestDeadlines:
         return AsyncMock(side_effect=call)
 
     async def test_overall_deadline_returns_the_unsigned_reading(self, monkeypatch):
-        monkeypatch.setattr(enrichment, "ENRICHMENT_DEADLINE_S", 0.2)
+        monkeypatch.setattr(enrichment_service, "ENRICHMENT_DEADLINE_S", 0.2)
         service = _service(ol_title=CRISIS_DOC, gb_title=CRISIS_VOLUME)
         dune = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.7)
 
@@ -530,7 +531,7 @@ class TestDeadlines:
         assert service.last_complete is False
 
     async def test_a_slow_call_times_out_alone(self, monkeypatch):
-        monkeypatch.setattr(enrichment, "PROVIDER_CALL_TIMEOUT_S", 0.1)
+        monkeypatch.setattr(enrichment_service, "PROVIDER_CALL_TIMEOUT_S", 0.1)
         service = _service(gb_isbn=CRISIS_VOLUME, ol_title=CRISIS_DOC)
         service.ol.search_by_isbn = self._slow(CRISIS_DOC)
         book = await _enrich_one(service, _reading(isbn_13=CRISIS_ISBN))
@@ -1047,14 +1048,14 @@ class TestRound4Robustness:
         assert book.editions[0].isbn_13 == SAPIENS_ISBN
 
     async def test_an_error_in_a_chain_is_a_lookup_failure(self, monkeypatch):
-        real = enrichment._isbn_record
+        real = enrichment_service._isbn_record
 
         def flaky(candidate, found, score, parts, isbns):
             if parts is enrichment._gb_parts:
                 raise TypeError("malformed record")
             return real(candidate, found, score, parts, isbns)
 
-        monkeypatch.setattr(enrichment, "_isbn_record", flaky)
+        monkeypatch.setattr(enrichment_service, "_isbn_record", flaky)
         service = _service(ol_isbn=SAPIENS_DOC, gb_isbn=SAPIENS_VOLUME)
         candidate = BookCandidate(
             title="Sapiens", author="Harari", confidence=0.9, isbn_13=SAPIENS_ISBN

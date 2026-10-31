@@ -61,7 +61,7 @@ function HeaderLogo() {
 function InnerStack() {
   const { theme } = useTheme();
   // Dark mode: semi-transparent frosted-glass header; light mode: transparent.
-  const headerBg = theme.isDark ? 'rgba(17,19,23,0.7)' : 'transparent';
+  const headerBg = theme.colors.headerOverlay;
   const webStyle = Platform.OS === 'web' && theme.isDark ? { backdropFilter: 'blur(20px)' } : {};
 
   return (

@@ -15,7 +15,7 @@ a book to the wishlist by posting back an ``EnrichedBook`` it got from
 What a valid token guarantees: the server produced exactly these field
 values for this user from provider records, within the TTL. It does not
 stop the user from choosing *which* provider record a photo or query
-matches. The enrichment service (``app/services/enrichment.py``) is what
+matches. The enrichment service (``app/services/enrichment/``) is what
 keeps user-controlled input out of the signed fields: whenever a provider
 matched, the title, author, IDs, description, cover, subjects and edition
 details come from the provider records, and an edition ISBN read only by the
@@ -321,14 +321,3 @@ def check(
     if exp <= int((now or datetime.now(UTC)).timestamp()):
         return EXPIRED
     return OK
-
-
-def verify(
-    token: str | None,
-    book: SignableBook,
-    user_id: uuid.UUID,
-    now: datetime | None = None,
-) -> bool:
-    """True when ``token`` is a valid, unexpired token for exactly ``book``'s
-    catalog fields and ``user_id``."""
-    return check(token, book, user_id, now) == OK

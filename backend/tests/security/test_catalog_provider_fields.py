@@ -117,8 +117,12 @@ class TestTitleAndAuthorFromTheProvider:
         # provider's title, never the photo's.
         (signed,) = catalog_token.sign_books([book], USER)
         forged = signed.model_copy(update={"title": DOCTORED.title})
-        assert catalog_token.verify(signed.catalog_token, signed, USER)
-        assert not catalog_token.verify(signed.catalog_token, forged, USER)
+        assert (
+            catalog_token.check(signed.catalog_token, signed, USER) == catalog_token.OK
+        )
+        assert (
+            catalog_token.check(signed.catalog_token, forged, USER) != catalog_token.OK
+        )
 
     async def test_google_books_when_open_library_missed(self):
         book = await _enrich_one(DOCTORED, ol=None, gb=GB_VOLUME)
@@ -257,8 +261,12 @@ class TestIsbn13ConfirmedOnlyByIdentifiers:
         forged = signed.model_copy(
             update={"editions": [EditionPreview(isbn_13=ISBN_13)]}
         )
-        assert catalog_token.verify(signed.catalog_token, signed, USER)
-        assert not catalog_token.verify(signed.catalog_token, forged, USER)
+        assert (
+            catalog_token.check(signed.catalog_token, signed, USER) == catalog_token.OK
+        )
+        assert (
+            catalog_token.check(signed.catalog_token, forged, USER) != catalog_token.OK
+        )
 
 
 NEUROMANCER_VOLUME = {
