@@ -62,7 +62,7 @@ jobs:
           # and frontend/android, so the directory prefixes cover them.
           NATIVE_RE='^(frontend/(ios|android|plugins)/|frontend/(app\.json|app\.config\.[A-Za-z]+|package\.json|package-lock\.json)$|\.github/workflows/ci\.yml$)'
           # frontend: any frontend file (JS bundle inputs) plus this workflow.
-          FRONTEND_RE='^(frontend/|\.github/workflows/ci\.yml$)'
+          FRONTEND_RE='^(frontend/|\.github/workflows/ci\.yml$|\.github/actions/setup-frontend/)'
           if echo "$CHANGED" | grep -qE "$NATIVE_RE"; then NATIVE=true; else NATIVE=false; fi
           if echo "$CHANGED" | grep -qE "$FRONTEND_RE"; then FRONTEND=true; else FRONTEND=false; fi
           echo "native=$NATIVE" >> "$GITHUB_OUTPUT"
@@ -208,9 +208,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: ./.github/actions/setup-backend
         with:
-          python-version: '3.12'
+          requirements: ''
       - name: Install bandit
         run: pip install bandit[toml]==1.8.3
       - name: Run Bandit SAST
@@ -258,11 +258,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - uses: ./.github/actions/setup-backend
       - name: Upgrade to head
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
@@ -320,13 +316,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - name: Type-check (tsc --noEmit)
         run: npm run typecheck
 
@@ -344,13 +334,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - name: Create iOS JS bundle
         run: |
           ENTRY_FILE=$(node -e "require('expo/scripts/resolveAppEntry')" . ios absolute | tail -n 1)
@@ -387,13 +371,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - name: Create Android JS bundle
         run: |
           ENTRY_FILE=$(node -e "require('expo/scripts/resolveAppEntry')" . android absolute | tail -n 1)
