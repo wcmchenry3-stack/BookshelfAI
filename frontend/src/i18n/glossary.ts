@@ -34,5 +34,3 @@ export const glossary = [
     definition: 'Generative Pre-trained Transformer model reference',
   },
 ];
-
-export default glossary;

@@ -12,7 +12,7 @@ lock (``SKIP LOCKED``; a row a refresh is replaying waits for the next run)
 The same daily run also purges, in bounded batches:
 
 - AI quota counters (``ai_quota``): day rows older than 90 days and month rows
-  (no longer written since #582) older than 13 months (app/ai/quota.py);
+  (no longer written since #582) older than 13 months (app/ai/quota/purge.py);
 - the AI usage ledger (``ai_usage``): raw rows older than 30 days are rolled
   up into ``ai_usage_daily`` and deleted, and daily rows older than 400 days
   are deleted (app/ai/ledger.py); in the same step, scan correction flags
@@ -22,7 +22,7 @@ The same daily run also purges, in bounded batches:
 - the daily AI spend totals (``ai_spend_daily``) older than 90 days
   (app/ai/breaker.py);
 - uncharged zero-result enhanced scans (``ai_enhanced_zero_results``) older
-  than 30 days (app/ai/quota.py, #533);
+  than 30 days (app/ai/quota/purge.py, #533);
 - per-user scan records (``scan_records``) older than
   ``scan_records.retention_days`` (default 30) (app/ai/scan_records.py, #585);
 - library entries in the trash (``user_books`` with ``deleted_at`` set, and

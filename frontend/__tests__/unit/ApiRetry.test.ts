@@ -2,6 +2,20 @@
  * #766: default timeout, retry with backoff and Retry-After, the never-retry
  * rules, 401 staying on the refresh path, and one Sentry report per request.
  */
+import {
+  api,
+  configureRetry,
+  gateStoredSession,
+  resumeStoredSession,
+  DEFAULT_TIMEOUT_MS,
+  MAX_RETRIES,
+  SCAN_UPLOAD_TIMEOUT_MS,
+  SEARCH_TIMEOUT_MS,
+  setAuthFailureCallback,
+} from '../../lib/api';
+import { MAX_RETRY_AFTER_MS, toApiError } from '../../lib/apiError';
+import { resetApiErrorReporting } from '../../lib/apiErrorReporting';
+
 const mockCapture = jest.fn();
 const mockGetItem = jest.fn();
 const mockSetItem = jest.fn();
@@ -27,20 +41,6 @@ jest.mock('axios', () => {
   globalThis.ReadableStream = savedRS;
   return { ...actual, post: (...a: unknown[]) => mockAxiosPost(...a), create: actual.create };
 });
-
-import {
-  api,
-  configureRetry,
-  gateStoredSession,
-  resumeStoredSession,
-  DEFAULT_TIMEOUT_MS,
-  MAX_RETRIES,
-  SCAN_UPLOAD_TIMEOUT_MS,
-  SEARCH_TIMEOUT_MS,
-  setAuthFailureCallback,
-} from '../../lib/api';
-import { MAX_RETRY_AFTER_MS, toApiError } from '../../lib/apiError';
-import { resetApiErrorReporting } from '../../lib/apiErrorReporting';
 
 type Step = {
   timeout?: boolean;

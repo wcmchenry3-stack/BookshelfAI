@@ -17,7 +17,7 @@ class AIEnhancedZeroResult(IdMixin, UserOwnedMixin, Base):
     ``scan.enhanced`` unit is given back because the scan found nothing. A
     charged zero-result scan (the user is at the threshold) writes no row.
     The per-user count inside ``scan.enhanced.zero_result_window_hours`` is
-    compared with ``scan.enhanced.zero_result_threshold`` (``app/ai/quota.py``).
+    compared with ``scan.enhanced.zero_result_threshold`` (``app/ai/quota/zero_result.py``).
     ``warned`` marks the row that sent the threshold warning.
 
     Holds no image, hash or content: the user, the time and the ledger call

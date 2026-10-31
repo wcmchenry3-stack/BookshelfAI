@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, RefreshControl, StyleSheet } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { BookRow, BookRowAction } from '../../components/library/BookRow';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
+import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import type { LibraryBook } from '../../components/library/libraryShared';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
@@ -70,9 +71,9 @@ export default function WishlistScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <LibraryScreen>
         <LoadingSpinner message={t('loading')} />
-      </View>
+      </LibraryScreen>
     );
   }
 
@@ -97,7 +98,7 @@ export default function WishlistScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <LibraryScreen>
       <FlatList
         data={books}
         keyExtractor={(item) => item.id}
@@ -135,7 +136,7 @@ export default function WishlistScreen() {
           );
         }}
       />
-    </View>
+    </LibraryScreen>
   );
 }
 

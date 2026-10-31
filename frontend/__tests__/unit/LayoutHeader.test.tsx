@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import RootLayoutDefault from '../../app/_layout';
 import React from 'react';
 import { render } from '@testing-library/react-native';
 
@@ -26,7 +29,9 @@ jest.mock('expo-router', () => {
       {children}
     </View>
   );
-  MockStack.Screen = () => null;
+  MockStack.Screen = function MockScreen() {
+    return null;
+  };
   return { Stack: MockStack };
 });
 
@@ -89,8 +94,6 @@ jest.mock('@expo-google-fonts/inter', () => ({
   Inter_700Bold: 'Inter_700Bold',
 }));
 
-import RootLayoutDefault from '../../app/_layout';
-
 describe('RootLayout header wiring (#756)', () => {
   it('puts both the theme toggle and the feedback "?" button in the Stack headerRight', async () => {
     const { getByTestId } = await render(<RootLayoutDefault />);
@@ -112,6 +115,10 @@ describe('RootLayout header wiring (#756)', () => {
   });
 
   it('no longer ships the floating FeedbackButton FAB module', () => {
-    expect(() => require.resolve('../../components/FeedbackWidget/FeedbackButton')).toThrow();
+    const dir = path.join(__dirname, '../../components/FeedbackWidget');
+    const present = fs.existsSync(dir)
+      ? fs.readdirSync(dir).filter((f) => f.startsWith('FeedbackButton'))
+      : [];
+    expect(present).toEqual([]);
   });
 });

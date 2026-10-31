@@ -6,6 +6,7 @@ import type { EnrichedBook } from '../../components/BookCandidatePicker';
 import type { ScanJobContextValue } from '../../contexts/ScanJobContext';
 import { IOS_DISMISS_FALLBACK_MS } from '../../hooks/useModalHandoff';
 import { useScanJobs } from '../../hooks/useScanJobs';
+import RootLayout from '../../app/_layout';
 
 // #616 review fixes, through the real root layout (real provider, picker and
 // sheet): "Add it yourself" must not discard the scan's other candidates, a
@@ -50,7 +51,9 @@ jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
 jest.mock('expo-router', () => {
   const { View } = require('react-native');
   const MockStack = ({ children }: { children?: React.ReactNode }) => <View>{children}</View>;
-  MockStack.Screen = () => null;
+  MockStack.Screen = function MockScreen() {
+    return null;
+  };
   return { Stack: MockStack };
 });
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
@@ -130,8 +133,6 @@ jest.mock('../../components/FeedbackWidget/FeedbackContext', () => ({
   },
   useFeedback: () => ({ openFeedback: () => {} }),
 }));
-
-import RootLayout from '../../app/_layout';
 
 void useScanJobs;
 

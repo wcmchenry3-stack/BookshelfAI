@@ -137,5 +137,3 @@ export const tokens = {
     min: 44, // WCAG 2.5.8
   },
 } as const;
-
-export type ColorKey = keyof typeof tokens.colors;
