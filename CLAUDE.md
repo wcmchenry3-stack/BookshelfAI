@@ -10,6 +10,7 @@ Monorepo: `backend/` · `frontend/` · `.github/` · `docs/`
 - [Backend](docs/claude/backend.md)
 - [Frontend](docs/claude/frontend.md)
 - [Testing](docs/claude/testing.md)
+- [CI checks](docs/ci-checks.md)         ← what each PR check does, gating, required checks
 - [iOS CI/CD](docs/claude/ios-ci.md)      ← READ BEFORE touching ios/ or ci_scripts/
 - [Android CI/CD](docs/claude/android-ci.md) ← READ BEFORE touching android/ or Gradle files
 

@@ -18,7 +18,7 @@ See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for univers
 
 ## What runs, and when
 
-Taken from `.github/workflows/` (`ci.yml`, `security.yml`, `migration-guard.yml`, `perf-ai.yml`, `ai-eval.yml`). The full CI job table is in [`docs/testing.md`](../testing.md#ci-test-jobs).
+Taken from `.github/workflows/` (`ci.yml`, `security.yml`, `migration-guard.yml`, `perf-ai.yml`, `ai-eval.yml`). Every PR check, with its purpose, gating, origin and timing, is in [`docs/ci-checks.md`](../ci-checks.md); the test-specific job details are in [`docs/testing.md`](../testing.md#ci-test-jobs).
 
 | Check | Where | When |
 |---|---|---|

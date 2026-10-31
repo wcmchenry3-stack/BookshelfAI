@@ -365,31 +365,16 @@ DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e npm run e2e
 
 ## CI test jobs
 
-Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-frontend`, `js-bundle-check` and the other bundle/build checks are defined inline in `ci.yml`:
+Every CI check (what it does, what it prevents, where it is defined, when it was added, how it gates and how long it takes) is listed in [ci-checks.md](ci-checks.md). The test-specific details are kept here:
 
-| Job | What it runs |
-|---|---|
-| `test-python` | `pytest` with coverage (default, no integration) |
-| `test-frontend` | `npx jest --coverage`; fails below the Jest `coverageThreshold` floor (see Coverage targets) |
-| `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres) |
-| `pytest -m security` (`security.yml`, job `pytest-security`) | Separate run of the security marker (security tests also run in `test-python` on every PR). Only on PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
-| `lint-python` | `black --check` + `ruff` |
-| `lint-frontend` | `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint) |
-| `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
-| `cve-python` | `pip-audit` |
-| `cve-frontend` | `npm audit` |
-| `sast-python` | Bandit static analysis |
-| `secret-scan` | gitleaks |
-| `detect-changes` | Always runs. Diffs the PR against its base and outputs `native` and `frontend` (see "Conditional bundle and native build checks" below) |
-| `js-bundle-check` | Metro bundle compiles for iOS. Runs only when `frontend` is true |
-| `android-bundle-check` | Metro bundle compiles for Android. Runs only when `frontend` is true |
-| `ios-build-check` | Full `xcodebuild archive` (no signing). Runs only when `native` is true and the PR is not a draft |
-| `android-build-check` | Full `./gradlew assembleDebug`. Runs only when `native` is true and the PR is not a draft |
-| `native-build-gate` | Always runs; the required check standing in for the four conditional jobs above (passes if each succeeded or was skipped) |
-| `repo-hygiene` | Own workflow (`repo-hygiene.yml`): jscpd copy-paste threshold, 600-line file cap, backend dead-code check (vulture), offline docs link and anchor check. A weekly `external-links` job checks external URLs (not a PR gate). See "Repo hygiene checks" below |
-| `static-frontend` | Own workflow (`static-frontend.yml`; every PR to `dev`/`main`, no paths filter so it can be required, and pushes to `dev`): `npm ci` then `npm run knip` (#768, #771) |
-| `design-token-check` | Own workflow (`design-token-check.yml`, calls the shared `called-design-token-check.yml`): the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. Runs on every PR to `dev`/`main` (opened, edited, synchronize, reopened), so it covers all frontend paths. It stays a separate workflow; do not fold it into `static-frontend.yml` |
-| `migration-guard` | Own workflow (`migration-guard.yml`, re-runs on label changes): `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`). Listed in the required checks of `.github/rulesets/protect-main-dev.json`; the owner must apply the ruleset in GitHub settings. On PRs into `main` it passes without scanning (already scanned on the feature PRs into `dev`) |
+- `test-python`: `pytest` with coverage (default, no integration). It also runs the `security`-marked tests (see "When the security suite runs" above).
+- `test-frontend`: `npx jest --coverage`; fails below the Jest `coverageThreshold` floor (see Coverage targets).
+- `test-migrations`: against a Postgres 16 service, `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres).
+- `lint-frontend`: `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint).
+- `typecheck-frontend`: `npm run typecheck` (`tsc --noEmit`, covers tests too).
+- `static-frontend`: its own workflow (`static-frontend.yml`; every PR to `dev`/`main` with no paths filter so it can be required, and pushes to `dev`): `npm ci` then `npm run knip` (#768, #771).
+- `design-token-check`: its own workflow, calling the shared `called-design-token-check.yml`, the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. It stays a separate workflow; do not fold it into `static-frontend.yml`.
+- `migration-guard`: `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`).
 
 ### Composite setup actions (#770)
 
@@ -415,7 +400,7 @@ The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff 
 
 ### Required status checks (#771)
 
-The required checks live in `.github/rulesets/protect-main-dev.json` (the owner applies the ruleset in GitHub settings by hand). A context must be exactly what GitHub reports: an in-repo job is its `name:` (else its job id); a reusable-workflow job is `<caller job id> / <inner job name>`.
+The required checks live in `.github/rulesets/protect-main-dev.json` (the owner applies the ruleset in GitHub settings by hand). The full per-check table and the recommended required list are in [ci-checks.md](ci-checks.md#branch-protection). A context must be exactly what GitHub reports: an in-repo job is its `name:` (else its job id); a reusable-workflow job is `<caller job id> / <inner job name>`.
 
 - A job skipped by `if:` still reports (as skipped) and passes. A workflow that does not run at all because of `on.pull_request.paths` never reports, so it blocks every PR outside those paths: never require a path-filtered workflow unless its filter is removed. This is why `static-frontend.yml` has no `paths:` filter. `e2e-web`, everything in `security.yml`, `doc-reminder`, `external-links`, `OWASP ZAP Active Scan` and `detect-changes` are deliberately not required.
 - `ios-build-check` and `android-build-check` are never required directly: when they run they report `ios-build-check / Xcode Build (no signing)` and `android-build-check / Gradle Build (Debug)`, when skipped the plain ids, so no single name always reports. `native-build-gate` is the required stand-in for both (and for the bundle checks); this is how android-build-check is covered.
