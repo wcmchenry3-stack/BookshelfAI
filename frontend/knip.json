@@ -5,29 +5,20 @@
     "__tests__/**/*.{ts,tsx}",
     "plugins/*.js",
     "scripts/*.js",
-    "components/*.web.tsx"
+    "components/*.web.tsx",
+    // Read at runtime via fs by scripts/translate.js (not imported), so knip sees no importer.
+    "src/i18n/glossary.ts"
   ],
   "project": ["**/*.{ts,tsx,js}", "!android/**", "!ios/**"],
-  // Read at runtime via fs by scripts/translate.js (not imported), so knip sees no importer.
-  "ignore": ["src/i18n/glossary.ts"],
-  // expo-status-bar: unused in code but part of the Expo template (uncertain, kept).
-  // @babel/core, react-test-renderer: peer deps of babel-preset-expo / @testing-library/react-native.
-  // jest-environment-jsdom: referenced via @jest-environment docblocks in tests.
-  // expo-updates, expo-system-ui: implied by app.json fields (not installed, reported as unlisted; uncertain).
+  // Every entry needs a written reason. Do not add one without it (see docs/testing.md).
   "ignoreDependencies": [
-    "expo-status-bar",
+    // Peer dep of babel-preset-expo, loaded by Metro/Jest via babel.config.js, never imported.
     "@babel/core",
+    // Peer dep of @testing-library/react-native, loaded by it at runtime, never imported.
     "react-test-renderer",
-    "jest-environment-jsdom",
-    "expo-updates",
-    "expo-system-ui"
-  ],
-  // Test asserts this removed module can no longer be resolved.
-  "ignoreUnresolved": ["../../components/FeedbackWidget/FeedbackButton"],
-  // i18n.ts default/i18nReady, theme barrel re-exports (ThemeContext, Theme, ColorKey): public module surface, uncertain, kept.
-  "ignoreIssues": {
-    "src/i18n/i18n.ts": ["exports"],
-    "theme/index.ts": ["exports", "types"],
-    "theme/tokens.ts": ["types"]
-  }
+    // Native module implied by app.json (userInterfaceStyle); not installed. Adding or removing it changes the native build (owner decision, see issue #812).
+    "expo-system-ui",
+    // Native module implied by app.json; not installed. Adding or removing it changes the native build (owner decision, see issue #812).
+    "expo-updates"
+  ]
 }

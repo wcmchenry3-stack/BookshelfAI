@@ -386,7 +386,8 @@ The required checks live in `.github/rulesets/protect-main-dev.json` (the owner 
 
 - Unused file, export or type: delete it, or drop the `export` keyword if the symbol is still used in its own file. A test counts as a user, so an export used only by tests is not reported.
 - Unused or unlisted dependency: remove it from `package.json`, or add it to `package.json` if it is really imported.
-- False positive (read at runtime, a native or config-only reference, a dynamic `require`): add it to `ignore`, `ignoreDependencies`, `ignoreUnresolved` or `ignoreIssues` in `knip.json` with a `//` comment saying why. No blanket globs.
+- File read at runtime rather than imported (e.g. `src/i18n/glossary.ts`, read by `scripts/translate.js`): declare it in `entry`, not `ignore`.
+- Peer or native-only dependency that is never imported: add it to `ignoreDependencies` with a one-line `//` comment above it saying who loads it and why it is not imported. An entry without a reason is not accepted. `ignore`, `ignoreIssues` and `ignoreUnresolved` are empty and stay empty: fix the code (for a test that asserts a file is gone, use `fs.existsSync`, not an unresolvable `require`). No blanket globs.
 
 Required checks are listed in `.github/rulesets/protect-main-dev.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
 
