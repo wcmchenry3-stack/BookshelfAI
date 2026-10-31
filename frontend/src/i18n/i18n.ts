@@ -153,7 +153,7 @@ export const importMap: Record<string, Record<string, ImportFn>> = {
   },
 };
 
-export const i18nReady = i18n
+i18n
   .use(
     resourcesToBackend((language: string, namespace: string) => {
       const loader = importMap[language]?.[namespace];
@@ -200,5 +200,3 @@ export const i18nReady = i18n
   })
   // Prevent unhandled promise rejection — fatal in React Native.
   .catch((err: unknown) => console.error('[i18n] init failed:', err));
-
-export default i18n;

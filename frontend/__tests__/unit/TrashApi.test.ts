@@ -1,6 +1,9 @@
 /**
  * #683: listTrash / restoreUserBook and the restore error mapping.
  */
+import { api, listTrash, restoreUserBook } from '../../lib/api';
+import { formatLocalDate, restoreFailure } from '../../lib/trash';
+
 jest.mock('../../lib/storage', () => ({
   getItem: jest.fn().mockResolvedValue('token'),
   setItem: jest.fn(),
@@ -20,9 +23,6 @@ jest.mock('axios', () => {
   globalThis.ReadableStream = savedRS;
   return actual;
 });
-
-import { api, listTrash, restoreUserBook } from '../../lib/api';
-import { formatLocalDate, restoreFailure } from '../../lib/trash';
 
 type Seen = { method?: string; url?: string };
 let seen: Seen = {};

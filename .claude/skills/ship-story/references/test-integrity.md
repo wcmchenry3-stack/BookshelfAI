@@ -85,7 +85,7 @@ Write `None — only new tests added.` when no existing test was touched.
 4. **Scan limits matrix (#584).** If the PR changes how scans are counted,
    charged or refused, it must add or change rows in `backend/tests/limits/`.
    That covers `backend/app/ai/quota/`, `breaker.py`, the limit keys in
-   `settings.py`, and the refusals or outcome handling in
+   `backend/app/ai/settings/` (`constants.py` / `definitions.py`), and the refusals or outcome handling in
    `backend/app/api/scan.py` and `backend/app/services/scan/` (the
    reservation refusals and settle decisions are in `quota_steps.py`). A PR
    that changes those rules without touching the matrix is a blocking

@@ -333,7 +333,7 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres) |
 | `pytest -m security` (`security.yml`, job `pytest-security`) | Separate run of the security marker (security tests also run in `test-python` on every PR). Only on PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
 | `lint-python` | `black --check` + `ruff` |
-| `lint-frontend` | `eslint` + `prettier --check` |
+| `lint-frontend` | `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint) |
 | `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
 | `cve-python` | `pip-audit` |
 | `cve-frontend` | `npm audit` |
@@ -386,7 +386,8 @@ The required checks live in `.github/rulesets/protect-main-dev.json` (the owner 
 
 - Unused file, export or type: delete it, or drop the `export` keyword if the symbol is still used in its own file. A test counts as a user, so an export used only by tests is not reported.
 - Unused or unlisted dependency: remove it from `package.json`, or add it to `package.json` if it is really imported.
-- False positive (read at runtime, a native or config-only reference, a dynamic `require`): add it to `ignore`, `ignoreDependencies`, `ignoreUnresolved` or `ignoreIssues` in `knip.json` with a `//` comment saying why. No blanket globs.
+- File read at runtime rather than imported (e.g. `src/i18n/glossary.ts`, read by `scripts/translate.js`): declare it in `entry`, not `ignore`.
+- Peer or native-only dependency that is never imported: add it to `ignoreDependencies` with a one-line `//` comment above it saying who loads it and why it is not imported. An entry without a reason is not accepted. `ignore`, `ignoreIssues` and `ignoreUnresolved` are empty and stay empty: fix the code (for a test that asserts a file is gone, use `fs.existsSync`, not an unresolvable `require`). No blanket globs.
 
 Required checks are listed in `.github/rulesets/protect-main-dev.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
 

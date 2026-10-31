@@ -43,11 +43,11 @@ Notes on the photo size:
 | `MAX_QUEUE_SIZE` | 50 | `frontend/lib/scanJob.ts:7`; enforced `ScanJobContext.tsx:451` (`isQueueFull`) and the backstop `:459-461` | jobs with status `queued` or `pending` (`isPendingUpload`, `scanJob.ts:60`). Does not count `searching`, `complete` or `failed` jobs, nor text searches' (zero) photos. The comment at `scanJob.ts:3-6` says so |
 | `FAILED_SCAN_RETENTION_MS` | 7 days | `scanJob.ts:10`, `isFailedScanExpired` `:111` | age of a `failed` job, counted from `failedAt`, or `createdAt` for jobs saved before #605 (`failedTimeOf` `:106`) |
 | `SCAN_RETRY_DELAYS_MS` | 30 s, 10 min, 1 h, 4 h | `frontend/lib/scanErrors.ts:130-135` | waits before attempts 2 to 5 of a photo after `503 scan_unavailable` (#604) |
-| `MAX_SCAN_ATTEMPTS` | 5 | `scanErrors.ts:145` | attempts per photo; after the 5th the job is `failed` (`ScanJobContext.tsx:1006-1012`). Total wait on the schedule: 4 h 40 min 30 s |
-| `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `scanErrors.ts:142` | no retry is scheduled further ahead than this; also applied to saved times on launch (`ScanJobContext.tsx:240`) |
-| `MAX_RETRIES` | 3 | `ScanJobContext.tsx:43`, used `:532` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
+| `MAX_SCAN_ATTEMPTS` | 5 | `scanErrors.ts:145` | attempts per photo; after the 5th the job is `failed` (attempt counted at `lib/scan/executeScan.ts:111`, failed at `lib/scan/scanOutcomes.ts:98-104`). Total wait on the schedule: 4 h 40 min 30 s |
+| `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `scanErrors.ts:142` | no retry is scheduled further ahead than this; also applied to saved times on launch (`ScanJobContext.tsx:270`) |
+| `MAX_RETRIES` | 3 | `hooks/useScanQueue.ts:18`, used `:343` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
 | `MAX_IN_PROGRESS_RETRIES` | 3 | `scanErrors.ts:99` | silent retries of `429 scan_in_progress` |
-| `MAX_DRAIN_PASSES` | 3 | `ScanJobContext.tsx:46` | passes of the upload drain per trigger |
+| `MAX_DRAIN_PASSES` | 3 | `hooks/useScanQueue.ts:21` | passes of the upload drain per trigger |
 | `MAX_ENTRIES` (log buffer) | 200 | `SessionLogger.ts` | lines kept for a bug report |
 | `MAX_LINE_CHARS` / `MAX_LOG_BYTES` (log buffer) | 1,000 characters / 100 KB | `SessionLogger.ts` | one stored line / the whole `session-logs.txt` attachment (oldest lines dropped first) |
 | `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` (feedback) | 5 submissions per 10 min, per install (module memory, reset on app restart) | `components/FeedbackWidget/useFeedbackSubmit.ts:34-35` | rate of feedback submissions; limits how often logs are sent, not their size |
@@ -158,7 +158,7 @@ Purges are called from `cleanup_expired_tokens` (`backend/app/services/token_cle
 | `ai_usage_daily` | per (day, feature, model, status) totals, no user | 400 days (`DAILY_RETENTION_DAYS` `ledger.py:75`) | `_purge_daily` `ledger.py:256` | yes |
 | `ai_spend_daily` (`ai_spend.py`) | one row per UTC day: reserved and settled micro-dollars, alert mask | 90 days (`RETENTION_DAYS` `app/ai/breaker.py:112`) | `breaker.purge_old_spend` `:327` | yes |
 | `ai_enhanced_zero_results` | uncharged zero-result enhanced scans per user | 30 days (`ZERO_RESULT_RETENTION_DAYS` `app/ai/quota/constants.py:41`) | `quota.purge_old_zero_results` `app/ai/quota/purge.py:63` | yes |
-| `scan_records` (`scan_record.py`) | per-user answer for a photo: SHA-256, candidates, enrichment JSON | `scan_records.retention_days`, default 30, bounds 1 to 30 (`app/ai/settings.py:210,213`); also at most `scan_records.max_per_user`, default 500, bounds 1 to 10,000 (`:211,214`), evicted oldest first on save | `scan_records.purge_old_scan_records` `:495`, `purge_old` `:473`. If settings are unreadable it uses 30 | yes |
+| `scan_records` (`scan_record.py`) | per-user answer for a photo: SHA-256, candidates, enrichment JSON | `scan_records.retention_days`, default 30, bounds 1 to 30 (`app/ai/settings/constants.py:36,39`); also at most `scan_records.max_per_user`, default 500, bounds 1 to 10,000 (`:37,40`), evicted oldest first on save | `scan_records.purge_old_scan_records` `:495`, `purge_old` `:473`. If settings are unreadable it uses 30 | yes |
 | `scan_corrections` (`scan_correction.py`) | which of title / author / ISBN a user edited on a pre-filled save (#631) | 30 days (`ledger.py` uses `RAW_RETENTION_DAYS`); also cascades with its `scan_records` row | `ledger._purge_scan_corrections` `:287`, called inside `rollup_and_purge` `:344` | yes |
 | `scan_corrections_daily` | per (day, feature, model) counts, no user | 400 days (`ledger.py:75`) | the same function, `:315-317` | yes |
 

@@ -80,13 +80,6 @@ const WISHLISTED_BOOK = {
   edition: { publish_year: 1965, publisher: 'Ace Books', page_count: 604 },
 };
 
-const READING_BOOK = {
-  ...WISHLISTED_BOOK,
-  id: 'ub-2',
-  status: 'reading',
-  book: { ...WISHLISTED_BOOK.book, id: 'b-2', title: 'Foundation' },
-};
-
 beforeEach(() => {
   jest.clearAllMocks();
   mockGet.mockResolvedValue({ data: [] });
