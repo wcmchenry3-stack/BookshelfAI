@@ -5,7 +5,9 @@ quota.py was split into a package. Callers and tests keep using
 ``quota.<name>``; these tests guard both."""
 
 import ast
+import importlib
 import logging
+import pkgutil
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -180,6 +182,14 @@ def test_no_module_calls_a_quota_function_or_tunable_by_bare_name():
 
 def test_the_modules_log_under_the_old_logger_name():
     assert quota.logger is logging.getLogger("app.ai.quota")
+    checked = []
+    for info in pkgutil.iter_modules(quota.__path__):
+        mod = importlib.import_module(f"{quota.__name__}.{info.name}")
+        logger = getattr(mod, "logger", None)
+        if logger is not None:
+            checked.append(info.name)
+            assert logger.name == "app.ai.quota", info.name
+    assert checked, "no submodule defines a module-level logger"
 
 
 @pytest.mark.parametrize(

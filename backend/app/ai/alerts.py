@@ -1,7 +1,7 @@
 """Service-level Sentry warnings that must carry nothing about the request.
 
 Used by the cost breaker's spend alerts (#531, ``app/ai/breaker.py``) and the
-zero-result enhanced-scan warning (#533, ``app/ai/quota.py``), and by the
+zero-result enhanced-scan warning (#533, ``app/ai/quota/sentry_warnings.py``), and by the
 refresh-token reuse alert (#690, ``app/auth/refresh_family.py``), which passes
 the user id and family id as tags itself and must not carry the request body
 (it holds the refresh token). The request's
