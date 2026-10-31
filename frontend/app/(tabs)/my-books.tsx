@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, RefreshControl, StyleSheet } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -9,13 +9,13 @@ import { BookDetailSheet } from '../../components/library/BookDetailSheet';
 import { BookRow, BookRowAction } from '../../components/library/BookRow';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
+import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { LibrarySearchBar } from '../../components/library/LibrarySearchBar';
 import { StatusTabs } from '../../components/library/StatusTabs';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import { NEXT_STATUS, SCREEN_PADDING, type Status } from '../../components/library/libraryShared';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
 import { onLibraryChanged } from '../../lib/libraryChanged';
-import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
 import { isServiceUnavailable } from '../../lib/apiErrorReporting';
 
@@ -45,7 +45,6 @@ interface UserBook {
 }
 
 export default function MyBooksScreen() {
-  const { theme } = useTheme();
   const { t } = useTranslation('my-books');
   const { activeColor } = useLibraryAccent();
   const [books, setBooks] = useState<UserBook[]>([]);
@@ -141,9 +140,9 @@ export default function MyBooksScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <LibraryScreen>
         <LoadingSpinner message={t('loading')} />
-      </View>
+      </LibraryScreen>
     );
   }
 
@@ -157,7 +156,7 @@ export default function MyBooksScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <LibraryScreen>
       <LibrarySearchBar value={query} onChangeText={setQuery} />
       <StatusTabs activeTab={activeTab} onChange={handleTabChange} />
 
@@ -227,11 +226,10 @@ export default function MyBooksScreen() {
         onAdvance={advanceStatus}
         onRemove={removeBook}
       />
-    </View>
+    </LibraryScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
   list: { paddingHorizontal: SCREEN_PADDING, paddingBottom: 32, gap: 12 },
 });
