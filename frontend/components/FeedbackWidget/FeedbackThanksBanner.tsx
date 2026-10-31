@@ -6,7 +6,7 @@ import { useTheme } from '../../hooks/useTheme';
 
 export const THANKS_BANNER_DURATION_MS = 4000;
 /** Approximate native header height; the banner sits just below it. */
-export const HEADER_HEIGHT = 56;
+const HEADER_HEIGHT = 56;
 
 interface Props {
   visible: boolean;

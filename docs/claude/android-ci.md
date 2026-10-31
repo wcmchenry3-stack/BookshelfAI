@@ -90,10 +90,12 @@ git commit -m "chore(android): regenerate prebuild after <reason>"
 
 | Job | What it checks |
 |---|---|
-| `android-bundle-check` | JS bundle compiles for Android (Metro, no native build) |
-| `android-build-check` | `./gradlew assembleDebug` compiles cleanly end-to-end |
+| `android-bundle-check` | JS bundle compiles for Android (Metro, no native build). Runs when `frontend/**` changes |
+| `android-build-check` | `./gradlew assembleDebug` compiles cleanly end-to-end. Runs only when native-affecting paths change, and not on draft PRs |
 | `gradle-wrapper-check` | `gradle-wrapper.jar` is present and unmodified |
 | `local-path-check` | No hardcoded local machine paths in Gradle files |
+
+The bundle/build jobs are conditional (`detect-changes`; path lists in `docs/testing.md`). The required check is `native-build-gate` (always runs; passes when each conditional job succeeded or was skipped), because a skipped reusable-workflow job never reports its `<job> / <inner job>` name. Push and deploy runs always run them.
 
 ## Play Store submission workflow
 

@@ -1,0 +1,89 @@
+name: Repo hygiene
+
+# Copy-paste detection (jscpd), source file-length cap, and docs link checks
+# (lychee). Kept out of ci.yml on purpose. See "Repo hygiene checks" in
+# docs/testing.md for how to move the thresholds and allowlists (#769).
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Monday 06:17 UTC: external links only
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-hygiene-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Tools are run by exact version, not through third-party actions.
+  JSCPD_VERSION: "5.4.0"
+  LYCHEE_VERSION: "0.22.0"
+  # sha256 of lychee-x86_64-unknown-linux-gnu.tar.gz for LYCHEE_VERSION
+  # (upstream publishes no checksum file; computed from the release asset).
+  LYCHEE_SHA256: "d004215a789db155779d3263e6e18ad424879b18eeddb00745efb8d9b2bd8891"
+
+jobs:
+  repo-hygiene:
+    name: repo-hygiene
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: File length cap (600 lines)
+        run: python3 scripts/check_file_length.py
+
+      - name: Copy-paste detection (jscpd)
+        run: npx --yes "jscpd@${JSCPD_VERSION}" --config .jscpd.json
+
+      - name: Upload jscpd report
+        if: always()
+        # actions/upload-artifact v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: jscpd-report
+          path: jscpd-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Install lychee
+        run: |
+          set -euo pipefail
+          url="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/lychee.tar.gz" "$url"
+          echo "${LYCHEE_SHA256}  $RUNNER_TEMP/lychee.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/lychee"
+          tar -xzf "$RUNNER_TEMP/lychee.tar.gz" -C "$RUNNER_TEMP/lychee"
+          echo "$RUNNER_TEMP/lychee" >> "$GITHUB_PATH"
+
+      - name: Docs links (relative links and anchors, offline)
+        run: lychee --config lychee.toml --offline --include-fragments 'docs/**/*.md' README.md CLAUDE.md
+
+  external-links:
+    name: external-links
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install lychee
+        run: |
+          set -euo pipefail
+          url="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/lychee.tar.gz" "$url"
+          echo "${LYCHEE_SHA256}  $RUNNER_TEMP/lychee.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/lychee"
+          tar -xzf "$RUNNER_TEMP/lychee.tar.gz" -C "$RUNNER_TEMP/lychee"
+          echo "$RUNNER_TEMP/lychee" >> "$GITHUB_PATH"
+
+      - name: Docs links (including external URLs)
+        run: lychee --config lychee.toml --include-fragments 'docs/**/*.md' README.md CLAUDE.md

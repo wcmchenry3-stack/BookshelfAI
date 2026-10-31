@@ -5,7 +5,7 @@ import type { ScanJob } from './scanJob';
 
 const STORAGE_KEY = 'scan_job_queue';
 // Directory under Paths.document where captures are persisted (see scan.tsx).
-export const SCAN_QUEUE_DIR = 'scan-queue';
+const SCAN_QUEUE_DIR = 'scan-queue';
 
 // Web: in-memory only (no offline persistence needed).
 const _webStore = new Map<string, string>();
