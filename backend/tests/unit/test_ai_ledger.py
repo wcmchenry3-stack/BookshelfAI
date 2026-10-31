@@ -513,12 +513,21 @@ class TestScanRecordsUsage:
     async def test_anyio_cancelled_scan_records_an_error_row(
         self, store, provider, rows
     ):
+        # Cancel from inside the provider call, not on a wall-clock
+        # deadline: a fixed 0.2s raced the pre-provider steps (upload checks,
+        # threaded normalise) on a loaded runner and cancelled before the
+        # reservation, so no row was written. 30s is only a hang guard.
+        reached = []
+
         async def hung(_image):
+            reached.append(True)
+            scope.cancel()
             await anyio.sleep(5)
 
         provider.return_value.identify = hung
-        with anyio.move_on_after(0.2) as scope:
+        with anyio.move_on_after(30) as scope:
             await _call_scan()
+        assert reached == [True]
         assert scope.cancelled_caught
         assert _one(rows)["status"] == "error"
         assert store.leases == {}

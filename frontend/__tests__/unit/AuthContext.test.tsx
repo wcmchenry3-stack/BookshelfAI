@@ -78,31 +78,19 @@ beforeEach(async () => {
 describe('AuthProvider', () => {
   it('starts in loading state', async () => {
     mockGetItem.mockReturnValue(new Promise(() => {}));
-    const { getByTestId } = await render(
-      <AuthProvider>
-        <AuthDisplay />
-      </AuthProvider>
-    );
+    const { getByTestId } = await renderProvider();
     expect(getByTestId('state').props.children).toBe('loading');
   });
 
   it('resolves to guest when no stored token', async () => {
     mockGetItem.mockResolvedValue(null);
-    const { getByTestId } = await render(
-      <AuthProvider>
-        <AuthDisplay />
-      </AuthProvider>
-    );
+    const { getByTestId } = await renderProvider();
     await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
   });
 
   it('resolves to authed when token found in SecureStore', async () => {
     mockGetItem.mockResolvedValue('some-token');
-    const { getByTestId } = await render(
-      <AuthProvider>
-        <AuthDisplay />
-      </AuthProvider>
-    );
+    const { getByTestId } = await renderProvider();
     await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
   });
 
@@ -185,6 +173,23 @@ const BOTH_TOKENS = {
   bookshelf_access_token: 'old-access',
   bookshelf_refresh_token: 'old-refresh',
 };
+
+// The context value, captured on each render by `renderCapturing`.
+let ctx!: React.ContextType<typeof AuthContext>;
+function Capture() {
+  // eslint-disable-next-line react-hooks/globals
+  ctx = useContext(AuthContext);
+  return null;
+}
+
+function renderCapturing() {
+  return render(
+    <AuthProvider>
+      <AuthDisplay />
+      <Capture />
+    </AuthProvider>
+  );
+}
 
 function renderProvider() {
   return render(
@@ -301,18 +306,7 @@ describe('AuthProvider request gate (#722 review round 2)', () => {
     '%s lifts the gate after storing the new tokens',
     async (method) => {
       mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
-      let ctx!: React.ContextType<typeof AuthContext>;
-      function Capture() {
-        // eslint-disable-next-line react-hooks/globals
-        ctx = useContext(AuthContext);
-        return null;
-      }
-      const { getByTestId } = await render(
-        <AuthProvider>
-          <AuthDisplay />
-          <Capture />
-        </AuthProvider>
-      );
+      const { getByTestId } = await renderCapturing();
       await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
 
       await act(async () => {
@@ -333,18 +327,7 @@ describe('AuthProvider request gate (#722 review round 2)', () => {
 describe('AuthProvider logout errors (#733 review)', () => {
   it('signs out and attempts both deletes even when the first delete throws', async () => {
     mockGetItem.mockResolvedValue('some-token');
-    let ctx!: React.ContextType<typeof AuthContext>;
-    function Capture() {
-      // eslint-disable-next-line react-hooks/globals
-      ctx = useContext(AuthContext);
-      return null;
-    }
-    const { getByTestId } = await render(
-      <AuthProvider>
-        <AuthDisplay />
-        <Capture />
-      </AuthProvider>
-    );
+    const { getByTestId } = await renderCapturing();
     await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
     mockDeleteItem.mockRejectedValueOnce(new Error('keychain locked'));
 
@@ -362,18 +345,7 @@ describe('AuthProvider logout errors (#733 review)', () => {
 
   it('closes the request gate on a normal logout', async () => {
     mockGetItem.mockResolvedValue('some-token');
-    let ctx!: React.ContextType<typeof AuthContext>;
-    function Capture() {
-      // eslint-disable-next-line react-hooks/globals
-      ctx = useContext(AuthContext);
-      return null;
-    }
-    const { getByTestId } = await render(
-      <AuthProvider>
-        <AuthDisplay />
-        <Capture />
-      </AuthProvider>
-    );
+    const { getByTestId } = await renderCapturing();
     await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
     mockGateStoredSession.mockClear();
 
@@ -395,18 +367,7 @@ describe('AuthProvider logout errors (#733 review)', () => {
 
   it('marks the next launch to wipe when a logout delete fails', async () => {
     mockGetItem.mockResolvedValue('some-token');
-    let ctx!: React.ContextType<typeof AuthContext>;
-    function Capture() {
-      // eslint-disable-next-line react-hooks/globals
-      ctx = useContext(AuthContext);
-      return null;
-    }
-    const { getByTestId } = await render(
-      <AuthProvider>
-        <AuthDisplay />
-        <Capture />
-      </AuthProvider>
-    );
+    const { getByTestId } = await renderCapturing();
     await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
     mockDeleteItem.mockRejectedValueOnce(new Error('keychain locked'));
 
@@ -456,18 +417,7 @@ describe('AuthProvider login during the install check (#729 review)', () => {
           answerKeys = res;
         })
       );
-      let ctx!: React.ContextType<typeof AuthContext>;
-      function Capture() {
-        // eslint-disable-next-line react-hooks/globals
-        ctx = useContext(AuthContext);
-        return null;
-      }
-      const { getByTestId } = await render(
-        <AuthProvider>
-          <AuthDisplay />
-          <Capture />
-        </AuthProvider>
-      );
+      const { getByTestId } = await renderCapturing();
 
       await act(async () => {
         if (method === 'login') await ctx.login('google-id-token');
@@ -488,18 +438,7 @@ describe('AuthProvider login during the install check (#729 review)', () => {
     mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
     const keychain = useKeychain(BOTH_TOKENS);
     (AsyncStorage.getAllKeys as jest.Mock).mockRejectedValueOnce(new Error('disk'));
-    let ctx!: React.ContextType<typeof AuthContext>;
-    function Capture() {
-      // eslint-disable-next-line react-hooks/globals
-      ctx = useContext(AuthContext);
-      return null;
-    }
-    const { getByTestId } = await render(
-      <AuthProvider>
-        <AuthDisplay />
-        <Capture />
-      </AuthProvider>
-    );
+    const { getByTestId } = await renderCapturing();
     await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
     await act(async () => {
       await ctx.login('google-id-token');
