@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { Modal, Text } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
 import SheetModal from '../../components/SheetModal';
@@ -44,6 +44,29 @@ describe('SheetModal', () => {
     const { getByLabelText, onDismiss } = await setup();
     fireEvent.press(getByLabelText('Close sheet'));
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('pins sheet props and dismiss wiring on the Modal and title header', async () => {
+    const onHidden = jest.fn();
+    const { getByText, onDismiss } = await setup({ onHidden });
+
+    // The test renderer only exposes host nodes, so walk up from the title to the
+    // composite Modal fiber and read the props it was rendered with.
+    let fiber = getByText('Sheet title').unstable_fiber;
+    while (fiber && fiber.type !== Modal) fiber = fiber.return;
+    expect(fiber).not.toBeNull();
+    const modal = { props: fiber!.memoizedProps };
+    expect(modal.props.presentationStyle).toBe('pageSheet');
+    expect(modal.props.animationType).toBe('slide');
+    expect(modal.props.accessibilityViewIsModal).toBe(true);
+
+    modal.props.onRequestClose();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    modal.props.onDismiss();
+    expect(onHidden).toHaveBeenCalledTimes(1);
+
+    expect(getByText('Sheet title').props.accessibilityRole).toBe('header');
   });
 
   it('renders nothing when not visible', async () => {
