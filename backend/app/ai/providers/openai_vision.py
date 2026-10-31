@@ -88,7 +88,7 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     carries no text (e.g. the model declined and returned a refusal instead).
     """
     try:
-        choice = body["choices"][0]  # type: ignore[index]
+        choice = body["choices"][0]  # type: ignore[index] - body is untyped JSON; a bad shape is caught below
         finish_reason = choice.get("finish_reason")
         content = choice["message"].get("content")
     except (KeyError, IndexError, TypeError, AttributeError):
@@ -121,7 +121,7 @@ def _usage(body: object) -> tuple[int, int, int]:
 
 def _has_refusal(body: object) -> bool:
     try:
-        refusal = body["choices"][0]["message"].get("refusal")  # type: ignore[index]
+        refusal = body["choices"][0]["message"].get("refusal")  # type: ignore[index] - body is untyped JSON; a bad shape means no refusal
     except (KeyError, IndexError, TypeError, AttributeError):
         return False
     return isinstance(refusal, str) and bool(refusal)
@@ -185,7 +185,7 @@ def _confidence(value: object) -> float:
     if isinstance(value, int):
         # A bool or an int (exact compare: float() overflows past ~1e308).
         return clamp_confidence(value)
-    number = float(value)  # type: ignore[arg-type]  # checked by _is_broken
+    number = float(value)  # type: ignore[arg-type] - already checked by _is_broken
     return clamp_confidence(number)
 
 

@@ -68,7 +68,7 @@ class _BlankGuardSource(PydanticBaseSettingsSource):
 
     # Abstract hook required by PydanticBaseSettingsSource. Never called
     # directly: pydantic resolves fields via __call__.
-    def get_field_value(self, field, field_name):  # pragma: no cover - abstract hook
+    def get_field_value(self, field, field_name):
         return None, field_name, False
 
     @staticmethod

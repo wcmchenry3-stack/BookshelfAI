@@ -108,7 +108,7 @@ async def _verify_turnstile(token: str) -> bool:
             return bool(resp.json().get("success"))
     # Any Turnstile failure (network, timeout, malformed response) is treated as
     # verification failure rather than propagating.
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - any failure = not verified
         logger.warning("Turnstile verification failed: %s", exc)
         return False
 
