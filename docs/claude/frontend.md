@@ -55,6 +55,10 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - Header (`headerRight` in `InnerStack`): `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
 - Do **not** use Ionicons — it has been replaced
 
+#### Library screens (My Books and Wishlist)
+- Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours and dark-mode top padding.
+- `hooks/useLibraryMutations.ts` owns advance-status and remove (the per-row in-flight guard, offline check, error alerts, the "moved to trash" banner). Each screen passes `onAdvanced` / `onRemoved` to update its own list, so My Books and Wishlist keep their different list rules. Put new shared row/header behaviour there, not in the screens.
+
 #### Logo / App Icon
 - Source asset: `frontend/assets/logo.png` (chihuahua + open book on navy, 1024×1024)
 - Configured in `app.json` as iOS icon, Android adaptive foreground (`backgroundColor: #0f426f`), and web favicon
