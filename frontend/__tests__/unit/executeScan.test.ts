@@ -1,3 +1,5 @@
+import { api } from '../../lib/api';
+import { executeScan } from '../../lib/scan/executeScan';
 import {
   classifyJobFailure,
   handleEnhancedRefusal,
@@ -12,6 +14,7 @@ import type { ScanUiState } from '../../lib/scanErrors';
 import { MAX_SCAN_ATTEMPTS, SCAN_RETRY_DELAYS_MS } from '../../lib/scanErrors';
 import type { ScanJob } from '../../lib/scanJob';
 
+jest.mock('../../lib/api', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 jest.mock('../../lib/sentry', () => ({
   Sentry: { addBreadcrumb: jest.fn(), captureMessage: jest.fn(), captureException: jest.fn() },
 }));
@@ -161,29 +164,37 @@ describe('handleUnavailable', () => {
   >;
 
   it('first attempt: waits on the schedule, shows the short notice and holds the photo queue', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
     const deps = makeDeps();
     handleUnavailable(deps, makeJob(), 1, state);
     expect(deps.stopDrainRef.current).toBe('images');
-    expect(deps.updateJob).toHaveBeenCalledWith(
-      'job-1',
-      expect.objectContaining({
-        status: 'queued',
-        error: 'unavailable',
-        attempts: 1,
-        nextAttemptAt: expect.any(Number),
-      })
-    );
+    expect(deps.updateJob).toHaveBeenCalledWith('job-1', {
+      status: 'queued',
+      error: 'unavailable',
+      retryCount: 0,
+      attempts: 1,
+      nextAttemptAt: 1_000_000 + SCAN_RETRY_DELAYS_MS[0],
+    });
     expect(deps.setScanNotice).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paused' }));
+    jest.restoreAllMocks();
   });
 
-  it('later attempt: no new notice, clears the paused one', () => {
+  it('later attempt: schedules the next step, no new notice, clears the paused one', () => {
+    jest.spyOn(Date, 'now').mockReturnValue(2_000_000);
     const deps = makeDeps();
     handleUnavailable(deps, makeJob(), 2, state);
+    expect(deps.updateJob).toHaveBeenCalledWith('job-1', {
+      status: 'queued',
+      error: 'unavailable',
+      retryCount: 0,
+      attempts: 2,
+      nextAttemptAt: 2_000_000 + SCAN_RETRY_DELAYS_MS[1],
+    });
     const call = (deps.setScanNotice as jest.Mock).mock.calls[0][0];
     expect(typeof call).toBe('function');
     expect(call({ kind: 'paused' })).toBeNull();
     expect(call({ kind: 'daily_limit' })).toEqual({ kind: 'daily_limit' });
-    expect(SCAN_RETRY_DELAYS_MS.length).toBeGreaterThanOrEqual(1);
+    jest.restoreAllMocks();
   });
 
   it('final attempt: fails the job, shows the final banner and starts a drain for waiting photos', () => {
@@ -309,5 +320,91 @@ describe('classification helpers', () => {
         reason: 'premium_required',
       } as ScanUiState)
     ).toBe(false);
+  });
+});
+
+describe('executeScan', () => {
+  const post = api.post as jest.Mock;
+  const inProgress = (retryAfter: string) => ({
+    response: {
+      status: 429,
+      data: { detail: 'scan_in_progress' },
+      headers: { 'retry-after': retryAfter },
+    },
+  });
+  const okResponse = { data: { books: [{ title: 'T', author: 'A' }], no_match: null } };
+
+  beforeEach(() => {
+    post.mockReset();
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('requests a fresh Turnstile token for every POST, including scan_in_progress retries', async () => {
+    let n = 0;
+    const getToken = jest.fn(async () => `tok-${++n}`);
+    const deps = makeDeps({ getTurnstileTokenRef: { current: getToken } });
+    post
+      .mockRejectedValueOnce(inProgress('2'))
+      .mockRejectedValueOnce(inProgress('2'))
+      .mockResolvedValueOnce(okResponse);
+    const p = executeScan(deps, makeJob());
+    await jest.advanceTimersByTimeAsync(10_000);
+    await p;
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(getToken).toHaveBeenCalledTimes(post.mock.calls.length);
+    const sent = post.mock.calls.map((c) => (c[1] as FormData).get('cf-turnstile-response'));
+    expect(sent).toEqual(['tok-1', 'tok-2', 'tok-3']);
+  });
+
+  it('silently retries scan_in_progress at most 3 times, waiting Retry-After each time', async () => {
+    const deps = makeDeps();
+    post.mockRejectedValue(inProgress('4'));
+    const p = executeScan(deps, makeJob());
+    await jest.advanceTimersByTimeAsync(3999);
+    expect(post).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(post).toHaveBeenCalledTimes(2);
+    await jest.advanceTimersByTimeAsync(4000);
+    expect(post).toHaveBeenCalledTimes(3);
+    await jest.advanceTimersByTimeAsync(4000);
+    expect(post).toHaveBeenCalledTimes(4);
+    await jest.advanceTimersByTimeAsync(60_000);
+    await p;
+    // 1 first try + 3 retries, then the refusal path takes over.
+    expect(post).toHaveBeenCalledTimes(4);
+    expect(deps.updateJob).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'queued', error: 'in_progress' })
+    );
+  });
+
+  it('runs a drain that was queued behind the send once it finishes', async () => {
+    const deps = makeDeps();
+    deps.drainAgainRef.current = true;
+    post.mockResolvedValueOnce(okResponse);
+    const p = executeScan(deps, makeJob());
+    await jest.advanceTimersByTimeAsync(0);
+    await p;
+    expect(deps.drainAgainRef.current).toBe(false);
+    expect(deps.drainQueue).toHaveBeenCalledTimes(1);
+    expect(deps.inFlightRef.current.size).toBe(0);
+    expect(deps.abortersRef.current.size).toBe(0);
+  });
+
+  it('does not drain again while a drain is running or a photo is still being sent', async () => {
+    const draining = makeDeps({ drainingRef: { current: true } });
+    draining.drainAgainRef.current = true;
+    post.mockResolvedValue(okResponse);
+    await executeScan(draining, makeJob());
+    expect(draining.drainQueue).not.toHaveBeenCalled();
+    expect(draining.drainAgainRef.current).toBe(true);
+
+    const busy = makeDeps({ imageInFlight: jest.fn(() => true) });
+    busy.drainAgainRef.current = true;
+    await executeScan(busy, makeJob());
+    expect(busy.drainQueue).not.toHaveBeenCalled();
   });
 });
