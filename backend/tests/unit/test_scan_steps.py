@@ -639,3 +639,25 @@ class TestScanRunsTheStepsInOrder:
         idx = _Pipeline.STEPS.index(failing)
         assert pipe.order == list(_Pipeline.STEPS[: idx + 1])
         pipe.refund.assert_not_awaited()
+
+
+class TestLookupRecord:
+    async def test_lookup_failure_recovers_the_session_and_takes_the_normal_path(
+        self,
+    ):
+        db, user = AsyncMock(), MagicMock()
+        with (
+            patch.object(
+                scan_api.scan_records, "lookup", AsyncMock(side_effect=OSError("db"))
+            ),
+            patch.object(scan_api.scan_records, "log_event") as log_event,
+        ):
+            got = await scan_api._record_lookup(
+                db, user, _USER_ID, "f" * 64, MagicMock(), attempt=2
+            )
+        assert got is None
+        db.rollback.assert_awaited_once()
+        db.refresh.assert_awaited_once_with(user)
+        log_event.assert_called_once_with(
+            "lookup_failed", ai_done=False, enrich_done=False, attempt=2
+        )

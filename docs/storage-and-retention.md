@@ -33,7 +33,7 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 Notes on the photo size:
 
 - JPEG size depends on the sensor resolution and the scene, and `expo-camera`'s `quality` is the only knob the app turns. These figures are rules of thumb for a busy bookshelf at 0.7 and **need a device measurement** (story G2 includes taking one).
-- The server accepts at most 5 MB per image (`backend/app/api/scan.py:53`, `413` above it) and the app has no handling for that code (`frontend/lib/scanErrors.ts` has no 413 case, so it becomes the `generic` state). A 48 to 50 MP capture at 0.7 may exceed 5 MB and fail on every retry. This is the strongest argument for resizing on the phone.
+- The server accepts at most 5 MB per image (`backend/app/services/scan/uploads.py:11`, `413` above it) and the app has no handling for that code (`frontend/lib/scanErrors.ts` has no 413 case, so it becomes the `generic` state). A 48 to 50 MP capture at 0.7 may exceed 5 MB and fail on every retry. This is the strongest argument for resizing on the phone.
 - The document directory is included in iOS device and iCloud backups. Failed and queued photos therefore also count against the user's backup.
 
 ### Caps today
@@ -51,7 +51,7 @@ Notes on the photo size:
 | `MAX_ENTRIES` (log buffer) | 200 | `SessionLogger.ts` | lines kept for a bug report |
 | `MAX_LINE_CHARS` / `MAX_LOG_BYTES` (log buffer) | 1,000 characters / 100 KB | `SessionLogger.ts` | one stored line / the whole `session-logs.txt` attachment (oldest lines dropped first) |
 | `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` (feedback) | 5 submissions per 10 min, per install (module memory, reset on app restart) | `components/FeedbackWidget/useFeedbackSubmit.ts:34-35` | rate of feedback submissions; limits how often logs are sent, not their size |
-| Server image cap | 5 MB | `backend/app/api/scan.py:53` | one upload; larger gets `413 Image must be 5MB or smaller` |
+| Server image cap | 5 MB | `backend/app/services/scan/uploads.py:11` | one upload; larger gets `413 Image must be 5MB or smaller` |
 
 There is **no total-bytes cap** and no free-space check anywhere in `frontend/` (no `getFreeDiskStorage`, no handling of a full disk).
 
@@ -219,7 +219,7 @@ What the backend logs (all structured JSON to stdout, `backend/app/core/logging.
 
 - **Per request:** the uvicorn access line (method, path, status) and a request ID set by `RequestIdMiddleware` (`app/main.py:57`). Rate-limit hits log `rate_limit_exceeded path=...` (`main.py:257`).
 - **Per sign-in:** a handful of `info` lines (`app/api/auth.py:35-85`), the last with the internal user ID, never the email.
-- **Per scan:** `image normalised: WxH, N bytes -> M bytes` (`app/ai/images.py:174`), one `scan_record event=... books=... in_library=...` line with counts only (`app/ai/scan_records.py:541`), retry lines from the provider adapter (`anthropic_vision.py:600`), and `warning` lines for ceilings and non-fatal failures (`app/api/scan.py:178-443`). No image, filename, raw model output or token.
+- **Per scan:** `image normalised: WxH, N bytes -> M bytes` (`app/ai/images.py:174`), one `scan_record event=... books=... in_library=...` line with counts only (`app/ai/scan_records.py:541`), retry lines from the provider adapter (`anthropic_vision.py:600`), and `warning` lines for ceilings and non-fatal failures (`app/api/scan.py`, `app/services/scan/quota_steps.py` and `records.py`; logger `app.api.scan`). No image, filename, raw model output or token.
 - **Per day:** one line per purge from `token_cleanup.py`.
 
 Where they go:
