@@ -21,14 +21,11 @@ flows run against real Postgres in tests/integration/test_refresh_families_db.py
 """
 
 import json
-import uuid
-from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import timedelta
+from unittest.mock import patch
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
@@ -36,6 +33,13 @@ from app.core.limiter import limiter
 from app.main import app
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
+from tests.helpers import (
+    FakeAuthDb,
+    bearer,
+    install_jwt_keys,
+    serve_fake_db,
+    sign_in,
+)
 from tests.unit._sentry_capture import captured_app_events
 
 pytestmark = pytest.mark.security
@@ -49,70 +53,24 @@ CLAIMS = {
 }
 
 
-@pytest.fixture(scope="module")
-def _keys():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    ).decode()
-    public = (
-        key.public_key()
-        .public_bytes(
-            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-        .decode()
-    )
-    return private, public
-
-
 @pytest.fixture(autouse=True)
 def _jwt_settings(_keys):
     with (
-        patch.object(settings, "jwt_private_key", _keys[0]),
-        patch.object(settings, "jwt_public_key", _keys[1]),
+        install_jwt_keys(_keys),
         patch.object(settings, "refresh_reuse_grace_seconds", 30),
     ):
         yield
 
 
-class FakeDb:
-    """One user and its refresh rows: the selects by jti, ``get`` by primary
-    key, and the two UPDATEs ``revoke_all_sessions`` issues."""
+class FakeDb(FakeAuthDb):
+    """The shared fake plus a hook on the user-row lock and ``get`` of a
+    refresh row by primary key."""
 
     def __init__(self) -> None:
-        self.user: User | None = None
-        self.tokens: list[RefreshToken] = []
+        super().__init__()
         # Runs once when /auth/refresh takes the user-row lock, after its
         # first read of the refresh row: a test interleaves a twin request.
         self.on_user_lock = None
-
-    def by_jti(self, jti: str) -> RefreshToken:
-        return next(t for t in self.tokens if t.jti == jti)
-
-    async def execute(self, stmt):
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        if getattr(stmt, "is_update", False):
-            params = stmt.compile().params
-            if stmt.table.name == "users":
-                self.user.token_version += 1
-                result.scalar_one.return_value = self.user.token_version
-            elif stmt.table.name == "refresh_tokens":
-                for t in self.tokens:
-                    if t.user_id == params["user_id_1"] and t.revoked_at is None:
-                        t.revoked_at = params["revoked_at"]
-            return result
-        entity = stmt.column_descriptions[0]["entity"]
-        if entity is User:
-            result.scalar_one_or_none.return_value = self.user
-        elif entity is RefreshToken:
-            jtis = {str(v) for v in stmt.compile().params.values()}
-            result.scalar_one_or_none.return_value = next(
-                (t for t in self.tokens if t.jti in jtis), None
-            )
-        return result
 
     async def get(self, model, pk, **_options):
         if model is User and self.user is not None and self.user.id == pk:
@@ -126,50 +84,13 @@ class FakeDb:
 
     def add(self, obj):
         if isinstance(obj, User):
-            obj.id = obj.id or uuid.uuid4()
             obj.token_version = obj.token_version or 0
-            self.user = obj
-        elif isinstance(obj, RefreshToken):
-            self.tokens.append(obj)
-
-    async def flush(self):
-        pass
-
-    async def commit(self):
-        pass
-
-    async def rollback(self):
-        pass
-
-    async def refresh(self, obj, attrs=None):
-        if isinstance(obj, User):
-            obj.created_at = obj.updated_at = datetime.now(UTC)
-
-    def begin_nested(self):
-        db = self
-
-        class _Ctx:
-            async def __aenter__(self):
-                return db
-
-            async def __aexit__(self, *exc):
-                return False
-
-        return _Ctx()
+        super().add(obj)
 
 
 @pytest.fixture
 def db():
-    from app.core.database import get_db
-
-    fake = FakeDb()
-
-    async def _db():
-        yield fake
-
-    app.dependency_overrides[get_db] = _db
-    yield fake
-    app.dependency_overrides.clear()
+    yield from serve_fake_db(FakeDb())
 
 
 @pytest.fixture
@@ -178,10 +99,7 @@ def client():
 
 
 def _sign_in(client) -> dict:
-    with patch("app.api.auth.verify_google_id_token", AsyncMock(return_value=CLAIMS)):
-        resp = client.post("/auth/google", json={"id_token": "t"})
-    assert resp.status_code == 200, resp.text
-    return resp.json()
+    return sign_in(client, CLAIMS)
 
 
 def _refresh(client, token: str):
@@ -197,8 +115,7 @@ def _age(row: RefreshToken, seconds: int) -> None:
     row.used_at -= timedelta(seconds=seconds)
 
 
-def _bearer(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+_bearer = bearer
 
 
 class TestFamilies:

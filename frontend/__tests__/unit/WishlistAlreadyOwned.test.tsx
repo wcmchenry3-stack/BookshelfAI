@@ -1,104 +1,27 @@
-import React from 'react';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
-
-import { ScanJobProvider } from '../../contexts/ScanJobContext';
-import { BannerProvider } from '../../contexts/BannerContext';
-import { useBanner } from '../../hooks/useBanner';
-import { useScanJobs } from '../../hooks/useScanJobs';
-import type { EnrichedBook } from '../../components/BookCandidatePicker';
 import { isAlreadyOwnedError, isOwned } from '../../lib/ownership';
+import { resetScanMocks, scanMocks } from '../helpers/scanJobMocks';
+import { httpError, scanAndAdd } from '../helpers/wishlistFlow';
 
 // #587: POST /wishlist answers 409 with an ownership code (owned_same_edition,
 // owned_other_edition, owned_edition_unknown) for a book the user already
 // has. The app treats it as "already in your library": not a failure, no
 // retry, no Sentry event.
 
-const mockGet = jest.fn();
-const mockPost = jest.fn();
-jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
-jest.mock('../../lib/api', () => ({
-  api: {
-    get: (...a: unknown[]) => mockGet(...a),
-    post: (...a: unknown[]) => mockPost(...a),
-  },
-}));
-jest.mock('../../lib/scanJobStorage', () => ({
-  loadJobs: () => Promise.resolve([]),
-  saveJobs: jest.fn().mockResolvedValue(undefined),
-  clearJobs: jest.fn(),
-  sweepOrphanedScanFiles: () => Promise.resolve(0),
-  deleteScanImage: jest.fn(),
-}));
-jest.mock('@react-native-community/netinfo', () => ({
-  __esModule: true,
-  default: {
-    fetch: () => Promise.resolve({ isConnected: true }),
-    addEventListener: () => () => {},
-  },
-}));
-const mockCaptureException = jest.fn();
-jest.mock('../../lib/sentry', () => ({
-  Sentry: {
-    addBreadcrumb: jest.fn(),
-    captureException: (...a: unknown[]) => mockCaptureException(...a),
-    captureMessage: jest.fn(),
-  },
-}));
-let mockUuid = 0;
-jest.mock('expo-crypto', () => ({ randomUUID: () => `mockUuid-${++mockUuid}` }));
+jest.mock('../../hooks/useAuth', () => require('../helpers/scanJobMocks').authedModule());
+jest.mock('../../lib/api', () => require('../helpers/scanJobMocks').scanApiModule());
+jest.mock('../../lib/scanJobStorage', () => require('../helpers/scanJobMocks').scanStorageModule());
+jest.mock('@react-native-community/netinfo', () =>
+  require('../helpers/scanJobMocks').netInfoModule()
+);
+jest.mock('../../lib/sentry', () => require('../helpers/scanJobMocks').sentryModule());
+jest.mock('expo-crypto', () => require('../helpers/scanJobMocks').cryptoModule());
 
-const book = (title: string): EnrichedBook => ({
-  open_library_work_id: `OL-${title}`,
-  title,
-  author: 'Frank Herbert',
-  subjects: [],
-  confidence: 0.9,
-  already_in_library: false,
-  in_library: false,
-  ownership: 'not_owned',
-  editions: [{ isbn_13: '9780441013593' }],
-  catalog_token: 'p.mac',
-});
-
-function httpError(status: number, detail: unknown) {
-  return Object.assign(new Error(`Request failed with status code ${status}`), {
-    response: { status, data: { detail } },
-  });
-}
+const { captureException: mockCaptureException } = scanMocks;
 
 beforeEach(() => {
   jest.resetAllMocks();
-  mockUuid = 0;
+  resetScanMocks();
 });
-
-function wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <BannerProvider>
-      <ScanJobProvider>{children}</ScanJobProvider>
-    </BannerProvider>
-  );
-}
-
-async function scanAndAdd(titles: string[], answer: (title: string) => Promise<unknown>) {
-  const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
-    wrapper,
-  });
-  await waitFor(() => expect(hook.result.current.scan.jobs).toEqual([]));
-  mockPost.mockResolvedValueOnce({
-    data: { books: titles.map(book), enhanced: false, enhanced_scans_remaining: null },
-  });
-  await act(async () => {
-    await hook.result.current.scan.startScan('image', 'file:///a.jpg');
-  });
-  await act(() => {
-    hook.result.current.scan.reviewJob(hook.result.current.scan.jobs[0].id);
-  });
-  mockPost.mockImplementation((_url: string, b: { title: string }) => answer(b.title));
-  await act(async () => {
-    await hook.result.current.scan.handleAddBooks(titles.map(book));
-  });
-  return hook;
-}
 
 const CODES = ['owned_same_edition', 'owned_other_edition', 'owned_edition_unknown'];
 

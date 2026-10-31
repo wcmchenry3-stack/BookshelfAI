@@ -22,7 +22,6 @@ import base64
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -33,8 +32,14 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.main import app
-from app.models.refresh_token import RefreshToken
 from app.models.user import User
+from tests.helpers import (
+    FakeAuthDb,
+    bearer,
+    install_jwt_keys,
+    serve_fake_db,
+    sign_in,
+)
 
 pytestmark = pytest.mark.security
 
@@ -47,120 +52,15 @@ CLAIMS = {
 }
 
 
-@pytest.fixture(scope="module")
-def _keys():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    ).decode()
-    public = (
-        key.public_key()
-        .public_bytes(
-            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-        .decode()
-    )
-    return private, public
-
-
 @pytest.fixture(autouse=True)
 def _jwt_settings(_keys):
-    with (
-        patch.object(settings, "jwt_private_key", _keys[0]),
-        patch.object(settings, "jwt_public_key", _keys[1]),
-    ):
+    with install_jwt_keys(_keys):
         yield
-
-
-class FakeDb:
-    """Stateful enough for sign-in, refresh, /auth/me and logout-all: one
-    user, its refresh-token rows, and the two UPDATEs revoke_all_sessions
-    issues. Counts every statement so a test can assert none was added."""
-
-    def __init__(self) -> None:
-        self.user: User | None = None
-        self.tokens: list[RefreshToken] = []
-        self.gets = 0
-        self.executes = 0
-
-    async def execute(self, stmt):
-        self.executes += 1
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        if getattr(stmt, "is_update", False):
-            params = stmt.compile().params
-            if stmt.table.name == "users":
-                assert params["id_1"] == self.user.id
-                self.user.token_version += 1
-                result.scalar_one.return_value = self.user.token_version
-            elif stmt.table.name == "refresh_tokens":
-                for t in self.tokens:
-                    if t.user_id == params["user_id_1"] and t.revoked_at is None:
-                        t.revoked_at = params["revoked_at"]
-            return result
-        entity = stmt.column_descriptions[0]["entity"]
-        if entity is User:
-            result.scalar_one_or_none.return_value = self.user
-        elif entity is RefreshToken:
-            jtis = {str(v) for v in stmt.compile().params.values()}
-            result.scalar_one_or_none.return_value = next(
-                (t for t in self.tokens if t.jti in jtis), None
-            )
-        return result
-
-    async def get(self, model, pk, **_options):
-        self.gets += 1
-        if model is User and self.user is not None and self.user.id == pk:
-            return self.user
-        return None
-
-    def add(self, obj):
-        if isinstance(obj, User):
-            obj.id = obj.id or uuid.uuid4()
-            self.user = obj
-        elif isinstance(obj, RefreshToken):
-            self.tokens.append(obj)
-
-    async def flush(self):
-        pass
-
-    async def commit(self):
-        pass
-
-    async def rollback(self):
-        pass
-
-    async def refresh(self, obj, attrs=None):
-        if isinstance(obj, User):
-            obj.created_at = obj.updated_at = datetime.now(UTC)
-
-    def begin_nested(self):
-        db = self
-
-        class _Ctx:
-            async def __aenter__(self):
-                return db
-
-            async def __aexit__(self, *exc):
-                return False
-
-        return _Ctx()
 
 
 @pytest.fixture
 def db():
-    from app.core.database import get_db
-
-    fake = FakeDb()
-
-    async def _db():
-        yield fake
-
-    app.dependency_overrides[get_db] = _db
-    yield fake
-    app.dependency_overrides.clear()
+    yield from serve_fake_db(FakeAuthDb())
 
 
 @pytest.fixture
@@ -169,14 +69,10 @@ def client():
 
 
 def _sign_in(client) -> dict:
-    with patch("app.api.auth.verify_google_id_token", AsyncMock(return_value=CLAIMS)):
-        resp = client.post("/auth/google", json={"id_token": "t"})
-    assert resp.status_code == 200, resp.text
-    return resp.json()
+    return sign_in(client, CLAIMS)
 
 
-def _bearer(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+_bearer = bearer
 
 
 def _sign(payload: dict, private_key: str) -> str:
