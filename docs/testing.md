@@ -21,6 +21,7 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 ```
 backend/tests/
 ├── conftest.py          DATABASE_URL guard, rate-limit reset fixture, db_session fixture
+├── helpers.py           Shared auth fakes and request helpers (see "Shared helpers")
 ├── unit/                Per-module tests — mock DB via fixtures
 ├── integration/         Real-DB tests — @pytest.mark.integration, auto-skipped w/o DATABASE_URL
 ├── limits/              Scan limits matrix on real Postgres — @pytest.mark.integration (test_no_real_provider.py is unmarked)
@@ -42,6 +43,19 @@ async def test_create_user(db_session: AsyncSession):
     # ... assertions
     # implicit rollback at end of test — DB state never persists
 ```
+
+### Shared helpers
+
+Test setup that two or more files need lives in one place, so a change to a fake is made once (#816). Reach for these before copying a fixture into a new file; if the setup you need is not here and a second file will use it, add it here rather than pasting it.
+
+| Helper | Where | Use it for |
+|---|---|---|
+| `rsa_pem_pair()`, `install_jwt_keys(keys)` | `tests/helpers.py` | A throwaway RS256 key pair and the `settings` patch that makes the app sign and verify with it |
+| `FakeAuthDb`, `serve_fake_db(fake)` | `tests/helpers.py` | Database-free auth flows: one user and its refresh rows, the jti selects, `get` by primary key and the two `revoke_all_sessions` UPDATEs, with `executes` / `gets` counters. Subclass it for a test-specific hook (see `FakeDb` in `security/test_refresh_reuse.py`). Use from a fixture: `yield from serve_fake_db(FakeAuthDb())` |
+| `sign_in(client, claims)`, `bearer(token)` | `tests/helpers.py` | `POST /auth/google` with Google verification stubbed, and the `Authorization` header |
+| `_keys` (module-scoped fixture) | `tests/security/conftest.py` | One key pair per security test module. It is not autouse: a module adds its own autouse `_jwt_settings` fixture that calls `install_jwt_keys(_keys)` |
+
+Rules: a helper holds setup, never an assertion about the behaviour under test, and a test keeps its own `assert` lines. A test may extend a shared fake by subclassing but must not weaken it.
 
 **DB guard** — `pytest_collection_modifyitems` auto-skips tests tagged `@pytest.mark.integration` when `DATABASE_URL` isn't a real Postgres URL. That keeps CI fast on the default Python-test job while the integration job passes its own real DB URL.
 
@@ -184,8 +198,35 @@ async def test_dedup_across_editions(db_session: AsyncSession):
 ```
 frontend/__tests__/
 ├── unit/            Screen + hook + context + component unit tests
-└── integration/     Cross-provider flows (e.g. ScanCaptureFlow)
+├── integration/     Cross-provider flows (e.g. ScanCaptureFlow)
+└── helpers/         Shared mocks, fixtures and provider wrappers (not tests; ignored by Jest)
 ```
+
+### Shared helpers (`__tests__/helpers/`)
+
+`package.json → jest.testPathIgnorePatterns` keeps this folder out of the test run. Use these before copying a mock block into a new test file (#816).
+
+| File | Exports | Use it for |
+|---|---|---|
+| `scanJobMocks.ts` | `scanMocks` (spies: `post`, `get`, `loadJobs`, `saveJobs`, `netFetch`, `captureMessage`, `captureException`, plus the registered `netListener` and the uuid counter), `resetScanMocks()`, the `jest.mock` factories `authedModule`, `scanApiModule`, `scanStorageModule`, `netInfoModule`, `sentryModule`, `cryptoModule`, and the fixtures `refusal`, `scanOk`, `queuedImageJob`, `queuedJob` | Every test that renders `ScanJobProvider`. It imports no app code, so the factories can be `require`d while app modules load |
+| `providers.tsx` | `ScanJobsWrapper`, `renderScanJobs`, `renderScanJobsWithBanner`, `reconnectAndDrain` | The Banner + ScanJob provider wrapper for `renderHook`, and firing the NetInfo listener then running the drain |
+| `wishlistFlow.tsx` | `book`, `httpError`, `scanAndAdd` | The "scan a photo, review, add to the wishlist" flow behind `POST /wishlist` refusal tests |
+| `screenMocks.tsx` | `themeModule`, `loadingSpinnerModule`, `focusEffectRouterModule`, `userBookRow` | Library screen tests: the `useTheme` token set, a spinner stand-in, `useFocusEffect` on mount, and a `/user-books` row |
+
+`jest.mock` calls stay in the test file, because babel-jest hoists them above imports. Pass the helper in through a factory that `require`s it:
+
+```typescript
+jest.mock('../../lib/api', () => require('../helpers/scanJobMocks').scanApiModule());
+jest.mock('../../lib/scanJobStorage', () => require('../helpers/scanJobMocks').scanStorageModule());
+
+const { post: mockPost } = scanMocks;          // alias the spies the test bodies use
+beforeEach(() => {
+  jest.resetAllMocks();                          // then restore the defaults
+  resetScanMocks();
+});
+```
+
+`no-require-imports` is off under `__tests__/**`, so the `require` inside a factory is allowed. Keep `expect(...)` calls in the test file: a helper sets up state and never asserts the behaviour under test (the one exception is `scanAndAdd`, whose first step waits for the hook to mount).
 
 Locale guards in `unit/`: `localeKeyParity.test.ts` (every `en` key exists in every locale, plural-aware) and `localeCharacterLimits.test.ts` (`_meta` character limits).
 
