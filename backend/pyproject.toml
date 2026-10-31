@@ -33,7 +33,7 @@ ignore_names = [
   "language",  # Book column and API schema field (schemas/book.py)
   "fetched_at",  # Book column, mapped by SQLAlchemy
   "open_library_edition_id",  # Edition column; also a SignableEdition field read by name in catalog_token
-  "issued_at",  # RefreshToken column, mapped by SQLAlchemy
+  "issued_at",  # RefreshToken column: write-only audit column, set by a DB default and never read by app code
   "prefilled_saves",  # ScanCorrection column, written by key in ai/scan_corrections.py
   "daily_taken",  # AIInflight column, read by name via FLAG_DAILY in ai/quota.py
   "wishlisted_at",  # UserBook column, serialized in the user_book response schema
@@ -52,15 +52,16 @@ ignore_names = [
   "scan_premium_daily_limit",  # read by getattr(settings, f"scan_{tier}_daily_limit") in ai/settings.py
   "scan_free_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
   "scan_premium_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
-  "google_client_secret",  # env-bound secret with no reader in app/; kept, owner decision (#813 report)
-  "openai_max_tokens",  # env-bound setting with no reader in app/ (docs/integrations.md); owner decision (#813 report)
   # --- Test seam ---
   "reset_cache",  # ai/settings.py cache reset, called from tests/ (vulture scans app/ only)
-  # --- PENDING OWNER DECISION (#813 report): tested only, no caller in app/ ---
-  # Deleting these means deleting their tests, which the test-integrity rules
-  # for this story do not allow. Remove the function and its tests in a
-  # follow-up, then remove the name here.
-  "parse_books",  # app/ai/providers/anthropic_vision.py; only tests/unit/test_anthropic_vision.py calls it
-  "_parse",  # OpenAIVisionProvider._parse; only tests/unit/test_openai_usage.py calls it
-  "verify",  # app/core/catalog_token.py verify; app uses catalog_token.check; only tests call verify
+  # --- PENDING OWNER DECISION (#830): tested-only functions and unread settings ---
+  # Deleting a tested-only function means deleting its tests, which the
+  # test-integrity rules for this story do not allow. An unread setting may be
+  # removed only with an owner decision, since that changes the env surface.
+  # Resolve each entry in #830, then remove the name here.
+  "parse_books",  # PENDING #830: app/ai/providers/anthropic_vision.py; only tests/unit/test_anthropic_vision.py calls it
+  "_parse",  # PENDING #830: OpenAIVisionProvider._parse; only tests/unit/test_openai_usage.py calls it
+  "verify",  # PENDING #830: app/core/catalog_token.py verify; app uses catalog_token.check; only tests call verify
+  "google_client_secret",  # PENDING #830: env-bound secret with no reader in app/ (render.yaml sets it); kept
+  "openai_max_tokens",  # PENDING #830: env-bound setting with no reader in app/ (docs/integrations.md); kept
 ]

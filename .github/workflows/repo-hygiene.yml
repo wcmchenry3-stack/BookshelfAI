@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           spec="$(grep -E '^vulture==' requirements-dev.txt)"
           python3 -m venv "$RUNNER_TEMP/vulture-venv"
-          "$RUNNER_TEMP/vulture-venv/bin/pip" install --quiet "$spec"
+          "$RUNNER_TEMP/vulture-venv/bin/pip" install --quiet --only-binary=:all: "$spec"
           "$RUNNER_TEMP/vulture-venv/bin/vulture" app --min-confidence 60
 
       - name: Copy-paste detection (jscpd)
