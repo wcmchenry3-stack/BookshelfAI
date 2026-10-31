@@ -12,6 +12,13 @@
  * repo. This test is the in-repo, per-PR Jest guard and does not try to
  * reproduce that workflow.
  *
+ * What it matches (inside string/template literals only, comments ignored):
+ *   - rgb(/rgba(/hsl(/hsla( anywhere in the string, e.g. '0 0 4px rgba(0,0,0,.2)'
+ *   - '#' + 3/4/6/8 hex digits anywhere, e.g. '1px solid #fff', 'linear-gradient(#fff,#000)'
+ * Not detected: named colours ('white', 'red'), 'transparent', and colours built
+ * at runtime. Strings containing '://' (URLs with #anchors) are skipped. An id
+ * like '#123' (or '(#632)') still matches as hex, which is accepted.
+ *
  * No allowlist or baseline. If an entry is ever truly unavoidable, add it to
  * ALLOWED below with a reason.
  */
@@ -22,17 +29,53 @@ const ROOT = path.join(__dirname, '../..');
 const DIRS = ['app', 'components', 'contexts', 'hooks', 'lib'];
 const ALLOWED: { file: string; line: number; reason: string }[] = [];
 
-// Hex only inside a string literal (so "#632" in comments or i18n keys like
-// 'a#b' are not hits); colour functions only at the start of a string literal.
-const HEX = /(['"`])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\1/;
-const FUNC = /(['"`])\s*(?:rgba?|hsla?)\(/;
+const HEX = /(?<![\w&-])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![\w-])/;
+const FUNC = /\b(?:rgba?|hsla?)\(/i;
 
+function isColourString(body: string): boolean {
+  if (body.includes('://')) return false;
+  return HEX.test(body) || FUNC.test(body);
+}
+
+// Returns 1-based line numbers holding a colour literal. Comments are stripped
+// (string-aware, so '//' inside a URL string is kept); block comments may span lines.
 function findLiterals(source: string): number[] {
   const hits: number[] = [];
+  let inBlock = false;
   source.split('\n').forEach((raw, i) => {
-    const line = raw.trim();
-    if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) return;
-    if (HEX.test(raw) || FUNC.test(raw)) hits.push(i + 1);
+    let quote: string | null = null;
+    let body = '';
+    let hit = false;
+    for (let j = 0; j < raw.length; j++) {
+      const ch = raw[j];
+      const next = raw[j + 1];
+      if (inBlock) {
+        if (ch === '*' && next === '/') {
+          inBlock = false;
+          j++;
+        }
+      } else if (quote) {
+        if (ch === '\\') {
+          body += ch + (next ?? '');
+          j++;
+        } else if (ch === quote) {
+          if (isColourString(body)) hit = true;
+          quote = null;
+        } else {
+          body += ch;
+        }
+      } else if (ch === '/' && next === '*') {
+        inBlock = true;
+        j++;
+      } else if (ch === '/' && next === '/') {
+        break;
+      } else if (ch === "'" || ch === '"' || ch === '`') {
+        quote = ch;
+        body = '';
+      }
+    }
+    if (quote && isColourString(body)) hit = true; // multi-line template tail
+    if (hit) hits.push(i + 1);
   });
   return hits;
 }
@@ -56,7 +99,20 @@ describe('no colour literals (Hard Rule 5)', () => {
     expect(findLiterals(`x\nconst a = "#007AFF";`)).toEqual([2]);
     expect(findLiterals('c: `rgba(0,0,0,0.5)`')).toEqual([1]);
     expect(findLiterals(`c: 'hsl(10, 50%, 50%)'`)).toEqual([1]);
-    expect(findLiterals(`// fixes (#632)\nt('a#b'); url('https://x/#top'); '#abcde'`)).toEqual([]);
+    expect(findLiterals(`s: '0 0 4px rgba(0,0,0,.2)'`)).toEqual([1]);
+    expect(findLiterals(`g: 'linear-gradient(#fff,#000)'`)).toEqual([1]);
+    expect(findLiterals(`b: '1px solid #fff'`)).toEqual([1]);
+    expect(findLiterals(`/* x */ const c = '#fff';`)).toEqual([1]);
+  });
+
+  it('detector ignores comments, anchors, URLs and non-colour hashes', () => {
+    expect(findLiterals(`// fixes (#632) '#fff'`)).toEqual([]);
+    expect(findLiterals(`/* a\n '#fff'\n*/ const x = 1;`)).toEqual([]);
+    expect(findLiterals(`t('a#fff'); '#section'; 'see #12'; '#abcde'; 'pre-#174 state'`)).toEqual(
+      []
+    );
+    expect(findLiterals(`u = 'https://x.com/p#fade'`)).toEqual([]);
+    expect(findLiterals(`const url = 'https://x.com'; // '#fff'`)).toEqual([]);
   });
 
   it('finds source files to scan', () => {

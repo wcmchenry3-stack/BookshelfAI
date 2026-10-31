@@ -51,7 +51,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
           {(value) => {
             const c = resolveTheme(value).colors;
             return (
-              <View style={[styles.container, { backgroundColor: c.errorBoundarySurface }]}>
+              <View
+                testID="eb-root"
+                style={[styles.container, { backgroundColor: c.errorBoundarySurface }]}
+              >
                 <Text style={[styles.title, { color: c.errorBoundaryTitle }]}>
                   Something went wrong
                 </Text>
@@ -68,6 +71,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
                       },
                     ]}
                     selectable
+                    testID="eb-detail"
                   >
                     {this.state.error.name}: {this.state.error.message}
                     {'\n\n'}

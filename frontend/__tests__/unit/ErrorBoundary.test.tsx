@@ -125,12 +125,20 @@ describe('ErrorBoundary', () => {
       ['light', lightTheme],
       ['dark', darkTheme],
     ])('uses the same fixed error palette in %s mode', async (_m, theme) => {
-      const { getByText } = await renderIn({ theme, mode: _m, toggleTheme: jest.fn() });
+      const { getByText, getByLabelText, getByTestId } = await renderIn({
+        theme,
+        mode: _m,
+        toggleTheme: jest.fn(),
+      });
       const flat = (el: { props: Record<string, any> }) =>
         Object.assign({}, ...[el.props.style].flat(Infinity).filter(Boolean));
       expect(flat(getByText('Something went wrong')).color).toBe('#111');
       expect(flat(getByText('The app ran into an unexpected error.')).color).toBe('#555');
       expect(flat(getByText('Try again')).color).toBe('#fff');
+      expect(flat(getByLabelText('Try again')).backgroundColor).toBe('#007AFF');
+      expect(flat(getByTestId('eb-root')).backgroundColor).toBe('#fff');
+      expect(flat(getByTestId('eb-detail')).color).toBe('#c00');
+      expect(flat(getByTestId('eb-detail')).backgroundColor).toBe('#fff0f0');
     });
   });
 });
