@@ -372,6 +372,8 @@ Every CI check (what it does, what it prevents, where it is defined, when it was
 - `test-migrations`: against a Postgres 16 service, `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres).
 - `lint-frontend`: `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint).
 - `typecheck-frontend`: `npm run typecheck` (`tsc --noEmit`, covers tests too).
+- `static-frontend`: its own workflow (`static-frontend.yml`; every PR to `dev`/`main` with no paths filter so it can be required, and pushes to `dev`): `npm ci` then `npm run knip` (#768, #771).
+- `design-token-check`: its own workflow, calling the shared `called-design-token-check.yml`, the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. It stays a separate workflow; do not fold it into `static-frontend.yml`.
 - `migration-guard`: `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`).
 
 ### Composite setup actions (#770)
