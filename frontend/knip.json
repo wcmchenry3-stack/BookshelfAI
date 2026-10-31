@@ -16,9 +16,9 @@
     "@babel/core",
     // Peer dep of @testing-library/react-native, loaded by it at runtime, never imported.
     "react-test-renderer",
-    // Native module implied by app.json (userInterfaceStyle); not installed. Adding or removing it changes the native build (owner decision, see issue #812).
+    // Native module implied by app.json (userInterfaceStyle); not installed. Adding or removing it changes the native build (owner decision #836).
     "expo-system-ui",
-    // Native module implied by app.json; not installed. Adding or removing it changes the native build (owner decision, see issue #812).
+    // Native module implied by app.json; not installed. Adding or removing it changes the native build (owner decision #836).
     "expo-updates"
   ]
 }
