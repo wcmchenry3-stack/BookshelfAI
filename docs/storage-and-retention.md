@@ -6,12 +6,12 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 
 ## Summary: the standard
 
-- **Every table that grows with usage has a retention rule and a purge** run by the daily cleanup task (`backend/app/services/token_cleanup.py:46-115`), in bounded batches (5,000 rows, at most 20 batches per table per run). A new usage-driven table adds its purge there and a row in the [retention table](#table-by-table-retention) in the same PR; `backend/tests/unit/test_storage_retention_doc.py` fails if a model table is missing from this page.
+- **Every table that grows with usage has a retention rule and a purge** run by the daily cleanup task (`backend/app/services/token_cleanup.py` `cleanup_expired_tokens`), in bounded batches (5,000 rows, at most 20 batches per table per run). A new usage-driven table adds its purge there and a row in the [retention table](#table-by-table-retention) in the same PR; `backend/tests/unit/test_storage_retention_doc.py` fails if a model table is missing from this page.
 - **Only three kinds of table may grow without a purge**: user-owned library data (`users`, `user_books`, `user_custom_books`, each capped or tied to a person; their live rows are kept, and rows in the trash are purged 30 days after deletion, #683), the shared catalog (`books`, `editions`, written only from signed provider data) and configuration (`ai_settings`, `ai_inflight`: bounded by user count or fixed keys). Today there is no account deletion, so a departed user's rows are never removed (gap G1).
 - **Raw per-call data lives 30 days, aggregates up to 400 days, per-user scan answers 30 days at most, counters 90 days.** Aggregates carry no user ID.
 - **On the phone, the photo is the only thing that is big.** A scan photo is kept until it is scanned and dismissed, or 7 days after it failed. The pending queue is capped at 50 photos; failed photos have an age limit and no count limit, and completed photos the user has not reviewed have no limit until the next app launch (G3). Everything else on the device is small and bounded.
 - **Today the app stores the camera's full-size JPEG** (quality 0.7). The server shrinks every photo to 1,568 px on the long edge anyway. Recommendation: shrink once at capture to the same size (G2), which cuts the queue from about 125 MB to about 15 MB (estimates).
-- **Plan limits are not in the repo**: Render Postgres is `basic-256mb` (`render.yaml:244`); Supabase's plan and size are not recorded. Confirm both before the 1,000-user mark (see [growth](#expected-growth)). The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
+- **Plan limits are not in the repo**: Render Postgres is `basic-256mb` (`render.yaml` `databases:` `bookshelf-db` `plan`); Supabase's plan and size are not recorded. Confirm both before the 1,000-user mark (see [growth](#expected-growth)). The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
 
 ---
 
@@ -21,10 +21,10 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 
 | Item | Where | What it holds | Size per item (*estimate*) | Cap |
 |---|---|---|---|---|
-| Scan photo | document directory `scan-queue/<ms>-<seq>.jpg` (`frontend/lib/scanJobStorage.ts:8`; written at `frontend/app/(tabs)/scan.tsx:150-159`) | the camera's JPEG as captured, **not resized**, `quality: 0.7` (`scan.tsx:112`) | 12 MP phone: about 1.5 to 3 MB, call it 2.5 MB. 48 to 50 MP phone: about 5 to 10 MB. See the note below | 50 waiting; none for failed (see caps) |
-| Camera original | the app cache directory (the `photo.uri` that `takePictureAsync` returns) | the same JPEG; `scan.tsx:159` copies it and nothing deletes the source | same as above, again | none in the app; the OS may clear the cache under pressure. Until then each capture costs about twice its size |
-| Job metadata | AsyncStorage key `scan_job_queue` (`scanJobStorage.ts:7,29-35`) | the `ScanJob` list as one JSON string; `results` are stripped before saving | about 250 to 400 bytes per job | follows the job count (below) |
-| Auth tokens | SecureStore keys `bookshelf_access_token`, `bookshelf_refresh_token` (`frontend/lib/api.ts:8-9`, `frontend/lib/storage.ts`) | two RS256 JWTs | about 0.5 to 1 KB each | two values |
+| Scan photo | document directory `scan-queue/<ms>-<seq>.jpg` (`frontend/lib/scanJobStorage.ts` `SCAN_QUEUE_DIR`; written in `handleCapture` of `frontend/hooks/useScanCapture.ts`) | the camera's JPEG as captured, **not resized**, `quality: 0.7` (`handleCapture` of `frontend/hooks/useScanCapture.ts`) | 12 MP phone: about 1.5 to 3 MB, call it 2.5 MB. 48 to 50 MP phone: about 5 to 10 MB. See the note below | 50 waiting; none for failed (see caps) |
+| Camera original | the app cache directory (the `photo.uri` that `takePictureAsync` returns) | the same JPEG; `handleCapture` of `frontend/hooks/useScanCapture.ts` copies it and nothing deletes the source | same as above, again | none in the app; the OS may clear the cache under pressure. Until then each capture costs about twice its size |
+| Job metadata | AsyncStorage key `scan_job_queue` (`frontend/lib/scanJobStorage.ts` `STORAGE_KEY`, `saveJobs`) | the `ScanJob` list as one JSON string; `results` are stripped before saving | about 250 to 400 bytes per job | follows the job count (below) |
+| Auth tokens | SecureStore keys `bookshelf_access_token`, `bookshelf_refresh_token` (`frontend/lib/api.ts` `ACCESS_TOKEN_KEY`, `REFRESH_TOKEN_KEY`; `frontend/lib/storage.ts`) | two RS256 JWTs | about 0.5 to 1 KB each | two values |
 | Install marker | AsyncStorage key `bookshelf_install_marker` (`frontend/lib/freshInstall.ts`) | `"1"` (done) or `"pending"` (a wipe is owed: a fresh-install wipe that did not finish, a launch whose check could not read AsyncStorage, or a sign-out whose delete failed; the next launch wipes first, as for any other value). Absent with no other AsyncStorage keys means a fresh install, so Keychain tokens left by a previous install are deleted; absent with other keys means an upgrade, so `"1"` is written and the tokens kept (#722) | a few bytes | one value |
 | Session log buffer | memory only (`frontend/components/FeedbackWidget/SessionLogger.ts`) | the last 200 `console.warn` / `console.error` lines | each line cut at 1,000 characters (`…[truncated]` marker); `getLogs()` capped at 100 KB (UTF-8) | 200 entries, gone when the app closes |
 | Book covers | the OS image cache for `<Image>` (`app/(tabs)/my-books.tsx`, `wishlist.tsx`, `components/BookCandidatePicker.tsx`) | remote cover thumbnails | tens of KB each | none set by the repo; the OS manages it |
@@ -33,25 +33,25 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 Notes on the photo size:
 
 - JPEG size depends on the sensor resolution and the scene, and `expo-camera`'s `quality` is the only knob the app turns. These figures are rules of thumb for a busy bookshelf at 0.7 and **need a device measurement** (story G2 includes taking one).
-- The server accepts at most 5 MB per image (`backend/app/services/scan/uploads.py:11`, `413` above it) and the app has no handling for that code (`frontend/lib/scanErrors.ts` has no 413 case, so it becomes the `generic` state). A 48 to 50 MP capture at 0.7 may exceed 5 MB and fail on every retry. This is the strongest argument for resizing on the phone.
+- The server accepts at most 5 MB per image (`backend/app/services/scan/uploads.py` `MAX_IMAGE_BYTES`, `413` above it) and the app has no handling for that code (`frontend/lib/scanErrors.ts` has no 413 case, so it becomes the `generic` state). A 48 to 50 MP capture at 0.7 may exceed 5 MB and fail on every retry. This is the strongest argument for resizing on the phone.
 - The document directory is included in iOS device and iCloud backups. Failed and queued photos therefore also count against the user's backup.
 
 ### Caps today
 
 | Cap | Value | Where | What it limits |
 |---|---|---|---|
-| `MAX_QUEUE_SIZE` | 50 | `frontend/lib/scanJob.ts:7`; enforced `ScanJobContext.tsx:451` (`isQueueFull`) and the backstop `:459-461` | jobs with status `queued` or `pending` (`isPendingUpload`, `scanJob.ts:60`). Does not count `searching`, `complete` or `failed` jobs, nor text searches' (zero) photos. The comment at `scanJob.ts:3-6` says so |
-| `FAILED_SCAN_RETENTION_MS` | 7 days | `scanJob.ts:10`, `isFailedScanExpired` `:111` | age of a `failed` job, counted from `failedAt`, or `createdAt` for jobs saved before #605 (`failedTimeOf` `:106`) |
-| `SCAN_RETRY_DELAYS_MS` | 30 s, 10 min, 1 h, 4 h | `frontend/lib/scanErrors.ts:130-135` | waits before attempts 2 to 5 of a photo after `503 scan_unavailable` (#604) |
-| `MAX_SCAN_ATTEMPTS` | 5 | `scanErrors.ts:145` | attempts per photo; after the 5th the job is `failed` (attempt counted at `lib/scan/executeScan.ts:111`, failed at `lib/scan/scanOutcomes.ts:98-104`). Total wait on the schedule: 4 h 40 min 30 s |
-| `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `scanErrors.ts:142` | no retry is scheduled further ahead than this; also applied to saved times on launch (`ScanJobContext.tsx:270`) |
-| `MAX_RETRIES` | 3 | `hooks/useScanQueue.ts:18`, used `:343` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
-| `MAX_IN_PROGRESS_RETRIES` | 3 | `scanErrors.ts:99` | silent retries of `429 scan_in_progress` |
-| `MAX_DRAIN_PASSES` | 3 | `hooks/useScanQueue.ts:21` | passes of the upload drain per trigger |
+| `MAX_QUEUE_SIZE` | 50 | `frontend/lib/scanJob.ts` `MAX_QUEUE_SIZE`; enforced by `isQueueFull` in `frontend/contexts/ScanJobContext.tsx` and by the backstop in `startScan` of `frontend/hooks/useScanQueue.ts` | jobs with status `queued` or `pending` (`isPendingUpload`, `frontend/lib/scanJob.ts`). Does not count `searching`, `complete` or `failed` jobs, nor text searches' (zero) photos. The comment above `MAX_QUEUE_SIZE` in `frontend/lib/scanJob.ts` says so |
+| `FAILED_SCAN_RETENTION_MS` | 7 days | `frontend/lib/scanJob.ts` `FAILED_SCAN_RETENTION_MS`, `isFailedScanExpired` | age of a `failed` job, counted from `failedAt`, or `createdAt` for jobs saved before #605 (`failedTimeOf`) |
+| `SCAN_RETRY_DELAYS_MS` | 30 s, 10 min, 1 h, 4 h | `frontend/lib/scanErrors.ts` `SCAN_RETRY_DELAYS_MS` | waits before attempts 2 to 5 of a photo after `503 scan_unavailable` (#604) |
+| `MAX_SCAN_ATTEMPTS` | 5 | `frontend/lib/scanErrors.ts` `MAX_SCAN_ATTEMPTS` | attempts per photo; after the 5th the job is `failed` (attempt counted in `runScan` of `frontend/lib/scan/executeScan.ts`, failed in `handleUnavailable` of `frontend/lib/scan/scanOutcomes.ts`). Total wait on the schedule: 5 h 10 min 30 s |
+| `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `frontend/lib/scanErrors.ts` `MAX_SCAN_RETRY_DELAY_MS` | no retry is scheduled further ahead than this; also applied to saved times on launch (load effect of `frontend/contexts/ScanJobContext.tsx`) |
+| `MAX_RETRIES` | 3 | `frontend/hooks/useScanQueue.ts` `MAX_RETRIES`, checked against `retryCount` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
+| `MAX_IN_PROGRESS_RETRIES` | 3 | `frontend/lib/scanErrors.ts` `MAX_IN_PROGRESS_RETRIES` | silent retries of `429 scan_in_progress` |
+| `MAX_DRAIN_PASSES` | 3 | `frontend/hooks/useScanQueue.ts` `MAX_DRAIN_PASSES` | passes of the upload drain per trigger |
 | `MAX_ENTRIES` (log buffer) | 200 | `SessionLogger.ts` | lines kept for a bug report |
 | `MAX_LINE_CHARS` / `MAX_LOG_BYTES` (log buffer) | 1,000 characters / 100 KB | `SessionLogger.ts` | one stored line / the whole `session-logs.txt` attachment (oldest lines dropped first) |
-| `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` (feedback) | 5 submissions per 10 min, per install (module memory, reset on app restart) | `components/FeedbackWidget/useFeedbackSubmit.ts:34-35` | rate of feedback submissions; limits how often logs are sent, not their size |
-| Server image cap | 5 MB | `backend/app/services/scan/uploads.py:11` | one upload; larger gets `413 Image must be 5MB or smaller` |
+| `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` (feedback) | 5 submissions per 10 min, per install (module memory, reset on app restart) | `components/FeedbackWidget/useFeedbackSubmit.ts` `FEEDBACK_RATE_LIMIT_MAX` / `FEEDBACK_RATE_LIMIT_WINDOW_MS` | rate of feedback submissions; limits how often logs are sent, not their size |
+| Server image cap | 5 MB | `backend/app/services/scan/uploads.py` `MAX_IMAGE_BYTES` | one upload; larger gets `413 Image must be 5MB or smaller` |
 
 There is **no total-bytes cap** and no free-space check anywhere in `frontend/` (no `getFreeDiskStorage`, no handling of a full disk).
 
@@ -61,28 +61,28 @@ Worst cases (*estimates*, 2.5 MB photos): 50 waiting photos is 125 MB; with 5 to
 
 | Rule | What happens | Where |
 |---|---|---|
-| Scan succeeded and the user closes the review | the job is dismissed and its image deleted | `ScanJobContext.tsx` `dismissReview` calls `dismissJob`; the delete is at `:649` |
-| User deletes a job from the queue screen | job removed, image deleted (confirm text `queueDeleteConfirm`) | `frontend/app/scan-queue.tsx:60`, `dismissJob` `ScanJobContext.tsx:649` |
-| Repeat of a photo whose books are all in the library | job and image dropped at once | `ScanJobContext.tsx:1252` |
-| Queue is already full at `startScan` | the just-captured image is deleted | `ScanJobContext.tsx:459-461`. (The scan screen checks `isQueueFull` first, `scan.tsx:75,94,190`, so a rejected capture leaves no file) |
-| Failed for 7 days | job and image removed on app launch (job dropped, file removed by the orphan sweep) and when the queue screen opens | `ScanJobContext.tsx:253-256` (launch), `:609-626` (`purgeExpiredFailedJobs`), called from `scan-queue.tsx:40` |
-| Orphan photo (crash between copy and job save) | any file in `scan-queue/` no job refers to is deleted on launch; files stamped at or after the launch time are spared | `scanJobStorage.ts:85-111`, called `ScanJobContext.tsx:256` |
-| Job was `complete` when the app was killed | dropped on launch (results are not persisted); its photo is swept | `ScanJobContext.tsx:243-256` |
-| Job restored as `searching` | reset to `pending` and uploaded again | `ScanJobContext.tsx:246` |
+| Scan succeeded and the user closes the review | the job is dismissed and its image deleted | `ScanJobContext.tsx` `dismissReview` calls `dismissJob`; the delete is in `dismissJob` |
+| User deletes a job from the queue screen | job removed, image deleted (confirm text `queueDeleteConfirm`) | `frontend/app/scan-queue.tsx` (delete confirmation, `queueDelete`), `dismissJob` in `frontend/contexts/ScanJobContext.tsx` |
+| Repeat of a photo whose books are all in the library | job and image dropped at once | `runScan` (the `all_in_library` branch) in `frontend/lib/scan/executeScan.ts` |
+| Queue is already full at `startScan` | the just-captured image is deleted | the `MAX_QUEUE_SIZE` backstop in `startScan` of `frontend/hooks/useScanQueue.ts`. (The scan screen checks `isQueueFull` first, in `frontend/app/(tabs)/scan.tsx` and `frontend/hooks/useScanCapture.ts`, so a rejected capture leaves no file) |
+| Failed for 7 days | job and image removed on app launch (job dropped, file removed by the orphan sweep) and when the queue screen opens | `frontend/contexts/ScanJobContext.tsx` load effect (`isFailedScanExpired`, launch), `purgeExpiredFailedJobs` (same file), called from `frontend/app/scan-queue.tsx` |
+| Orphan photo (crash between copy and job save) | any file in `scan-queue/` no job refers to is deleted on launch; files stamped at or after the launch time are spared | `frontend/lib/scanJobStorage.ts` `sweepOrphanedScanFiles`, called from the load effect in `frontend/contexts/ScanJobContext.tsx` |
+| Job was `complete` when the app was killed | dropped on launch (results are not persisted); its photo is swept | load effect in `frontend/contexts/ScanJobContext.tsx` (the `status !== 'complete'` filter) |
+| Job restored as `searching` | reset to `pending` and uploaded again | load effect in `frontend/contexts/ScanJobContext.tsx` (the `searching` to `pending` mapping) |
 
 Missing:
 
 - **No deletion on low storage**, and no way to know storage is low.
-- **No deletion after N days for `queued` / `pending` photos.** A photo that never reaches the server (the user stays offline or blocked by a limit) stays on the phone until it eventually fails or is dismissed. After 5 attempts it becomes `failed` and the 7-day clock starts, but a photo refused by a limit stays `queued` (`hasRefusedJobs`, `scanErrors.ts:93-96`) with no age limit.
+- **No deletion after N days for `queued` / `pending` photos.** A photo that never reaches the server (the user stays offline or blocked by a limit) stays on the phone until it eventually fails or is dismissed. After 5 attempts it becomes `failed` and the 7-day clock starts, but a photo refused by a limit stays `queued` (`hasRefusedJobs` in `frontend/lib/scanErrors.ts`) with no age limit.
 - **No deletion of the camera original** in the cache directory.
 - **Cleared on sign-out (#723):** when the user signs out (Settings button or a revoked session), `ScanJobContext` empties the in-memory queue, removes `scan_job_queue`, deletes the queued photos and sweeps `scan-queue/`, and a send still in flight drops its result. The next account therefore starts with an empty queue. Remaining bounding work (caps, sizes) is tracked in #669.
 - **No per-photo size check** before queueing (a 5 MB+ photo is queued, then fails on every attempt).
 - **No count cap on failed jobs.**
-- **No cap on completed but unreviewed photos.** A successful scan keeps its image so the review sheet can offer an enhanced re-scan (`ScanJobContext.tsx:1261-1263`); it is deleted only when the user dismisses the review or on the next app launch. `isPendingUpload` (`scanJob.ts:60`) excludes completed jobs, so they do not count toward the 50-photo cap (`ScanJobContext.tsx:459`). A user who keeps scanning without opening results accumulates them without limit until the app restarts.
+- **No cap on completed but unreviewed photos.** A successful scan keeps its image so the review sheet can offer an enhanced re-scan (`runScan` in `frontend/lib/scan/executeScan.ts`, the "Keep the image" step); it is deleted only when the user dismisses the review or on the next app launch. `isPendingUpload` (`frontend/lib/scanJob.ts`) excludes completed jobs, so they do not count toward the 50-photo cap (`isQueueFull` in `frontend/contexts/ScanJobContext.tsx`). A user who keeps scanning without opening results accumulates them without limit until the app restarts.
 
 ### Should photos be downscaled before queueing?
 
-Yes. Recommendation: resize on the phone, once, at capture, before the copy to `scan-queue/`: long edge 1,568 px (the same value the server uses, `backend/app/ai/registry.py:126,137`), JPEG quality 0.8.
+Yes. Recommendation: resize on the phone, once, at capture, before the copy to `scan-queue/`: long edge 1,568 px (the same value the server uses, `backend/app/ai/registry.py` `FEATURES` entries `scan.standard` and `scan.enhanced`), JPEG quality 0.8.
 
 | | Today (full size, q 0.7) | Resized (1,568 px, q 0.8) |
 |---|---|---|
@@ -90,7 +90,7 @@ Yes. Recommendation: resize on the phone, once, at capture, before the copy to `
 | 50 waiting photos | about 125 MB (250 to 500 MB on 48 MP) | about 15 to 20 MB |
 | Upload on mobile data | 1.5 to 10 MB per scan | under 0.5 MB |
 | Can exceed the 5 MB server cap | yes, on high-resolution sensors | no |
-| What the model sees | the server shrinks to 1,568 px, JPEG q 85 (`backend/app/ai/images.py:5,20`) | the same pixels; no loss of what the model could use |
+| What the model sees | the server shrinks to 1,568 px, JPEG q 85 (`backend/app/ai/images.py` `JPEG_QUALITY`, `normalise_image`) | the same pixels; no loss of what the model could use |
 
 Trade-offs:
 
@@ -103,23 +103,23 @@ Trade-offs:
 
 | Situation | What the user sees | i18n key (`scan` namespace, `frontend/src/i18n/locales/*/scan.json`) |
 |---|---|---|
-| Queue full (50 waiting) | red banner for 4 s; capture is refused (`scan.tsx:75,94,190`, `ScanJobContext.tsx:459-465`) | `queueFull`; `queueFullLimited` when a limit is what holds the queue ("You've reached your scan limit. Your saved photos will be sent when scanning is available again.") |
+| Queue full (50 waiting) | red banner for 4 s; capture is refused (`isQueueFull` checks in `frontend/app/(tabs)/scan.tsx` and `frontend/hooks/useScanCapture.ts`; the backstop in `startScan` of `frontend/hooks/useScanQueue.ts`) | `queueFull`; `queueFullLimited` when a limit is what holds the queue ("You've reached your scan limit. Your saved photos will be sent when scanning is available again.") |
 | Attempts used up (5) | job `failed`; "This scan failed. Tap Retry to try again." with "View queue" | `scanFailedFinal`, `scanFailedFinalRetry`, `scanFailedFinalViewQueue`, `viewQueueFailed` |
-| 7-day retention | the queue screen shows "Failed scans are removed after 7 days." | `queueFailedNote` (`scan-queue.tsx:149`) |
+| 7-day retention | the queue screen shows "Failed scans are removed after 7 days." | `queueFailedNote` (`frontend/app/scan-queue.tsx`) |
 | Delete a job | confirm dialog "Delete this scan? The photo will be removed." | `queueDeleteConfirm`, `queueDeleteCancel` |
 | Manual retries used up (3) | "Maximum retries reached. Saved for later." | `maxRetries` |
-| Photo cannot be saved (disk full, copy fails) | the generic "Something went wrong. Please try again." with Retry; Sentry gets stage `file_copy` | `scanFailedMessage` (`scan.tsx:160-181`) |
+| Photo cannot be saved (disk full, copy fails) | the generic "Something went wrong. Please try again." with Retry; Sentry gets stage `file_copy` | `scanFailedMessage` (`frontend/hooks/useScanCapture.ts`, the `file_copy` stage in `handleCapture`) |
 | Server `413` (over 5 MB) | the generic failure | `scanFailedTitle`, `scanFailedMessage` (no specific copy) |
 | Free storage low | nothing | none (gap G5) |
 
 ### Logs and caches on the device
 
-- **Session log buffer** (#523): memory only, 200 lines, sent as an attachment `session-logs.txt` to Sentry only when the user files a bug report (`useFeedbackSubmit.ts:76-90`). Each line goes through a bounded pipeline (G6, fixed by #671 and #758): (1) serialise each argument with a budget: the serialiser stops walking once about 4,000 characters exist and arrays are capped at 100 items, so a huge array or object costs the same as a small one (the engine still enumerates the keys of a many-key object once); (2) join the arguments and cut the text to a 4,000-character work size; (3) redact that text; (4) wherever a clip happened (a long argument, the joined text) drop a trailing run of token characters that looks like a fragment (contains a digit or one of `. @ % + / = -`, or starts `eyJ`) and add `…[truncated]`; (5) cut to 1,000 characters, again dropping a split fragment. A stored line is therefore at most 1,012 characters (1,000 plus the 12-character `…[truncated]` marker), not counting the timestamp and level prefix. Redaction therefore runs before the 1,000-character cut, so a secret that straddles it is already replaced. `getLogs()` returns at most 100 KB of UTF-8 (a lone surrogate counts as 3 bytes), dropping the oldest lines first.
+- **Session log buffer** (#523): memory only, 200 lines, sent as an attachment `session-logs.txt` to Sentry only when the user files a bug report (`useFeedbackSubmit.ts` `submit`, the `session-logs.txt` attachment). Each line goes through a bounded pipeline (G6, fixed by #671 and #758): (1) serialise each argument with a budget: the serialiser stops walking once about 4,000 characters exist and arrays are capped at 100 items, so a huge array or object costs the same as a small one (the engine still enumerates the keys of a many-key object once); (2) join the arguments and cut the text to a 4,000-character work size; (3) redact that text; (4) wherever a clip happened (a long argument, the joined text) drop a trailing run of token characters that looks like a fragment (contains a digit or one of `. @ % + / = -`, or starts `eyJ`) and add `…[truncated]`; (5) cut to 1,000 characters, again dropping a split fragment. A stored line is therefore at most 1,012 characters (1,000 plus the 12-character `…[truncated]` marker), not counting the timestamp and level prefix. Redaction therefore runs before the 1,000-character cut, so a secret that straddles it is already replaced. `getLogs()` returns at most 100 KB of UTF-8 (a lone surrogate counts as 3 bytes), dropping the oldest lines first.
   - Rules: `Authorization` and `Proxy-Authorization`: an unquoted value, whatever its scheme (Bearer, Basic, Digest, AWS4-HMAC-SHA256, custom), is redacted to the end of the line or to `&` in a URL query, giving `Authorization: [redacted]`; a quoted or JSON value is replaced inside its quotes; `Bearer <8+ token characters>` (also quoted, or after `bearer:`) becomes `Bearer [redacted]`, keyword case kept; `token`, `secret`, `secret_key`, `password`, `passwd`, `api_key`/`apikey`/`api-key` as the end of any key name (`client_secret`, `authToken`, `db_password`), followed by `=` or `:` (plain, quoted or JSON), have their value replaced by `[redacted]`; JWT-shaped strings (`eyJ` header, three base64url segments, also after `-` or `_`, also two glued together) and leftover `eyJ` runs of 10+ characters become `[jwt]`; email addresses (RFC 5322 local-part characters, a `key=` prefix is kept) become `[email]`.
   - Linear time: the keyed rules start only at a fixed keyword and use disjoint character classes; the JWT and email scans are single manual passes (a pure regex such as `[a-z]+@` is quadratic on `'a'.repeat(n)`); the unit test measures 16,000 against 4,000 characters over 22 pathological inputs.
   - Serialising never throws (circular objects, BigInt and throwing getters give `[unserializable]`).
   - Known limits: non-ASCII email addresses and dotless hosts (`user@localhost`) are not matched; a `key=` prefix on an email is kept, so `jane=doe@x.com` leaks `jane=`; JWTs whose header does not start `eyJ` and opaque secrets in free text with no recognised keyword are not detected; a keyed value only counts when the key ends with one of the words above (`sessionid=`, `cookie:` and `private_key` are not covered); JSON that was stringified a second time (`\"password\":\"x\"`) is not matched; a word such as `token: expired` is redacted even when it is not a secret (over-redaction is preferred); a secret longer than the 4,000-character work size is cut, and the cut fragment is dropped only when it looks like a token; a many-key object still costs one key enumeration by the engine (about 100 ms for 300,000 keys), and objects with many `undefined` or function-valued keys are not budget-limited (they emit nothing, about 275 ms for 300,000 keys); an unquoted keyed value ends at whitespace, `,`, `;`, `&`, `}` or a quote, so the rest of such a secret is stored (`password=hunter 2` becomes `password=[redacted] 2`); percent-encoded emails (`a%40b.com`) are not matched; a clip inside a Bearer token can leave up to 7 characters of it (a shorter value is not recognised as a token).
-- **Sentry** (`frontend/lib/sentry.ts:22-28`): `tracesSampleRate` 0.2 in production, 1.0 elsewhere, `sendDefaultPii: false`. Offline cache and retention are SDK defaults.
+- **Sentry** (`frontend/lib/sentry.ts` `tracesSampleRate`, `sendDefaultPii`): `tracesSampleRate` 0.2 in production, 1.0 elsewhere, `sendDefaultPii: false`. Offline cache and retention are SDK defaults.
 - **AsyncStorage** holds only the job list. On Android the library's default database limit is 6 MB (library default, to confirm for the pinned version); the job list needs about 0.1 MB for 300 jobs, so there is no risk today.
 - **SecureStore** holds only the two tokens (`frontend/lib/storage.ts`); web uses an in-memory map. Expo has warned about values over 2,048 bytes; the tokens are well under that (estimate, to confirm).
 
@@ -141,7 +141,7 @@ Trade-offs:
 
 ### Table-by-table retention
 
-Purges are called from `cleanup_expired_tokens` (`backend/app/services/token_cleanup.py:46-115`): once 60 s after startup, then every 24 h (`:43-44`), each purge in its own `try` so one failure does not skip the rest. Each batched purge deletes 5,000 rows per batch and at most 20 batches per run, so at most 100,000 rows per table per run. The trash purge (#683) is smaller: 500 rows per batch, at most 20 batches (10,000 library rows) per run. "Matches doc" compares code with the table's section in [`data-model.md`](data-model.md).
+Purges are called from `cleanup_expired_tokens` (`backend/app/services/token_cleanup.py` `cleanup_expired_tokens`): once 60 s after startup (`_INITIAL_DELAY_SECONDS`), then every 24 h (`_INTERVAL_SECONDS`), each purge in its own `try` so one failure does not skip the rest. Each batched purge deletes 5,000 rows per batch and at most 20 batches per run, so at most 100,000 rows per table per run. The trash purge (#683) is smaller: 500 rows per batch, at most 20 batches (10,000 library rows) per run. "Matches doc" compares code with the table's section in [`data-model.md`](data-model.md).
 
 | Table | Holds | Retention rule (code) | Purge | Matches doc |
 |---|---|---|---|---|
@@ -151,26 +151,26 @@ Purges are called from `cleanup_expired_tokens` (`backend/app/services/token_cle
 | `user_books` (`user_book.py`) | the user's library rows, live and in the trash (`deleted_at`, #683) | live rows: none; cascade with the user; no per-user cap. Trashed rows (`DELETE /user-books/{id}`): kept 30 days (`TRASH_RETENTION_DAYS`, `trash_retention_days` in `config.py`), one trashed copy per book (copies with your data are kept), and the newest 1,000 per user (`TRASH_MAX_ENTRIES_PER_USER`, 100–5,000), whichever comes first; restorable until then. A `DELETE` hard-deletes, in the same transaction, the user's other, older trashed rows of the same book that hold no user data (`trash.evict_same_book`, `UserBook.has_no_user_data()`: no notes, rating, edition, overrides, status beyond wishlisted or status dates; same work for a catalog entry, merged rows included; same title and author or ISBN for an unverified one), so an add / delete loop never grows the trash, while a copy with the user's data stays until the purge or the cap; then, as a backstop, the oldest trashed rows beyond the cap (`trash.evict_over_cap`), so a mass delete of up to 1,000 distinct books stays restorable. Worst case ~13 KB per trashed row (10,000 characters of notes plus overrides of 500 / 500 / 2,048, measured with `pg_column_size`), up to ~25 KB with multibyte notes: ~13–25 MB per user at the default cap, ~65–125 MB at the maximum of 5,000 | `app/services/trash.py:purge_trash`, called from `token_cleanup.py:_purge_trash`; batches of 500 rows, at most 20 per run (10,000 rows), one commit per batch, `SKIP LOCKED`, under the advisory lock `pg_try_advisory_xact_lock` so two instances never purge at once (#683) | yes (#683 updated both) |
 | `user_custom_books` (`user_custom_book.py`) | the user's own unverified entries | cap 200 live entries per user (`config.py`, `unverified_books_per_user_max`; trashed ones do not count) plus at most `TRASH_MAX_ENTRIES_PER_USER` (1,000) trashed ones, so at most 1,200 rows per user (~1.3 MB worst case); cascade with the user and with their library row; trashed, restored and evicted with their library row | purged with their library row by the trash purge, the same-book eviction and the per-user trash cap (#683) | yes |
 | `refresh_tokens` (`refresh_token.py`) | one row per issued refresh JWT | expired rows (`expires_at < now`, 7 days after issue, `refresh_token_expiry_days`) and rows revoked without rotation (logout, logout-all); rotated rows stay until they expire, for reuse detection (#690) | `app/auth/refresh_family.py:purge_refresh_tokens`, called from `token_cleanup.py:_purge_refresh_tokens`; batches of 5,000, at most 20 per run, `SKIP LOCKED` (#690) | yes (#690 updated both) |
-| `ai_quota` (`ai_quota.py`) | per-user, per-day counters (`scan`, `scan.no_match`, `scan.requests`) and legacy month rows | day rows 90 days (`DAILY_RETENTION_DAYS` `app/ai/quota/constants.py:36`); month rows 13 months (`:37`) | `quota.purge_old_quota` `app/ai/quota/purge.py:55`, `_purge_kind` `:13` | yes |
+| `ai_quota` (`ai_quota.py`) | per-user, per-day counters (`scan`, `scan.no_match`, `scan.requests`) and legacy month rows | day rows 90 days (`DAILY_RETENTION_DAYS` `app/ai/quota/constants.py`); month rows 13 months (`MONTHLY_RETENTION_MONTHS`) | `quota.purge_old_quota` `app/ai/quota/purge.py`, `_purge_kind` | yes |
 | `ai_inflight` (`ai_quota.py`) | one lease row per user with a call in flight | deleted on release; a crashed request's row is replaced at that user's next scan | none; bounded by user count | yes |
 | `ai_settings` (`ai_settings.py`) | operator dials | fixed set of keys | none; does not grow | yes |
-| `ai_usage` (`ai_usage.py`) | one row per provider call, with user ID, tokens and cost | 30 days raw (`RAW_RETENTION_DAYS` `app/ai/ledger.py:74`), then rolled up into `ai_usage_daily` and deleted in one transaction | `ledger.rollup_and_purge` `:326-348`, `_rollup_batch` | yes |
-| `ai_usage_daily` | per (day, feature, model, status) totals, no user | 400 days (`DAILY_RETENTION_DAYS` `ledger.py:75`) | `_purge_daily` `ledger.py:256` | yes |
-| `ai_spend_daily` (`ai_spend.py`) | one row per UTC day: reserved and settled micro-dollars, alert mask | 90 days (`RETENTION_DAYS` `app/ai/breaker.py:112`) | `breaker.purge_old_spend` `:327` | yes |
-| `ai_enhanced_zero_results` | uncharged zero-result enhanced scans per user | 30 days (`ZERO_RESULT_RETENTION_DAYS` `app/ai/quota/constants.py:41`) | `quota.purge_old_zero_results` `app/ai/quota/purge.py:63` | yes |
-| `scan_records` (`scan_record.py`) | per-user answer for a photo: SHA-256, candidates, enrichment JSON | `scan_records.retention_days`, default 30, bounds 1 to 30 (`app/ai/settings/constants.py:36,39`); also at most `scan_records.max_per_user`, default 500, bounds 1 to 10,000 (`:37,40`), evicted oldest first on save | `scan_records.purge_old_scan_records` `:495`, `purge_old` `:473`. If settings are unreadable it uses 30 | yes |
-| `scan_corrections` (`scan_correction.py`) | which of title / author / ISBN a user edited on a pre-filled save (#631) | 30 days (`ledger.py` uses `RAW_RETENTION_DAYS`); also cascades with its `scan_records` row | `ledger._purge_scan_corrections` `:287`, called inside `rollup_and_purge` `:344` | yes |
-| `scan_corrections_daily` | per (day, feature, model) counts, no user | 400 days (`ledger.py:75`) | the same function, `:315-317` | yes |
+| `ai_usage` (`ai_usage.py`) | one row per provider call, with user ID, tokens and cost | 30 days raw (`RAW_RETENTION_DAYS` `app/ai/ledger.py`), then rolled up into `ai_usage_daily` and deleted in one transaction | `ledger.rollup_and_purge`, `_rollup_batch` | yes |
+| `ai_usage_daily` | per (day, feature, model, status) totals, no user | 400 days (`DAILY_RETENTION_DAYS` `ledger.py`) | `_purge_daily` `ledger.py` | yes |
+| `ai_spend_daily` (`ai_spend.py`) | one row per UTC day: reserved and settled micro-dollars, alert mask | 90 days (`RETENTION_DAYS` `app/ai/breaker.py`) | `breaker.purge_old_spend` | yes |
+| `ai_enhanced_zero_results` | uncharged zero-result enhanced scans per user | 30 days (`ZERO_RESULT_RETENTION_DAYS` `app/ai/quota/constants.py`) | `quota.purge_old_zero_results` `app/ai/quota/purge.py` | yes |
+| `scan_records` (`scan_record.py`) | per-user answer for a photo: SHA-256, candidates, enrichment JSON | `scan_records.retention_days`, default 30, bounds 1 to 30 (`app/ai/settings/constants.py` `SCAN_RECORDS_RETENTION_DAYS_BOUNDS`, `DEFAULT_SCAN_RECORDS_RETENTION_DAYS`); also at most `scan_records.max_per_user`, default 500, bounds 1 to 10,000 (`SCAN_RECORDS_MAX_PER_USER_BOUNDS`, `DEFAULT_SCAN_RECORDS_MAX_PER_USER`), evicted oldest first on save | `scan_records.purge_old_scan_records`, `purge_old` (both in `app/ai/scan_records.py`). If settings are unreadable it uses 30 | yes |
+| `scan_corrections` (`scan_correction.py`) | which of title / author / ISBN a user edited on a pre-filled save (#631) | 30 days (`ledger.py` uses `RAW_RETENTION_DAYS`); also cascades with its `scan_records` row | `ledger._purge_scan_corrections`, called inside `rollup_and_purge` | yes |
+| `scan_corrections_daily` | per (day, feature, model) counts, no user | 400 days (`DAILY_RETENTION_DAYS`, `ledger.py`) | the same function | yes |
 
 Findings from checking each row against the code:
 
-1. Every retention number in the issue's list and in `data-model.md` matches the code. The docstring of `token_cleanup.py:1-27` also matches.
+1. Every retention number in the issue's list and in `data-model.md` matches the code. The module docstring of `token_cleanup.py` also matches.
 2. **`refresh_tokens` was the only table with no retention text in `data-model.md`.** Added in this change.
-3. **Nothing purges `users`, `books`, `editions`, or live `user_books` / `user_custom_books` rows** (since #683 the trash is purged 30 days after deletion), and there is no account-deletion endpoint (`backend/app/api/` has only `auth`, `books`, `scan`, `user_books`). `data-model.md` notes "Phase 2 account deletion ... not built yet" in several places. Every per-user table above cascades from `users`, so a deletion endpoint is one `DELETE` on `users` plus the `ai_usage` rows, which use `ON DELETE SET NULL` (`models/ai_usage.py:83-86`) and keep their cost data without a user. Account deletion (#291) must remove the user's trashed library rows at once too (the cascade does), not leave them for the 30-day trash purge.
-4. The `scan_corrections` purge is wrapped so a failure does not fail the usage rollup (`ledger.py:344-357`); the other purges are isolated by their own `try` in `token_cleanup.py`.
+3. **Nothing purges `users`, `books`, `editions`, or live `user_books` / `user_custom_books` rows** (since #683 the trash is purged 30 days after deletion), and there is no account-deletion endpoint (`backend/app/api/` has only `auth`, `books`, `scan`, `user_books`). `data-model.md` notes "Phase 2 account deletion ... not built yet" in several places. Every per-user table above cascades from `users`, so a deletion endpoint is one `DELETE` on `users` plus the `ai_usage` rows, which use `ON DELETE SET NULL` (`models/ai_usage.py`, the `user_id` foreign key) and keep their cost data without a user. Account deletion (#291) must remove the user's trashed library rows at once too (the cascade does), not leave them for the 30-day trash purge.
+4. The `scan_corrections` purge is wrapped so a failure does not fail the usage rollup (`ledger.py`, `rollup_and_purge`); the other purges are isolated by their own `try` in `token_cleanup.py`.
 5. `ai_usage` has no per-user cap and no per-user row limit apart from the request limits (`scan.requests_per_user_daily` 100, `docs/scan-limits.md`), so a user can add at most about 100 rows a day.
 6. The 100,000 rows per table per run ceiling is far above the daily rate even at 10,000 users (below). If a purge ever falls behind (the service was down for days), it catches up at 100,000 rows a day per table.
-7. The task runs inside the API process (`app/main.py:238`). Two instances both run it; every purge is idempotent, so that is safe.
+7. The task runs inside the API process (`app/main.py`, `lifespan`). Two instances both run it; every purge is idempotent, so that is safe.
 
 ### Expected growth
 
@@ -208,24 +208,24 @@ Plan limits:
 
 | Environment | Database | Plan in the repo | Storage limit |
 |---|---|---|---|
-| Production (`bookshelf-api`) | Supabase Postgres, session pooler (`render.yaml:1-9`, `docs/RENDER.md:44-62`) | the repo says to upgrade to Pro before store submission (`RENDER.md:61,187`); the current plan is not recorded | plan limit to confirm |
-| Staging / dev (`bookshelf-api-dev`) | Render Postgres `bookshelf-db`, `basic-256mb` (`render.yaml:243-244`, `docs/deployment.md:122`) | `basic-256mb` | plan limit to confirm (no `diskSizeGB` in `render.yaml`) |
+| Production (`bookshelf-api`) | Supabase Postgres, session pooler (`render.yaml` header comment; `docs/RENDER.md` `## Connecting to Supabase (production only)`) | the repo says to upgrade to Pro before store submission (`docs/RENDER.md` `## First production deploy — cutover checklist`); the current plan is not recorded | plan limit to confirm |
+| Staging / dev (`bookshelf-api-dev`) | Render Postgres `bookshelf-db`, `basic-256mb` (`render.yaml` `databases:` `bookshelf-db`; `docs/deployment.md` `### Database`) | `basic-256mb` | plan limit to confirm (no `diskSizeGB` in `render.yaml`) |
 
-Reading the table: at 100 users the purgeable data (about 50 MB) is small against any paid plan. At 1,000 users it is about 500 MB, which is where the plan's limit must be known. At 10,000 users it is about 5 GB plus 3 GB a year of library growth. The backup job dumps the whole database daily and keeps 30 dumps (`docs/backups.md:187-195`): at 5 GB uncompressed that is up to 30 x the compressed size in R2's 10 GB free tier, so the backup retention needs a look at the same time (G8).
+Reading the table: at 100 users the purgeable data (about 50 MB) is small against any paid plan. At 1,000 users it is about 500 MB, which is where the plan's limit must be known. At 10,000 users it is about 5 GB plus 3 GB a year of library growth. The backup job dumps the whole database daily and keeps 30 dumps (`docs/backups.md` `## Cost`): at 5 GB uncompressed that is up to 30 x the compressed size in R2's 10 GB free tier, so the backup retention needs a look at the same time (G8).
 
 ### Logs
 
 What the backend logs (all structured JSON to stdout, `backend/app/core/logging.py`; redaction in `security.md#logging`):
 
-- **Per request:** the uvicorn access line (method, path, status) and a request ID set by `RequestIdMiddleware` (`app/main.py:57`). Rate-limit hits log `rate_limit_exceeded path=...` (`main.py:257`).
-- **Per sign-in:** a handful of `info` lines (`app/api/auth.py:35-85`), the last with the internal user ID, never the email.
-- **Per scan:** `image normalised: WxH, N bytes -> M bytes` (`app/ai/images.py:174`), one `scan_record event=... books=... in_library=...` line with counts only (`app/ai/scan_records.py:541`), retry lines from the provider adapter (`anthropic_vision.py:600`), and `warning` lines for ceilings and non-fatal failures (`app/api/scan.py`, `app/services/scan/quota_steps.py` and `records.py`; logger `app.api.scan`). No image, filename, raw model output or token.
+- **Per request:** the uvicorn access line (method, path, status) and a request ID set by `RequestIdMiddleware` (`app/main.py` `RequestIdMiddleware`). Rate-limit hits log `rate_limit_exceeded path=...` (`main.py` `_rate_limit_exceeded_handler`).
+- **Per sign-in:** a handful of `info` lines (`app/api/auth.py` `google_auth`), the last with the internal user ID, never the email.
+- **Per scan:** `image normalised: WxH, N bytes -> M bytes` (`app/ai/images.py` `normalise_image`), one `scan_record event=... books=... in_library=...` line with counts only (`app/ai/scan_records.py` `log_event`), retry lines from the provider adapter (`app/ai/providers/anthropic_vision.py` `_create_with_retries`), and `warning` lines for ceilings and non-fatal failures (`app/api/scan.py`, `app/services/scan/quota_steps.py` and `records.py`; logger `app.api.scan`). No image, filename, raw model output or token.
 - **Per day:** one line per purge from `token_cleanup.py`.
 
 Where they go:
 
 - **Render logs** (stdout of `bookshelf-api` and `bookshelf-api-dev`). Retention is set by the Render workspace plan, not by the repo: plan limit to confirm.
-- **Sentry**: backend errors and 20 percent of traces when hardened (`app/main.py:47`), scrubbed by `app/core/sentry_context.py`; the app sends errors and 20 percent of traces in production. Retention is set by the Sentry plan: plan limit to confirm.
+- **Sentry**: backend errors and 20 percent of traces when hardened (`app/main.py` `sentry_sdk.init`, `traces_sample_rate`), scrubbed by `app/core/sentry_context.py`; the app sends errors and 20 percent of traces in production. Retention is set by the Sentry plan: plan limit to confirm.
 
 Retention the repo controls: none. It controls only what is logged (the rules above) and the sampling rate. There is no log file, no log table and no `logging` handler that writes to disk or the database.
 
@@ -234,9 +234,9 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 | # | Gap | Where |
 |---|---|---|
 | G1 | No account deletion; `users`, `user_books`, `user_custom_books`, `ai_*` per-user rows and `refresh_tokens` of a departed user stay forever | `backend/app/api/` |
-| G2 | Photos are stored full size; the server cap (5 MB) can be exceeded on high-resolution phones | `scan.tsx:112,159` |
-| G3 | Failed jobs have no count cap; refused (`queued`) jobs have no age cap; completed-but-unreviewed jobs keep their photo, uncapped, until the next launch | `scanJob.ts:7-10,60`, `ScanJobContext.tsx:1261-1263` |
-| G4 | The camera original in the cache is never deleted; queued photos are not deleted on sign-out | `scan.tsx:159`, `AuthContext` |
+| G2 | Photos are stored full size; the server cap (5 MB) can be exceeded on high-resolution phones | `frontend/hooks/useScanCapture.ts` `handleCapture` |
+| G3 | Failed jobs have no count cap; refused (`queued`) jobs have no age cap; completed-but-unreviewed jobs keep their photo, uncapped, until the next launch | `frontend/lib/scanJob.ts` `MAX_QUEUE_SIZE`, `FAILED_SCAN_RETENTION_MS`, `isPendingUpload`; `runScan` in `frontend/lib/scan/executeScan.ts` |
+| G4 | The camera original in the cache is never deleted; queued photos are not deleted on sign-out | `frontend/hooks/useScanCapture.ts` `handleCapture`, `AuthContext` |
 | G5 | No free-space check and no storage-full message | `frontend/` |
 | G6 | ~~Session log lines are unbounded in length~~ Fixed by #671/#758: 1,000-character lines, 100 KB attachment, bounded serialisation, redact-then-cut; known redaction limits are listed under "Logs and caches on the device" | `SessionLogger.ts` |
 | G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others; doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
