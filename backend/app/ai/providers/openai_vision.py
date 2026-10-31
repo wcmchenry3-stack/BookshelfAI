@@ -327,12 +327,6 @@ class OpenAIVisionProvider:
             outcome=outcome,
         )
 
-    def _parse(
-        self, content: str | None, finish_reason: str | None, max_books: int
-    ) -> list[BookCandidate]:
-        """The candidates in the model's reply (empty when malformed)."""
-        return self._parse_reply(content, finish_reason, max_books) or []
-
     def _parse_reply(
         self, content: str | None, finish_reason: str | None, max_books: int
     ) -> list[BookCandidate] | None:

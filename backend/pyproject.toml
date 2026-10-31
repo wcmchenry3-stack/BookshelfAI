@@ -54,14 +54,9 @@ ignore_names = [
   "scan_premium_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
   # --- Test seam ---
   "reset_cache",  # ai/settings.py cache reset, called from tests/ (vulture scans app/ only)
-  # --- PENDING OWNER DECISION (#830): tested-only functions and unread settings ---
-  # Deleting a tested-only function means deleting its tests, which the
-  # test-integrity rules for this story do not allow. An unread setting may be
-  # removed only with an owner decision, since that changes the env surface.
-  # Resolve each entry in #830, then remove the name here.
-  "parse_books",  # PENDING #830: app/ai/providers/anthropic_vision.py; only tests/unit/test_anthropic_vision.py calls it
-  "_parse",  # PENDING #830: OpenAIVisionProvider._parse; only tests/unit/test_openai_usage.py calls it
-  "verify",  # PENDING #830: app/core/catalog_token.py verify; app uses catalog_token.check; only tests call verify
-  "google_client_secret",  # PENDING #830: env-bound secret with no reader in app/ (render.yaml sets it); kept
-  "openai_max_tokens",  # PENDING #830: env-bound setting with no reader in app/ (docs/integrations.md); kept
+  # --- PENDING OWNER DECISION (#830): unread settings ---
+  # An unread setting may be removed only with an owner decision, since that
+  # changes the env surface.
+  "google_client_secret",  # kept by owner decision #830 until deploy config is confirmed
+  "openai_max_tokens",  # kept by owner decision #830 until deploy config is confirmed
 ]

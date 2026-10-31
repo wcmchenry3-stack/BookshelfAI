@@ -321,14 +321,3 @@ def check(
     if exp <= int((now or datetime.now(UTC)).timestamp()):
         return EXPIRED
     return OK
-
-
-def verify(
-    token: str | None,
-    book: SignableBook,
-    user_id: uuid.UUID,
-    now: datetime | None = None,
-) -> bool:
-    """True when ``token`` is a valid, unexpired token for exactly ``book``'s
-    catalog fields and ``user_id``."""
-    return check(token, book, user_id, now) == OK
