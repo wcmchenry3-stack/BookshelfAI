@@ -64,7 +64,13 @@ backend/
 │   └── services/          Domain logic (stateless, reusable)
 │       ├── book_identifier.py     Abstract interface + BookCandidate dataclass
 │       ├── deduplication.py       Per-user library dedup check
-│       ├── enrichment.py          Enrich candidates via Google Books + Open Library
+│       ├── enrichment/            Enrich candidates via Google Books + Open Library
+│       │   ├── service.py         EnrichmentService (provider chains, ISBN lookup)
+│       │   ├── scoring.py         Reading-vs-record fit, provider agreement
+│       │   ├── titles.py          Title / subtitle comparison
+│       │   ├── authors.py         Author-name comparison
+│       │   ├── isbn.py            ISBN validation and conversion
+│       │   └── text.py            Text normalisation
 │       ├── google_books.py        Google Books API client
 │       ├── open_library.py        Open Library API client
 │       └── wishlist.py            POST /wishlist business logic
