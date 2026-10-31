@@ -1,11 +1,19 @@
 """Revoking every session a user holds (#689)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.auth.jwt import (
+    access_token_ttl_seconds,
+    create_access_token,
+    create_refresh_token,
+)
+from app.auth.refresh_family import new_family_row
+from app.core.config import settings
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
@@ -41,3 +49,28 @@ async def revoke_all_sessions(db: AsyncSession, user: User) -> None:
         .values(revoked_at=now)
         .execution_options(synchronize_session=False)
     )
+
+
+class IssuedTokens(NamedTuple):
+    """An access/refresh token pair as returned to the client."""
+
+    access_token: str
+    refresh_token: str
+    expires_in: int
+
+
+async def issue_session_tokens(db: AsyncSession, user: User) -> IssuedTokens:
+    """Mint an access + refresh token pair for ``user`` and start a new
+    refresh-token family (#844).
+
+    Adds the family's first ``RefreshToken`` row and commits, so the caller's
+    own pending changes are committed too. Shared by ``POST /auth/google`` and
+    the e2e ``POST /auth/test-login`` route; ``POST /auth/refresh`` rotates an
+    existing family instead and does not use this.
+    """
+    access_token = create_access_token(str(user.id), user.email, user.token_version)
+    refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
+    expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
+    db.add(new_family_row(user.id, jti, expires_at))
+    await db.commit()
+    return IssuedTokens(access_token, refresh_token, access_token_ttl_seconds())

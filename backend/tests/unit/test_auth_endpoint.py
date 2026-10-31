@@ -78,9 +78,9 @@ def _google_login(claims=GOOGLE_CLAIMS):
     with (
         patch("app.api.auth.verify_google_id_token", return_value=claims),
         patch("app.api.auth.settings") as mock_settings,
-        patch("app.api.auth.create_access_token", return_value=FAKE_ACCESS),
+        patch("app.auth.sessions.create_access_token", return_value=FAKE_ACCESS),
         patch(
-            "app.api.auth.create_refresh_token",
+            "app.auth.sessions.create_refresh_token",
             return_value=(FAKE_REFRESH, FAKE_JTI),
         ),
     ):

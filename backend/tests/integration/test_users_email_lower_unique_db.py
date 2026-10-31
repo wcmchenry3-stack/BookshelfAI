@@ -231,8 +231,8 @@ async def test_concurrent_case_variant_first_sign_ins_one_row_and_409(monkeypatc
         with (
             patch("app.api.auth.verify_google_id_token", side_effect=verify),
             # Token signing is not under test here.
-            patch("app.api.auth.create_access_token", return_value="a"),
-            patch("app.api.auth.create_refresh_token", return_value=("r", tag)),
+            patch("app.auth.sessions.create_access_token", return_value="a"),
+            patch("app.auth.sessions.create_refresh_token", return_value=("r", tag)),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
