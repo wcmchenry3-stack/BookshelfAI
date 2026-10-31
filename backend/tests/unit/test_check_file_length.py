@@ -100,7 +100,53 @@ def test_main_exit_codes(tmp_path, capsys):
 
 
 def test_repo_allowlist_is_current():
-    """The real repo passes its own check (no new long files, no allowlisted growth)."""
+    """The real repo passes the strict check (#820): no long files, no stale entries."""
     root = SCRIPT.parent.parent
-    violations, _ = cfl.check(root, cfl.load_allowlist(root / cfl.ALLOWLIST_RELPATH))
-    assert violations == []
+    assert cfl.main(["--root", str(root), "--strict"]) == 0
+
+
+def test_repo_allowlist_entries_carry_a_marker():
+    """#820: the allowlist is empty today; any entry must be an approved exception.
+
+    Each entry line needs an ``epic:refactor #N`` or ``owner-approved #N`` marker.
+    """
+    import re
+
+    marker = re.compile(r"(epic:refactor|owner-approved)\s+#\d+")
+    path = SCRIPT.parent.parent / cfl.ALLOWLIST_RELPATH
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw.split("#", 1)[0].strip():
+            assert marker.search(raw), f"allowlist entry without a marker: {raw!r}"
+
+
+def test_strict_fails_on_stale_entry(tmp_path, capsys):
+    _write(tmp_path, "backend/app/small.py", 10)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "file_length_allowlist.txt").write_text(
+        "backend/app/small.py 700\n"
+    )
+    assert cfl.main(["--root", str(tmp_path)]) == 0  # lenient: warning only
+    assert cfl.main(["--root", str(tmp_path), "--strict"]) == 1
+    assert "remove it from the allowlist" in capsys.readouterr().out
+
+
+def test_strict_fails_on_stale_cap_and_missing_file(tmp_path):
+    _write(tmp_path, "backend/app/big.py", 650)
+    (tmp_path / "scripts").mkdir()
+    allow = tmp_path / "scripts" / "file_length_allowlist.txt"
+    allow.write_text("backend/app/big.py 700\n")
+    assert cfl.main(["--root", str(tmp_path), "--strict"]) == 1
+    allow.write_text("backend/app/big.py 650\nbackend/app/gone.py 900\n")
+    assert cfl.main(["--root", str(tmp_path), "--strict"]) == 1
+
+
+def test_strict_fails_on_over_cap_file(tmp_path, capsys):
+    _write(tmp_path, "backend/app/big.py", 601)
+    (tmp_path / "scripts").mkdir()
+    assert cfl.main(["--root", str(tmp_path), "--strict"]) == 1
+    assert "601 lines exceeds the 600-line cap" in capsys.readouterr().out
+
+
+def test_strict_passes_on_clean_tree(tmp_path):
+    _write(tmp_path, "backend/app/ok.py", 600)
+    assert cfl.main(["--root", str(tmp_path), "--strict"]) == 0
