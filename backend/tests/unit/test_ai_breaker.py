@@ -814,7 +814,8 @@ class TestScanEndpoint:
 
     def test_unpriceable_result_settles_the_estimate(self, client, store, provider):
         with patch(
-            "app.api.scan.cost_micros", MagicMock(side_effect=LookupError("no price"))
+            "app.services.scan.settlement.cost_micros",
+            MagicMock(side_effect=LookupError("no price")),
         ):
             assert client.post("/scan", files=_file()).status_code == 200
         assert store.spend_today() == (0, STANDARD_EST)
