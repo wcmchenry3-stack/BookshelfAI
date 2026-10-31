@@ -38,13 +38,5 @@ module.exports = {
       files: ['__tests__/**', 'jest.setup.ts'],
       rules: { '@typescript-eslint/no-require-imports': 'off' },
     },
-    {
-      // TEMPORARY (#817): this file is being edited in open PR #837, so its two remaining
-      // warnings (react/display-name, import/first) are left as warnings here and counted
-      // by `--max-warnings` in package.json. Delete this block, and set --max-warnings to 0,
-      // once #837 has merged and fixed them.
-      files: ['__tests__/unit/LayoutHeader.test.tsx'],
-      rules: { 'react/display-name': 'warn', 'import/first': 'warn' },
-    },
   ],
 };

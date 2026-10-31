@@ -9,7 +9,7 @@
     "web": "expo start --web",
     "test": "jest",
     "test:ci": "jest --coverage",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "e2e:build": "node e2e/stack/build-web.mjs",
