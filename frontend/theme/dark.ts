@@ -57,6 +57,17 @@ export const darkTheme: Theme = {
 
     outline: c.outline.dark,
     outlineVariant: c.outlineVariant.dark,
+    headerOverlay: c.headerOverlay.dark,
+    tabBarOverlay: c.tabBarOverlay.dark,
+    outlineVariantFaint: c.outlineVariantFaint.dark,
+    shadow: c.shadow.dark,
+    errorBoundarySurface: c.errorBoundarySurface.dark,
+    errorBoundaryTitle: c.errorBoundaryTitle.dark,
+    errorBoundaryBody: c.errorBoundaryBody.dark,
+    errorBoundaryDetail: c.errorBoundaryDetail.dark,
+    errorBoundaryDetailSurface: c.errorBoundaryDetailSurface.dark,
+    errorBoundaryAction: c.errorBoundaryAction.dark,
+    errorBoundaryOnAction: c.errorBoundaryOnAction.dark,
 
     // Convenience aliases
     background: c.background.dark,
