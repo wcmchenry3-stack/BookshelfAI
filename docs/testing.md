@@ -339,14 +339,31 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `cve-frontend` | `npm audit` |
 | `sast-python` | Bandit static analysis |
 | `secret-scan` | gitleaks |
-| `js-bundle-check` | Metro bundle compiles for iOS |
-| `android-bundle-check` | Metro bundle compiles for Android |
-| `ios-build-check` | Full `xcodebuild archive` (no signing) |
-| `android-build-check` | Full `./gradlew assembleDebug` |
+| `detect-changes` | Always runs. Diffs the PR against its base and outputs `native` and `frontend` (see "Conditional bundle and native build checks" below) |
+| `js-bundle-check` | Metro bundle compiles for iOS. Runs only when `frontend` is true |
+| `android-bundle-check` | Metro bundle compiles for Android. Runs only when `frontend` is true |
+| `ios-build-check` | Full `xcodebuild archive` (no signing). Runs only when `native` is true and the PR is not a draft |
+| `android-build-check` | Full `./gradlew assembleDebug`. Runs only when `native` is true and the PR is not a draft |
+| `native-build-gate` | Always runs; the required check standing in for the four conditional jobs above (passes if each succeeded or was skipped) |
 | `repo-hygiene` | Own workflow (`repo-hygiene.yml`): jscpd copy-paste threshold, 600-line file cap, offline docs link and anchor check. A weekly `external-links` job checks external URLs (not a PR gate). See "Repo hygiene checks" below |
 | `static-frontend` | Own workflow (`static-frontend.yml`; PRs to `dev`/`main` touching `frontend/**`, and pushes to `dev`): `npm ci` then `npm run knip` (#768) |
 | `design-token-check` | Own workflow (`design-token-check.yml`, calls the shared `called-design-token-check.yml`): the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. Runs on every PR to `dev`/`main` (opened, edited, synchronize, reopened), so it covers all frontend paths. It stays a separate workflow; do not fold it into `static-frontend.yml` |
 | `migration-guard` | Own workflow (`migration-guard.yml`, re-runs on label changes): `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`). Listed in the required checks of `.github/rulesets/protect-main-dev.json`; the owner must apply the ruleset in GitHub settings. On PRs into `main` it passes without scanning (already scanned on the feature PRs into `dev`) |
+
+### Conditional bundle and native build checks
+
+The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff --name-only <base>...HEAD`, no third-party action) decides:
+
+| Output | True when the PR touches | Gates |
+|---|---|---|
+| `frontend` | `frontend/**` or `.github/workflows/ci.yml` | `js-bundle-check`, `android-bundle-check` |
+| `native` | `frontend/ios/**` (Podfile, `ci_scripts/`), `frontend/android/**` (Gradle files), `frontend/plugins/**`, `frontend/app.json`, `frontend/app.config.*`, `frontend/package.json`, `frontend/package-lock.json`, or `.github/workflows/ci.yml` | `ios-build-check`, `android-build-check` |
+
+- On `push` (dev/main) and `workflow_call` (Deploy) there is no PR base, so both outputs are `true` and everything always runs.
+- **Draft PRs skip only `ios-build-check` and `android-build-check`.** Every other job, including the bundle checks, still runs on drafts. `ready_for_review` is a `pull_request` trigger type, so the native builds run when the PR is marked ready. Because of the `cancel-in-progress` concurrency group, that run cancels any in-flight draft run, which is expected.
+- A job skipped by `if:` reports as success to required checks, so a skipped build check does not block merge. A docs-only or backend-only PR therefore shows these jobs as skipped.
+- The required check is `native-build-gate` (always runs, `if: always()`), not `ios-build-check / Xcode Build (no signing)`. A reusable-workflow job skipped by `if:` reports under the plain job name (`ios-build-check`, skipped), never under the `<job> / <inner job>` name, so the inner name would never report on a skipped PR and block merge. The gate passes when `ios-build-check`, `android-build-check`, `js-bundle-check` and `android-bundle-check` each succeeded or were skipped, and fails on failure or cancellation, or if `detect-changes` did not succeed.
+- `podfile-lock-check` and `gradle-wrapper-check` are unchanged.
 
 ### Fixing or ignoring a knip finding (#768)
 
