@@ -1,83 +1,43 @@
-import React from 'react';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, waitFor } from '@testing-library/react-native';
 
-import { ScanJobProvider } from '../../contexts/ScanJobContext';
-import { BannerProvider } from '../../contexts/BannerContext';
-import { useBanner } from '../../hooks/useBanner';
-import { useScanJobs } from '../../hooks/useScanJobs';
+import type { useScanJobs } from '../../hooks/useScanJobs';
+import { renderScanJobsWithBanner } from '../helpers/providers';
 import { SCAN_RETRY_DELAYS_MS, MAX_SCAN_ATTEMPTS } from '../../lib/scanErrors';
 import type { ScanJob } from '../../lib/scanJob';
+import {
+  queuedJob as makeQueuedJob,
+  refusal,
+  resetScanMocks,
+  scanMocks,
+  scanOk,
+} from '../helpers/scanJobMocks';
 
 // #604: a photo the server could not scan because the AI was unavailable
 // (503 scan_unavailable, including a malformed reply, #572) is retried on a
 // fixed schedule, one photo at a time, and then failed.
 
-const mockPost = jest.fn();
-const mockGet = jest.fn();
-jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
-jest.mock('../../lib/api', () => ({
-  api: {
-    post: (...a: unknown[]) => mockPost(...a),
-    get: (...a: unknown[]) => mockGet(...a),
-  },
-}));
+jest.mock('../../hooks/useAuth', () => require('../helpers/scanJobMocks').authedModule());
+jest.mock('../../lib/api', () => require('../helpers/scanJobMocks').scanApiModule());
+jest.mock('../../lib/scanJobStorage', () => require('../helpers/scanJobMocks').scanStorageModule());
+jest.mock('@react-native-community/netinfo', () =>
+  require('../helpers/scanJobMocks').netInfoModule()
+);
+jest.mock('../../lib/sentry', () => require('../helpers/scanJobMocks').sentryModule());
+jest.mock('expo-crypto', () => require('../helpers/scanJobMocks').cryptoModule());
 
-const mockSaveJobs = jest.fn();
-const mockLoadJobs = jest.fn();
-const mockNetFetch = jest.fn();
-let mockNetListener: ((s: { isConnected: boolean }) => void) | null = null;
-jest.mock('../../lib/scanJobStorage', () => ({
-  loadJobs: () => mockLoadJobs(),
-  saveJobs: (...a: unknown[]) => mockSaveJobs(...a),
-  clearJobs: jest.fn(),
-  sweepOrphanedScanFiles: () => Promise.resolve(0),
-  deleteScanImage: jest.fn(),
-}));
+const {
+  post: mockPost,
+  get: mockGet,
+  saveJobs: mockSaveJobs,
+  loadJobs: mockLoadJobs,
+  netFetch: mockNetFetch,
+  captureMessage: mockCaptureMessage,
+} = scanMocks;
 
-jest.mock('@react-native-community/netinfo', () => ({
-  __esModule: true,
-  default: {
-    fetch: () => mockNetFetch(),
-    addEventListener: (cb: (s: { isConnected: boolean }) => void) => {
-      mockNetListener = cb;
-      return () => {};
-    },
-  },
-}));
-
-const mockCaptureMessage = jest.fn();
-jest.mock('../../lib/sentry', () => ({
-  Sentry: {
-    addBreadcrumb: jest.fn(),
-    captureException: jest.fn(),
-    captureMessage: (...a: unknown[]) => mockCaptureMessage(...a),
-  },
-}));
-
-let mockUuid = 0;
-jest.mock('expo-crypto', () => ({ randomUUID: () => `mockUuid-${++mockUuid}` }));
-
-function wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <BannerProvider>
-      <ScanJobProvider>{children}</ScanJobProvider>
-    </BannerProvider>
-  );
-}
-
-function refusal(status: number, detail: string) {
-  return { response: { status, data: { detail }, headers: {} } };
-}
 const UNAVAILABLE = refusal(503, 'scan_unavailable');
 const NETWORK_ERROR = Object.assign(new Error('Network Error'), { response: undefined });
 
-const OK = {
-  data: {
-    books: [{ title: 'Dune', author: 'Herbert' }],
-    enhanced: false,
-    enhanced_scans_remaining: null,
-  },
-};
+const OK = scanOk(null);
 
 /** The `attempt` form field of the n-th POST /scan. */
 function attemptOf(n: number): unknown {
@@ -90,23 +50,20 @@ function attempts(): unknown[] {
 }
 
 function queuedJob(i: number, extra: Partial<ScanJob> = {}): ScanJob {
-  return {
-    id: `q-${i}`,
-    type: 'image',
-    status: 'queued',
-    createdAt: i,
-    imageUri: `file:///q${i}.jpg`,
-    retryCount: 0,
-    ...extra,
-  };
+  return makeQueuedJob(i, extra) as ScanJob;
 }
 
 async function setup() {
-  const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
-    wrapper,
-  });
+  const hook = await renderScanJobsWithBanner();
   await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
   return hook;
+}
+
+/** Start one image scan inside `act`. */
+async function startPhoto(scan: Pick<ReturnType<typeof useScanJobs>, 'startScan'>, uri: string) {
+  await act(async () => {
+    await scan.startScan('image', uri);
+  });
 }
 
 async function advance(ms: number) {
@@ -118,11 +75,7 @@ async function advance(ms: number) {
 beforeEach(() => {
   jest.resetAllMocks();
   jest.useFakeTimers();
-  mockUuid = 0;
-  mockNetListener = null;
-  mockSaveJobs.mockResolvedValue(undefined);
-  mockLoadJobs.mockResolvedValue([]);
-  mockNetFetch.mockResolvedValue({ isConnected: true });
+  resetScanMocks();
 });
 
 afterEach(() => {
@@ -138,9 +91,7 @@ describe('the retry schedule (#604)', () => {
   it('retries after 30 s, 10 min, 1 h and 4 h, sending attempt 1-5', async () => {
     mockPost.mockRejectedValue(UNAVAILABLE);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     expect(mockPost).toHaveBeenCalledTimes(1);
 
     const delays = [30_000, 600_000, 3_600_000, 14_400_000];
@@ -160,9 +111,7 @@ describe('the retry schedule (#604)', () => {
     mockPost.mockRejectedValue(UNAVAILABLE);
     const { result } = await setup();
     const before = Date.now();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     const job = result.current.scan.jobs[0];
     expect(job).toEqual(
       expect.objectContaining({
@@ -183,9 +132,7 @@ describe('the retry schedule (#604)', () => {
   it('shows the short notice only while the first retry is pending', async () => {
     mockPost.mockRejectedValue(UNAVAILABLE);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     expect(result.current.scan.scanNotice).toEqual({ kind: 'paused' });
     await advance(30_000);
     expect(mockPost).toHaveBeenCalledTimes(2);
@@ -196,9 +143,7 @@ describe('the retry schedule (#604)', () => {
   it('a success on a retry ends the schedule', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(30_000);
     const job = result.current.scan.jobs[0];
     expect(job.status).toBe('complete');
@@ -221,9 +166,7 @@ describe('only provider-unavailable outcomes are retried (#604)', () => {
   ])('%s is not retried', async (_name, err) => {
     mockPost.mockRejectedValue(err);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(5 * 3_600_000);
     // One request, sent as attempt 1, and no retry.
     expect(attempts()).toEqual(['1']);
@@ -234,9 +177,7 @@ describe('only provider-unavailable outcomes are retried (#604)', () => {
   it('no books found is not retried', async () => {
     mockPost.mockResolvedValue({ data: { books: [], enhanced: false, no_match: 'free' } });
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(5 * 3_600_000);
     expect(attempts()).toEqual(['1']);
     expect(result.current.scan.jobs[0].status).toBe('failed');
@@ -245,9 +186,7 @@ describe('only provider-unavailable outcomes are retried (#604)', () => {
   it('a refusal on a later attempt ends the schedule', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockRejectedValue(refusal(503, 'scan_disabled'));
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(30_000);
     expect(mockPost).toHaveBeenCalledTimes(2);
     const job = result.current.scan.jobs[0];
@@ -263,9 +202,7 @@ describe('offline pauses the schedule (#604)', () => {
   it('sends nothing while offline and sends the due photo on reconnect', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     mockNetFetch.mockResolvedValue({ isConnected: false });
     await advance(2 * 3_600_000);
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -274,7 +211,7 @@ describe('offline pauses the schedule (#604)', () => {
 
     mockNetFetch.mockResolvedValue({ isConnected: true });
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(0);
     });
     expect(mockPost).toHaveBeenCalledTimes(2);
@@ -286,9 +223,7 @@ describe('offline pauses the schedule (#604)', () => {
     // Codex B: NetInfo still says connected, every request gets no response.
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockRejectedValue(NETWORK_ERROR);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(30_000);
     expect(mockPost).toHaveBeenCalledTimes(2);
     const before = Date.now();
@@ -297,7 +232,7 @@ describe('offline pauses the schedule (#604)', () => {
     );
     // Not resent at once, nor on a reconnect event, before the 30 s floor.
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(29_000);
     });
     expect(mockPost).toHaveBeenCalledTimes(2);
@@ -317,7 +252,7 @@ describe('one photo at a time (#604)', () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       // Well past the 2 s delay between drained jobs.
       await jest.advanceTimersByTimeAsync(10_000);
     });
@@ -327,7 +262,7 @@ describe('one photo at a time (#604)', () => {
 
     // A reconnect or "Try again" during the wait sends nothing either.
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       result.current.scan.resumeQueue();
       await jest.advanceTimersByTimeAsync(10_000);
     });
@@ -346,7 +281,7 @@ describe('one photo at a time (#604)', () => {
     mockPost.mockRejectedValue(UNAVAILABLE);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10_000);
     });
     await advance(30_000);
@@ -367,7 +302,7 @@ describe('the schedule survives a restart (#604)', () => {
     mockPost.mockResolvedValue(OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10_000);
     });
     // Not due yet: the launch drain leaves it alone.
@@ -386,7 +321,7 @@ describe('the schedule survives a restart (#604)', () => {
     mockPost.mockResolvedValue(OK);
     await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(0);
     });
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -405,7 +340,7 @@ describe('the schedule survives a restart (#604)', () => {
     mockPost.mockResolvedValue(OK);
     await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(0);
     });
     expect(attempts()).toEqual(['2']);
@@ -475,9 +410,7 @@ describe('the retry timer (#604)', () => {
   it('is cleared on unmount', async () => {
     mockPost.mockRejectedValue(UNAVAILABLE);
     const { result, unmount } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     expect(result.current.scan.jobs[0].nextAttemptAt).toBeDefined();
     await act(async () => {
       await unmount();
@@ -491,14 +424,12 @@ describe('the retry timer (#604)', () => {
     let release: (v: unknown) => void = () => {};
     mockPost.mockImplementationOnce(() => new Promise((res) => (release = res)));
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(30_000);
     expect(mockPost).toHaveBeenCalledTimes(2);
     // Attempt 2 is in flight; a reconnect drain and more time must not resend it.
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(60_000);
     });
     expect(mockPost).toHaveBeenCalledTimes(2);
@@ -518,7 +449,7 @@ describe('a photo that fails for good releases the queue (#604, Codex A)', () =>
     mockPost.mockResolvedValue(OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10_000);
     });
     for (const delay of SCAN_RETRY_DELAYS_MS) await advance(delay);
@@ -534,13 +465,9 @@ describe('a success brings waiting photos forward (#604)', () => {
   it('a new capture during a wait is sent at once, and its success sends the waiting photo now', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(5_000);
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///b.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///b.jpg');
     await advance(100);
     // a (attempt 1), b (attempt 1, straight away), a again well before its 30 s.
     expect(attempts()).toEqual(['1', '1', '2']);
@@ -556,7 +483,7 @@ describe('a success brings waiting photos forward (#604)', () => {
     mockPost.mockResolvedValue(OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10_000);
     });
     // q-2 keeps its attempt count: attempt 4, not 1.
@@ -567,13 +494,9 @@ describe('a success brings waiting photos forward (#604)', () => {
   it('a new capture that also gets 503 starts its own schedule; the notice stays until its first retry', async () => {
     mockPost.mockRejectedValue(UNAVAILABLE);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(5_000);
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///b.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///b.jpg');
     expect(attempts()).toEqual(['1', '1']);
     expect(result.current.scan.scanNotice).toEqual({ kind: 'paused' });
     const [b, a] = result.current.scan.jobs;
@@ -598,9 +521,7 @@ describe('enhanced re-scans keep the paused path (#604)', () => {
       })
       .mockRejectedValue(UNAVAILABLE);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     const id = result.current.scan.jobs[0].id;
     await act(async () => {
       await result.current.scan.requestEnhancedScan(id);
@@ -623,9 +544,7 @@ describe('connectivity on the timer (#604)', () => {
   it('an unknown connection state (isConnected null) counts as online', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     mockNetFetch.mockResolvedValue({ isConnected: null });
     await advance(30_000);
     expect(attempts()).toEqual(['1', '2']);
@@ -635,9 +554,7 @@ describe('connectivity on the timer (#604)', () => {
   it('offline when the timer fires: checks again after 60 s without a reconnect event', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     mockNetFetch.mockResolvedValue({ isConnected: false });
     await advance(30_000);
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -663,7 +580,7 @@ describe('the wait is capped at 4 h (#604)', () => {
       Date.now() + 4 * 3_600_000
     );
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10_000);
     });
     expect(mockPost).not.toHaveBeenCalled();
@@ -693,7 +610,7 @@ describe('the drain while a photo waits (#604)', () => {
     mockGet.mockResolvedValue(TEXT_OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10_000);
     });
     expect(mockGet).toHaveBeenCalledTimes(1);
@@ -712,7 +629,7 @@ describe('the drain while a photo waits (#604)', () => {
     mockPost.mockResolvedValue(OK);
     await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(7_000);
     });
     // Due at 3 s, but the drain is still running.
@@ -738,7 +655,7 @@ describe('the drain while a photo waits (#604)', () => {
     mockPost.mockResolvedValue(OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10_000);
     });
     expect(attempts()).toEqual(['2', '1']);
@@ -748,9 +665,7 @@ describe('the drain while a photo waits (#604)', () => {
   it('does not double-send a pending job that is in flight (inFlightRef)', async () => {
     mockPost.mockRejectedValueOnce(UNAVAILABLE).mockResolvedValue(OK);
     const { result } = await setup();
-    await act(async () => {
-      await result.current.scan.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current.scan, 'file:///a.jpg');
     await advance(29_000);
     // A capture whose connectivity check is still running: the job is
     // 'pending' (not 'searching') and only inFlightRef keeps a drain off it.
