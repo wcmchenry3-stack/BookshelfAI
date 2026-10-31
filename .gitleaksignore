@@ -15,6 +15,10 @@ d05251dc4483705959f55bcc066407bd885dbce9:backend/tests/security/test_origin_auth
 # fixture literal (the checker must flag JWT-shaped values). The next commit
 # builds it at runtime; this silences the historic hit in the PR commit range.
 6f6b19747c01ce8b27486ed39e0fcda77bfc190e:backend/tests/unit/test_log_hygiene_checker.py:jwt:10
+# 4981f87 (PR #783, #758): a fake JWT literal in a SessionLogger redaction test.
+# The test now builds JWT-shaped strings at runtime (fakeJwt); this silences the
+# historic hit in the PR commit range.
+4981f8769eb25f523477ff09ed6cd94e6e507e90:frontend/__tests__/unit/FeedbackSessionLogger.test.ts:jwt:224
 # 9026c33 (PR #782, #736): a fake JWT literal in a Sentry scrub test. The test
 # now builds it at runtime; this silences the historic hit in the PR range.
 9026c336db3cdc0d8dcd5a6dcabc96156351d4ff:frontend/__tests__/unit/sentryScrub.test.ts:jwt:7
