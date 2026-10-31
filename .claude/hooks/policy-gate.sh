@@ -20,6 +20,14 @@ if [ ! -f "$PATTERNS_FILE" ]; then
   exit 0
 fi
 
+# ── Global skip list (single source of truth) ────────────────────
+# Paths that never trigger any policy (policy definitions, docs, vendored and
+# generated output). Lives in policy-patterns.json as "_global_skip" so the
+# hook and the pattern file cannot drift; the literal below is only a fallback
+# for a patterns file that predates the key.
+GLOBAL_SKIP=$(jq -r '._global_skip // empty' "$PATTERNS_FILE" | tr -d '\r')
+[ -z "$GLOBAL_SKIP" ] && GLOBAL_SKIP='^\.claude/|\.mdx?$'
+
 # ── Get changed files ────────────────────────────────────────────
 # Use merge-base against the PR target branch (dev, then main) so we
 # only see files actually changed on this branch, not everything that
@@ -49,10 +57,9 @@ for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' 
   [ -z "$DETECT" ] || [ "$DETECT" = "null" ] && continue
 
   while IFS= read -r file; do
-    # Skip .claude/ directory (contains policy definitions with pattern strings)
-    case "$file" in .claude/*) continue ;; esac
-    # Skip documentation files — they reference APIs by name but contain no executable code
-    case "$file" in *.md|*.mdx|CLAUDE.md) continue ;; esac
+    # Skip .claude/ (policy definitions contain pattern strings), docs (they
+    # name APIs but hold no executable code) and vendored/generated output.
+    echo "$file" | grep -qE "$GLOBAL_SKIP" && continue
 
     # Skip files matching the skip pattern (checked against full path and basename
     # so patterns can exclude by directory prefix OR by filename)

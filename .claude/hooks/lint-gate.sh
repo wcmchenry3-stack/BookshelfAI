@@ -4,13 +4,17 @@
 # lint-review sub-agent to auto-fix before retrying.
 set -uo pipefail
 
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/output.sh
+source "$HOOK_DIR/lib/output.sh"
+
 # ── Read tool input from stdin ───────────────────────────────────
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+hook_read_input
+COMMAND=$(hook_jq '.tool_input.command // empty')
 
 # Only gate on PR-creation commands
-if ! echo "$COMMAND" | grep -qE 'gh\s+pr\s+create'; then
-  exit 0
+if ! echo "$COMMAND" | grep -qE 'gh[[:space:]]+pr[[:space:]]+create'; then
+  hook_allow
 fi
 
 FAIL=0
@@ -50,12 +54,7 @@ fi
 
 # ── Verdict ──────────────────────────────────────────────────────
 if [ "$FAIL" -ne 0 ]; then
-  {
-    echo "BLOCKED: Lint check failed. Invoke the lint-review agent to auto-fix."
-    echo ""
-    echo -e "$REPORT"
-  } >&2
-  exit 2
+  hook_block "Lint check failed. Invoke the lint-review agent to auto-fix." "$REPORT"
 fi
 
-exit 0
+hook_allow
