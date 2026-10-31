@@ -11,6 +11,8 @@ on:
       - 'backend/tests/security/**'
       - 'backend/requirements*.txt'
       - '.github/workflows/security.yml'
+      - '.github/actions/setup-backend/**'
+      - '.github/actions/setup-frontend/**'
       - '.zap/**'
   workflow_dispatch:
 

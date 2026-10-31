@@ -62,7 +62,7 @@ jobs:
           # and frontend/android, so the directory prefixes cover them.
           NATIVE_RE='^(frontend/(ios|android|plugins)/|frontend/(app\.json|app\.config\.[A-Za-z]+|package\.json|package-lock\.json)$|\.github/workflows/ci\.yml$)'
           # frontend: any frontend file (JS bundle inputs) plus this workflow.
-          FRONTEND_RE='^(frontend/|\.github/workflows/ci\.yml$)'
+          FRONTEND_RE='^(frontend/|\.github/workflows/ci\.yml$|\.github/actions/setup-frontend/)'
           if echo "$CHANGED" | grep -qE "$NATIVE_RE"; then NATIVE=true; else NATIVE=false; fi
           if echo "$CHANGED" | grep -qE "$FRONTEND_RE"; then FRONTEND=true; else FRONTEND=false; fi
           echo "native=$NATIVE" >> "$GITHUB_OUTPUT"

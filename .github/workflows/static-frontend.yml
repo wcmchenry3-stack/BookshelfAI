@@ -6,6 +6,7 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/static-frontend.yml"
+      - ".github/actions/setup-frontend/**"
   push:
     branches: [dev]
 

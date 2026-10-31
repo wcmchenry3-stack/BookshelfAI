@@ -363,7 +363,7 @@ The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff 
 
 | Output | True when the PR touches | Gates |
 |---|---|---|
-| `frontend` | `frontend/**` or `.github/workflows/ci.yml` | `js-bundle-check`, `android-bundle-check` |
+| `frontend` | `frontend/**`, `.github/workflows/ci.yml` or `.github/actions/setup-frontend/**` | `js-bundle-check`, `android-bundle-check` |
 | `native` | `frontend/ios/**` (Podfile, `ci_scripts/`), `frontend/android/**` (Gradle files), `frontend/plugins/**`, `frontend/app.json`, `frontend/app.config.*`, `frontend/package.json`, `frontend/package-lock.json`, or `.github/workflows/ci.yml` | `ios-build-check`, `android-build-check` |
 
 - On `push` (dev/main) and `workflow_call` (Deploy) there is no PR base, so both outputs are `true` and everything always runs.

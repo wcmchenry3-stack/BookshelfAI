@@ -13,6 +13,8 @@ on:
       - 'frontend/**'
       - 'backend/**'
       - '.github/workflows/e2e-web.yml'
+      - '.github/actions/setup-backend/**'
+      - '.github/actions/setup-frontend/**'
   workflow_dispatch:
 
 concurrency:
