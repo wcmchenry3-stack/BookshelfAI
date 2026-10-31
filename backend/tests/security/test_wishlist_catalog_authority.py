@@ -376,8 +376,14 @@ class TestResultsAreSignedPerUser:
         for payload in (first, repeat):
             (book,) = payload["books"]
             req = EnrichedBook(**book)
-            assert catalog_token.verify(book["catalog_token"], req, ALICE.id)
-            assert not catalog_token.verify(book["catalog_token"], req, BOB.id)
+            assert (
+                catalog_token.check(book["catalog_token"], req, ALICE.id)
+                == catalog_token.OK
+            )
+            assert (
+                catalog_token.check(book["catalog_token"], req, BOB.id)
+                != catalog_token.OK
+            )
         assert repeat["books"] == first["books"]
 
     def test_search_results_carry_tokens_for_this_user_only(self):
@@ -401,8 +407,13 @@ class TestResultsAreSignedPerUser:
             app.dependency_overrides.clear()
         (book,) = resp.json()
         req = EnrichedBook(**book)
-        assert catalog_token.verify(book["catalog_token"], req, BOB.id)
-        assert not catalog_token.verify(book["catalog_token"], req, ALICE.id)
+        assert (
+            catalog_token.check(book["catalog_token"], req, BOB.id) == catalog_token.OK
+        )
+        assert (
+            catalog_token.check(book["catalog_token"], req, ALICE.id)
+            != catalog_token.OK
+        )
 
     def test_scan_result_round_trips_into_the_catalog(self, scan_env, wishlist):
         post, _ = scan_env
