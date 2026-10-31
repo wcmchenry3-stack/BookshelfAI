@@ -626,19 +626,15 @@ class TestScanRunsTheStepsInOrder:
         assert pipe.order == list(_Pipeline.STEPS[:6])
 
     @pytest.mark.parametrize("failing", _Pipeline.STEPS[:-1])
-    async def test_a_failing_step_stops_the_pipeline_and_never_refunds_here(
-        self, failing
-    ):
-        """scan() itself never refunds: the only refunds are inside
-        _run_provider (unavailable / malformed). A failure in any step
-        stops every later one."""
+    async def test_a_failing_step_stops_every_later_step(self, failing):
+        """A failure in any step stops every later one. (Where refunds
+        happen is pinned by the _run_provider tests.)"""
         pipe = _Pipeline(fail=failing)
         with pytest.raises(HTTPException) as err:
             await pipe.run()
         assert err.value.detail == failing
         idx = _Pipeline.STEPS.index(failing)
         assert pipe.order == list(_Pipeline.STEPS[: idx + 1])
-        pipe.refund.assert_not_awaited()
 
 
 class TestLookupRecord:

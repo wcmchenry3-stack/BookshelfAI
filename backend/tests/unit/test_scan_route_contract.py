@@ -2,9 +2,10 @@
 the AST so a later edit cannot quietly undo them:
 
 - every route keeps its ``@limiter.limit(settings.rate_limit_*)``;
-- every name the suite replaces with ``patch("app.api.scan.<name>")`` is
-  still a module attribute *and* looked up by name inside the route module,
-  so the patch reaches running code;
+- every name in ``PATCHED_BY_NAME`` (the helpers and services the suite
+  outside ``test_scan_steps.py`` replaces with ``patch("app.api.scan.<name>")``)
+  is still a module attribute *and* loaded by name somewhere in the route
+  module;
 - the helpers in ``app/services/scan/`` share the module objects the suite
   patches attributes on (``app.api.scan.ledger.record`` etc.);
 - ``_reserve_scan_quota`` maps only the quota refusal classes (anything else
