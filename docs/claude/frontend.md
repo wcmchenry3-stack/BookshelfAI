@@ -195,12 +195,21 @@ Call the backend through the `api` instance in `lib/api.ts` (never bare `axios`,
 - **Sentry**: the interceptor reports only the final failure of a logical request (see "API error reporting" above); retried attempts are never reported.
 - **Handling errors**: convert with `toApiError(err)` from `lib/apiError.ts` instead of reading `err.response` by hand. It returns `{ status?, code?, retryAfterMs?, isNetworkError, isTimeout, message }`. `code` is the backend `detail` when it is a string, or `detail.code` / `detail.detail.code` when it is an object; `retryAfterMs` is the parsed, uncapped `Retry-After`. `message` is for logs only; show translated copy keyed on `status`/`code`. Existing callers still read raw axios errors (`lib/scanErrors.ts`, `lib/trash.ts`, the auth and wishlist screens); migrate them as you touch them.
 
+## Lint
+
+Lint is warning-free (#817). In `frontend/.eslintrc.js`, `import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `@typescript-eslint/no-unused-vars` and `@typescript-eslint/no-require-imports` are errors.
+
+- `no-require-imports` is off only for `__tests__/**` and `jest.setup.ts` (one `overrides` block): `jest.mock()` factories, `jest.isolateModules` and dynamic locale JSON loads need a lazy `require()` because Jest hoists mocks above imports. App code may not `require`.
+- `import/first` has no exceptions. `app/_layout.tsx` keeps `../lib/sentry` as the first import (rule 13) and runs `SessionLogger.init()` and the lifecycle breadcrumb below the imports (ES imports are hoisted, so Sentry still loads first; `__tests__/unit/LayoutInitOrder.test.tsx` asserts the order).
+- A new `eslint-disable` needs a reason on the same line (`// eslint-disable-next-line <rule> -- <why>`). Fix the code first; do not add one to silence a warning.
+- Temporary: `__tests__/unit/LayoutHeader.test.tsx` keeps two warnings (a per-file `warn` override in `.eslintrc.js`) until PR #837 lands. Then delete that override and set `npm run lint` to `eslint . --max-warnings 0`.
+
 ## Commands
 
 ```bash
 npx jest                          # unit tests
 npx jest --coverage               # with coverage report
-npx eslint .                      # lint (includes a11y rules)
+npx eslint .                      # lint (includes a11y rules; must be warning-free)
 npx prettier --check .            # format check
 npx prettier --write .            # format fix
 ```

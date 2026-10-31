@@ -333,7 +333,7 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres) |
 | `pytest -m security` (`security.yml`, job `pytest-security`) | Separate run of the security marker (security tests also run in `test-python` on every PR). Only on PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
 | `lint-python` | `black --check` + `ruff` |
-| `lint-frontend` | `eslint` + `prettier --check` |
+| `lint-frontend` | `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint) |
 | `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
 | `cve-python` | `pip-audit` |
 | `cve-frontend` | `npm audit` |
