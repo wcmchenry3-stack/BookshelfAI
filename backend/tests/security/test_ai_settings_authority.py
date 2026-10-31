@@ -148,13 +148,17 @@ def test_no_router_can_write_ai_settings():
 
 
 def test_settings_module_does_not_import_providers():
-    tree = ast.parse((APP_ROOT / "ai" / "settings.py").read_text(encoding="utf-8"))
+    # app/ai/settings is a package since #807: every module in it is checked.
+    paths = sorted((APP_ROOT / "ai" / "settings").glob("*.py"))
+    assert paths
     modules = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            modules.add(node.module or "")
-            if node.module == "app.ai":
-                modules.update(f"app.ai.{a.name}" for a in node.names)
-        elif isinstance(node, ast.Import):
-            modules.update(a.name for a in node.names)
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                modules.add(node.module or "")
+                if node.module == "app.ai":
+                    modules.update(f"app.ai.{a.name}" for a in node.names)
+            elif isinstance(node, ast.Import):
+                modules.update(a.name for a in node.names)
     assert not {m for m in modules if m.startswith("app.ai.providers")}

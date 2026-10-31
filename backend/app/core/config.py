@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
     # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
     # boot, and after that the DB row is the source of truth (change it with
-    # `python -m app.ai.settings set ...`, see app/ai/settings.py). They are
+    # `python -m app.ai.settings set ...`, see app/ai/settings/). They are
     # also the fallback when a row is missing. A disabled scan is rejected
     # before the image is processed, Turnstile is called or the provider is
     # contacted (the framework has already received the multipart body);

@@ -3,7 +3,6 @@
 # was allowlisted: a file may shrink but never grow. When you shrink one, lower
 # its number here (or delete the line once it is under 600).
 backend/app/ai/quota.py 1722
-backend/app/ai/settings.py 1184
 backend/app/api/scan.py 1026
 backend/app/services/enrichment.py 959
 frontend/app/(tabs)/my-books.tsx 739

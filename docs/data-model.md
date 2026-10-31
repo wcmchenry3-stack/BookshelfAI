@@ -551,7 +551,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 | Column | Type | Notes |
 |---|---|---|
-| `key` | text, PK | one of the keys defined in `app/ai/settings.py`; other keys are ignored |
+| `key` | text, PK | one of the keys defined in `app/ai/settings/definitions.py`; other keys are ignored |
 | `value` | JSONB, not null | bool, string or int depending on the key; validated on write and again on read |
 | `updated_at` | timestamptz, not null, server default `now()` | set on every write |
 | `updated_by` | text, nullable | `seed` for startup seeding, else the CLI's `--by` / `$USER` / `cli` |
