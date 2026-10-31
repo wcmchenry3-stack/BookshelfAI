@@ -46,7 +46,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 - Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
 - No content, not JSON, the wrong shape (a bare list is still accepted), or a non-empty list in which every entry is structurally broken → ledger `malformed`, `503 scan_unavailable`, refunded (#572)
 - Structurally broken entries (not an object, a title or author missing or not a string or over 500 characters after strip, a confidence that is not a number) are skipped individually (#754); a numeric confidence is clamped to 0–1 (NaN and bool become 0.5, an integer too large for a float clamps to 1 or 0), as in the Claude adapter; an empty or whitespace title is dropped (#746; schema-valid, so a reply of only such entries is `ok` with no books, not `malformed`), an empty author is kept (a title-only lookup)
-- `isbn_13` / `isbn_10` are cleaned by `app/ai/providers/isbn.py` (#746): spaces and hyphens stripped; a non-string, non-ASCII-digit or bad-check-digit value becomes null and the book is kept (the model can invent ISBNs, e.g. #743)
+- `isbn_13` / `isbn_10` are cleaned by `app/ai/providers/_common.py` (#746; moved from `isbn.py` in #814): spaces and hyphens stripped; a non-string, non-ASCII-digit or bad-check-digit value becomes null and the book is kept (the model can invent ISBNs, e.g. #743)
 - `finish_reason: length` → ledger `truncated` with the parsed books; with none, `malformed` (503, refunded; #572)
 
 **Cost note:** gpt-4o-mini is the cheapest vision-capable model. Scan cost is approximately $0.001 per image at current pricing. The `rate_limit_scan` bucket (10/min per client) caps abuse at the HTTP layer.
@@ -88,7 +88,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Endpoint:** `https://www.googleapis.com/books/v1/volumes`
 **Key env var:** `GOOGLE_BOOKS_API_KEY` (optional — API works unauthenticated at a lower quota)
 **Timeout:** 10 seconds
-**Source:** `backend/app/services/google_books.py`
+**Source:** `backend/app/services/google_books.py`; the GET itself (10 s timeout, raise on a non-2xx status, JSON body) is `get_json` in `backend/app/services/_lookup_http.py`, shared with Open Library (#814)
 
 **Methods used:**
 - `search(title, author, limit=1, score=None)` — `q=intitle:"<title>" inauthor:"<author>"` (quoted phrases; the author part only when there is one), `maxResults=limit` (at most 5). With `score`, returns the highest-scoring volume with a positive score, or None when none scores above 0; without `score`, the first volume. Enrichment calls it with the read title, the read author's surname, `limit=5` and a score of how well each volume fits the reading (#743): for a candidate without a valid ISBN-13, and when the ISBN lookup found nothing or another book.
@@ -108,7 +108,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Endpoint:** configurable via `OPEN_LIBRARY_BASE_URL` (default `https://openlibrary.org`)
 **No API key** — Open Library is free + unauthenticated
 **Timeout:** 10 seconds
-**Source:** `backend/app/services/open_library.py`
+**Source:** `backend/app/services/open_library.py` (request through `backend/app/services/_lookup_http.py`, as Google Books)
 
 **Methods used:**
 - `search(title, author, limit=1, score=None)` — `/search.json?title=...&author=...&fields=key,title,subtitle,author_name,isbn,subject&limit=<limit>` (at most 5; `author` only when there is one). With `score`, returns the highest-scoring doc with a positive score, or None when none scores above 0; without `score`, the first doc. Called like the Google Books `search` above (#743).

@@ -1,11 +1,10 @@
-import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import CheckConstraint, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.models._mixins import IdMixin, TimestampMixin, UserOwnedMixin
 
 # Field limits, shared with the request schema (app/schemas/user_book.py) and
 # enforced again by the table's check constraints. The title and author limits
@@ -14,7 +13,7 @@ TITLE_MAX = 500
 AUTHOR_MAX = 500
 
 
-class UserCustomBook(Base):
+class UserCustomBook(IdMixin, UserOwnedMixin, TimestampMixin, Base):
     """A book the user added themselves because neither Open Library nor
     Google Books found it: an **unverified** entry (#616).
 
@@ -39,6 +38,7 @@ class UserCustomBook(Base):
     """
 
     __tablename__ = "user_custom_books"
+    user_id_indexed = True
     __table_args__ = (
         CheckConstraint(
             f"char_length(title) BETWEEN 1 AND {TITLE_MAX}",
@@ -54,15 +54,6 @@ class UserCustomBook(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
     title: Mapped[str] = mapped_column(String, nullable=False)
     author: Mapped[str] = mapped_column(String, nullable=False)
     isbn_13: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -70,15 +61,6 @@ class UserCustomBook(Base):
     # row that holds this entry (user_books.deleted_at).
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
     )
 
     @classmethod

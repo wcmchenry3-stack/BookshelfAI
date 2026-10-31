@@ -8,13 +8,13 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
-    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.models._mixins import IdMixin, TimestampMixin
 
 # Where a catalog row's data came from (#682), ``books.source``:
 # - ``google_books``: a Google Books volume matched (``google_books_id`` set).
@@ -28,7 +28,7 @@ from app.core.database import Base
 BOOK_SOURCES = ("google_books", "open_library", "scan")
 
 
-class Book(Base):
+class Book(IdMixin, TimestampMixin, Base):
     __tablename__ = "books"
     __table_args__ = (
         # One row per Google Books volume (#613, migration 0015, which merged
@@ -49,9 +49,6 @@ class Book(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
     open_library_work_id: Mapped[str | None] = mapped_column(
         String, unique=True, nullable=True, index=True
     )
@@ -79,15 +76,6 @@ class Book(Base):
         nullable=True,
         index=True,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
 
     # Deleting a Book never deletes or orphans children: passive_deletes="all"
     # stops the ORM from nulling out loaded children's book_id, so the
@@ -102,5 +90,5 @@ class Book(Base):
     # merged row load it explicitly (``selectinload``) or resolve it with
     # app/services/catalog.py.
     merged_into: Mapped["Book | None"] = relationship(
-        "Book", remote_side=[id], foreign_keys=[merged_into_id], lazy="raise"
+        "Book", remote_side="Book.id", foreign_keys=[merged_into_id], lazy="raise"
     )

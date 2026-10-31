@@ -436,7 +436,7 @@ class TestServicesPickTheBestResult:
         service = EnrichmentService()
         client = _http_client({"docs": docs})
         with (
-            patch("app.services.open_library.httpx.AsyncClient", return_value=client),
+            patch("app.services._lookup_http.httpx.AsyncClient", return_value=client),
             patch.object(service.gb, "search", AsyncMock(return_value=None)),
         ):
             book = await _enrich_one(service, self.CANDIDATE)
@@ -457,7 +457,7 @@ class TestServicesPickTheBestResult:
         service = EnrichmentService()
         client = _http_client({"items": items})
         with (
-            patch("app.services.google_books.httpx.AsyncClient", return_value=client),
+            patch("app.services._lookup_http.httpx.AsyncClient", return_value=client),
             patch.object(service.ol, "search", AsyncMock(return_value=None)),
         ):
             book = await _enrich_one(service, self.CANDIDATE)
@@ -470,7 +470,7 @@ class TestServicesPickTheBestResult:
         service = EnrichmentService()
         # Both services use the same httpx module: one fake answers both.
         client = _http_client({"docs": [OTHER_DOC], "items": [OTHER_VOLUME]})
-        with patch("app.services.open_library.httpx.AsyncClient", return_value=client):
+        with patch("app.services._lookup_http.httpx.AsyncClient", return_value=client):
             book = await _enrich_one(service, self.CANDIDATE)
         assert client.get.await_count == 2
         assert book.open_library_work_id is None and book.google_books_id is None
@@ -479,11 +479,11 @@ class TestServicesPickTheBestResult:
         ol_client = _http_client({"docs": []})
         gb_client = _http_client({})
         with patch(
-            "app.services.open_library.httpx.AsyncClient", return_value=ol_client
+            "app.services._lookup_http.httpx.AsyncClient", return_value=ol_client
         ):
             assert await OpenLibraryService().search('Say "Hi"', "", limit=50) is None
         with patch(
-            "app.services.google_books.httpx.AsyncClient", return_value=gb_client
+            "app.services._lookup_http.httpx.AsyncClient", return_value=gb_client
         ):
             assert await GoogleBooksService().search('Say "Hi"', " ", limit=50) is None
         ol_params = ol_client.get.await_args.kwargs["params"]
@@ -686,7 +686,7 @@ class TestOneSidedSubtitles:
 
     async def test_open_library_is_asked_for_the_subtitle(self):
         client = _http_client({"docs": []})
-        with patch("app.services.open_library.httpx.AsyncClient", return_value=client):
+        with patch("app.services._lookup_http.httpx.AsyncClient", return_value=client):
             await OpenLibraryService().search("Sapiens", "harari")
             await OpenLibraryService().search_by_isbn(SAPIENS_ISBN)
         for call in client.get.await_args_list:
