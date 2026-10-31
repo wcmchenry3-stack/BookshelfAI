@@ -3,10 +3,7 @@ name: Static Frontend Checks
 on:
   pull_request:
     branches: [main, dev]
-    paths:
-      - "frontend/**"
-      - ".github/workflows/static-frontend.yml"
-      - ".github/actions/setup-frontend/**"
+    # No paths filter: the job must always report, so it can be a required check.
   push:
     branches: [dev]
 
