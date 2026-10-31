@@ -1,75 +1,49 @@
-import React from 'react';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, waitFor } from '@testing-library/react-native';
 
-import { ScanJobProvider } from '../../contexts/ScanJobContext';
-import { BannerProvider } from '../../contexts/BannerContext';
-import { useBanner } from '../../hooks/useBanner';
-import { useScanJobs } from '../../hooks/useScanJobs';
+import type { useScanJobs } from '../../hooks/useScanJobs';
+import { reconnectAndDrain, renderScanJobs, renderScanJobsWithBanner } from '../helpers/providers';
+import {
+  queuedImageJob,
+  queuedJob,
+  refusal,
+  resetScanMocks,
+  scanMocks,
+  scanOk,
+} from '../helpers/scanJobMocks';
 
-const mockPost = jest.fn();
-jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
-jest.mock('../../lib/api', () => ({
-  api: { post: (...a: unknown[]) => mockPost(...a), get: jest.fn() },
-}));
+jest.mock('../../hooks/useAuth', () => require('../helpers/scanJobMocks').authedModule());
+jest.mock('../../lib/api', () => require('../helpers/scanJobMocks').scanApiModule());
+jest.mock('../../lib/scanJobStorage', () => require('../helpers/scanJobMocks').scanStorageModule());
+jest.mock('@react-native-community/netinfo', () =>
+  require('../helpers/scanJobMocks').netInfoModule()
+);
+jest.mock('expo-crypto', () => require('../helpers/scanJobMocks').cryptoModule());
 
-const mockSaveJobs = jest.fn();
-const mockLoadJobs = jest.fn();
-const mockNetFetch = jest.fn();
-let mockNetListener: ((s: { isConnected: boolean }) => void) | null = null;
-jest.mock('../../lib/scanJobStorage', () => ({
-  loadJobs: () => mockLoadJobs(),
-  saveJobs: (...a: unknown[]) => mockSaveJobs(...a),
-  clearJobs: jest.fn(),
-  sweepOrphanedScanFiles: () => Promise.resolve(0),
-  deleteScanImage: jest.fn(),
-}));
+const {
+  post: mockPost,
+  saveJobs: mockSaveJobs,
+  loadJobs: mockLoadJobs,
+  netFetch: mockNetFetch,
+} = scanMocks;
 
-jest.mock('@react-native-community/netinfo', () => ({
-  __esModule: true,
-  default: {
-    fetch: () => mockNetFetch(),
-    addEventListener: (cb: (s: { isConnected: boolean }) => void) => {
-      mockNetListener = cb;
-      return () => {};
-    },
-  },
-}));
+const OK = scanOk();
 
-let mockUuid = 0;
-jest.mock('expo-crypto', () => ({ randomUUID: () => `mockUuid-${++mockUuid}` }));
-
-function wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <BannerProvider>
-      <ScanJobProvider>{children}</ScanJobProvider>
-    </BannerProvider>
-  );
+/** Start one image scan inside `act`. */
+async function startPhoto(scan: Pick<ReturnType<typeof useScanJobs>, 'startScan'>, uri: string) {
+  await act(async () => {
+    await scan.startScan('image', uri);
+  });
 }
-
-function refusal(status: number, detail: string, extra = {}, headers = {}) {
-  return { response: { status, data: { detail, ...extra }, headers } };
-}
-
-const OK = {
-  data: {
-    books: [{ title: 'Dune', author: 'Herbert' }],
-    enhanced: false,
-    enhanced_scans_remaining: 5,
-  },
-};
 
 async function setup() {
-  const hook = await renderHook(() => useScanJobs(), { wrapper });
+  const hook = await renderScanJobs();
   await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
   return hook;
 }
 
 beforeEach(() => {
   jest.resetAllMocks();
-  mockUuid = 0;
-  mockSaveJobs.mockResolvedValue(undefined);
-  mockLoadJobs.mockResolvedValue([]);
-  mockNetFetch.mockResolvedValue({ isConnected: true });
+  resetScanMocks();
 });
 
 afterEach(() => {
@@ -80,11 +54,8 @@ describe('scan refusals', () => {
   it('402 scan_limit_reached from an older server is a generic failure, not a notice', async () => {
     // #582: there is no monthly limit; the generic failure banner (retry /
     // save for later) is the fallback for a 402 an older server still sends.
-    const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
-      wrapper,
-    });
+    const { result } = await renderScanJobsWithBanner();
     await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
-    const { result } = hook;
     mockPost.mockRejectedValueOnce(
       refusal(402, 'scan_limit_reached', { limit: 5, used: 5, period_end: '2026-11-01' })
     );
@@ -101,9 +72,7 @@ describe('scan refusals', () => {
   it('429 daily_scan_limit sets the daily notice', async () => {
     const { result } = await setup();
     mockPost.mockRejectedValueOnce(refusal(429, 'daily_scan_limit', {}, { 'retry-after': '3600' }));
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     expect(result.current.scanNotice?.kind).toBe('daily_limit');
     const n = result.current.scanNotice as { resetsAt: number };
     expect(Math.abs(n.resetsAt - (Date.now() + 3_600_000))).toBeLessThan(5000);
@@ -114,9 +83,7 @@ describe('scan refusals', () => {
     async (code) => {
       const { result } = await setup();
       mockPost.mockRejectedValueOnce(refusal(503, code));
-      await act(async () => {
-        await result.current.startScan('image', 'file:///a.jpg');
-      });
+      await startPhoto(result.current, 'file:///a.jpg');
       expect(result.current.scanNotice).toEqual({
         kind: 'paused',
       });
@@ -136,11 +103,8 @@ describe('scan refusals', () => {
   it.each(ENHANCED_REFUSALS)(
     '%s falls back without a notice and hides the offer',
     async (_name, err, text) => {
-      const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
-        wrapper,
-      });
+      const { result } = await renderScanJobsWithBanner();
       await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
-      const { result } = hook;
       mockPost.mockResolvedValueOnce({ data: { ...OK.data, books: [] } });
       await act(async () => {
         await result.current.scan.startScan('image', 'file:///a.jpg');
@@ -165,9 +129,7 @@ describe('scan refusals', () => {
     async (_name, err) => {
       const { result } = await setup();
       mockPost.mockResolvedValueOnce(OK);
-      await act(async () => {
-        await result.current.startScan('image', 'file:///a.jpg');
-      });
+      await startPhoto(result.current, 'file:///a.jpg');
       mockPost.mockRejectedValueOnce(err);
       await act(async () => {
         await result.current.requestEnhancedScan(result.current.jobs[0].id);
@@ -180,11 +142,8 @@ describe('scan refusals', () => {
   );
 
   it('offers the enhanced re-scan only when the server reports scans left', async () => {
-    const hook = await renderHook(() => ({ scan: useScanJobs(), banner: useBanner() }), {
-      wrapper,
-    });
+    const { result } = await renderScanJobsWithBanner();
     await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
-    const { result } = hook;
     // A Free user: the server reports null (enhanced is Premium-only).
     mockPost.mockResolvedValueOnce({
       data: { books: [], enhanced: false, enhanced_scans_remaining: null },
@@ -218,15 +177,11 @@ describe('scan refusals', () => {
   it('a successful scan clears the notice and bumps the usage refresh key', async () => {
     const { result } = await setup();
     mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     const before = result.current.usageRefreshKey;
     mockPost.mockResolvedValueOnce(OK);
     mockPost.mockResolvedValueOnce(OK); // the automatic resend of the refused photo
-    await act(async () => {
-      await result.current.startScan('image', 'file:///b.jpg');
-    });
+    await startPhoto(result.current, 'file:///b.jpg');
     expect(result.current.scanNotice).toBeNull();
     expect(result.current.usageRefreshKey).toBeGreaterThan(before);
   });
@@ -234,9 +189,7 @@ describe('scan refusals', () => {
   it('dismissScanNotice clears the notice', async () => {
     const { result } = await setup();
     mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     await act(async () => result.current.dismissScanNotice());
     expect(result.current.scanNotice).toBeNull();
   });
@@ -296,15 +249,11 @@ describe('refusal follow-ups', () => {
     const { result } = await setup();
     const k0 = result.current.usageRefreshKey;
     mockPost.mockRejectedValueOnce({ response: { status: 500, data: {} } });
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     const k1 = result.current.usageRefreshKey;
     expect(k1).toBeGreaterThan(k0);
     mockPost.mockRejectedValueOnce({ message: 'Network Error', response: undefined });
-    await act(async () => {
-      await result.current.startScan('image', 'file:///b.jpg');
-    });
+    await startPhoto(result.current, 'file:///b.jpg');
     expect(result.current.usageRefreshKey).toBe(k1);
   });
 
@@ -312,18 +261,14 @@ describe('refusal follow-ups', () => {
     const { result } = await setup();
     const k0 = result.current.usageRefreshKey;
     mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     expect(result.current.usageRefreshKey).toBe(k0);
   });
 
   it('a refusal leaves the job queued, counted as pending, with no retry budget used', async () => {
     const { result } = await setup();
     mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     expect(result.current.jobs[0]).toEqual(
       expect.objectContaining({ status: 'queued', error: 'paused', retryCount: 0 })
     );
@@ -354,9 +299,7 @@ describe('refusal follow-ups', () => {
   it('a refused enhanced re-scan restores earlier results silently and shows the notice', async () => {
     const { result } = await setup();
     mockPost.mockResolvedValueOnce(OK);
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     mockPost.mockRejectedValueOnce(refusal(429, 'daily_scan_limit', {}, { 'retry-after': '60' }));
     await act(async () => {
       await result.current.requestEnhancedScan(result.current.jobs[0].id);
@@ -372,9 +315,7 @@ describe('refusal follow-ups', () => {
   it('daily limit without Retry-After resets at the next UTC midnight', async () => {
     const { result } = await setup();
     mockPost.mockRejectedValueOnce(refusal(429, 'daily_scan_limit'));
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     const n = result.current.scanNotice as { resetsAt: number };
     const d = new Date();
     expect(n.resetsAt).toBe(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1));
@@ -398,23 +339,12 @@ describe('refusal follow-ups', () => {
   });
 
   it('stops draining on the daily limit and leaves the rest queued', async () => {
-    const queued = [1, 2, 3].map((i) => ({
-      id: `q-${i}`,
-      type: 'image' as const,
-      status: 'queued' as const,
-      createdAt: i,
-      imageUri: `file:///q${i}.jpg`,
-      retryCount: 0,
-    }));
+    const queued = [1, 2, 3].map((i) => queuedJob(i));
     mockLoadJobs.mockResolvedValue(queued);
     mockPost.mockRejectedValue(refusal(429, 'daily_scan_limit', {}, { 'retry-after': '60' }));
     const { result } = await setup();
     jest.useFakeTimers();
-    await act(async () => {
-      mockNetListener?.({ isConnected: true });
-      // Well past the 2 s delay between drained jobs.
-      await jest.advanceTimersByTimeAsync(10000);
-    });
+    await reconnectAndDrain();
     expect(result.current.scanNotice?.kind).toBe('daily_limit');
     expect(mockPost).toHaveBeenCalledTimes(1);
     const statuses = result.current.jobs.map((j) => j.status).sort();
@@ -423,38 +353,15 @@ describe('refusal follow-ups', () => {
 
   it('an enhanced-only switch-off still lets queued standard photos through', async () => {
     mockLoadJobs.mockResolvedValue([
-      {
-        id: 'q-enh',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 1,
-        imageUri: 'file:///e.jpg',
-        retryCount: 0,
-        enhanced: true,
-      },
-      {
-        id: 'q-enh-2',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 2,
-        imageUri: 'file:///e2.jpg',
-        retryCount: 0,
-        enhanced: true,
-      },
-      {
-        id: 'q-std',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 3,
-        imageUri: 'file:///s.jpg',
-        retryCount: 0,
-      },
+      queuedImageJob('q-enh', 1, 'file:///e.jpg', { enhanced: true }),
+      queuedImageJob('q-enh-2', 2, 'file:///e2.jpg', { enhanced: true }),
+      queuedImageJob('q-std', 3, 'file:///s.jpg'),
     ]);
     mockPost.mockRejectedValueOnce(refusal(503, 'enhanced_scan_disabled')).mockResolvedValue(OK);
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10000);
     });
     // The refused enhanced photo, then the standard one; the second enhanced
@@ -471,38 +378,15 @@ describe('refusal follow-ups', () => {
     ['429 enhanced_throttled', refusal(429, 'enhanced_throttled', {}, { 'retry-after': '60' })],
   ])('%s still lets queued standard photos through', async (_name, err) => {
     mockLoadJobs.mockResolvedValue([
-      {
-        id: 'q-enh',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 1,
-        imageUri: 'file:///e.jpg',
-        retryCount: 0,
-        enhanced: true,
-      },
-      {
-        id: 'q-enh-2',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 2,
-        imageUri: 'file:///e2.jpg',
-        retryCount: 0,
-        enhanced: true,
-      },
-      {
-        id: 'q-std',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 3,
-        imageUri: 'file:///s.jpg',
-        retryCount: 0,
-      },
+      queuedImageJob('q-enh', 1, 'file:///e.jpg', { enhanced: true }),
+      queuedImageJob('q-enh-2', 2, 'file:///e2.jpg', { enhanced: true }),
+      queuedImageJob('q-std', 3, 'file:///s.jpg'),
     ]);
     mockPost.mockRejectedValueOnce(err).mockResolvedValue(OK);
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10000);
     });
     // The refused enhanced photo, then the standard one; the second enhanced
@@ -519,22 +403,8 @@ describe('refusal follow-ups', () => {
     const { api } = jest.requireMock('../../lib/api') as { api: { get: jest.Mock } };
     api.get.mockResolvedValue({ data: [] });
     mockLoadJobs.mockResolvedValue([
-      {
-        id: 'q-img',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 1,
-        imageUri: 'file:///q.jpg',
-        retryCount: 0,
-      },
-      {
-        id: 'q-img-2',
-        type: 'image' as const,
-        status: 'queued' as const,
-        createdAt: 2,
-        imageUri: 'file:///q2.jpg',
-        retryCount: 0,
-      },
+      queuedImageJob('q-img', 1, 'file:///q.jpg'),
+      queuedImageJob('q-img-2', 2, 'file:///q2.jpg'),
       {
         id: 'q-text',
         type: 'text' as const,
@@ -548,7 +418,7 @@ describe('refusal follow-ups', () => {
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10000);
     });
     // One refused photo, the second photo skipped, the text search sent.
@@ -562,15 +432,6 @@ describe('refusal follow-ups', () => {
 });
 
 describe('drain races', () => {
-  const queuedJob = (i: number) => ({
-    id: `q-${i}`,
-    type: 'image' as const,
-    status: 'queued' as const,
-    createdAt: i,
-    imageUri: `file:///q${i}.jpg`,
-    retryCount: 0,
-  });
-
   it('a reconnect drain does not send a job startScan is still checking connectivity for', async () => {
     const { result } = await setup();
     let release: (v: { isConnected: boolean }) => void = () => {};
@@ -582,7 +443,7 @@ describe('drain races', () => {
     });
     // Job is pending, NetInfo.fetch is still unresolved; reconnect fires.
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
     });
     await act(async () => {
       release({ isConnected: true });
@@ -597,7 +458,7 @@ describe('drain races', () => {
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(100);
     });
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -613,15 +474,6 @@ describe('drain races', () => {
 });
 
 describe('Try again resumes the queue', () => {
-  const queuedJob = (i: number, extra = {}) => ({
-    id: `q-${i}`,
-    type: 'image' as const,
-    status: 'queued' as const,
-    createdAt: i,
-    imageUri: `file:///q${i}.jpg`,
-    retryCount: 0,
-    ...extra,
-  });
   const three = () => [1, 2, 3].map((i) => queuedJob(i));
 
   it('resumes the remaining queued jobs after a drain stopped on a refusal', async () => {
@@ -630,7 +482,7 @@ describe('Try again resumes the queue', () => {
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10000);
     });
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -651,7 +503,7 @@ describe('Try again resumes the queue', () => {
     const { result } = await setup();
     jest.useFakeTimers();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
       await jest.advanceTimersByTimeAsync(10000);
     });
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -669,7 +521,7 @@ describe('Try again resumes the queue', () => {
     mockPost.mockResolvedValue(OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
     });
     await waitFor(() => expect(result.current.jobs[0].status).toBe('complete'));
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -682,7 +534,7 @@ describe('Try again resumes the queue', () => {
     mockPost.mockResolvedValue(OK);
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
     });
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
     jest.useFakeTimers();
@@ -704,7 +556,7 @@ describe('Try again resumes the queue', () => {
     mockPost.mockRejectedValue(refusal(503, 'scan_disabled'));
     const { result } = await setup();
     await act(async () => {
-      mockNetListener?.({ isConnected: true });
+      scanMocks.netListener?.({ isConnected: true });
     });
     await waitFor(() => expect(result.current.scanNotice?.kind).toBe('paused'));
     expect(result.current.jobs[0]).toEqual(
@@ -715,14 +567,10 @@ describe('Try again resumes the queue', () => {
   it('a later successful scan sends the earlier refused photo automatically', async () => {
     const { result } = await setup();
     mockPost.mockRejectedValueOnce(refusal(503, 'scan_disabled'));
-    await act(async () => {
-      await result.current.startScan('image', 'file:///a.jpg');
-    });
+    await startPhoto(result.current, 'file:///a.jpg');
     expect(result.current.jobs[0].status).toBe('queued');
     mockPost.mockResolvedValue(OK);
-    await act(async () => {
-      await result.current.startScan('image', 'file:///b.jpg');
-    });
+    await startPhoto(result.current, 'file:///b.jpg');
     // A (refused), B (ok), then A again from the automatic drain.
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(3));
     await waitFor(() =>

@@ -33,10 +33,9 @@ from app.auth.refresh_family import (
     family_of,
     is_displaced,
     is_rotated,
-    new_family_row,
     successor_row,
 )
-from app.auth.sessions import revoke_all_sessions
+from app.auth.sessions import issue_session_tokens, revoke_all_sessions
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.limiter import limiter
@@ -107,16 +106,12 @@ async def google_auth(
         )
     logger.info("Signed-in user resolved (user_id=%s)", user.id)
 
-    access_token = create_access_token(str(user.id), user.email, user.token_version)
-    refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
-    expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
-    db.add(new_family_row(user.id, jti, expires_at))
-    await db.commit()
+    tokens = await issue_session_tokens(db, user)
     logger.info("Auth successful (user_id=%s)", user.id)
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=access_token_ttl_seconds(),
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
     )
 
 

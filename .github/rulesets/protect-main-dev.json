@@ -51,7 +51,22 @@
           { "context": "expo-compat / Expo Compatibility Check" },
           { "context": "local-path-check / Local Path Detection" },
           { "context": "podfile-lock-check" },
-          { "context": "migration-guard" }
+          { "context": "migration-guard" },
+          { "context": "typecheck-frontend" },
+          { "context": "claude-policy" },
+          { "context": "android-bundle-check" },
+          { "context": "gradle-wrapper-check" },
+          { "context": "static-frontend" },
+          { "context": "repo-hygiene" },
+          { "context": "gate-main-source / Verify PR source is dev" },
+          { "context": "backend-health / Backend Health" },
+          { "context": "sentry-check / Sentry Check" },
+          { "context": "openai-policy / OpenAI API Policy Check" },
+          { "context": "openai-policy-check / OpenAI API Policy Check" },
+          { "context": "gemini-policy-check / Gemini API Policy Check" },
+          { "context": "provenance-coverage / Provenance Coverage" },
+          { "context": "feedback-token-lint / Feedback Token Lint" },
+          { "context": "design-token-check / Design Tokens & Accessibility Check" }
         ]
       }
     }

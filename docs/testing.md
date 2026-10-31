@@ -21,6 +21,7 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 ```
 backend/tests/
 ├── conftest.py          DATABASE_URL guard, rate-limit reset fixture, db_session fixture
+├── helpers.py           Shared auth fakes and request helpers (see "Shared helpers")
 ├── unit/                Per-module tests — mock DB via fixtures
 ├── integration/         Real-DB tests — @pytest.mark.integration, auto-skipped w/o DATABASE_URL
 ├── limits/              Scan limits matrix on real Postgres — @pytest.mark.integration (test_no_real_provider.py is unmarked)
@@ -42,6 +43,19 @@ async def test_create_user(db_session: AsyncSession):
     # ... assertions
     # implicit rollback at end of test — DB state never persists
 ```
+
+### Shared helpers
+
+Test setup that two or more files need lives in one place, so a change to a fake is made once (#816). Reach for these before copying a fixture into a new file; if the setup you need is not here and a second file will use it, add it here rather than pasting it.
+
+| Helper | Where | Use it for |
+|---|---|---|
+| `rsa_pem_pair()`, `install_jwt_keys(keys)` | `tests/helpers.py` | A throwaway RS256 key pair and the `settings` patch that makes the app sign and verify with it |
+| `FakeAuthDb`, `serve_fake_db(fake)` | `tests/helpers.py` | Database-free auth flows: one user and its refresh rows, the jti selects, `get` by primary key and the two `revoke_all_sessions` UPDATEs, with `executes` / `gets` counters. Subclass it for a test-specific hook (see `FakeDb` in `security/test_refresh_reuse.py`). Use from a fixture: `yield from serve_fake_db(FakeAuthDb())` |
+| `sign_in(client, claims)`, `bearer(token)` | `tests/helpers.py` | `POST /auth/google` with Google verification stubbed, and the `Authorization` header |
+| `_keys` (module-scoped fixture) | `tests/security/conftest.py` | One key pair per security test module. It is not autouse: a module adds its own autouse `_jwt_settings` fixture that calls `install_jwt_keys(_keys)` |
+
+Rules: a helper holds setup, never an assertion about the behaviour under test, and a test keeps its own `assert` lines. A test may extend a shared fake by subclassing but must not weaken it.
 
 **DB guard** — `pytest_collection_modifyitems` auto-skips tests tagged `@pytest.mark.integration` when `DATABASE_URL` isn't a real Postgres URL. That keeps CI fast on the default Python-test job while the integration job passes its own real DB URL.
 
@@ -184,8 +198,35 @@ async def test_dedup_across_editions(db_session: AsyncSession):
 ```
 frontend/__tests__/
 ├── unit/            Screen + hook + context + component unit tests
-└── integration/     Cross-provider flows (e.g. ScanCaptureFlow)
+├── integration/     Cross-provider flows (e.g. ScanCaptureFlow)
+└── helpers/         Shared mocks, fixtures and provider wrappers (not tests; ignored by Jest)
 ```
+
+### Shared helpers (`__tests__/helpers/`)
+
+`package.json → jest.testPathIgnorePatterns` keeps this folder out of the test run. Use these before copying a mock block into a new test file (#816).
+
+| File | Exports | Use it for |
+|---|---|---|
+| `scanJobMocks.ts` | `scanMocks` (spies: `post`, `get`, `loadJobs`, `saveJobs`, `netFetch`, `captureMessage`, `captureException`, plus the registered `netListener` and the uuid counter), `resetScanMocks()`, the `jest.mock` factories `authedModule`, `scanApiModule`, `scanStorageModule`, `netInfoModule`, `sentryModule`, `cryptoModule`, and the fixtures `refusal`, `scanOk`, `queuedImageJob`, `queuedJob` | Every test that renders `ScanJobProvider`. It imports no app code, so the factories can be `require`d while app modules load |
+| `providers.tsx` | `ScanJobsWrapper`, `renderScanJobs`, `renderScanJobsWithBanner`, `reconnectAndDrain` | The Banner + ScanJob provider wrapper for `renderHook`, and firing the NetInfo listener then running the drain |
+| `wishlistFlow.tsx` | `book`, `httpError`, `scanAndAdd` | The "scan a photo, review, add to the wishlist" flow behind `POST /wishlist` refusal tests |
+| `screenMocks.tsx` | `themeModule`, `loadingSpinnerModule`, `focusEffectRouterModule`, `userBookRow` | Library screen tests: the `useTheme` token set, a spinner stand-in, `useFocusEffect` on mount, and a `/user-books` row |
+
+`jest.mock` calls stay in the test file, because babel-jest hoists them above imports. Pass the helper in through a factory that `require`s it:
+
+```typescript
+jest.mock('../../lib/api', () => require('../helpers/scanJobMocks').scanApiModule());
+jest.mock('../../lib/scanJobStorage', () => require('../helpers/scanJobMocks').scanStorageModule());
+
+const { post: mockPost } = scanMocks;          // alias the spies the test bodies use
+beforeEach(() => {
+  jest.resetAllMocks();                          // then restore the defaults
+  resetScanMocks();
+});
+```
+
+`no-require-imports` is off under `__tests__/**`, so the `require` inside a factory is allowed. Keep `expect(...)` calls in the test file: a helper sets up state and never asserts the behaviour under test (the one exception is `scanAndAdd`, whose first step waits for the hook to mount).
 
 Locale guards in `unit/`: `localeKeyParity.test.ts` (every `en` key exists in every locale, plural-aware) and `localeCharacterLimits.test.ts` (`_meta` character limits).
 
@@ -333,7 +374,7 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres) |
 | `pytest -m security` (`security.yml`, job `pytest-security`) | Separate run of the security marker (security tests also run in `test-python` on every PR). Only on PRs to `dev` that touch the paths listed in "When the security suite runs", plus weekly (Monday 08:00 UTC) and manual dispatch |
 | `lint-python` | `black --check` + `ruff` |
-| `lint-frontend` | `eslint` + `prettier --check` |
+| `lint-frontend` | `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint) |
 | `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
 | `cve-python` | `pip-audit` |
 | `cve-frontend` | `npm audit` |
@@ -345,10 +386,17 @@ Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-fro
 | `ios-build-check` | Full `xcodebuild archive` (no signing). Runs only when `native` is true and the PR is not a draft |
 | `android-build-check` | Full `./gradlew assembleDebug`. Runs only when `native` is true and the PR is not a draft |
 | `native-build-gate` | Always runs; the required check standing in for the four conditional jobs above (passes if each succeeded or was skipped) |
-| `repo-hygiene` | Own workflow (`repo-hygiene.yml`): jscpd copy-paste threshold, 600-line file cap, offline docs link and anchor check. A weekly `external-links` job checks external URLs (not a PR gate). See "Repo hygiene checks" below |
-| `static-frontend` | Own workflow (`static-frontend.yml`; PRs to `dev`/`main` touching `frontend/**`, and pushes to `dev`): `npm ci` then `npm run knip` (#768) |
+| `repo-hygiene` | Own workflow (`repo-hygiene.yml`): jscpd copy-paste threshold, 600-line file cap, backend dead-code check (vulture), offline docs link and anchor check. A weekly `external-links` job checks external URLs (not a PR gate). See "Repo hygiene checks" below |
+| `static-frontend` | Own workflow (`static-frontend.yml`; every PR to `dev`/`main`, no paths filter so it can be required, and pushes to `dev`): `npm ci` then `npm run knip` (#768, #771) |
 | `design-token-check` | Own workflow (`design-token-check.yml`, calls the shared `called-design-token-check.yml`): the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. Runs on every PR to `dev`/`main` (opened, edited, synchronize, reopened), so it covers all frontend paths. It stays a separate workflow; do not fold it into `static-frontend.yml` |
 | `migration-guard` | Own workflow (`migration-guard.yml`, re-runs on label changes): `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`). Listed in the required checks of `.github/rulesets/protect-main-dev.json`; the owner must apply the ruleset in GitHub settings. On PRs into `main` it passes without scanning (already scanned on the feature PRs into `dev`) |
+
+### Composite setup actions (#770)
+
+Jobs that set up Node or Python use two local composite actions instead of repeating `setup-node`/`setup-python` steps. Pins and cache settings live only in these files. Each one needs `actions/checkout` first.
+
+- `.github/actions/setup-frontend/action.yml`: `actions/setup-node` with the npm cache (`frontend/package-lock.json`), then `npm ci` in `frontend/`. Inputs: `node-version` (default `'22'`; pass `'20'` only where a job pins 20, as `npm audit` in `security.yml` does) and `install` (default `'true'`; `'false'` sets up Node and the cache only).
+- `.github/actions/setup-backend/action.yml`: `actions/setup-python` (`python-version` default `'3.12'`) with the pip cache (`backend/requirements*.txt`), then `pip install -r` for each file in `requirements`. Inputs: `requirements` (space-separated, relative to `backend/`, default `'requirements.txt'`; `''` installs nothing) and `python-version`.
 
 ### Conditional bundle and native build checks
 
@@ -356,7 +404,7 @@ The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff 
 
 | Output | True when the PR touches | Gates |
 |---|---|---|
-| `frontend` | `frontend/**` or `.github/workflows/ci.yml` | `js-bundle-check`, `android-bundle-check` |
+| `frontend` | `frontend/**`, `.github/workflows/ci.yml` or `.github/actions/setup-frontend/**` | `js-bundle-check`, `android-bundle-check` |
 | `native` | `frontend/ios/**` (Podfile, `ci_scripts/`), `frontend/android/**` (Gradle files), `frontend/plugins/**`, `frontend/app.json`, `frontend/app.config.*`, `frontend/package.json`, `frontend/package-lock.json`, or `.github/workflows/ci.yml` | `ios-build-check`, `android-build-check` |
 
 - On `push` (dev/main) and `workflow_call` (Deploy) there is no PR base, so both outputs are `true` and everything always runs.
@@ -365,13 +413,22 @@ The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff 
 - The required check is `native-build-gate` (always runs, `if: always()`), not `ios-build-check / Xcode Build (no signing)`. A reusable-workflow job skipped by `if:` reports under the plain job name (`ios-build-check`, skipped), never under the `<job> / <inner job>` name, so the inner name would never report on a skipped PR and block merge. The gate passes when `ios-build-check`, `android-build-check`, `js-bundle-check` and `android-bundle-check` each succeeded or were skipped, and fails on failure or cancellation, or if `detect-changes` did not succeed.
 - `podfile-lock-check` and `gradle-wrapper-check` are unchanged.
 
+### Required status checks (#771)
+
+The required checks live in `.github/rulesets/protect-main-dev.json` (the owner applies the ruleset in GitHub settings by hand). A context must be exactly what GitHub reports: an in-repo job is its `name:` (else its job id); a reusable-workflow job is `<caller job id> / <inner job name>`.
+
+- A job skipped by `if:` still reports (as skipped) and passes. A workflow that does not run at all because of `on.pull_request.paths` never reports, so it blocks every PR outside those paths: never require a path-filtered workflow unless its filter is removed. This is why `static-frontend.yml` has no `paths:` filter. `e2e-web`, everything in `security.yml`, `doc-reminder`, `external-links`, `OWASP ZAP Active Scan` and `detect-changes` are deliberately not required.
+- `ios-build-check` and `android-build-check` are never required directly: when they run they report `ios-build-check / Xcode Build (no signing)` and `android-build-check / Gradle Build (Debug)`, when skipped the plain ids, so no single name always reports. `native-build-gate` is the required stand-in for both (and for the bundle checks); this is how android-build-check is covered.
+- `backend/tests/unit/test_ruleset_required_checks.py` (run by `test-python`) fails when a required context matches no workflow job, when its workflow has a `paths`/`paths-ignore` filter or does not run on PRs into `dev`, or when a native build job is required directly.
+
 ### Fixing or ignoring a knip finding (#768)
 
 `frontend/knip.json` configures knip: entry points are `app/**` (Expo Router), `__tests__/**` (Jest), `plugins/*.js`, `scripts/*.js` and `components/*.web.tsx` (platform files); the Jest, Babel and Expo plugins add `jest.setup.ts`, `babel.config.js` and the `app.json` plugin references.
 
 - Unused file, export or type: delete it, or drop the `export` keyword if the symbol is still used in its own file. A test counts as a user, so an export used only by tests is not reported.
 - Unused or unlisted dependency: remove it from `package.json`, or add it to `package.json` if it is really imported.
-- False positive (read at runtime, a native or config-only reference, a dynamic `require`): add it to `ignore`, `ignoreDependencies`, `ignoreUnresolved` or `ignoreIssues` in `knip.json` with a `//` comment saying why. No blanket globs.
+- File read at runtime rather than imported (e.g. `src/i18n/glossary.ts`, read by `scripts/translate.js`): declare it in `entry`, not `ignore`.
+- Peer or native-only dependency that is never imported: add it to `ignoreDependencies` with a one-line `//` comment above it saying who loads it and why it is not imported. An entry without a reason is not accepted. `ignore`, `ignoreIssues` and `ignoreUnresolved` are empty and stay empty: fix the code (for a test that asserts a file is gone, use `fs.existsSync`, not an unresolvable `require`). No blanket globs.
 
 Required checks are listed in `.github/rulesets/protect-main-dev.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
 
@@ -381,10 +438,11 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 
 ## Repo hygiene checks
 
-`.github/workflows/repo-hygiene.yml` (job `repo-hygiene`, on every PR and push to `dev`/`main`) runs three checks (#769). It is a separate workflow from `ci.yml`. The tools run by exact version (`JSCPD_VERSION`, `LYCHEE_VERSION` in the workflow), not through third-party actions; the lychee tarball is checked against a pinned sha256 (`LYCHEE_SHA256`). Bump the version and the checksum together.
+`.github/workflows/repo-hygiene.yml` (job `repo-hygiene`, on every PR and push to `dev`/`main`) runs four checks (#769, and the vulture check from #813). It is a separate workflow from `ci.yml`. The tools run by exact version (`JSCPD_VERSION`, `LYCHEE_VERSION` in the workflow), not through third-party actions; the lychee tarball is checked against a pinned sha256 (`LYCHEE_SHA256`). Bump the version and the checksum together.
 
 - **Copy-paste detection (jscpd).** `.jscpd.json` at the repo root scans `backend/app` and `frontend/{app,components,contexts,hooks,lib}` (tests and locales excluded). The `threshold` is a percentage of duplicated lines, set just above the measured level (1.42% when added, threshold 1.6). New duplication that pushes the total over it fails the job. The JSON report is uploaded as the `jscpd-report` artifact. To run it locally: `npx jscpd@5.4.0 --config .jscpd.json` from the repo root; the report lands in `jscpd-report/` (gitignored). When you remove duplication, lower `threshold` to just above the new measured percentage so the gain is kept. Never raise it to fit new copy-pasted code; extract the shared code instead.
 - **File-length cap.** `python3 scripts/check_file_length.py` fails when a `.py`, `.ts` or `.tsx` file is over 600 lines. Tests, `__tests__`, locales, generated files, `backend/alembic/versions`, `node_modules`, `ios/` and `android/` are not counted. Files that were already over the cap are in `scripts/file_length_allowlist.txt` (`path max_lines`), each capped at its length when it was listed: it can shrink but not grow. When you shrink one, lower its number (the script warns about stale entries; `--strict` makes that an error); delete the line once the file is under 600. Do not add a file to the allowlist to make a new long file pass; split it. Tested by `backend/tests/unit/test_check_file_length.py`.
+- **Backend dead code (vulture, #813).** From `backend/`: `vulture app --min-confidence 60` (the CI command, after `pip install -r requirements-dev.txt`, which pins `vulture==`). Config is `[tool.vulture]` in `backend/pyproject.toml`: `ignore_decorators` covers route handlers (`@router.*`, `@app.*`) and pydantic validators and serializers, and `ignore_names` is the whitelist. Vulture matches a name everywhere in `app/`, so keep each entry specific. An entry is for a name used at runtime that static analysis cannot see (a pydantic response or request field, an ORM column, a settings key read by `getattr`, a framework hook), and each one needs a one-line comment saying how it is used. Do not whitelist to get a PR through: delete the code, and its tests if they were its only callers (with owner sign-off), or fix the caller. When you delete code vulture flagged, remove its whitelist entry in the same change. Entries marked "PENDING" are pending owner decision #830 (tested-only functions and unread settings); do not add to that group. CI installs only the vulture pin into a venv, not the backend's runtime deps, because vulture reads the AST.
 - **Docs links (lychee).** `lychee.toml` at the repo root. On PRs: `lychee --config lychee.toml --offline --include-fragments 'docs/**/*.md' README.md CLAUDE.md`, i.e. relative links and `#anchors` only, no network. External URLs are checked only by the `external-links` job, which runs weekly (Monday 06:17 UTC) and on manual dispatch and is not a PR gate. A link that cannot resolve in CI on purpose (for example the owner's `~/.claude/standards/` files) goes in `exclude` in `lychee.toml`, with a comment.
 
 ## Coverage targets

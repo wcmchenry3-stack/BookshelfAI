@@ -26,6 +26,7 @@ from app.services.enrichment import (
     EnrichmentService,
     reading_match_score,
 )
+from app.services.enrichment import service as enrichment_service
 from app.services.google_books import GoogleBooksService
 from app.services.open_library import OpenLibraryService
 
@@ -435,7 +436,7 @@ class TestServicesPickTheBestResult:
         service = EnrichmentService()
         client = _http_client({"docs": docs})
         with (
-            patch("app.services.open_library.httpx.AsyncClient", return_value=client),
+            patch("app.services._lookup_http.httpx.AsyncClient", return_value=client),
             patch.object(service.gb, "search", AsyncMock(return_value=None)),
         ):
             book = await _enrich_one(service, self.CANDIDATE)
@@ -456,7 +457,7 @@ class TestServicesPickTheBestResult:
         service = EnrichmentService()
         client = _http_client({"items": items})
         with (
-            patch("app.services.google_books.httpx.AsyncClient", return_value=client),
+            patch("app.services._lookup_http.httpx.AsyncClient", return_value=client),
             patch.object(service.ol, "search", AsyncMock(return_value=None)),
         ):
             book = await _enrich_one(service, self.CANDIDATE)
@@ -469,7 +470,7 @@ class TestServicesPickTheBestResult:
         service = EnrichmentService()
         # Both services use the same httpx module: one fake answers both.
         client = _http_client({"docs": [OTHER_DOC], "items": [OTHER_VOLUME]})
-        with patch("app.services.open_library.httpx.AsyncClient", return_value=client):
+        with patch("app.services._lookup_http.httpx.AsyncClient", return_value=client):
             book = await _enrich_one(service, self.CANDIDATE)
         assert client.get.await_count == 2
         assert book.open_library_work_id is None and book.google_books_id is None
@@ -478,11 +479,11 @@ class TestServicesPickTheBestResult:
         ol_client = _http_client({"docs": []})
         gb_client = _http_client({})
         with patch(
-            "app.services.open_library.httpx.AsyncClient", return_value=ol_client
+            "app.services._lookup_http.httpx.AsyncClient", return_value=ol_client
         ):
             assert await OpenLibraryService().search('Say "Hi"', "", limit=50) is None
         with patch(
-            "app.services.google_books.httpx.AsyncClient", return_value=gb_client
+            "app.services._lookup_http.httpx.AsyncClient", return_value=gb_client
         ):
             assert await GoogleBooksService().search('Say "Hi"', " ", limit=50) is None
         ol_params = ol_client.get.await_args.kwargs["params"]
@@ -504,7 +505,7 @@ class TestDeadlines:
         return AsyncMock(side_effect=call)
 
     async def test_overall_deadline_returns_the_unsigned_reading(self, monkeypatch):
-        monkeypatch.setattr(enrichment, "ENRICHMENT_DEADLINE_S", 0.2)
+        monkeypatch.setattr(enrichment_service, "ENRICHMENT_DEADLINE_S", 0.2)
         service = _service(ol_title=CRISIS_DOC, gb_title=CRISIS_VOLUME)
         dune = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.7)
 
@@ -530,7 +531,7 @@ class TestDeadlines:
         assert service.last_complete is False
 
     async def test_a_slow_call_times_out_alone(self, monkeypatch):
-        monkeypatch.setattr(enrichment, "PROVIDER_CALL_TIMEOUT_S", 0.1)
+        monkeypatch.setattr(enrichment_service, "PROVIDER_CALL_TIMEOUT_S", 0.1)
         service = _service(gb_isbn=CRISIS_VOLUME, ol_title=CRISIS_DOC)
         service.ol.search_by_isbn = self._slow(CRISIS_DOC)
         book = await _enrich_one(service, _reading(isbn_13=CRISIS_ISBN))
@@ -685,7 +686,7 @@ class TestOneSidedSubtitles:
 
     async def test_open_library_is_asked_for_the_subtitle(self):
         client = _http_client({"docs": []})
-        with patch("app.services.open_library.httpx.AsyncClient", return_value=client):
+        with patch("app.services._lookup_http.httpx.AsyncClient", return_value=client):
             await OpenLibraryService().search("Sapiens", "harari")
             await OpenLibraryService().search_by_isbn(SAPIENS_ISBN)
         for call in client.get.await_args_list:
@@ -1047,14 +1048,14 @@ class TestRound4Robustness:
         assert book.editions[0].isbn_13 == SAPIENS_ISBN
 
     async def test_an_error_in_a_chain_is_a_lookup_failure(self, monkeypatch):
-        real = enrichment._isbn_record
+        real = enrichment_service._isbn_record
 
         def flaky(candidate, found, score, parts, isbns):
             if parts is enrichment._gb_parts:
                 raise TypeError("malformed record")
             return real(candidate, found, score, parts, isbns)
 
-        monkeypatch.setattr(enrichment, "_isbn_record", flaky)
+        monkeypatch.setattr(enrichment_service, "_isbn_record", flaky)
         service = _service(ol_isbn=SAPIENS_DOC, gb_isbn=SAPIENS_VOLUME)
         candidate = BookCandidate(
             title="Sapiens", author="Harari", confidence=0.9, isbn_13=SAPIENS_ISBN

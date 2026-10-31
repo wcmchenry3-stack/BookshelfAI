@@ -36,7 +36,7 @@ export function InAppBanner() {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismiss is re-created every render; the effect must re-run only when the banner changes
   }, [banner]);
 
   function dismiss() {

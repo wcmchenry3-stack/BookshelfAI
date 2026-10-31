@@ -1,10 +1,8 @@
-import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
-import { ScanJobProvider } from '../../contexts/ScanJobContext';
-import { BannerProvider } from '../../contexts/BannerContext';
 import { useBanner } from '../../hooks/useBanner';
 import { useScanJobs } from '../../hooks/useScanJobs';
+import { ScanJobsWrapper as wrapper } from '../helpers/providers';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -71,12 +69,20 @@ jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: moc
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function wrapper({ children }: { children: React.ReactNode }) {
-  return (
-    <BannerProvider>
-      <ScanJobProvider>{children}</ScanJobProvider>
-    </BannerProvider>
-  );
+type ScanHook = { current: ReturnType<typeof useScanJobs> };
+
+/** Run a text search for "Dune" inside `act`. */
+async function searchDune(result: ScanHook) {
+  await act(async () => {
+    await result.current.startScan('text', undefined, 'Dune');
+  });
+}
+
+/** Open the first job for review inside `act`. */
+async function reviewFirstJob(result: ScanHook) {
+  await act(() => {
+    result.current.reviewJob(result.current.jobs[0].id);
+  });
 }
 
 async function renderScanJobs() {
@@ -131,9 +137,7 @@ describe('ScanJobContext — startScan', () => {
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
     const { result } = await renderScanJobs();
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
 
     const job = result.current.jobs.find((j) => j.type === 'text');
     expect(job).toBeTruthy();
@@ -199,9 +203,7 @@ describe('ScanJobContext — startScan', () => {
     mockGet.mockRejectedValueOnce(new Error('network'));
     const { result } = await renderScanJobs();
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
 
     expect(mockDeleteScanImage).not.toHaveBeenCalled();
   });
@@ -236,9 +238,7 @@ describe('ScanJobContext — startScan', () => {
     mockNetInfoFetch.mockResolvedValue({ isConnected: false });
     const { result } = await renderScanJobs();
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
 
     const job = result.current.jobs[0];
     expect(job?.status).toBe('queued');
@@ -301,9 +301,7 @@ describe('ScanJobContext — queueForLater', () => {
     const { result } = await renderScanJobs();
 
     mockGet.mockRejectedValueOnce(new Error('fail'));
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
     expect(result.current.jobs[0]?.status).toBe('failed');
 
     await act(() => {
@@ -429,9 +427,7 @@ describe('ScanJobContext — persistence', () => {
     const { result } = await renderHook(() => useScanJobs(), { wrapper });
     await waitFor(() => expect(mockLoadJobs).toHaveBeenCalled());
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
 
     // A real state change after the failed load persists normally.
     await waitFor(() => expect(mockSaveJobs).toHaveBeenCalled());
@@ -458,9 +454,7 @@ describe('ScanJobContext — dismissJob', () => {
     const { result } = await renderScanJobs();
 
     mockGet.mockRejectedValueOnce(new Error('fail'));
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
     expect(result.current.jobs).toHaveLength(1);
     const jobId = result.current.jobs[0].id;
 
@@ -488,14 +482,10 @@ describe('ScanJobContext — reviewJob', () => {
     const { result } = await renderScanJobs();
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
     expect(result.current.jobs[0]?.status).toBe('complete');
 
-    await act(() => {
-      result.current.reviewJob(result.current.jobs[0].id);
-    });
+    await reviewFirstJob(result);
 
     expect(result.current.reviewingJob).toBeTruthy();
     expect(result.current.reviewingJob?.id).toBe(result.current.jobs[0].id);
@@ -505,13 +495,9 @@ describe('ScanJobContext — reviewJob', () => {
     const { result } = await renderScanJobs();
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
 
-    await act(() => {
-      result.current.reviewJob(result.current.jobs[0].id);
-    });
+    await reviewFirstJob(result);
     expect(result.current.reviewingJob).toBeTruthy();
 
     await act(() => {
@@ -527,14 +513,10 @@ describe('ScanJobContext — handleAddBooks', () => {
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
     mockPost.mockResolvedValueOnce({});
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
     expect(result.current.jobs[0]?.status).toBe('complete');
 
-    await act(() => {
-      result.current.reviewJob(result.current.jobs[0].id);
-    });
+    await reviewFirstJob(result);
 
     await act(async () => {
       await result.current.handleAddBooks([BOOK]);
@@ -550,12 +532,8 @@ describe('ScanJobContext — handleAddBooks', () => {
     const { result } = await renderScanJobs();
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
-    await act(() => {
-      result.current.reviewJob(result.current.jobs[0].id);
-    });
+    await searchDune(result);
+    await reviewFirstJob(result);
 
     // Connection drops after results arrive, before the user picks a book.
     mockNetInfoFetch.mockResolvedValue({ isConnected: false });
@@ -572,12 +550,8 @@ describe('ScanJobContext — handleAddBooks', () => {
     const { result } = await renderScanJobs();
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
 
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
-    await act(() => {
-      result.current.reviewJob(result.current.jobs[0].id);
-    });
+    await searchDune(result);
+    await reviewFirstJob(result);
 
     mockNetInfoFetch.mockResolvedValue({ isConnected: null });
     mockPost.mockResolvedValueOnce({});
@@ -597,9 +571,7 @@ describe('ScanJobContext — multi-book review', () => {
     await act(async () => {
       await result.current.startScan('image', 'file:///docs/scan-queue/photo.jpg');
     });
-    await act(() => {
-      result.current.reviewJob(result.current.jobs[0].id);
-    });
+    await reviewFirstJob(result);
   }
 
   it('adds every ticked book to the wishlist and discards the job and its image', async () => {
@@ -790,9 +762,7 @@ describe('ScanJobContext — enhanced scan', () => {
   it('ignores enhanced requests for text searches', async () => {
     const { result } = await renderScanJobs();
     mockGet.mockResolvedValueOnce({ data: [{ title: 'Dune', author: 'Herbert' }] });
-    await act(async () => {
-      await result.current.startScan('text', undefined, 'Dune');
-    });
+    await searchDune(result);
 
     await act(async () => {
       await result.current.requestEnhancedScan(result.current.jobs[0].id);

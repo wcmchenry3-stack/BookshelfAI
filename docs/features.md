@@ -24,7 +24,7 @@ Navigation is file-based via `expo-router`. Two route groups:
 
 ### Feedback
 
-A header "?" button (next to the theme toggle, on every Stack screen) and the Settings **Send feedback** row open the same bottom sheet. The user picks Bug or Feature request and writes a description (max 2000 characters). Submit sends via Sentry User Feedback (`source: in_app_feedback`, tag `feedback.type`); session logs are attached for bugs only. Submissions are limited to 5 per 10 minutes per install. On success the sheet closes and a 4 s "Thanks for your feedback!" banner shows. Strings live in the `feedback` namespace.
+A header "?" button (next to the theme toggle, on every Stack screen) and the Settings **Send feedback** row open the same bottom sheet. The user picks Bug or Feature request and writes a description (max 2000 characters). Submit sends via Sentry User Feedback (`source: in_app_feedback`, tag `feedback.type`); session logs are attached for bugs only (lines cut at 1,000 characters, at most 100 KB, with Bearer/Authorization values, JWTs, sensitive URL params and email addresses redacted). Submissions are limited to 5 per 10 minutes per install. On success the sheet closes and a 4 s "Thanks for your feedback!" banner shows. Strings live in the `feedback` namespace.
 
 ### Scan flow — camera → identification → wishlist
 

@@ -2,15 +2,6 @@
 // native crash reporter is ready before any other module can throw.
 import { Sentry } from '../lib/sentry';
 
-// Record that the root layout module has evaluated — helps diagnose
-// crashes that happen between Sentry init and first render.
-SessionLogger.init();
-Sentry.addBreadcrumb({
-  category: 'app.lifecycle',
-  message: 'Root layout module evaluated',
-  level: 'info',
-});
-
 import '../src/i18n/i18n';
 
 import { Image, Platform, StyleSheet, Text, View } from 'react-native';
@@ -41,6 +32,17 @@ import { FeedbackProvider } from '../components/FeedbackWidget/FeedbackContext';
 import { HeaderFeedbackButton } from '../components/FeedbackWidget/HeaderFeedbackButton';
 import { SessionLogger } from '../components/FeedbackWidget/SessionLogger';
 
+// ES imports are hoisted, so every import above (Sentry first) has evaluated before
+// this runs. Kept below the imports so `import/first` passes without a disable.
+// Record that the root layout module has evaluated — helps diagnose
+// crashes that happen between Sentry init and first render.
+SessionLogger.init();
+Sentry.addBreadcrumb({
+  category: 'app.lifecycle',
+  message: 'Root layout module evaluated',
+  level: 'info',
+});
+
 function HeaderLogo() {
   const { theme } = useTheme();
   return (
@@ -61,7 +63,7 @@ function HeaderLogo() {
 function InnerStack() {
   const { theme } = useTheme();
   // Dark mode: semi-transparent frosted-glass header; light mode: transparent.
-  const headerBg = theme.isDark ? 'rgba(17,19,23,0.7)' : 'transparent';
+  const headerBg = theme.colors.headerOverlay;
   const webStyle = Platform.OS === 'web' && theme.isDark ? { backdropFilter: 'blur(20px)' } : {};
 
   return (

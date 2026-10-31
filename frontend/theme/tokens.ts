@@ -62,6 +62,25 @@ export const tokens = {
     // ── Outline ────────────────────────────────────────────────────────────
     outline: { light: '#737780', dark: '#8f9096' },
     outlineVariant: { light: '#c2c7d0', dark: '#45474c' },
+    // Translucent / fixed-value variants (values identical to the literals they replaced).
+    // headerOverlay: dark frosted-glass stack header; light header stays transparent.
+    headerOverlay: { light: 'transparent', dark: 'rgba(17,19,23,0.7)' },
+    // tabBarOverlay: dark frosted-glass tab bar; light uses surfaceContainerLow's value.
+    tabBarOverlay: { light: '#f5f3ef', dark: 'rgba(17,19,23,0.85)' },
+    // outlineVariantFaint: outlineVariant (#45474c) at ~40% opacity; none in light.
+    outlineVariantFaint: { light: 'transparent', dark: 'rgba(69,71,76,0.4)' },
+    shadow: { light: '#000', dark: '#000' },
+
+    // ── ErrorBoundary surface ──────────────────────────────────────────────
+    // The boundary mounts ABOVE ThemeProvider, so it has always rendered one
+    // fixed palette in both modes. Same values in light and dark = no visual change.
+    errorBoundarySurface: { light: '#fff', dark: '#fff' },
+    errorBoundaryTitle: { light: '#111', dark: '#111' },
+    errorBoundaryBody: { light: '#555', dark: '#555' },
+    errorBoundaryDetail: { light: '#c00', dark: '#c00' },
+    errorBoundaryDetailSurface: { light: '#fff0f0', dark: '#fff0f0' },
+    errorBoundaryAction: { light: '#007AFF', dark: '#007AFF' },
+    errorBoundaryOnAction: { light: '#fff', dark: '#fff' },
 
     // ── Convenience aliases (backward-compat) ──────────────────────────────
     background: { light: '#edf2f8', dark: '#111317' },
@@ -118,5 +137,3 @@ export const tokens = {
     min: 44, // WCAG 2.5.8
   },
 } as const;
-
-export type ColorKey = keyof typeof tokens.colors;

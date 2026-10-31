@@ -1,0 +1,311 @@
+{
+ "ai_enhanced_zero_results": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "user_id", "type": "UUID", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=CASCADE"]},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []},
+   {"name": "ledger_id", "type": "UUID", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "warned", "type": "BOOLEAN", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:False", "server_default": "sql:false", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_ai_enhanced_zero_results_user_created ON ai_enhanced_zero_results (user_id, created_at)"
+  ],
+  "constraints": []
+ },
+ "ai_inflight": {
+  "columns": [
+   {"name": "user_id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=CASCADE"]},
+   {"name": "lease_id", "type": "UUID", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "lease_expires_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "daily_taken", "type": "BOOLEAN", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:False", "server_default": "sql:false", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [],
+  "constraints": []
+ },
+ "ai_quota": {
+  "columns": [
+   {"name": "user_id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=CASCADE"]},
+   {"name": "feature", "type": "VARCHAR(64)", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "window_kind", "type": "VARCHAR(8)", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "window_start", "type": "DATE", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "units_used", "type": "INTEGER", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:0", "server_default": "value:'0'", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_ai_quota_window ON ai_quota (window_kind, window_start)"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_ai_quota_units_used",
+   "CheckConstraint:ck_ai_quota_window_kind"
+  ]
+ },
+ "ai_settings": {
+  "columns": [
+   {"name": "key", "type": "TEXT", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "value", "type": "JSONB", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "updated_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": "sql:now()", "foreign_keys": []},
+   {"name": "updated_by", "type": "TEXT", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [],
+  "constraints": []
+ },
+ "ai_spend_daily": {
+  "columns": [
+   {"name": "day", "type": "DATE", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "reserved_micros", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:0", "server_default": "value:'0'", "onupdate": null, "foreign_keys": []},
+   {"name": "settled_micros", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:0", "server_default": "value:'0'", "onupdate": null, "foreign_keys": []},
+   {"name": "alerted_mask", "type": "SMALLINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:0", "server_default": "value:'0'", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [],
+  "constraints": [
+   "CheckConstraint:ck_ai_spend_daily_non_negative"
+  ]
+ },
+ "ai_usage": {
+  "columns": [
+   {"name": "id", "type": "BIGINT", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "call_id", "type": "UUID", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "user_id", "type": "UUID", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=SET NULL"]},
+   {"name": "feature", "type": "VARCHAR(64)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "model", "type": "VARCHAR(64)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "price_version", "type": "VARCHAR(16)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "input_tokens", "type": "INTEGER", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "output_tokens", "type": "INTEGER", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "cache_read_tokens", "type": "INTEGER", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "cache_write_tokens", "type": "INTEGER", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "cost_micros", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "status", "type": "VARCHAR(16)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "request_id", "type": "VARCHAR(64)", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "attempt", "type": "SMALLINT", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_ai_usage_created_at ON ai_usage (created_at)",
+   "CREATE INDEX ix_ai_usage_user_created ON ai_usage (user_id, created_at)"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_ai_usage_non_negative",
+   "CheckConstraint:ck_ai_usage_status",
+   "UniqueConstraint:uq_ai_usage_call_id"
+  ]
+ },
+ "ai_usage_daily": {
+  "columns": [
+   {"name": "day", "type": "DATE", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "feature", "type": "VARCHAR(64)", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "model", "type": "VARCHAR(64)", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "status", "type": "VARCHAR(16)", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "calls", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "input_tokens", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "output_tokens", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "cost_micros", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [],
+  "constraints": [
+   "CheckConstraint:ck_ai_usage_daily_non_negative",
+   "CheckConstraint:ck_ai_usage_daily_status"
+  ]
+ },
+ "books": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "open_library_work_id", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": true, "unique": true, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "google_books_id", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "title", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "author", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "description", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "cover_url", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "subjects", "type": "VARCHAR[]", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "language", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:'en'", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "source", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "fetched_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "merged_into_id", "type": "UUID", "nullable": true, "primary_key": false, "index": true, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["books.id ondelete=RESTRICT"]},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []},
+   {"name": "updated_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": "sql:now()", "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_books_merged_into_id ON books (merged_into_id)",
+   "CREATE UNIQUE INDEX ix_books_open_library_work_id ON books (open_library_work_id)",
+   "CREATE UNIQUE INDEX uq_books_google_books_id ON books (google_books_id) WHERE google_books_id IS NOT NULL"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_books_merged_into_other",
+   "CheckConstraint:ck_books_source"
+  ]
+ },
+ "editions": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "book_id", "type": "UUID", "nullable": false, "primary_key": false, "index": true, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["books.id ondelete=RESTRICT"]},
+   {"name": "isbn_13", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": true, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "isbn_10", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "publisher", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "publish_year", "type": "INTEGER", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "format", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "page_count", "type": "INTEGER", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "open_library_edition_id", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_editions_book_id ON editions (book_id)"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_editions_format"
+  ]
+ },
+ "refresh_tokens": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "jti", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": true, "unique": true, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "user_id", "type": "UUID", "nullable": false, "primary_key": false, "index": true, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=CASCADE"]},
+   {"name": "issued_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []},
+   {"name": "expires_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "revoked_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "family_id", "type": "UUID", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "used_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "replaced_by_id", "type": "UUID", "nullable": true, "primary_key": false, "index": true, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["refresh_tokens.id ondelete=SET NULL"]},
+   {"name": "displaced_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_refresh_tokens_replaced_by_id ON refresh_tokens (replaced_by_id)",
+   "CREATE INDEX ix_refresh_tokens_user_id ON refresh_tokens (user_id)",
+   "CREATE UNIQUE INDEX ix_refresh_tokens_jti ON refresh_tokens (jti)"
+  ],
+  "constraints": []
+ },
+ "scan_corrections": {
+  "columns": [
+   {"name": "id", "type": "BIGINT", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "scan_record_id", "type": "UUID", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["scan_records.id ondelete=CASCADE"]},
+   {"name": "candidate_index", "type": "SMALLINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "feature", "type": "VARCHAR(64)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "tier", "type": "VARCHAR(16)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "model", "type": "VARCHAR(64)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "title_edited", "type": "BOOLEAN", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "author_edited", "type": "BOOLEAN", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "isbn_edited", "type": "BOOLEAN", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_scan_corrections_created_at ON scan_corrections (created_at)"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_scan_corrections_index",
+   "UniqueConstraint:uq_scan_corrections_record_candidate"
+  ]
+ },
+ "scan_corrections_daily": {
+  "columns": [
+   {"name": "day", "type": "DATE", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "feature", "type": "VARCHAR(64)", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "model", "type": "VARCHAR(64)", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "prefilled_saves", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "title_edited", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "author_edited", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "isbn_edited", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "any_edited", "type": "BIGINT", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [],
+  "constraints": [
+   "CheckConstraint:ck_scan_corrections_daily_non_negative"
+  ]
+ },
+ "scan_records": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "user_id", "type": "UUID", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=CASCADE"]},
+   {"name": "fingerprint", "type": "VARCHAR(64)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "feature", "type": "VARCHAR(64)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "tier", "type": "VARCHAR(16)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "model", "type": "VARCHAR(64)", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "candidates", "type": "JSONB", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "enrichment", "type": "JSONB", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "ai_done", "type": "BOOLEAN", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:False", "server_default": "sql:false", "onupdate": null, "foreign_keys": []},
+   {"name": "enrich_done", "type": "BOOLEAN", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:False", "server_default": "sql:false", "onupdate": null, "foreign_keys": []},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []},
+   {"name": "updated_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_scan_records_created_at ON scan_records (created_at)",
+   "CREATE INDEX ix_scan_records_user_created ON scan_records (user_id, created_at)"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_scan_records_fingerprint",
+   "CheckConstraint:ck_scan_records_steps",
+   "UniqueConstraint:uq_scan_records_user_fingerprint"
+  ]
+ },
+ "user_books": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "user_id", "type": "UUID", "nullable": false, "primary_key": false, "index": true, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=CASCADE"]},
+   {"name": "book_id", "type": "UUID", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["books.id ondelete=RESTRICT"]},
+   {"name": "custom_book_id", "type": "UUID", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["user_custom_books.id ondelete=CASCADE"]},
+   {"name": "edition_id", "type": "UUID", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["editions.id ondelete=None"]},
+   {"name": "status", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": true, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "wishlisted_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "purchased_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "started_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "finished_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "notes", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "rating", "type": "INTEGER", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "title_override", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "author_override", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "cover_url_override", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "deleted_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []},
+   {"name": "updated_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": "sql:now()", "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_user_books_deleted_at ON user_books (deleted_at) WHERE deleted_at IS NOT NULL",
+   "CREATE INDEX ix_user_books_status ON user_books (status)",
+   "CREATE INDEX ix_user_books_user_id ON user_books (user_id)",
+   "CREATE UNIQUE INDEX uq_user_books_user_book_live ON user_books (user_id, book_id) WHERE deleted_at IS NULL"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_user_books_author_override",
+   "CheckConstraint:ck_user_books_cover_url_override",
+   "CheckConstraint:ck_user_books_one_book",
+   "CheckConstraint:ck_user_books_overrides_catalog_only",
+   "CheckConstraint:ck_user_books_rating",
+   "CheckConstraint:ck_user_books_status",
+   "CheckConstraint:ck_user_books_title_override",
+   "UniqueConstraint:uq_user_books_custom_book"
+  ]
+ },
+ "user_custom_books": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "user_id", "type": "UUID", "nullable": false, "primary_key": false, "index": true, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": ["users.id ondelete=CASCADE"]},
+   {"name": "title", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "author", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "isbn_13", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "deleted_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []},
+   {"name": "updated_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": "sql:now()", "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE INDEX ix_user_custom_books_user_id ON user_custom_books (user_id)"
+  ],
+  "constraints": [
+   "CheckConstraint:ck_user_custom_books_author",
+   "CheckConstraint:ck_user_custom_books_isbn_13",
+   "CheckConstraint:ck_user_custom_books_title"
+  ]
+ },
+ "users": {
+  "columns": [
+   {"name": "id", "type": "UUID", "nullable": false, "primary_key": true, "index": null, "unique": null, "default": "callable:uuid.uuid4", "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "email", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": null, "unique": true, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "google_id", "type": "VARCHAR", "nullable": false, "primary_key": false, "index": null, "unique": true, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "display_name", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "avatar_url", "type": "VARCHAR", "nullable": true, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": null, "onupdate": null, "foreign_keys": []},
+   {"name": "token_version", "type": "INTEGER", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": "value:0", "server_default": "value:'0'", "onupdate": null, "foreign_keys": []},
+   {"name": "created_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": null, "foreign_keys": []},
+   {"name": "updated_at", "type": "TIMESTAMP WITH TIME ZONE", "nullable": false, "primary_key": false, "index": null, "unique": null, "default": null, "server_default": "sql:now()", "onupdate": "sql:now()", "foreign_keys": []}
+  ],
+  "indexes": [
+   "CREATE UNIQUE INDEX uq_users_email_lower ON users (lower(email))"
+  ],
+  "constraints": []
+ }
+}

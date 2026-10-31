@@ -80,8 +80,8 @@ def _post_google(db, claims=CLAIMS):
         with (
             patch("app.api.auth.verify_google_id_token", return_value=claims),
             patch("app.api.auth.settings") as st,
-            patch("app.api.auth.create_access_token", return_value="a") as access,
-            patch("app.api.auth.create_refresh_token", return_value=("r", "j")),
+            patch("app.auth.sessions.create_access_token", return_value="a") as access,
+            patch("app.auth.sessions.create_refresh_token", return_value=("r", "j")),
         ):
             st.allowed_emails_list = []
             st.jwt_expiry_hours = 24
@@ -207,8 +207,11 @@ class TestEmailReuseTakeover:
                         return_value={**CLAIMS, "email": "victim@Example.COM"},
                     ),
                     patch("app.api.auth.settings") as st,
-                    patch("app.api.auth.create_access_token", return_value="a"),
-                    patch("app.api.auth.create_refresh_token", return_value=("r", "j")),
+                    patch("app.auth.sessions.create_access_token", return_value="a"),
+                    patch(
+                        "app.auth.sessions.create_refresh_token",
+                        return_value=("r", "j"),
+                    ),
                 ):
                     st.allowed_emails_list = allowed
                     st.jwt_expiry_hours = 24
@@ -298,8 +301,8 @@ class TestTestLoginIdentity:
             patch.object(main.settings, "test_auth_secret", secret),
             patch.object(main.settings, "allowed_emails", ""),
             patch.object(database, "get_db", _get_db),
-            patch("app.auth.jwt.create_access_token", return_value="a"),
-            patch("app.auth.jwt.create_refresh_token", return_value=("r", "j")),
+            patch("app.auth.sessions.create_access_token", return_value="a"),
+            patch("app.auth.sessions.create_refresh_token", return_value=("r", "j")),
         ):
             client = TestClient(app)
             if raw is not None:

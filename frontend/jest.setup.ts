@@ -1,3 +1,8 @@
+// Initialize i18n with English resources before every test.
+// en translations are bundled as static imports and available synchronously;
+// components calling useTranslation() will get the correct English strings.
+import './src/i18n/i18n';
+
 // Provide default safe-area insets so useSafeAreaInsets() works without SafeAreaProvider.
 jest.mock('react-native-safe-area-context', () => {
   const actual = jest.requireActual('react-native-safe-area-context');
@@ -59,8 +64,3 @@ jest.mock('react-native-webview', () => {
     __mock: { injectJavaScript, reload, mount },
   };
 });
-
-// Initialize i18n with English resources before every test.
-// en translations are bundled as static imports and available synchronously;
-// components calling useTranslation() will get the correct English strings.
-import './src/i18n/i18n';

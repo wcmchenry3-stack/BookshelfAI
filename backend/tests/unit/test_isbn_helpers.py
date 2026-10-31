@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.ai.providers.isbn import clean_isbn_10, clean_isbn_13
+from app.ai.providers._common import clean_isbn_10, clean_isbn_13
 
 # The two ISBN-13s the model invented on 2026-10-28 (#743): bad check digits.
 INVENTED_13 = ["9780786412345", "9780817354368"]

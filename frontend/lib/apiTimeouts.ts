@@ -14,7 +14,7 @@ export const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * GET /books/search: Google Books (httpx timeout 10 s, services/google_books.py)
- * then enrichment (ENRICHMENT_DEADLINE_S = 20 s, services/enrichment.py) is
+ * then enrichment (ENRICHMENT_DEADLINE_S = 20 s, services/enrichment/service.py) is
  * about 30 s worst case; 45 s leaves a 15 s margin for the network.
  */
 export const SEARCH_TIMEOUT_MS = 45_000;

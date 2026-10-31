@@ -1,0 +1,35 @@
+# Python + pip cache, then `pip install -r` for each requirements file under
+# backend/. Used by every workflow job that runs the FastAPI backend or its
+# tools.
+name: Setup backend
+description: Set up Python with the pip cache and install backend requirements files (relative to backend/).
+
+inputs:
+  requirements:
+    description: "Space-separated requirements files relative to backend/, installed in order. Empty installs nothing."
+    required: false
+    default: 'requirements.txt'
+  python-version:
+    description: Python version to install.
+    required: false
+    default: '3.12'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: backend/requirements*.txt
+
+    - name: Install backend requirements
+      shell: bash
+      working-directory: backend
+      env:
+        REQUIREMENTS: ${{ inputs.requirements }}
+      run: |
+        read -r -a reqs <<< "$REQUIREMENTS"
+        for req in "${reqs[@]}"; do
+          pip install -r "$req"
+        done

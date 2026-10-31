@@ -5,6 +5,16 @@
  * interceptor (401 → refresh → retry, and failure paths) without making
  * real HTTP calls.
  */
+import {
+  ACCESS_TOKEN_KEY,
+  api,
+  gateStoredSession,
+  REFRESH_TOKEN_KEY,
+  resumeStoredSession,
+  setAuthFailureCallback,
+  TOKEN_REVOKED,
+  waitForPendingRefresh,
+} from '../../lib/api';
 
 // The refresh-retry tests invoke api(original) which triggers the async
 // request interceptor chain (token lookup + Sentry breadcrumb) before
@@ -47,17 +57,6 @@ jest.mock('axios', () => {
     create: actual.create,
   };
 });
-
-import {
-  ACCESS_TOKEN_KEY,
-  api,
-  gateStoredSession,
-  REFRESH_TOKEN_KEY,
-  resumeStoredSession,
-  setAuthFailureCallback,
-  TOKEN_REVOKED,
-  waitForPendingRefresh,
-} from '../../lib/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

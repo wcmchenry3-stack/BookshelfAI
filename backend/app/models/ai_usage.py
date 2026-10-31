@@ -1,23 +1,20 @@
 import uuid
-from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
-    Date,
-    DateTime,
     ForeignKey,
     Index,
     Integer,
     SmallInteger,
     String,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.models._mixins import CreatedAtMixin, DailyFeatureModelKeyMixin
 
 STATUS_OK = "ok"
 STATUS_REFUSED = "refused"
@@ -44,7 +41,7 @@ USAGE_STATUSES = (
 _STATUS_IN = "status IN ({})".format(", ".join(f"'{s}'" for s in USAGE_STATUSES))
 
 
-class AIUsage(Base):
+class AIUsage(CreatedAtMixin, Base):
     """One row per paid AI provider call: the usage ledger (#530).
 
     Written by ``app.ai.ledger`` in the same commit as the quota settle (the
@@ -103,12 +100,9 @@ class AIUsage(Base):
     # limits or ordering. NULL on rows written before 0014 (unknown) and for
     # callers outside /scan. Not carried into ``ai_usage_daily``.
     attempt: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
 
 
-class AIUsageDaily(Base):
+class AIUsageDaily(DailyFeatureModelKeyMixin, Base):
     """Daily totals of ``ai_usage`` per (UTC day, feature, model, status) (#530).
 
     Upserted (counts added) by the rollup when raw rows pass 30 days; no user
@@ -125,9 +119,6 @@ class AIUsageDaily(Base):
         ),
     )
 
-    day: Mapped[date] = mapped_column(Date, primary_key=True)
-    feature: Mapped[str] = mapped_column(String(64), primary_key=True)
-    model: Mapped[str] = mapped_column(String(64), primary_key=True)
     status: Mapped[str] = mapped_column(String(16), primary_key=True)
     calls: Mapped[int] = mapped_column(BigInteger, nullable=False)
     input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)

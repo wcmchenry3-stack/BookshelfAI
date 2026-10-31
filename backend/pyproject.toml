@@ -6,3 +6,57 @@ ignore = [
   # is designed to catch.
   "B008",
 ]
+
+[tool.vulture]
+# Dead-code check, run in CI as `vulture app --min-confidence 60` (#813).
+# Route handlers and pydantic hooks are called by FastAPI/pydantic, not by
+# name, so vulture cannot see the call; ignore them by decorator.
+ignore_decorators = [
+  "@router.*",
+  "@app.*",
+  "@field_validator",
+  "@model_validator",
+  "@model_serializer",
+  "@computed_field",
+]
+# Each name is whitelisted by name (vulture matches on the name, not the
+# owner class), so a new unused name that happens to match one of these is
+# hidden too. Keep this list short and keep each reason true.
+ignore_names = [
+  # --- Hooks called by a framework, never by name in app/ ---
+  "model_config",  # pydantic v2 reserved class attribute on every model
+  "settings_customise_sources",  # pydantic-settings hook called by BaseSettings
+  "get_field_value",  # abstract method of PydanticBaseSettingsSource; the class cannot be built without it (#813)
+  "dispatch",  # Starlette BaseHTTPMiddleware hook, called by Starlette per request
+  "user_books",  # SQLAlchemy relationship, back_populates="book" on UserBook
+  # --- Column / attribute read through SQLAlchemy, pydantic or by string key ---
+  "language",  # Book column and API schema field (schemas/book.py)
+  "fetched_at",  # Book column, mapped by SQLAlchemy
+  "open_library_edition_id",  # Edition column; also a SignableEdition field read by name in catalog_token
+  "issued_at",  # RefreshToken column: write-only audit column, set by a DB default and never read by app code
+  "prefilled_saves",  # ScanCorrection column, written by key in ai/scan_corrections.py
+  "daily_taken",  # AIInflight column, read by name via FLAG_DAILY in ai/quota.py
+  "wishlisted_at",  # UserBook column, serialized in the user_book response schema
+  "unverified",  # UserBook property, read through the response schema's from_attributes
+  # --- API response / request schema fields the client relies on ---
+  "token_type",  # TokenResponse field of the OAuth-style auth response
+  "expires_in",  # TokenResponse field of the auth response (seconds)
+  "enhanced_scans_remaining",  # scan response field read by the frontend scan UI
+  "repeat",  # scan response field: a repeat photo served from a saved record
+  "found_used_today",  # scan usage response field read by the frontend
+  "found_daily_limit",  # scan usage response field read by the frontend
+  "unverified_isbn_13",  # user_book response field for an unverified entry
+  "overrides",  # user_book response field carrying the user's own overrides
+  # --- Settings read from the environment or by getattr ---
+  "scan_free_daily_limit",  # read by getattr(settings, f"scan_{tier}_daily_limit") in ai/settings.py
+  "scan_premium_daily_limit",  # read by getattr(settings, f"scan_{tier}_daily_limit") in ai/settings.py
+  "scan_free_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
+  "scan_premium_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
+  # --- Test seam ---
+  "reset_cache",  # ai/settings.py cache reset, called from tests/ (vulture scans app/ only)
+  # --- PENDING OWNER DECISION (#830): unread settings ---
+  # An unread setting may be removed only with an owner decision, since that
+  # changes the env surface.
+  "google_client_secret",  # kept by owner decision #830 until deploy config is confirmed
+  "openai_max_tokens",  # kept by owner decision #830 until deploy config is confirmed
+]

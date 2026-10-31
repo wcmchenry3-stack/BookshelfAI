@@ -70,13 +70,21 @@ import anyio
 import httpx2
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+from app.ai.providers._common import (
+    MAX_TEXT_LENGTH,
+    clamp_confidence,
+    clean_isbn_10,
+    clean_isbn_13,
+    collect_candidates,
+    has_broken_text,
+    token_count,
+)
 from app.ai.providers.base import (
     ProviderConnectError,
     ProviderOutcome,
     ProviderResult,
     ProviderTimeoutError,
 )
-from app.ai.providers.isbn import clean_isbn_10, clean_isbn_13
 from app.ai.providers.openai_vision import SYSTEM_PROMPT
 from app.ai.registry import FeatureSpec
 from app.core.config import settings
@@ -97,11 +105,6 @@ MAX_RETRIES = 2
 RETRYABLE_STATUSES = frozenset({429, 500, 503, 529})
 BACKOFF_BASE_S = 0.5
 BACKOFF_CAP_S = 8.0
-
-# The ledger's token columns are Postgres INTEGER.
-MAX_TOKEN_COUNT = 2_147_483_647
-# Title/author are search keys; anything longer is not a real title.
-MAX_TEXT_LENGTH = 500
 
 
 # ---------------------------------------------------------------------------
@@ -166,13 +169,11 @@ class _Book(BaseModel):
     @classmethod
     def _confidence(cls, value: Any) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
+            # Any non-number (a string, null, a list) is 0.5 here; the OpenAI
+            # adapter parses a numeric string and treats the rest as broken.
+            # The difference is intentional until #795 decides.
             return 0.5
-        if isinstance(value, int):
-            # Exact compare: math.isnan/float() overflow on a huge integer.
-            return float(min(max(value, 0), 1))
-        if math.isnan(value):
-            return 0.5
-        return min(max(float(value), 0.0), 1.0)
+        return clamp_confidence(value)
 
     @field_validator("isbn_13", mode="before")
     @classmethod
@@ -223,18 +224,20 @@ def _log_content(kind: str, text: str, stop_reason: str | None) -> None:
     )
 
 
-def _is_broken(item: Any) -> bool:
-    """An item that breaks the requested structure (#572): not an object, a
-    title or author that is missing or not a string, or one longer than
-    ``MAX_TEXT_LENGTH``. An empty or whitespace title or author is not broken:
-    the item is schema-valid and only dropped."""
-    if not isinstance(item, dict):
-        return True
-    for key in ("title", "author"):
-        value = item.get(key)
-        if not isinstance(value, str) or len(value.strip()) > MAX_TEXT_LENGTH:
-            return True
-    return False
+def _to_candidate(item: Any) -> BookCandidate | None:
+    """The candidate for a well-formed item, or None when it is
+    schema-valid but empty or whitespace (dropped, not broken)."""
+    try:
+        book = _Book.model_validate(item)
+    except ValidationError:
+        return None
+    return BookCandidate(
+        title=book.title,
+        author=book.author,
+        confidence=book.confidence,
+        isbn_13=book.isbn_13,
+        isbn_10=book.isbn_10,
+    )
 
 
 def parse_reply(
@@ -243,7 +246,7 @@ def parse_reply(
     """The validated, de-duplicated candidates in a reply (at most
     ``max_books``), or None when the reply is malformed (#572): not JSON, not
     a ``{"books": [...]}`` object, or a non-empty list in which every item is
-    structurally broken (see :func:`_is_broken`). Schema-valid items with an
+    structurally broken (see ``_common.has_broken_text``). Schema-valid items with an
     empty or whitespace title or author are dropped, as before, so such a
     reply can be ``ok`` with fewer books or none. A genuine ``{"books": []}``
     is an empty list, not None.
@@ -270,32 +273,13 @@ def parse_reply(
             return None
         items = books
 
-    candidates: list[BookCandidate] = []
-    seen: set[tuple[str, str]] = set()
-    broken = 0
-    for item in items:
-        if len(candidates) >= max_books:
-            break
-        if _is_broken(item):
-            broken += 1
-            continue
-        try:
-            book = _Book.model_validate(item)
-        except ValidationError:
-            # Schema-valid but empty or whitespace: dropped, not broken.
-            continue
-        candidate = BookCandidate(
-            title=book.title,
-            author=book.author,
-            confidence=book.confidence,
-            isbn_13=book.isbn_13,
-            isbn_10=book.isbn_10,
-        )
-        key = _dedupe_key(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        candidates.append(candidate)
+    candidates, broken = collect_candidates(
+        items,
+        max_books,
+        is_broken=has_broken_text,
+        to_candidate=_to_candidate,
+        dedupe_key=_dedupe_key,
+    )
     if items and broken == len(items):
         # A list none of whose items has the requested structure: not a
         # "no books" answer.
@@ -304,22 +288,9 @@ def parse_reply(
     return candidates
 
 
-def parse_books(
-    text: str, stop_reason: str | None, max_books: int
-) -> list[BookCandidate]:
-    """:func:`parse_reply`, with a malformed reply as an empty list."""
-    return parse_reply(text, stop_reason, max_books) or []
-
-
 # ---------------------------------------------------------------------------
 # Usage, outcome
 # ---------------------------------------------------------------------------
-
-
-def _token_count(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return min(max(value, 0), MAX_TOKEN_COUNT)
 
 
 def _usage(message: Any) -> tuple[int, int, int, int]:
@@ -330,10 +301,10 @@ def _usage(message: Any) -> tuple[int, int, int, int]:
     if usage is None:
         return 0, 0, 0, 0
     return (
-        _token_count(getattr(usage, "input_tokens", 0)),
-        _token_count(getattr(usage, "output_tokens", 0)),
-        _token_count(getattr(usage, "cache_read_input_tokens", 0)),
-        _token_count(getattr(usage, "cache_creation_input_tokens", 0)),
+        token_count(getattr(usage, "input_tokens", 0)),
+        token_count(getattr(usage, "output_tokens", 0)),
+        token_count(getattr(usage, "cache_read_input_tokens", 0)),
+        token_count(getattr(usage, "cache_creation_input_tokens", 0)),
     )
 
 

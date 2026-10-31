@@ -91,7 +91,7 @@ These live in the app (`frontend/lib/scanErrors.ts`, `frontend/lib/scanJob.ts`),
 
 | Limit | What it limits | Applies to | Default | Setting | Bounds | User sees when hit | Tracked in |
 |---|---|---|---|---|---|---|---|
-| Image file size | Bytes of the uploaded image, read in chunks | everyone | 5 MB | `MAX_IMAGE_BYTES` in `app/api/scan.py` (code) | fixed | `413`, `Image must be 5MB or smaller` | n/a |
+| Image file size | Bytes of the uploaded image, read in chunks | everyone | 5 MB | `MAX_IMAGE_BYTES` in `app/services/scan/uploads.py` (code) | fixed | `413`, `Image must be 5MB or smaller` | n/a |
 | `/scan` request body | Whole multipart body on `POST /scan` (image cap plus 1 MB of framing), counted as it arrives, chunked or not (#557) | everyone | 6 MB | `MAX_SCAN_REQUEST_BYTES` (code) | fixed | `413`, `Request body too large` | n/a |
 | Other request bodies | Every other route | everyone | 10 MB | `RequestSizeLimitMiddleware.MAX_BODY_SIZE` (code) | fixed | `413`, `Request body too large`; a bad `Content-Length` is `400` | n/a |
 | Decoded pixels | Width x height read from the header before decoding (decompression-bomb guard) | everyone | 40,000,000 | `scan.max_image_pixels` (seed `SCAN_MAX_IMAGE_PIXELS`) | 1,000,000..100,000,000 | `413 image_too_large_pixels` | n/a |

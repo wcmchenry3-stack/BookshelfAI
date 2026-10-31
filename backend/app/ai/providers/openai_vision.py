@@ -35,26 +35,27 @@ import base64
 import hashlib
 import json
 import logging
-import math
 
 import httpx
 
+from app.ai.providers._common import (
+    clamp_confidence,
+    clean_isbn_10,
+    clean_isbn_13,
+    collect_candidates,
+    has_broken_text,
+    token_count,
+)
 from app.ai.providers.base import (
     ProviderOutcome,
     ProviderResult,
     ProviderTimeoutError,
 )
-from app.ai.providers.isbn import clean_isbn_10, clean_isbn_13
 from app.ai.registry import FeatureSpec
 from app.core.config import settings
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 logger = logging.getLogger(__name__)
-
-# Title/author are search keys; anything longer is not a real title. Same
-# limit as the Claude adapter (``anthropic_vision.MAX_TEXT_LENGTH``), repeated
-# here so this module does not import the Anthropic SDK.
-MAX_TEXT_LENGTH = 500
 
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -97,18 +98,6 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     return content, finish_reason
 
 
-# The ledger's token columns are Postgres INTEGER.
-MAX_TOKEN_COUNT = 2_147_483_647
-
-
-def _token_count(value: object) -> int:
-    """A token count from the usage block: an int clamped to
-    ``[0, MAX_TOKEN_COUNT]``; anything else is 0."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return min(max(value, 0), MAX_TOKEN_COUNT)
-
-
 def _usage(body: object) -> tuple[int, int, int]:
     """Return ``(input, output, cache_read)`` billed tokens from ``usage``.
 
@@ -120,11 +109,11 @@ def _usage(body: object) -> tuple[int, int, int]:
     usage = body.get("usage") if isinstance(body, dict) else None
     if not isinstance(usage, dict):
         return 0, 0, 0
-    prompt = _token_count(usage.get("prompt_tokens"))
-    output = _token_count(usage.get("completion_tokens"))
+    prompt = token_count(usage.get("prompt_tokens"))
+    output = token_count(usage.get("completion_tokens"))
     details = usage.get("prompt_tokens_details")
     cached = (
-        _token_count(details.get("cached_tokens")) if isinstance(details, dict) else 0
+        token_count(details.get("cached_tokens")) if isinstance(details, dict) else 0
     )
     cached = min(cached, prompt)
     return prompt - cached, output, cached
@@ -174,17 +163,9 @@ def _is_broken(item: object) -> bool:
     title or author missing or not a string (a ``null`` author used to crash
     the de-duplication), or a confidence that is not a number. An empty title
     or author is not broken: the item is schema-valid."""
-    if not isinstance(item, dict):
-        return True
-    if not isinstance(item.get("title"), str) or not isinstance(
-        item.get("author"), str
-    ):
-        return True
-    # Same rule as the Claude adapter (#754): over-long text is broken.
-    if (
-        len(item["title"].strip()) > MAX_TEXT_LENGTH
-        or len(item["author"].strip()) > MAX_TEXT_LENGTH
-    ):
+    # Same title/author rule as the Claude adapter (#754): over-long text is
+    # broken.
+    if has_broken_text(item):
         return True
     try:
         float(item.get("confidence", 0.5))
@@ -199,16 +180,13 @@ def _confidence(value: object) -> float:
     """The confidence clamped to 0-1, as the Claude adapter does (#754): NaN
     and a boolean become 0.5, infinity clamps to 0 or 1. (A non-number such as
     ``"high"`` is broken here, see :func:`_is_broken`, a rule kept from #572;
-    the Claude adapter defaults it to 0.5.)"""
-    if isinstance(value, bool):
-        return 0.5
+    the Claude adapter defaults it to 0.5. The difference is intentional
+    until #795 decides.)"""
     if isinstance(value, int):
-        # Exact compare: float() overflows on an integer past ~1e308.
-        return float(min(max(value, 0), 1))
+        # A bool or an int (exact compare: float() overflows past ~1e308).
+        return clamp_confidence(value)
     number = float(value)  # type: ignore[arg-type]  # checked by _is_broken
-    if math.isnan(number):
-        return 0.5
-    return min(max(number, 0.0), 1.0)
+    return clamp_confidence(number)
 
 
 def _candidate(item: object) -> BookCandidate | None:
@@ -327,12 +305,6 @@ class OpenAIVisionProvider:
             outcome=outcome,
         )
 
-    def _parse(
-        self, content: str | None, finish_reason: str | None, max_books: int
-    ) -> list[BookCandidate]:
-        """The candidates in the model's reply (empty when malformed)."""
-        return self._parse_reply(content, finish_reason, max_books) or []
-
     def _parse_reply(
         self, content: str | None, finish_reason: str | None, max_books: int
     ) -> list[BookCandidate] | None:
@@ -362,23 +334,14 @@ class OpenAIVisionProvider:
             _log_unparseable("unexpected JSON shape", content, finish_reason)
             return None
 
-        candidates: list[BookCandidate] = []
-        seen: set[tuple[str, str]] = set()
-        broken = 0
-        for item in items:
-            if len(candidates) >= max_books:
-                break
-            if _is_broken(item):
-                broken += 1
-                continue
-            candidate = _candidate(item)
-            if candidate is None:
-                continue  # schema-valid but dropped (empty title)
-            key = _dedupe_key(candidate)
-            if key in seen:
-                continue
-            seen.add(key)
-            candidates.append(candidate)
+        # A candidate that is None is schema-valid but dropped (empty title).
+        candidates, broken = collect_candidates(
+            items,
+            max_books,
+            is_broken=_is_broken,
+            to_candidate=_candidate,
+            dedupe_key=_dedupe_key,
+        )
 
         if items and broken == len(items):
             # A list none of whose items has the requested structure: not a

@@ -117,7 +117,7 @@ def test_budget_503_passes_in_any_app_file():
 
 
 def test_real_scan_router_budget_refusal_passes():
-    rel = "backend/app/api/scan.py"
+    rel = "backend/app/services/scan/quota_steps.py"
     assert policy.check_file(rel, (REPO / rel).read_text(), ALLOWED) == []
 
 
@@ -154,7 +154,7 @@ def test_real_provider_without_retry_after_fails():
 
 
 def test_real_scan_router_with_402_budget_fails():
-    rel = "backend/app/api/scan.py"
+    rel = "backend/app/services/scan/quota_steps.py"
     text = (REPO / rel).read_text()
     old = 'status_code=status.HTTP_503_SERVICE_UNAVAILABLE,\n            detail="ai_budget_reached"'
     assert old in text

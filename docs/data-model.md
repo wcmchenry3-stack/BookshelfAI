@@ -205,6 +205,8 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 
 ## Entity reference
 
+**Shared columns (#814).** Columns that several tables declare the same way come from the mixins in `backend/app/models/_mixins.py`: `IdMixin` (`id`, UUID primary key, `uuid4`), `UserOwnedMixin` (`user_id` → `users.id` `ON DELETE CASCADE`, NOT NULL; `user_id_indexed = True` adds `ix_<table>_user_id`), `CreatedAtMixin` (`created_at`, `server_default now()`), `TimestampMixin` (`created_at` plus `updated_at` with `onupdate`) and `DailyFeatureModelKeyMixin` (the `day`, `feature`, `model` primary key of the daily totals tables). The tables below still list every column. A mixin's columns keep the place the table declared them in through `sort_order` (SQLAlchemy would otherwise put them after the class's own columns). `tests/unit/test_model_schema_snapshot.py` pins every table's columns, indexes and constraints against `backend/tests/fixtures/model_schema_snapshot.json`; a migration that changes the schema regenerates it in the same PR (see *Writing a new migration*).
+
 ### `users` (`backend/app/models/user.py`)
 
 | Column | Type | Notes |
@@ -362,7 +364,7 @@ Per-user count of AI calls reserved, per quota key and window (#528). Backs the 
 
 **Keys and indexes:** the composite primary key `(user_id, feature, window_kind, window_start)` is the unique key the reservation upsert targets (`INSERT … ON CONFLICT … DO UPDATE SET units_used = units_used + 1 WHERE units_used < limit`). `ix_ai_quota_window (window_kind, window_start)` serves the global daily sum (which filters out `scan.requests`) and the retention purge.
 
-**Writes:** only `app/ai/quota.py` (reserve, refund, the no-match move, the request count, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
+**Writes:** only `app/ai/quota/` (reserve, refund, the no-match move, the request count, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
 
 **Volume and retention:** about 70 bytes per row. Per active user, up to three day rows for each day they scan (`scan`, `scan.no_match` on a day with a no-match, #577, and `scan.requests` on any day they call `/scan`, #586): at most about 210 bytes per active user per day. `scan.requests` rows are purged with the other day rows. No month rows are written since #582. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month (so the legacy month rows are gone 13 months after the last one was written; until then they are kept so a rollback to the previous release finds its counters), in batches of 5,000 and at most 20 batches per window kind per run. This table is not used for reporting: monthly spend and call counts come from `ai_usage` / `ai_usage_daily`.
 
@@ -457,7 +459,7 @@ One row per recorded enhanced scan that returned no books (#533). Before #582 su
 
 **Index:** `ix_ai_enhanced_zero_results_user_created (user_id, created_at)` serves the window count (`WHERE user_id = ? AND created_at > clock_timestamp() - window`) and the throttle's Retry-After lookup.
 
-**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row and the lease delete commit together (before #582 also the refund of the `scan.enhanced` month unit; there is no such unit any more). It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the user was below the threshold; an empty scan at or above it, a scan with books and any provider error, timeout or malformed reply write nothing. The scan's daily unit stays charged either way (#582). A repeat served from a scan record (#585) makes no provider call and writes none. No client-supplied value is stored: no image, hash or content.
+**Writes:** only `app/ai/quota/zero_result.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row and the lease delete commit together (before #582 also the refund of the `scan.enhanced` month unit; there is no such unit any more). It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the user was below the threshold; an empty scan at or above it, a scan with books and any provider error, timeout or malformed reply write nothing. The scan's daily unit stays charged either way (#582). A repeat served from a scan record (#585) makes no provider call and writes none. No client-supplied value is stored: no image, hash or content.
 
 **Volume and retention:** about 40 bytes per row (more with the index), bounded by the threshold per user per window (at most 20 per window at the maximum setting). Rows older than 30 days are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_zero_results`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
 
@@ -551,7 +553,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 | Column | Type | Notes |
 |---|---|---|
-| `key` | text, PK | one of the keys defined in `app/ai/settings.py`; other keys are ignored |
+| `key` | text, PK | one of the keys defined in `app/ai/settings/definitions.py`; other keys are ignored |
 | `value` | JSONB, not null | bool, string or int depending on the key; validated on write and again on read |
 | `updated_at` | timestamptz, not null, server default `now()` | set on every write |
 | `updated_by` | text, nullable | `seed` for startup seeding, else the CLI's `--by` / `$USER` / `cli` |
@@ -643,6 +645,9 @@ $EDITOR alembic/versions/<new-file>.py
 
 # Apply it
 alembic upgrade head
+
+# Update the pinned schema snapshot (#814) and review its diff
+python -m tests.unit.test_model_schema_snapshot --write
 ```
 
 ### Check-constraint gotcha

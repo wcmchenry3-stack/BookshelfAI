@@ -2,7 +2,6 @@ import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 import sentry_sdk
@@ -392,12 +391,7 @@ if not settings.is_hardened:
             email_allowed,
             resolve_and_commit_google_user,
         )
-        from app.auth.jwt import (
-            access_token_ttl_seconds,
-            create_access_token,
-            create_refresh_token,
-        )
-        from app.auth.refresh_family import new_family_row
+        from app.auth.sessions import issue_session_tokens
         from app.core.database import get_db
 
         # A whitespace-only secret counts as unset: the route stays disabled.
@@ -447,21 +441,13 @@ if not settings.is_hardened:
                     status_code=409, content={"detail": ACCOUNT_CONFLICT}
                 )
 
-            access_token = create_access_token(
-                str(user.id), user.email, user.token_version
-            )
-            refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
-            expires_at = datetime.now(UTC) + timedelta(
-                days=settings.refresh_token_expiry_days
-            )
-            db.add(new_family_row(user.id, jti, expires_at))
-            await db.commit()
+            tokens = await issue_session_tokens(db, user)
 
             logger.info("test-login: issued tokens (user_id=%s)", user.id)
             return JSONResponse(
                 content={
-                    "access_token": access_token,
-                    "refresh_token": refresh_token,
-                    "expires_in": access_token_ttl_seconds(),
+                    "access_token": tokens.access_token,
+                    "refresh_token": tokens.refresh_token,
+                    "expires_in": tokens.expires_in,
                 }
             )
