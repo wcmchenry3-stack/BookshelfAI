@@ -787,7 +787,14 @@ class TestScanEndpoint:
 
         from app.api import scan as scan_api
 
+        # Cancel from inside the provider call, not on a wall-clock deadline
+        # that can fire before the reservation on a slow runner. 30s is only
+        # a hang guard.
+        reached = []
+
         async def hung(_image):
+            reached.append(True)
+            scope.cancel()
             await anyio.sleep(10)
 
         provider.return_value.identify = hung
@@ -798,7 +805,7 @@ class TestScanEndpoint:
         )
         with (
             patch.object(scan_api.settings, "turnstile_required", False),
-            anyio.move_on_after(0.3) as scope,
+            anyio.move_on_after(30) as scope,
         ):
             await scan_api.scan.__wrapped__(
                 request=MagicMock(),
@@ -808,6 +815,7 @@ class TestScanEndpoint:
                 cf_turnstile_response=None,
                 enhanced=False,
             )
+        assert reached == [True]
         assert scope.cancelled_caught
         assert store.spend_today() == (0, STANDARD_EST)
         assert store.leases == {}
