@@ -28,7 +28,8 @@ from app.services.enrichment.titles import _listed_same_book, _split_title
 from app.services.google_books import GoogleBooksService
 from app.services.open_library import OpenLibraryService
 
-logger = logging.getLogger(__name__)
+# Keep the pre-split logger name: log filters and Sentry tags key on it.
+logger = logging.getLogger("app.services.enrichment")
 
 # Shown when a provider matched but neither record names an author.
 UNKNOWN_AUTHOR = "Unknown"

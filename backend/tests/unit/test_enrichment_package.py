@@ -43,6 +43,12 @@ def test_every_exported_name_resolves(name):
     assert hasattr(enrichment, name)
 
 
+def test_logger_name_is_unchanged_by_the_split():
+    from app.services.enrichment import service
+
+    assert service.logger.name == "app.services.enrichment"
+
+
 def test_the_service_reads_its_constants_from_its_own_module(monkeypatch):
     """A patch must target ``enrichment.service``: the package attribute is
     only a re-export."""
