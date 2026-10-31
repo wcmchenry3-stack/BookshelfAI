@@ -1,0 +1,18 @@
+{
+  "path": ["backend/tests", "frontend/__tests__"],
+  "format": ["python", "typescript", "tsx"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/locales/**",
+    "**/*.json",
+    "**/__tests__/helpers/**"
+  ],
+  "minLines": 5,
+  "minTokens": 50,
+  "threshold": 6.6,
+  "reporters": ["console", "json"],
+  "output": "./jscpd-report/tests",
+  "gitignore": true,
+  "absolute": false
+}

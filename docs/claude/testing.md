@@ -14,7 +14,7 @@ See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for univers
 - DB isolation: rollback fixture in `backend/tests/conftest.py` — do NOT mock the database
 - Cost guard: no test may call a real AI provider. `backend/tests/_network_guard.py` (installed for every run by `backend/tests/conftest.py`) blocks any request to an Anthropic or OpenAI API host and fails the test. Fake providers at the gateway boundary (`backend/tests/limits/_harness.py`) or with `backend/tests/_claude_fake.py`.
 - AI scan evaluation (`backend/eval/ai_scan/`, #536): runs a real model only from the on-demand `ai-eval.yml` workflow, never in tests. Its tests use `backend/tests/_ai_eval_fakes.py` (fake R2 client, scripted adapter). Re-run the eval when a scan prompt, model or `max_tokens` changes; see `docs/testing.md`.
-- Repo hygiene (#769, `.github/workflows/repo-hygiene.yml`): jscpd duplication threshold (`.jscpd.json`), 600-line source file cap (`scripts/check_file_length.py`, allowlist `scripts/file_length_allowlist.txt` can shrink but not grow), backend dead-code check (`vulture app --min-confidence 60`, whitelist in `backend/pyproject.toml` `[tool.vulture]`), and offline docs link/anchor check (`lychee.toml`). Do not raise a threshold or extend the allowlist to get a PR through; see "Repo hygiene checks" in `docs/testing.md`.
+- Repo hygiene (#769, `.github/workflows/repo-hygiene.yml`): jscpd duplication threshold (`.jscpd.json`), a second jscpd config for tests (`.jscpd.tests.json`), 600-line source file cap (`scripts/check_file_length.py --strict`; `scripts/file_length_allowlist.txt` is empty and stays empty), backend dead-code check (`vulture app --min-confidence 60`, whitelist in `backend/pyproject.toml` `[tool.vulture]`), and offline docs link/anchor check (`lychee.toml`). Do not raise a threshold or add an allowlist, knip `ignore*` or jscpd `ignore` entry to get a PR through: fix the code. A new exception is rejected by `scripts/policy/check_grandfather_lists.py` (part of the `claude-policy` job) unless the same file's diff has an `epic:refactor #NNN` reference, which needs owner sign-off in that issue. Merge safety (up-to-date branches) is owner decision #859. see "Repo hygiene checks" in `docs/testing.md`.
 
 ## What runs, and when
 
@@ -22,7 +22,7 @@ Taken from `.github/workflows/` (`ci.yml`, `security.yml`, `migration-guard.yml`
 
 | Check | Where | When |
 |---|---|---|
-| Backend unit tests, `pytest --cov=. --cov-fail-under=90` (app code only) | `ci.yml` `test-python` | every PR to `dev` or `main` |
+| Backend unit tests, `pytest --cov=. --cov-fail-under=98` (app code only) | `ci.yml` `test-python` | every PR to `dev` or `main` |
 | Backend security suite, `pytest -m security` | runs inside `test-python` on every PR (no marker filter in `pytest.ini`); also on its own in `security.yml` `pytest-security` | separate run: PRs to `dev` that touch `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `security.yml` or `.zap/**`; weekly (Monday 08:00 UTC); manual |
 | Backend integration, `pytest -m integration tests -q -rs` (every folder, `REQUIRE_DB_TESTS=1`) on real Postgres 16 | `ci.yml` `test-migrations`, after `alembic upgrade head`, `alembic check` and `downgrade -1` | every PR to `dev` or `main` |
 | Scan limits matrix (`backend/tests/limits/`) | Its `integration`-marked files run in `test-migrations`. `test_no_real_provider.py` has no marker and runs in `test-python`. | every PR to `dev` or `main` |
