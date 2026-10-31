@@ -14,6 +14,7 @@ from app.ai.entitlements import Tier
 from app.ai.gateway import AIResult
 from app.api import scan as scan_api
 from app.models.ai_usage import STATUS_ERROR
+from app.services.scan import settlement as scan_settlement
 
 _USER = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
 _NOW = datetime(2026, 3, 1, tzinfo=UTC)
@@ -160,7 +161,7 @@ class TestSettlement:
         )
 
     def test_answered_call_settles_its_priced_cost(self):
-        with patch.object(scan_api, "cost_micros", return_value=123):
+        with patch.object(scan_settlement, "cost_micros", return_value=123):
             s = scan_api._settlement(
                 reservation=self._reservation(),
                 feature="scan.standard",
@@ -171,7 +172,7 @@ class TestSettlement:
 
     def test_unpriceable_call_settles_the_estimate(self, caplog):
         with patch.object(
-            scan_api, "cost_micros", side_effect=KeyError("m")
+            scan_settlement, "cost_micros", side_effect=KeyError("m")
         ), caplog.at_level(logging.ERROR):
             s = scan_api._settlement(
                 reservation=self._reservation(900),
@@ -184,7 +185,7 @@ class TestSettlement:
 
     def test_failed_call_settles_the_estimate_with_the_resolved_model(self):
         with patch.object(
-            scan_api, "resolve_spec", return_value=SimpleNamespace(model="m2")
+            scan_settlement, "resolve_spec", return_value=SimpleNamespace(model="m2")
         ):
             s = scan_api._settlement(
                 reservation=self._reservation(900),
@@ -195,7 +196,7 @@ class TestSettlement:
         assert s == breaker.Settlement(900, "scan.standard", "m2", "timeout")
 
     def test_unresolvable_model_is_tagged_unknown_and_status_defaults_to_error(self):
-        with patch.object(scan_api, "resolve_spec", side_effect=RuntimeError):
+        with patch.object(scan_settlement, "resolve_spec", side_effect=RuntimeError):
             s = scan_api._settlement(
                 reservation=self._reservation(900),
                 feature="scan.standard",
