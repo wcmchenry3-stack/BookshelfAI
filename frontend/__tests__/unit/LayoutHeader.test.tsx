@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import React from 'react';
 import { render } from '@testing-library/react-native';
 
@@ -112,6 +114,10 @@ describe('RootLayout header wiring (#756)', () => {
   });
 
   it('no longer ships the floating FeedbackButton FAB module', () => {
-    expect(() => require.resolve('../../components/FeedbackWidget/FeedbackButton')).toThrow();
+    const dir = path.join(__dirname, '../../components/FeedbackWidget');
+    const present = fs.existsSync(dir)
+      ? fs.readdirSync(dir).filter((f) => f.startsWith('FeedbackButton'))
+      : [];
+    expect(present).toEqual([]);
   });
 });
