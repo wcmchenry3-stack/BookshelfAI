@@ -1,4 +1,5 @@
 import { renderHook, act } from '@testing-library/react-native';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 
 let capturedListener: ((state: { isConnected: boolean | null }) => void) | null = null;
 const mockUnsubscribe = jest.fn();
@@ -12,8 +13,6 @@ jest.mock('@react-native-community/netinfo', () => ({
     },
   },
 }));
-
-import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 
 beforeEach(() => {
   capturedListener = null;

@@ -7,6 +7,7 @@ import type { EnrichedBook } from '../../components/BookCandidatePicker';
 import type { ScanJobContextValue } from '../../contexts/ScanJobContext';
 import { IOS_DISMISS_FALLBACK_MS } from '../../hooks/useModalHandoff';
 import { draftFromBook, scanReferenceOf, withScanRecord } from '../../lib/unverified';
+import RootLayout from '../../app/_layout';
 
 // #631: an "Add it yourself" save pre-filled from a photo scan names the
 // scan candidate it came from ({scan_record_id, candidate_index}, never the
@@ -53,7 +54,9 @@ jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
 jest.mock('expo-router', () => {
   const { View } = require('react-native');
   const MockStack = ({ children }: { children?: React.ReactNode }) => <View>{children}</View>;
-  MockStack.Screen = () => null;
+  MockStack.Screen = function MockScreen() {
+    return null;
+  };
   return { Stack: MockStack };
 });
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
@@ -98,8 +101,6 @@ jest.mock('../../components/FeedbackWidget/FeedbackContext', () => ({
   },
   useFeedback: () => ({ openFeedback: () => {} }),
 }));
-
-import RootLayout from '../../app/_layout';
 
 const REC = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 

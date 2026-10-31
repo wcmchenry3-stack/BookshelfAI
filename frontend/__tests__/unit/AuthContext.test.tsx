@@ -59,7 +59,7 @@ jest.mock('expo-router', () => ({
 }));
 
 function AuthDisplay() {
-  const { isAuthenticated, isLoading, login, logout } = useContext(AuthContext);
+  const { isAuthenticated, isLoading } = useContext(AuthContext);
   return <Text testID="state">{isLoading ? 'loading' : isAuthenticated ? 'authed' : 'guest'}</Text>;
 }
 

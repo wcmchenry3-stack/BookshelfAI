@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 
 import { MAX_RETRY_AFTER_MS, isTimeoutError, toApiError } from './apiError';
 import { DEFAULT_TIMEOUT_MS } from './apiTimeouts';
@@ -97,10 +98,9 @@ export const api = axios.create({
 type SessionTagged = { _sessionEpoch?: number };
 type RetryTagged = { _retryCount?: number };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function shouldRetry(
   error: unknown,
-  config: (RetryTagged & SessionTagged & Record<string, any>) | undefined
+  config: (AxiosRequestConfig & RetryTagged & SessionTagged) | undefined
 ) {
   if (!config) return false;
   if (axios.isCancel(error) || config.signal?.aborted) return false;
