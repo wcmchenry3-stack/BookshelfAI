@@ -60,6 +60,9 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - Header (`headerRight` in `InnerStack`): `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
 - Do **not** use Ionicons — it has been replaced
 
+#### Shared sheets
+- `components/SheetModal.tsx` is the shared page-sheet modal scaffold (themed container, title + close header, body, bordered footer) used by `BookCandidatePicker` and `AddUnverifiedBookSheet`; pass the body as children and the primary action as `footer`.
+
 #### Library screens (My Books and Wishlist)
 
 - Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours and dark-mode top padding.
