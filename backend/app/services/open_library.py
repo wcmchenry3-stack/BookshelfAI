@@ -3,12 +3,14 @@
 import logging
 from collections.abc import Callable
 
-import httpx
-
 from app.core.config import settings
+from app.services._lookup_http import dict_records, first_record, get_json
 from app.services.book_identifier import MAX_SEARCH_RESULTS, best_record
 
 logger = logging.getLogger(__name__)
+
+# The fields every search asks for.
+_SEARCH_FIELDS = "key,title,subtitle,author_name,isbn,subject"
 
 
 class OpenLibraryService:
@@ -32,34 +34,20 @@ class OpenLibraryService:
         params = {
             "title": title,
             "limit": max(1, min(limit, MAX_SEARCH_RESULTS)),
-            "fields": "key,title,subtitle,author_name,isbn,subject",
+            "fields": _SEARCH_FIELDS,
         }
         if author:
             params["author"] = author
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{self.base}/search.json", params=params)
-            resp.raise_for_status()
-            data = resp.json()
-
-        docs = [d for d in data.get("docs", []) if isinstance(d, dict)]
-        return best_record(docs, score)
+        data = await get_json(f"{self.base}/search.json", params)
+        return best_record(dict_records(data, "docs"), score)
 
     async def search_by_isbn(self, isbn: str) -> dict | None:
         """Look up a work by ISBN. Returns work dict or None."""
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{self.base}/search.json",
-                params={
-                    "isbn": isbn,
-                    "limit": 1,
-                    "fields": "key,title,subtitle,author_name,isbn,subject",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        docs = data.get("docs", [])
-        return docs[0] if docs else None
+        data = await get_json(
+            f"{self.base}/search.json",
+            {"isbn": isbn, "limit": 1, "fields": _SEARCH_FIELDS},
+        )
+        return first_record(data, "docs")
 
     def extract_work_id(self, doc: dict) -> str | None:
         """Extract bare work ID like OL45804W from /works/OL45804W key."""

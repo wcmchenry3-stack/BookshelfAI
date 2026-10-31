@@ -33,6 +33,7 @@ backend/
 │   │   ├── models_allowlist.py Allowed models and token/timeout bounds (shared by config and registry)
 │   │   ├── registry.py        Server-controlled FeatureSpec registry (validated at import)
 │   │   └── providers/         Provider adapters (only package allowed to call a provider)
+│   │       ├── _common.py         Reply parsing shared by the adapters (ISBNs, confidence, logging)
 │   │       ├── base.py            VisionProvider protocol
 │   │       └── openai_vision.py   OpenAI vision book identifier
 │   ├── api/               HTTP routers (endpoints)
@@ -51,7 +52,7 @@ backend/
 │   │   ├── limiter.py         slowapi Limiter instance
 │   │   ├── logging.py         stdlib logging + request-id contextvar
 │   │   └── sentry_context.py  SentryContextMiddleware
-│   ├── models/            SQLAlchemy ORM models (one file per table)
+│   ├── models/            SQLAlchemy ORM models (one file per table; shared columns in _mixins.py)
 │   │   ├── book.py
 │   │   ├── edition.py
 │   │   ├── refresh_token.py
@@ -71,6 +72,7 @@ backend/
 │       │   ├── authors.py         Author-name comparison
 │       │   ├── isbn.py            ISBN validation and conversion
 │       │   └── text.py            Text normalisation
+│       ├── _lookup_http.py        GET + JSON helper shared by the two lookup clients
 │       ├── google_books.py        Google Books API client
 │       ├── open_library.py        Open Library API client
 │       └── wishlist.py            POST /wishlist business logic

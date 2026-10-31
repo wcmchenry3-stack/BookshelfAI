@@ -205,6 +205,8 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 
 ## Entity reference
 
+**Shared columns (#814).** Columns that several tables declare the same way come from the mixins in `backend/app/models/_mixins.py`: `IdMixin` (`id`, UUID primary key, `uuid4`), `UserOwnedMixin` (`user_id` → `users.id` `ON DELETE CASCADE`, NOT NULL; `user_id_indexed = True` adds `ix_<table>_user_id`), `CreatedAtMixin` (`created_at`, `server_default now()`), `TimestampMixin` (`created_at` plus `updated_at` with `onupdate`) and `DailyFeatureModelKeyMixin` (the `day`, `feature`, `model` primary key of the daily totals tables). The tables below still list every column. A mixin's columns keep the place the table declared them in through `sort_order` (SQLAlchemy would otherwise put them after the class's own columns). `tests/unit/test_model_schema_snapshot.py` pins every table's columns, indexes and constraints against `backend/tests/fixtures/model_schema_snapshot.json`; a migration that changes the schema regenerates it in the same PR (see *Writing a new migration*).
+
 ### `users` (`backend/app/models/user.py`)
 
 | Column | Type | Notes |
@@ -643,6 +645,9 @@ $EDITOR alembic/versions/<new-file>.py
 
 # Apply it
 alembic upgrade head
+
+# Update the pinned schema snapshot (#814) and review its diff
+python -m tests.unit.test_model_schema_snapshot --write
 ```
 
 ### Check-constraint gotcha

@@ -10,7 +10,6 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     and_,
-    func,
     or_,
     text,
 )
@@ -18,6 +17,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.models._mixins import IdMixin, TimestampMixin, UserOwnedMixin
 
 VALID_STATUSES = ("wishlisted", "purchased", "reading", "read")
 # The status a new entry starts with (POST /wishlist, unverified adds).
@@ -37,8 +37,9 @@ OVERRIDE_COLUMNS = {
 }
 
 
-class UserBook(Base):
+class UserBook(IdMixin, UserOwnedMixin, TimestampMixin, Base):
     __tablename__ = "user_books"
+    user_id_indexed = True
     __table_args__ = (
         # One live entry per user and book (#683): an entry in the trash
         # (``deleted_at`` set) does not block adding the book again.
@@ -94,15 +95,6 @@ class UserBook(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
     # The shared catalog book; NULL only for an unverified entry (#616),
     # which has ``custom_book_id`` instead (ck_user_books_one_book).
     book_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -150,15 +142,6 @@ class UserBook(Base):
     # ``UserBook.live()``.
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
     )
 
     book: Mapped["Book | None"] = relationship(  # noqa: F821

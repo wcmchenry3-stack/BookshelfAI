@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.ai.providers import anthropic_vision as av
-from app.ai.providers.isbn import clean_isbn_10
+from app.ai.providers._common import MAX_TOKEN_COUNT, clean_isbn_10
 from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FEATURES
 from app.services.book_identifier import ScanUnavailableError
@@ -87,7 +87,7 @@ class TestUsage:
 
     def test_huge_counts_are_capped(self):
         usage = SimpleNamespace(input_tokens=10**15)
-        assert av._usage(SimpleNamespace(usage=usage))[0] == av.MAX_TOKEN_COUNT
+        assert av._usage(SimpleNamespace(usage=usage))[0] == MAX_TOKEN_COUNT
 
 
 class TestRetryAfter:

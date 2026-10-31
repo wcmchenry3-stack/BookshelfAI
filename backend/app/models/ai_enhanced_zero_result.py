@@ -1,14 +1,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, false, func
+from sqlalchemy import Boolean, DateTime, Index, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.models._mixins import IdMixin, UserOwnedMixin
 
 
-class AIEnhancedZeroResult(Base):
+class AIEnhancedZeroResult(IdMixin, UserOwnedMixin, Base):
     """One row per uncharged enhanced scan that returned no books (#533).
 
     Written by ``app.ai.quota.release`` in the same transaction as the scan's
@@ -32,14 +33,6 @@ class AIEnhancedZeroResult(Base):
         Index("ix_ai_enhanced_zero_results_user_created", "user_id", "created_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
