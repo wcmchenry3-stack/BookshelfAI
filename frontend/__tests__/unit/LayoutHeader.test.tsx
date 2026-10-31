@@ -1,6 +1,6 @@
 import fs from 'fs';
-import RootLayoutDefault from '../../app/_layout';
 import path from 'path';
+import RootLayoutDefault from '../../app/_layout';
 import React from 'react';
 import { render } from '@testing-library/react-native';
 

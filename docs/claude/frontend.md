@@ -1,7 +1,6 @@
 # Frontend Conventions
 
 ## Stack
-
 Expo SDK 55 · Expo Router · React Native · TypeScript · axios · expo-secure-store
 
 ## Running Locally
@@ -16,7 +15,6 @@ npx expo start
 ## Key Patterns
 
 ### Theme
-
 - **All colours must come from `useTheme()`** — zero hardcoded colour values, ever
 - Import: `import { useTheme } from '../hooks/useTheme'`
 - Use `theme.colors.*`, `theme.spacing.*`, `theme.typography.*`, `theme.radius.*`
@@ -29,24 +27,22 @@ npx expo start
 ### Design System
 
 #### Colors (MD3 roles — light / dark)
-
 Defined in `frontend/theme/tokens.ts`. Key roles:
 
-| Role                      | Light     | Dark      | Use                                  |
-| ------------------------- | --------- | --------- | ------------------------------------ |
-| `primary`                 | `#0f426f` | `#a0cafe` | Brand, active states, filled buttons |
-| `onPrimary`               | `#ffffff` | `#003258` | Text/icon on primary bg              |
-| `secondary`               | `#47645d` | `#adcdc4` | Inactive tab icons, secondary text   |
-| `secondaryContainer`      | `#c6e7dd` | `#2f4c45` | "Read" status badge bg               |
-| `surface`                 | `#fbf9f5` | `#131210` | Screen backgrounds                   |
-| `surfaceContainerLow`     | `#f5f3ef` | `#1b1c1a` | Card backgrounds, tab bar bg         |
-| `surfaceContainerHighest` | `#e4e2de` | `#343532` | Input fields                         |
-| `onSurface`               | `#1b1c1a` | `#e5e3df` | Primary text                         |
-| `onSurfaceVariant`        | `#42474f` | `#c4c9c1` | Secondary text, ghost button text    |
-| `outline`                 | `#737780` | `#8e9299` | Borders, dividers                    |
+| Role | Light | Dark | Use |
+|---|---|---|---|
+| `primary` | `#0f426f` | `#a0cafe` | Brand, active states, filled buttons |
+| `onPrimary` | `#ffffff` | `#003258` | Text/icon on primary bg |
+| `secondary` | `#47645d` | `#adcdc4` | Inactive tab icons, secondary text |
+| `secondaryContainer` | `#c6e7dd` | `#2f4c45` | "Read" status badge bg |
+| `surface` | `#fbf9f5` | `#131210` | Screen backgrounds |
+| `surfaceContainerLow` | `#f5f3ef` | `#1b1c1a` | Card backgrounds, tab bar bg |
+| `surfaceContainerHighest` | `#e4e2de` | `#343532` | Input fields |
+| `onSurface` | `#1b1c1a` | `#e5e3df` | Primary text |
+| `onSurfaceVariant` | `#42474f` | `#c4c9c1` | Secondary text, ghost button text |
+| `outline` | `#737780` | `#8e9299` | Borders, dividers |
 
 #### Typography
-
 - **Headline font**: Noto Serif (`NotoSerif_700Bold`, `NotoSerif_800ExtraBold`) — loaded via `useFonts` in `app/_layout.tsx` (if loading fails, e.g. the web 12s timeout, the app renders with system fonts rather than a blank screen)
 - **Body / label font**: Inter (`Inter_400Regular`, `Inter_500Medium`, `Inter_600SemiBold`, `Inter_700Bold`)
 - Token: `theme.typography.fontFamilyHeadline` → `'NotoSerif_700Bold'`
@@ -54,7 +50,6 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - Size scale: `fontSizeDisplay` (48) · `fontSizeH1` (40) · `fontSizeH2` (32) · `fontSizeH3` (24) · `fontSizeLG` (20) · `fontSizeBase` (16) · `fontSizeSM` (14)
 
 #### Icons
-
 - Library: **MaterialIcons** from `@expo/vector-icons`
 - Tab icons: `document-scanner` (Scan) · `auto-stories` (Wishlist) · `library-books` (My Books) · `settings` (Settings)
 - Header (`headerRight` in `InnerStack`): `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
@@ -64,18 +59,15 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - `components/SheetModal.tsx` is the shared page-sheet modal scaffold (themed container, title + close header, body, bordered footer) used by `BookCandidatePicker` and `AddUnverifiedBookSheet`; pass the body as children and the primary action as `footer`.
 
 #### Library screens (My Books and Wishlist)
-
 - Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours and dark-mode top padding.
 - `hooks/useLibraryMutations.ts` owns advance-status and remove (the per-row in-flight guard, offline check, error alerts, the "moved to trash" banner). Each screen passes `onAdvanced` / `onRemoved` to update its own list, so My Books and Wishlist keep their different list rules. Put new shared row/header behaviour there, not in the screens.
 
 #### Logo / App Icon
-
 - Source asset: `frontend/assets/logo.png` (chihuahua + open book on navy, 1024×1024)
 - Configured in `app.json` as iOS icon, Android adaptive foreground (`backgroundColor: #0f426f`), and web favicon
 - Rendered in-app via `<Image source={require('../assets/logo.png')} />` in the header (`app/_layout.tsx`)
 
 ### Feedback flow
-
 - Entry points: the header "?" button (`HeaderFeedbackButton`, on every Stack screen) and the "Send feedback" row in Settings. Both call `useFeedback().openFeedback()` from `FeedbackProvider` (`components/FeedbackWidget/FeedbackContext.tsx`, mounted in `app/_layout.tsx`), which owns the single bottom-sheet `FeedbackWidget` and the `FeedbackThanksBanner`.
 - Sheet: Bug / Feature request chips + description only (max 2000). On success it closes itself and the banner (4 s, non-interactive, below the header) confirms.
 - Submission goes to Sentry User Feedback (`captureFeedback`, `source: 'in_app_feedback'`, tag `feedback.type`); session logs are attached for bug reports only (`SessionLogger`: 200 lines, each cut at 1,000 chars, 100 KB total, redacted before the cut: Authorization/Bearer/JWT/email/token params; never throws). Throttled per install to 5 submissions / 10 min.
@@ -83,16 +75,13 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - There is no floating button; do not add one over the tab bar.
 
 ### Accessibility
-
 See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md). WCAG 2.2 AA required on every interactive element. React Native: `accessibilityLabel`, `accessibilityRole`, `accessibilityHint` (if non-obvious), `minWidth/minHeight: 44` on all `Pressable`.
 
 ### Token Storage
-
 - Tokens and preferences: `expo-secure-store` only
 - Never use `AsyncStorage` for anything sensitive
 
 ### File Routing
-
 - Screens live in `app/` — Expo Router picks them up automatically
 - Tabs: `app/(tabs)/<name>.tsx`
 - Auth: `app/(auth)/<name>.tsx`
@@ -104,30 +93,30 @@ Stack: `i18next` + `react-i18next`. All user-facing strings must use `useTransla
 
 #### Namespaces
 
-| Namespace    | Covers                                                      |
-| ------------ | ----------------------------------------------------------- |
-| `common`     | Error title, Close, Remove, cover alt                       |
-| `auth`       | Login screen                                                |
-| `tabs`       | Tab bar labels + a11y labels                                |
-| `my-books`   | My Books screen — status tabs, badge, detail sheet, actions |
-| `scan`       | Scan screen — alerts, mode tabs, permission, camera         |
-| `settings`   | Settings screen                                             |
-| `wishlist`   | Wishlist screen                                             |
-| `components` | `BookCandidatePicker`, `ThemeToggleButton`                  |
-| `feedback`   | In-app feedback widget                                      |
+| Namespace | Covers |
+|-----------|--------|
+| `common` | Error title, Close, Remove, cover alt |
+| `auth` | Login screen |
+| `tabs` | Tab bar labels + a11y labels |
+| `my-books` | My Books screen — status tabs, badge, detail sheet, actions |
+| `scan` | Scan screen — alerts, mode tabs, permission, camera |
+| `settings` | Settings screen |
+| `wishlist` | Wishlist screen |
+| `components` | `BookCandidatePicker`, `ThemeToggleButton` |
+| `feedback` | In-app feedback widget |
 
 #### Using translations in a screen
 
 ```tsx
-import { useTranslation } from "react-i18next";
+import { useTranslation } from 'react-i18next';
 
-const { t } = useTranslation("my-books");
+const { t } = useTranslation('my-books');
 // Cross-namespace lookup:
-t("close", { ns: "common" });
+t('close', { ns: 'common' })
 // Interpolation:
-t("coverAlt", { ns: "common", title: book.title });
+t('coverAlt', { ns: 'common', title: book.title })
 // Dynamic nested key:
-t(`status.${item.status}`);
+t(`status.${item.status}`)
 ```
 
 #### Adding a new language
@@ -161,7 +150,6 @@ node scripts/translate.js --all
 `__tests__/unit/localeKeyParity.test.ts` fails with a list of `ns:key` entries when a locale is missing a key that `en` has, or carries a stale key that `en` no longer has. When you add or remove an `en` key, update all 12 other locales in the same PR (and `_meta/<ns>.meta.json`). Plurals: `en` uses `x_one` / `x_other`; a locale satisfies `x` with `x_other` plus its own CLDR categories (ar: zero/one/two/few/many/other, ru: one/few/many/other, he: one/two/many/other, ja/ko/zh: other only). `localeCharacterLimits.test.ts` enforces the `characterLimit` values in `_meta`. `provenance.json` currently tracks only the `feedback` namespace.
 
 #### RTL locales
-
 Arabic (`ar`) and Hebrew (`he`) are RTL. String translations are complete.
 Layout mirroring (`I18nManager.forceRTL()` + app restart) is a follow-up task.
 
@@ -215,7 +203,7 @@ Call the backend through the `api` instance in `lib/api.ts` (never bare `axios`,
 Lint is warning-free (#817) and `npm run lint` runs `eslint . --max-warnings 0`. In `frontend/.eslintrc.js`, `import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `@typescript-eslint/no-unused-vars` and `@typescript-eslint/no-require-imports` are errors.
 
 - `no-require-imports` is off only for `__tests__/**` and `jest.setup.ts` (one `overrides` block): `jest.mock()` factories, `jest.isolateModules` and dynamic locale JSON loads need a lazy `require()` because Jest hoists mocks above imports. App code may not `require`.
-- `import/first` has no exceptions. `app/_layout.tsx` keeps `../lib/sentry` as the first import (rule 13) and runs `SessionLogger.init()` and the lifecycle breadcrumb below the imports (ES imports are hoisted, so Sentry still loads first; `__tests__/unit/LayoutInitOrder.test.tsx` asserts the order).
+- `import/first` has no exceptions. `app/_layout.tsx` keeps `../lib/sentry` as the first import (rule 13) and runs `SessionLogger.init()` and the lifecycle breadcrumb below the imports (ES imports are hoisted, so Sentry still loads first; `__tests__/unit/LayoutInitOrder.test.tsx` checks the source structure: Sentry is the first import and the init code comes after the last import).
 - A new `eslint-disable` needs a reason on the same line (`// eslint-disable-next-line <rule> -- <why>`). Fix the code first; do not add one to silence a warning.
 
 ## Commands
