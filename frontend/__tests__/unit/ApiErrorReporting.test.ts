@@ -2,6 +2,13 @@
  * #724: unexpected API failures are reported to Sentry once per session with
  * status/path/detail tags, and a 403 never signs the user out.
  */
+import { api, setAuthFailureCallback } from '../../lib/api';
+import {
+  isServiceUnavailable,
+  pathTemplate,
+  resetApiErrorReporting,
+} from '../../lib/apiErrorReporting';
+
 const mockCapture = jest.fn();
 const mockDeleteItem = jest.fn();
 
@@ -24,13 +31,6 @@ jest.mock('axios', () => {
   globalThis.ReadableStream = savedRS;
   return actual;
 });
-
-import { api, setAuthFailureCallback } from '../../lib/api';
-import {
-  isServiceUnavailable,
-  pathTemplate,
-  resetApiErrorReporting,
-} from '../../lib/apiErrorReporting';
 
 function respondWith(status: number, detail?: unknown) {
   api.defaults.adapter = async (config) => {

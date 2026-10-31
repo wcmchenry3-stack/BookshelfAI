@@ -1,5 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
+import RootLayoutDefault from '../../app/_layout';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,7 @@ jest.mock('expo-router', () => {
   const MockStack = ({ children }: { children?: React.ReactNode }) => (
     <View testID="stack">{children}</View>
   );
-  MockStack.Screen = (props: unknown) => {
+  MockStack.Screen = function MockScreen(props: unknown) {
     mockScreens.push(props as { name: string; options?: Record<string, unknown> });
     return null;
   };
@@ -128,8 +129,6 @@ jest.mock('@expo-google-fonts/inter', () => ({
 }));
 
 // ─── Import after mocks ─────────────────────────────────────────────────────
-
-import RootLayoutDefault from '../../app/_layout';
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
