@@ -28,6 +28,7 @@ export function BookDetailSheet<T extends DetailBook>({
   onRemove,
 }: BookDetailSheetProps<T>) {
   const { theme } = useTheme();
+  // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
   const { activeColor, onActiveColor } = useLibraryAccent();
   const nextStatus = selected ? NEXT_STATUS[selected.status] : undefined;

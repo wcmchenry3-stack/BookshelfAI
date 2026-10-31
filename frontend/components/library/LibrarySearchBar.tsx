@@ -14,6 +14,7 @@ interface LibrarySearchBarProps {
 /** Title/author filter box; pads below the floating header in dark mode. */
 export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps) {
   const { theme } = useTheme();
+  // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
   const { topPad } = useLibraryAccent();
   return (

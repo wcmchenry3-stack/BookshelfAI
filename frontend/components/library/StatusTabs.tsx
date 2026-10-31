@@ -13,6 +13,7 @@ interface StatusTabsProps {
 /** Horizontal status filter tabs (All / Wishlisted / Purchased / ...). */
 export function StatusTabs({ activeTab, onChange }: StatusTabsProps) {
   const { theme } = useTheme();
+  // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
   const { activeColor, onActiveColor } = useLibraryAccent();
   return (

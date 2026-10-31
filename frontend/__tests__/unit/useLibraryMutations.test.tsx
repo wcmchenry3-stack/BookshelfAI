@@ -16,6 +16,14 @@ jest.mock('../../lib/api', () => ({
   },
 }));
 
+// The en copy for my-books and wishlist is identical, so echo "<ns>:<key>" to
+// prove which namespace the hook reads.
+jest.mock('react-i18next', () => ({
+  useTranslation: (ns: string) => ({
+    t: (key: string, opts?: { ns?: string }) => `${opts?.ns ?? ns}:${key}`,
+  }),
+}));
+
 jest.mock('../../lib/trash', () => ({
   openTrash: (...args: unknown[]) => mockOpenTrash(...args),
 }));
@@ -133,6 +141,7 @@ describe('useLibraryMutations', () => {
       });
 
       expect(Alert.alert).toHaveBeenCalledTimes(1);
+      expect(Alert.alert).toHaveBeenCalledWith('common:errorTitle', 'my-books:errorUpdateStatus');
       expect(onAdvanced).not.toHaveBeenCalled();
       expect(result.current.mutatingIds.size).toBe(0);
 
@@ -210,29 +219,52 @@ describe('useLibraryMutations', () => {
       });
 
       expect(Alert.alert).toHaveBeenCalledTimes(1);
+      expect(Alert.alert).toHaveBeenCalledWith('common:errorTitle', 'my-books:errorRemoveBook');
       expect(mockShowBanner).not.toHaveBeenCalled();
       expect(onRemoved).not.toHaveBeenCalled();
       expect(result.current.mutatingIds.size).toBe(0);
     });
   });
 
+  it('uses the wishlist copy for failures when namespace is wishlist', async () => {
+    mockPatch.mockRejectedValue(new Error('boom'));
+    mockDelete.mockRejectedValue(new Error('boom'));
+    const { hook } = setup({ namespace: 'wishlist' });
+    const { result } = await hook;
+
+    await act(async () => {
+      await result.current.advanceStatus(ITEM);
+    });
+    expect(Alert.alert).toHaveBeenLastCalledWith('common:errorTitle', 'wishlist:errorUpdateStatus');
+
+    await act(async () => {
+      await result.current.removeBook(ITEM);
+    });
+    expect(Alert.alert).toHaveBeenLastCalledWith('common:errorTitle', 'wishlist:errorRemoveBook');
+  });
+
   it('guards each row independently', async () => {
-    let resolvePatch: (v: unknown) => void = () => {};
-    mockPatch.mockReturnValueOnce(new Promise((r) => (resolvePatch = r)));
+    const resolvers: ((v: unknown) => void)[] = [];
+    mockPatch.mockImplementation(() => new Promise((r) => resolvers.push(r)));
     const { hook } = setup();
     const { result } = await hook;
 
-    let first: Promise<void> = Promise.resolve();
+    let both: Promise<unknown> = Promise.resolve();
     await act(async () => {
-      first = result.current.advanceStatus(ITEM);
-      await result.current.advanceStatus({ id: 'ub-2', status: 'wishlisted' });
+      both = Promise.all([
+        result.current.advanceStatus(ITEM),
+        result.current.advanceStatus({ id: 'ub-2', status: 'wishlisted' }),
+      ]);
     });
 
     expect(mockPatch).toHaveBeenCalledTimes(2);
+    expect(result.current.mutatingIds.has('ub-1')).toBe(true);
+    expect(result.current.mutatingIds.has('ub-2')).toBe(true);
 
     await act(async () => {
-      resolvePatch({ data: { id: 'ub-1', status: 'purchased' } });
-      await first;
+      resolvers.forEach((r) => r({ data: { id: 'x', status: 'purchased' } }));
+      await both;
     });
+    expect(result.current.mutatingIds.size).toBe(0);
   });
 });
