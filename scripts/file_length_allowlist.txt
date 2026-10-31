@@ -2,7 +2,6 @@
 # Format: <repo-relative path> <max_lines>. The cap is the file's length when it
 # was allowlisted: a file may shrink but never grow. When you shrink one, lower
 # its number here (or delete the line once it is under 600).
-backend/app/ai/quota.py 1722
 backend/app/ai/settings.py 1184
 backend/app/api/scan.py 1026
 # ScanJobContext.tsx: was raised to a temporary 2000 ceiling by owner decision #801; lowered to 1110 by #804
