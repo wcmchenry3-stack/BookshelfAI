@@ -162,6 +162,9 @@ describe('handleUnavailable', () => {
     ScanUiState,
     { kind: 'unavailable' }
   >;
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   it('first attempt: waits on the schedule, shows the short notice and holds the photo queue', () => {
     jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
@@ -176,7 +179,6 @@ describe('handleUnavailable', () => {
       nextAttemptAt: 1_000_000 + SCAN_RETRY_DELAYS_MS[0],
     });
     expect(deps.setScanNotice).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paused' }));
-    jest.restoreAllMocks();
   });
 
   it('later attempt: schedules the next step, no new notice, clears the paused one', () => {
@@ -194,7 +196,6 @@ describe('handleUnavailable', () => {
     expect(typeof call).toBe('function');
     expect(call({ kind: 'paused' })).toBeNull();
     expect(call({ kind: 'daily_limit' })).toEqual({ kind: 'daily_limit' });
-    jest.restoreAllMocks();
   });
 
   it('final attempt: fails the job, shows the final banner and starts a drain for waiting photos', () => {

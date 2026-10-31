@@ -1,20 +1,16 @@
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import NetInfo from '@react-native-community/netinfo';
-import * as Crypto from 'expo-crypto';
 import { useTranslation } from 'react-i18next';
 
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useAuth } from '../hooks/useAuth';
 import { useBanner } from '../hooks/useBanner';
+import { useScanQueue } from '../hooks/useScanQueue';
+import { useScanReview } from '../hooks/useScanReview';
 import { useTurnstile } from '../hooks/useTurnstile';
-import { api } from '../lib/api';
-import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
-import { apiErrorTags, isReportedCentrally, sanitizeApiError } from '../lib/apiErrorReporting';
 import { Sentry } from '../lib/sentry';
-import { hasRefusedJobs, MAX_SCAN_RETRY_DELAY_MS, type ScanNotice } from '../lib/scanErrors';
+import { MAX_SCAN_RETRY_DELAY_MS, type ScanNotice } from '../lib/scanErrors';
 import {
-  isAwaitingRetry,
   isFailedScanExpired,
   isPendingUpload,
   MAX_QUEUE_SIZE,
@@ -30,19 +26,10 @@ import {
 } from '../lib/scanJobStorage';
 import { executeScan } from '../lib/scan/executeScan';
 import type { ScanExecDeps } from '../lib/scan/types';
-import { draftFromBook, type UnverifiedDraft } from '../lib/unverified';
+import type { UnverifiedDraft } from '../lib/unverified';
 
 /** An "Add it yourself" form waiting to be shown, with its own id (#616). */
 export type PendingUnverifiedDraft = UnverifiedDraft & { id: string };
-
-const MAX_RETRIES = 3;
-const QUEUE_DRAIN_DELAY = 2000;
-// Extra drain passes when a retry wait ends mid-drain (#604).
-const MAX_DRAIN_PASSES = 3;
-// When the retry timer fires during a drain, check again after this long.
-const RETRY_TIMER_BUSY_DELAY = 1000;
-// When the retry timer fires while offline, check again after this long (#604).
-const RETRY_TIMER_OFFLINE_DELAY = 60 * 1000;
 
 export interface ScanJobContextValue {
   jobs: ScanJob[];
@@ -122,11 +109,6 @@ export const ScanJobContext = createContext<ScanJobContextValue>({
   dismissUnverified: () => {},
 });
 
-/** Identifies a scan result within its job (title and author, as read). */
-function candidateKey(book: EnrichedBook): string {
-  return `${book.title}\u0000${book.author}`;
-}
-
 export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const [jobs, setJobs] = useState<ScanJob[]>([]);
   const [reviewingJobId, setReviewingJobId] = useState<string | null>(null);
@@ -141,7 +123,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // Where each draft's book came from, by draft id. Kept after the forms
   // close, so a save still in flight can take its own book out of its scan.
   const draftSourcesRef = useRef(new Map<string, { jobId: string | null; key: string }>());
-  const nextDraftIdRef = useRef(0);
   // Keep jobs in a ref so callbacks can read the latest state synchronously.
   // The ref is the source of truth: every change goes through setJobsAndRef,
   // which updates the ref first and then hands React the same list. There is
@@ -170,16 +151,6 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       [...inFlightRef.current].some(
         (id) => jobsRef.current.find((j) => j.id === id)?.type === 'image'
       ),
-    []
-  );
-  // Whether a photo is being uploaded right now (past its connectivity
-  // check), which a drain must not send another photo alongside.
-  const imageUploading = useCallback(
-    () =>
-      [...inFlightRef.current].some((id) => {
-        const j = jobsRef.current.find((x) => x.id === id);
-        return j?.type === 'image' && j.status === 'searching';
-      }),
     []
   );
   const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
@@ -338,336 +309,28 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     [setJobsAndRef]
   );
 
-  // Drain queued/pending jobs when connectivity is restored. Declared before
-  // the connectivity effect to satisfy no-use-before-define. Only uses stable
-  // refs and setJobs so deps are empty.
-  const drainQueue = useCallback(async () => {
-    // Runs again when a retry was queued while it was running (#605).
-    do {
-      drainAgainRef.current = false;
-      drainingRef.current = true;
-      try {
-        // A photo skipped only because another photo was waiting for its
-        // retry is revisited once that wait ends during the pass (the waiting
-        // photo failed for good or was sent and succeeded), since nothing
-        // else would start another drain then (#604). Bounded: each extra
-        // pass needs a photo to have stopped waiting during the previous one.
-        for (let pass = 0; pass < MAX_DRAIN_PASSES; pass++) {
-          if (!(await drainPass())) break;
-        }
-      } finally {
-        drainingRef.current = false;
-      }
-      // Left for the photo being sent, whose completion starts the next drain.
-    } while (drainAgainRef.current && !imageUploading());
-
-    // One pass over the queue; true when a photo was skipped for another
-    // photo's retry wait and no photo is waiting any more.
-    async function drainPass(): Promise<boolean> {
-      // Read the latest jobs from the ref: a setJobs updater is run lazily by
-      // React, so it can't be used to read state synchronously.
-      const pending = jobsRef.current.filter(
-        (j) => j.status === 'queued' || j.status === 'pending'
-      );
-      // Retry schedule (#604): photos whose next attempt is due go first,
-      // earliest first. While any photo is still waiting for its next
-      // attempt, no other photo is sent (one at a time).
-      const startedAt = Date.now();
-      const due = pending
-        .filter((j) => isAwaitingRetry(j) && j.nextAttemptAt! <= startedAt)
-        .sort((a, b) => a.nextAttemptAt! - b.nextAttemptAt!);
-      const queuedJobs = [...due, ...pending.filter((j) => !due.includes(j))];
-      // Re-read on every step, not once: a photo can stop waiting during the
-      // drain (failed after its last attempt, or made due by a success).
-      const waitingForRetry = () => {
-        const now = Date.now();
-        return jobsRef.current.some(
-          (j) =>
-            j.type === 'image' &&
-            isAwaitingRetry(j) &&
-            j.nextAttemptAt! > now &&
-            !inFlightRef.current.has(j.id)
-        );
-      };
-
-      stopDrainRef.current = 'none';
-      let skippedForWait = false;
-      for (const job of queuedJobs) {
-        const netState = await NetInfo.fetch();
-        // Only a known-offline state stops the drain; null ("unknown") counts
-        // as connected, as in handleAddBooks (#604).
-        if (netState.isConnected === false) break;
-        // The list above is a snapshot: skip jobs dismissed, sent or being
-        // sent (startScan/retryScan) since.
-        const current = jobsRef.current.find((j) => j.id === job.id);
-        // Re-read: executeScan (via a refusal) sets it during the loop.
-        const stop = stopDrainRef.current as 'none' | 'enhanced' | 'images';
-        // Held back only because another photo is waiting for its retry.
-        const heldByWait =
-          !!current &&
-          current.type === 'image' &&
-          stop === 'none' &&
-          !isAwaitingRetry(current) &&
-          waitingForRetry();
-        if (heldByWait) skippedForWait = true;
-        // One photo at a time: a photo uploading outside this drain
-        // (startScan, retryScan) holds back the drain's photos until it
-        // finishes, which then drains again (#605).
-        if (current?.type === 'image' && !inFlightRef.current.has(current.id) && imageUploading()) {
-          drainAgainRef.current = true;
-          continue;
-        }
-        if (
-          !current ||
-          (current.status !== 'queued' && current.status !== 'pending') ||
-          inFlightRef.current.has(job.id) ||
-          // A refusal (limit, paused) applies to photo uploads only (POST
-          // /scan); queued text searches still go through.
-          (current.type === 'image' &&
-            (stop === 'images' ||
-              (stop === 'enhanced' && !!current.enhanced) ||
-              // Not due yet, or another photo is waiting for its retry.
-              (isAwaitingRetry(current) ? current.nextAttemptAt! > Date.now() : heldByWait)))
-        ) {
-          continue;
-        }
-        await executeScanRef.current(current);
-        // Delay between jobs to avoid API burst.
-        if (queuedJobs.indexOf(job) < queuedJobs.length - 1) {
-          await new Promise((r) => setTimeout(r, QUEUE_DRAIN_DELAY));
-        }
-      }
-      const stopped = stopDrainRef.current as 'none' | 'enhanced' | 'images';
-      return skippedForWait && stopped === 'none' && !waitingForRetry();
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const resumeQueue = useCallback(() => {
-    setScanNotice(null);
-    if (!drainingRef.current) void drainQueue();
-  }, [drainQueue]);
-
-  // Listen for connectivity changes and drain queued jobs.
-  useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener((state) => {
-      if (state.isConnected && !drainingRef.current) {
-        drainQueue();
-      }
-    });
-    return unsubscribe;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
-
-  // Retry schedule timer (#604): while the app is open, drain when the
-  // earliest scheduled attempt is due. Re-armed whenever jobs change (a new
-  // schedule, a sent or dismissed photo) and cleared on unmount. On launch
-  // the connectivity listener's first event drains whatever is already due.
-  // A wait is never armed for longer than the longest step of the schedule.
-  // Known offline (isConnected === false), nothing is sent and no attempt is
-  // used: it checks again after RETRY_TIMER_OFFLINE_DELAY (or on reconnect).
-  // The drain never sends a job that is in flight (inFlightRef), so the timer
-  // can't double-send.
-  const nextRetryAt = useMemo(() => {
-    let next: number | null = null;
-    for (const j of jobs) {
-      if (j.type === 'image' && isAwaitingRetry(j) && (next === null || j.nextAttemptAt! < next)) {
-        next = j.nextAttemptAt!;
-      }
-    }
-    return next;
-  }, [jobs]);
-  useEffect(() => {
-    if (!loaded || nextRetryAt === null) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const arm = (delay: number) => {
-      timer = setTimeout(() => void fire(), Math.min(Math.max(0, delay), MAX_SCAN_RETRY_DELAY_MS));
-    };
-    async function fire() {
-      if (cancelled) return;
-      // A timer can fire a little early; wait out the rest.
-      const remaining = nextRetryAt! - Date.now();
-      if (remaining > 0) return arm(remaining);
-      if (drainingRef.current) return arm(RETRY_TIMER_BUSY_DELAY);
-      const netState = await NetInfo.fetch();
-      if (cancelled) return;
-      if (netState.isConnected === false) return arm(RETRY_TIMER_OFFLINE_DELAY);
-      if (drainingRef.current) return arm(RETRY_TIMER_BUSY_DELAY);
-      await drainQueue();
-      // A drain that sent the due photo changed the jobs, which re-ran this
-      // effect (cancelled). If it could not (it went offline mid-drain), look
-      // again later rather than wait for an event that may not come.
-      if (!cancelled) arm(RETRY_TIMER_OFFLINE_DELAY);
-    }
-    arm(nextRetryAt - Date.now());
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [loaded, nextRetryAt, drainQueue]);
+  // The queue: drain, reconnect drain, retry timer, and the send entry
+  // points (hooks/useScanQueue.ts).
+  const { drainQueue, resumeQueue, startScan, retryScan, restartScanSchedule } = useScanQueue({
+    jobs,
+    loaded,
+    jobsRef,
+    setJobsAndRef,
+    updateJob,
+    inFlightRef,
+    generationRef,
+    drainingRef,
+    drainAgainRef,
+    stopDrainRef,
+    imageInFlight,
+    setScanNotice,
+    showBanner,
+    t,
+    executeScanRef,
+  });
 
   const pendingCount = useMemo(() => jobs.filter(isPendingUpload).length, [jobs]);
   const isQueueFull = pendingCount >= MAX_QUEUE_SIZE;
-
-  const startScan = useCallback(
-    async (type: ScanJobType, imageUri?: string, query?: string) => {
-      let startedId: string | null = null;
-      const generation = generationRef.current;
-      try {
-        // Backstop for the cap — the scan screen checks isQueueFull before
-        // persisting a capture, but a stale render could still get here.
-        if (jobsRef.current.filter(isPendingUpload).length >= MAX_QUEUE_SIZE) {
-          if (imageUri) deleteScanImage(imageUri);
-          showBanner({
-            message: t(hasRefusedJobs(jobsRef.current) ? 'queueFullLimited' : 'queueFull'),
-            type: 'error',
-            duration: 4000,
-          });
-          return;
-        }
-
-        const job: ScanJob = {
-          id: Crypto.randomUUID(),
-          type,
-          status: 'pending',
-          // eslint-disable-next-line react-hooks/purity
-          createdAt: Date.now(),
-          query,
-          imageUri,
-          retryCount: 0,
-        };
-
-        Sentry.addBreadcrumb({
-          category: 'scan',
-          message: `Scan started: ${type}`,
-          level: 'info',
-          data: { jobId: job.id, type: job.type },
-        });
-
-        setJobsAndRef((prev) => [job, ...prev]);
-        // Held across the connectivity check below, where the job is already
-        // 'pending' but not yet sent: a reconnect drain must skip it.
-        startedId = job.id;
-        inFlightRef.current.add(job.id);
-
-        const netState = await NetInfo.fetch();
-        // Signed out during the connectivity check: the job was dropped with
-        // the queue, so nothing is sent or announced.
-        if (generationRef.current !== generation) return;
-        if (!netState.isConnected) {
-          updateJob(job.id, { status: 'queued' });
-          showBanner({
-            message: t('savedOffline'),
-            type: 'info',
-            duration: 4000,
-          });
-          return;
-        }
-
-        await executeScanRef.current(job);
-      } catch (err) {
-        if (!isReportedCentrally(err)) {
-          Sentry.captureException(sanitizeApiError(err));
-        }
-        showBanner({
-          message: t('scanFailedMessage'),
-          type: 'error',
-          duration: 4000,
-        });
-      } finally {
-        if (startedId) inFlightRef.current.delete(startedId);
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showBanner, t]
-  );
-
-  const retryScan = useCallback(
-    async (jobId: string) => {
-      const job = jobsRef.current.find((j) => j.id === jobId);
-      if (!job) return;
-
-      Sentry.addBreadcrumb({
-        category: 'scan',
-        message: `Scan retry: attempt ${job.retryCount + 1}`,
-        level: 'info',
-        data: { jobId, retryCount: job.retryCount + 1 },
-      });
-
-      if (job.retryCount >= MAX_RETRIES) {
-        showBanner({
-          message: t('maxRetries'),
-          type: 'info',
-          duration: 4000,
-        });
-        updateJob(jobId, { status: 'queued' });
-        return;
-      }
-
-      const updated: ScanJob = {
-        ...job,
-        retryCount: job.retryCount + 1,
-        status: 'pending' as const,
-        error: undefined,
-        failedAt: undefined,
-      };
-      setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
-      await executeScanRef.current(updated);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showBanner, t]
-  );
-
-  // "Retry" on the final-failure banner (#604): send the photo again now,
-  // with the schedule restarted at attempt 1.
-  const restartScanSchedule = useCallback(
-    async (jobId: string) => {
-      const job = jobsRef.current.find((j) => j.id === jobId);
-      if (!job || job.status !== 'failed' || inFlightRef.current.has(jobId)) return;
-      // One photo at a time (#604): if another photo is being sent, a drain is
-      // running, or a photo waits on its retry schedule, hand this one to the
-      // drain instead of sending it now.
-      const now = Date.now();
-      const imageSending = imageInFlight();
-      const photoWaiting = jobsRef.current.some(
-        (j) => j.id !== jobId && j.type === 'image' && isAwaitingRetry(j) && j.nextAttemptAt! > now
-      );
-      if (job.type === 'image' && (imageSending || drainingRef.current || photoWaiting)) {
-        setJobsAndRef((prev) =>
-          prev.map((j) =>
-            j.id === jobId
-              ? {
-                  ...j,
-                  status: 'queued' as const,
-                  error: undefined,
-                  failedAt: undefined,
-                  retryCount: 0,
-                  attempts: undefined,
-                  nextAttemptAt: undefined,
-                }
-              : j
-          )
-        );
-        // Starting a drain now would send this photo alongside the one being
-        // sent, so ask for one when that send or the running drain finishes.
-        if (!imageSending && !drainingRef.current) void drainQueue();
-        else drainAgainRef.current = true;
-        return;
-      }
-      const updated: ScanJob = {
-        ...job,
-        status: 'pending',
-        error: undefined,
-        failedAt: undefined,
-        retryCount: 0,
-        attempts: undefined,
-        nextAttemptAt: undefined,
-      };
-      setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
-      await executeScanRef.current(updated);
-    },
-    [setJobsAndRef, drainQueue, imageInFlight]
-  );
 
   // Failed scans are kept 7 days (#605): on launch (the load above) and when
   // the queue screen opens, older ones are removed with their images.
@@ -747,261 +410,23 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     [setJobsAndRef]
   );
 
-  // Keep the review id readable from long-lived closures (the banner action).
-  useEffect(() => {
-    reviewingJobIdRef.current = reviewingJobId;
-  }, [reviewingJobId]);
-
-  // "Add it yourself" (#616). One sheet at a time: close the review picker
-  // WITHOUT dismissing its job (dismissReview would delete the whole job and
-  // photo). A book leaves the job only once its form is saved, so cancelling
-  // the form brings the review back with that book still in it.
-  const addYourself = useCallback((books: EnrichedBook[]) => {
-    if (books.length === 0) return;
-    const jobId = reviewingJobIdRef.current;
-    const job = jobId ? jobsRef.current.find((j) => j.id === jobId) : undefined;
-    setReviewingJobId(null);
-    reopenReviewJobIdRef.current = job ? job.id : null;
-    setUnverifiedDrafts(
-      books.map((b) => {
-        nextDraftIdRef.current += 1;
-        const id = `draft-${nextDraftIdRef.current}`;
-        draftSourcesRef.current.set(id, { jobId: job ? job.id : null, key: candidateKey(b) });
-        return { ...draftFromBook(b), id };
-      })
-    );
-  }, []);
-
-  // When the forms are done, show the review again if the job still has
-  // books; a job whose every book was saved this way is finished.
-  useEffect(() => {
-    if (unverifiedDrafts.length > 0) return;
-    const jobId = reopenReviewJobIdRef.current;
-    if (!jobId) return;
-    reopenReviewJobIdRef.current = null;
-    const job = jobsRef.current.find((j) => j.id === jobId);
-    if (!job) return;
-    if ((job.results?.length ?? 0) > 0) setReviewingJobId(jobId);
-    else if (job.status === 'complete') dismissJob(jobId);
-  }, [unverifiedDrafts, dismissJob]);
-
-  const dismissUnverified = useCallback(() => setUnverifiedDrafts([]), []);
-
-  const unverifiedDraftsRef = useRef(unverifiedDrafts);
-  useEffect(() => {
-    unverifiedDraftsRef.current = unverifiedDrafts;
-  }, [unverifiedDrafts]);
-
-  const unverifiedSaved = useCallback(
-    (title: string, draftId?: string) => {
-      const id = draftId ?? unverifiedDraftsRef.current[0]?.id;
-      const source = id ? draftSourcesRef.current.get(id) : undefined;
-      if (id) draftSourcesRef.current.delete(id);
-      const job = source?.jobId ? jobsRef.current.find((j) => j.id === source.jobId) : undefined;
-      if (job && source) {
-        updateJob(job.id, {
-          results: (job.results ?? []).filter((b) => candidateKey(b) !== source.key),
-        });
-      }
-      // Only that draft leaves the queue; a stale save leaves others alone.
-      setUnverifiedDrafts((prev) => prev.filter((d) => d.id !== id));
-      showBanner({
-        message: t('unverifiedSavedMessage', { title }),
-        type: 'success',
-        duration: 4000,
-      });
-    },
-    [showBanner, t, updateJob]
-  );
-
-  const handleAddBooks = useCallback(
-    async (books: EnrichedBook[]) => {
-      if (books.length === 0) return;
-      const jobId = reviewingJobId;
-      const generation = generationRef.current;
-      const signedOutSince = () => generationRef.current !== generation;
-      const controller = new AbortController();
-      abortersRef.current.add(controller);
-
-      Sentry.addBreadcrumb({
-        category: 'scan',
-        message: `Adding ${books.length} book(s) from review`,
-        level: 'info',
-        data: { count: books.length },
-      });
-
-      // Adding to the wishlist is a server-authoritative write — never
-      // attempt it offline. isConnected === false means "known offline";
-      // null/undefined ("unknown", e.g. an unusual connection type) is
-      // treated as connected, matching useNetworkStatus elsewhere.
-      const netState = await NetInfo.fetch();
-      if (signedOutSince()) {
-        abortersRef.current.delete(controller);
-        return;
-      }
-      if (netState.isConnected === false) {
-        abortersRef.current.delete(controller);
-        showBanner({
-          message: t('requiresConnection', { ns: 'common' }),
-          type: 'error',
-          duration: 4000,
-        });
-        return;
-      }
-
-      const outcomes = await Promise.allSettled(
-        books.map((book) => api.post('/wishlist', book, { signal: controller.signal }))
-      );
-      abortersRef.current.delete(controller);
-      // Signed out meanwhile: no banner, review change or Sentry event.
-      if (signedOutSince()) return;
-      // A 409 with an ownership code means the book is already in the
-      // library (#587): nothing to retry and not a failure.
-      const alreadyOwned = (o: PromiseSettledResult<unknown>) =>
-        o.status === 'rejected' && isAlreadyOwnedError(o.reason);
-      const owned = books.filter((_, i) => alreadyOwned(outcomes[i]));
-      // A 422 catalog refusal (#612) is final: retrying cannot help, so the
-      // book is "not saved" but neither retried nor reported to Sentry.
-      const refusals = outcomes.map((o) =>
-        o.status === 'rejected' ? catalogRefusal(o.reason) : null
-      );
-      const notInCatalog = books.filter((_, i) => refusals[i] === 'book_not_in_catalog');
-      const staleResult = books.filter((_, i) => refusals[i] === 'catalog_token_invalid');
-      const refused = notInCatalog.length + staleResult.length;
-      const failed = books.filter(
-        (_, i) => outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i])
-      );
-      // Failures a retry might fix.
-      const retryable = books.filter(
-        (_, i) =>
-          outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i]) && refusals[i] === null
-      );
-      const newlyAdded = books.length - failed.length - owned.length;
-
-      if (failed.length === 0) {
-        if (jobId) dismissJob(jobId);
-        setReviewingJobId(null);
-        let message: string;
-        if (owned.length === 0) {
-          message =
-            books.length === 1
-              ? t('addedMessage', { title: books[0].title })
-              : t('addedManyMessage', { count: books.length });
-        } else if (newlyAdded === 0) {
-          message =
-            owned.length === 1
-              ? t('alreadyInLibraryMessage', { title: owned[0].title })
-              : t('alreadyInLibraryManyMessage', { count: owned.length });
-        } else {
-          message = t('addedAndOwnedMessage', { added: newlyAdded, owned: owned.length });
-        }
-        showBanner({
-          message,
-          type: newlyAdded === 0 ? 'info' : 'success',
-          duration: 4000,
-        });
-        return;
-      }
-
-      for (const outcome of outcomes) {
-        if (
-          outcome.status === 'rejected' &&
-          !alreadyOwned(outcome) &&
-          catalogRefusal(outcome.reason) === null &&
-          !isReportedCentrally(outcome.reason)
-        ) {
-          Sentry.captureException(sanitizeApiError(outcome.reason), {
-            tags: { feature: 'scan', action: 'add_books', ...apiErrorTags(outcome.reason) },
-          });
-        }
-      }
-      // Keep only the books a retry could save; owned and stale books are
-      // done with. While the picker stays open (something is retryable) a
-      // book no catalog matched stays too, so its "Add it yourself" button
-      // remains reachable (#616).
-      const kept = books.filter((b) => retryable.includes(b) || notInCatalog.includes(b));
-      if (jobId && retryable.length < books.length) {
-        if (retryable.length === 0) {
-          dismissJob(jobId);
-          setReviewingJobId(null);
-        } else {
-          updateJob(jobId, { results: kept });
-        }
-      }
-      // Count only the books actually added; say how many were already
-      // in the library rather than counting them as added (#587).
-      let message: string;
-      if (refused > 0) {
-        // Not saved, with the specific reason for the refused books (#612).
-        if (
-          newlyAdded === 0 &&
-          owned.length === 0 &&
-          retryable.length === 0 &&
-          staleResult.length === 0
-        ) {
-          message =
-            notInCatalog.length === 1
-              ? t('notInCatalogMessage')
-              : t('notInCatalogManyMessage', { count: notInCatalog.length });
-        } else if (
-          newlyAdded === 0 &&
-          owned.length === 0 &&
-          retryable.length === 0 &&
-          notInCatalog.length === 0
-        ) {
-          message =
-            staleResult.length === 1
-              ? t('catalogTokenInvalidMessage')
-              : t('catalogTokenInvalidManyMessage', { count: staleResult.length });
-        } else {
-          const counts = { added: newlyAdded, owned: owned.length, notSaved: failed.length };
-          const summary =
-            newlyAdded > 0
-              ? owned.length > 0
-                ? t('notSavedSummaryOwnedMessage', counts)
-                : t('notSavedSummaryMessage', counts)
-              : owned.length > 0
-                ? t('notSavedOwnedOnlyMessage', counts)
-                : t('notSavedOnlyMessage', counts);
-          message = [
-            summary,
-            notInCatalog.length > 0 ? t('reasonNotInCatalog', { count: notInCatalog.length }) : '',
-            staleResult.length > 0 ? t('reasonTokenInvalid', { count: staleResult.length }) : '',
-            retryable.length > 0 ? t('retryOthersHint') : '',
-          ]
-            .filter(Boolean)
-            .join(' ');
-        }
-      } else if (owned.length > 0) {
-        message =
-          newlyAdded > 0
-            ? t('addedSomeOwnedMessage', {
-                added: newlyAdded,
-                owned: owned.length,
-                failed: failed.length,
-              })
-            : t('ownedNotSavedRetryMessage', { owned: owned.length, failed: failed.length });
-      } else if (newlyAdded > 0) {
-        message = t('addedSomeMessage', { added: newlyAdded, total: books.length });
-      } else {
-        message = t('couldNotSaveMessage');
-      }
-      // Long, multi-sentence results are shown in full and stay long enough to read.
-      showBanner({
-        message,
-        type: 'error',
-        duration: Math.min(12000, Math.max(6000, message.length * 60)),
-        numberOfLines: 0,
-        // Books no catalog matched can still be added as the user's own
-        // unverified entries (#616).
-        actions:
-          notInCatalog.length > 0
-            ? [{ label: t('addItYourself'), onPress: () => addYourself(notInCatalog) }]
-            : undefined,
-      });
-    },
-    [reviewingJobId, dismissJob, updateJob, showBanner, t, addYourself]
-  );
+  // Add-books and the "Add it yourself" drafts (hooks/useScanReview.ts).
+  const { handleAddBooks, addYourself, unverifiedSaved, dismissUnverified } = useScanReview({
+    jobsRef,
+    updateJob,
+    generationRef,
+    abortersRef,
+    showBanner,
+    t,
+    reviewingJobId,
+    setReviewingJobId,
+    reviewingJobIdRef,
+    dismissJob,
+    unverifiedDrafts,
+    setUnverifiedDrafts,
+    reopenReviewJobIdRef,
+    draftSourcesRef,
+  });
 
   // Keep executeScan in a ref so useCallbacks always call the latest version
   // without creating circular deps. Updated after every render so closures
@@ -1035,8 +460,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       turnstileConfiguredRef,
     };
     executeScanRef.current = (job: ScanJob) => executeScan(deps, job);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // updateJob, setJobsAndRef, drainQueue and imageInFlight never change, so
+    // listing them re-runs this no more often than the values below.
   }, [
+    updateJob,
+    setJobsAndRef,
+    drainQueue,
+    imageInFlight,
     showBanner,
     t,
     i18n,
