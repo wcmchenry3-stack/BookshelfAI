@@ -13,7 +13,7 @@ See [~/.claude/standards/testing.md](~/.claude/standards/testing.md) for univers
 - DB isolation: rollback fixture in `backend/tests/conftest.py` — do NOT mock the database
 - Cost guard: no test may call a real AI provider. `backend/tests/_network_guard.py` (installed for every run by `backend/tests/conftest.py`) blocks any request to an Anthropic or OpenAI API host and fails the test. Fake providers at the gateway boundary (`backend/tests/limits/_harness.py`) or with `backend/tests/_claude_fake.py`.
 - AI scan evaluation (`backend/eval/ai_scan/`, #536): runs a real model only from the on-demand `ai-eval.yml` workflow, never in tests. Its tests use `backend/tests/_ai_eval_fakes.py` (fake R2 client, scripted adapter). Re-run the eval when a scan prompt, model or `max_tokens` changes; see `docs/testing.md`.
-- Repo hygiene (#769, `.github/workflows/repo-hygiene.yml`): jscpd duplication threshold (`.jscpd.json`), 600-line source file cap (`scripts/check_file_length.py`, allowlist `scripts/file_length_allowlist.txt` can shrink but not grow), and offline docs link/anchor check (`lychee.toml`). Do not raise a threshold or extend the allowlist to get a PR through; see "Repo hygiene checks" in `docs/testing.md`.
+- Repo hygiene (#769, `.github/workflows/repo-hygiene.yml`): jscpd duplication threshold (`.jscpd.json`), 600-line source file cap (`scripts/check_file_length.py`, allowlist `scripts/file_length_allowlist.txt` can shrink but not grow), backend dead-code check (`vulture app --min-confidence 60`, whitelist in `backend/pyproject.toml` `[tool.vulture]`), and offline docs link/anchor check (`lychee.toml`). Do not raise a threshold or extend the allowlist to get a PR through; see "Repo hygiene checks" in `docs/testing.md`.
 
 ## What runs, and when
 

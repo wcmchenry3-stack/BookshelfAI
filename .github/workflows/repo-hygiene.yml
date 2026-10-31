@@ -1,8 +1,9 @@
 name: Repo hygiene
 
-# Copy-paste detection (jscpd), source file-length cap, and docs link checks
-# (lychee). Kept out of ci.yml on purpose. See "Repo hygiene checks" in
-# docs/testing.md for how to move the thresholds and allowlists (#769).
+# Copy-paste detection (jscpd), source file-length cap, backend dead-code check
+# (vulture, #813), and docs link checks (lychee). Kept out of ci.yml on purpose.
+# See "Repo hygiene checks" in docs/testing.md for how to move the thresholds
+# and allowlists (#769).
 
 on:
   pull_request:
@@ -39,6 +40,18 @@ jobs:
 
       - name: File length cap (600 lines)
         run: python3 scripts/check_file_length.py
+
+      - name: Backend dead-code check (vulture)
+        # Installs only the vulture pin from backend/requirements-dev.txt into a
+        # venv; vulture reads the AST, so the backend's runtime deps are not
+        # needed. Config and whitelist: [tool.vulture] in backend/pyproject.toml.
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          spec="$(grep -E '^vulture==' requirements-dev.txt)"
+          python3 -m venv "$RUNNER_TEMP/vulture-venv"
+          "$RUNNER_TEMP/vulture-venv/bin/pip" install --quiet "$spec"
+          "$RUNNER_TEMP/vulture-venv/bin/vulture" app --min-confidence 60
 
       - name: Copy-paste detection (jscpd)
         run: npx --yes "jscpd@${JSCPD_VERSION}" --config .jscpd.json
