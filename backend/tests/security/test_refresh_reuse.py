@@ -73,6 +73,7 @@ class FakeDb(FakeAuthDb):
         self.on_user_lock = None
 
     async def get(self, model, pk, **_options):
+        self.gets += 1
         if model is User and self.user is not None and self.user.id == pk:
             hook, self.on_user_lock = self.on_user_lock, None
             if hook is not None:
