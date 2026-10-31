@@ -6,7 +6,6 @@ backend/app/ai/quota.py 1722
 backend/app/ai/settings.py 1184
 backend/app/api/scan.py 1026
 frontend/app/(tabs)/my-books.tsx 739
-frontend/app/(tabs)/scan.tsx 720
 # ScanJobContext.tsx: was raised to a temporary 2000 ceiling by owner decision #801; lowered to 1110 by #804
 # (#769 set 1624 while #766 added 3 lines; the two merged together). Bring it
 # back down, and every file here under 600, in the refactor epic.
