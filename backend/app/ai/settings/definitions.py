@@ -204,7 +204,7 @@ _SCAN_RECORDS = (
         SCAN_RECORDS_RETENTION_DAYS_KEY,
         _scan_records_retention_days,
         lambda: ai_settings.DEFAULT_SCAN_RECORDS_RETENTION_DAYS,
-        "days a scan record is kept and served, then purged " "(seed: code default 30)",
+        "days a scan record is kept and served, then purged (seed: code default 30)",
         bounds=_range(SCAN_RECORDS_RETENTION_DAYS_BOUNDS),
     ),
     SettingDefinition(

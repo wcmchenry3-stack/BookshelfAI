@@ -59,7 +59,7 @@ RETIRED_KEYS = frozenset(
 # Tiers with allowance keys: quota.<tier>.found_daily and
 # quota.<tier>.no_match_daily (#577). Plain
 # strings (the Tier enum values) so this module stays free of request-side
-# imports; app/ai/quota.py maps a Tier to its keys.
+# imports; app/ai/quota/ maps a Tier to its keys.
 QUOTA_TIERS = ("free", "premium")
 MAX_MODEL_NAME_LENGTH = 100
 MAX_UPDATED_BY_LENGTH = 100

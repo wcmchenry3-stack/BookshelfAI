@@ -63,7 +63,7 @@ The ``quota.*`` allowances are per tier. The found allowance is shared by
 standard and enhanced scans (one ``ai_quota`` counter per user and UTC day,
 under ``quota.SCAN_QUOTA_FEATURE``, OD-1); the no-match allowance has its own
 counter (``quota.SCAN_NO_MATCH_QUOTA_FEATURE``) and only standard scans move
-to it (#577); see ``app/ai/quota.py``.
+to it (#577); see ``app/ai/quota/``.
 
 **Found / no-match (#577).** ``quota.<tier>.daily`` is retired
 (:data:`RETIRED_KEYS`): it became ``quota.<tier>.found_daily``. Carry-over:

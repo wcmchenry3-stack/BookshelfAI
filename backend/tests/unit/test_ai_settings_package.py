@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import runpy
-import subprocess  # nosec B404 - fixed argv, no shell
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -388,7 +388,7 @@ def test_python_m_runs_the_cli_in_process(snapshot_env, capsys):
 
 def test_python_m_app_ai_settings_help_still_runs(expected):
     env = {**os.environ, "COLUMNS": "80"}
-    result = subprocess.run(  # nosec B603 - fixed argv
+    result = subprocess.run(
         [sys.executable, "-m", "app.ai.settings", "--help"],
         cwd=BACKEND_DIR,
         env=env,
