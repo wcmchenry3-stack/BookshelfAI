@@ -304,13 +304,6 @@ def parse_reply(
     return candidates
 
 
-def parse_books(
-    text: str, stop_reason: str | None, max_books: int
-) -> list[BookCandidate]:
-    """:func:`parse_reply`, with a malformed reply as an empty list."""
-    return parse_reply(text, stop_reason, max_books) or []
-
-
 # ---------------------------------------------------------------------------
 # Usage, outcome
 # ---------------------------------------------------------------------------

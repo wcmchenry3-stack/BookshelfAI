@@ -27,18 +27,16 @@ export default function TabLayout() {
   const activeTabTint = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
 
   // Dark mode: frosted-glass bottom nav with rounded top and subtle border.
-  const tabBarBg = theme.isDark ? 'rgba(17,19,23,0.85)' : theme.colors.surfaceContainerLow;
+  const tabBarBg = theme.isDark ? theme.colors.tabBarOverlay : theme.colors.surfaceContainerLow;
   const tabBarStyle = StyleSheet.flatten([
     styles.tabBar,
     {
       backgroundColor: tabBarBg,
       borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: theme.isDark
-        ? 'rgba(69,71,76,0.4)' // outlineVariant at ~40% opacity
-        : 'transparent',
+      borderTopColor: theme.colors.outlineVariantFaint,
       ...(theme.isDark
         ? {
-            shadowColor: '#000',
+            shadowColor: theme.colors.shadow,
             shadowOffset: { width: 0, height: -4 },
             shadowOpacity: 0.3,
             shadowRadius: 12,

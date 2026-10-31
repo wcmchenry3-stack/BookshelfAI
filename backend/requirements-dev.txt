@@ -8,3 +8,5 @@ ruff==0.17.2
 pip-audit==2.10.1
 bandit[toml]==1.9.4
 pyyaml==6.0.3
+# Dead-code check (#813). Run by repo-hygiene.yml, which reads this pin.
+vulture==2.16

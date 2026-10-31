@@ -66,7 +66,9 @@ class _BlankGuardSource(PydanticBaseSettingsSource):
         self._init_kwargs = dict(getattr(init_settings, "init_kwargs", {}) or {})
         self._env_files = env_files
 
-    def get_field_value(self, field, field_name):  # pragma: no cover - unused
+    # Abstract hook required by PydanticBaseSettingsSource. Never called
+    # directly: pydantic resolves fields via __call__.
+    def get_field_value(self, field, field_name):  # pragma: no cover - abstract hook
         return None, field_name, False
 
     @staticmethod
