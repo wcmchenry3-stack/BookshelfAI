@@ -61,10 +61,10 @@ committed `ios/` directory directly.
 ## JS bundle validation (GitHub Actions)
 
 The `js-bundle-check` CI job runs `react-native bundle --platform ios` on every
-PR to verify the JS bundle can be created. This catches silent bundling failures
+PR that changes `frontend/**` (and always on push/deploy) to verify the JS bundle can be created. This catches silent bundling failures
 before they reach Xcode Cloud.
 
-The Xcode build CI check (`ios-build-check`) only compiles in Debug mode, which
+`ios-build-check` runs only when native-affecting paths change (see `docs/testing.md`, "Conditional bundle and native build checks") and is skipped on draft PRs; the required check is `native-build-gate`, because a skipped reusable-workflow job never reports its `<job> / <inner job>` name. It only compiles in Debug mode, which
 sets `SKIP_BUNDLING=1` — it cannot detect bundler or entry-point issues.
 
 ## Sentry bundling fallback

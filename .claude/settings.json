@@ -17,6 +17,27 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/policy-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/commit-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pr-title-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/precheck-gate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__create_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pr-title-gate.sh"
           }
         ]
       }

@@ -102,3 +102,7 @@ backend/eval/**/manifest.json
 backend/eval/**/ground_truth*.jsonl
 backend/ai-eval-report*.json
 jscpd-report/
+
+# Playwright web e2e (frontend/e2e)
+frontend/test-results/
+frontend/playwright-report/
