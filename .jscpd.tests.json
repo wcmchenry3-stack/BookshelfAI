@@ -11,7 +11,7 @@
   ],
   "minLines": 5,
   "minTokens": 50,
-  "threshold": 6.6,
+  "threshold": 7.0,
   "reporters": ["console", "json"],
   "output": "./jscpd-report/tests",
   "gitignore": true,

@@ -105,10 +105,18 @@ def test_repo_allowlist_is_current():
     assert cfl.main(["--root", str(root), "--strict"]) == 0
 
 
-def test_repo_allowlist_has_no_entries():
-    """#820: every grandfathered file is gone; new entries need an epic:refactor ref."""
-    root = SCRIPT.parent.parent
-    assert cfl.load_allowlist(root / cfl.ALLOWLIST_RELPATH) == {}
+def test_repo_allowlist_entries_carry_a_marker():
+    """#820: the allowlist is empty today; any entry must be an approved exception.
+
+    Each entry line needs an ``epic:refactor #N`` or ``owner-approved #N`` marker.
+    """
+    import re
+
+    marker = re.compile(r"(epic:refactor|owner-approved)\s+#\d+")
+    path = SCRIPT.parent.parent / cfl.ALLOWLIST_RELPATH
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw.split("#", 1)[0].strip():
+            assert marker.search(raw), f"allowlist entry without a marker: {raw!r}"
 
 
 def test_strict_fails_on_stale_entry(tmp_path, capsys):

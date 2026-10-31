@@ -1,40 +1,51 @@
 #!/usr/bin/env python3
 """Grandfather-list policy (#820). Stdlib only.
 
-A PR may not add an exception to a gate (the file-length allowlist, a knip
-``ignore*`` key, a jscpd ``ignore`` entry) unless the same file's diff also adds
-a line naming a linked ``epic:refactor`` issue.
+A PR may not add an exception to a gate, or loosen one, unless the same file's
+diff also adds a line naming a linked ``epic:refactor`` issue (or
+``owner-approved #N`` for an owner-approved permanent exception).
 
-CI's policy job sees neither the PR body nor the labels, so the reference has to
-live in the diff itself:
+What is compared is the *collection* of exceptions in the old and new version of
+each guarded file, not diff lines, so deleting an entry, reordering, or lowering
+a cap never flags, and renaming a key to ``ignore*`` does:
 
-- ``scripts/file_length_allowlist.txt``: ``path 700  # epic:refactor #123``
-- ``frontend/knip.json``: a ``// epic:refactor #123`` comment (the file is JSONC)
-- ``.jscpd.json`` / ``.jscpd.tests.json``: a ``"//": "epic:refactor #123"`` key
+- ``scripts/file_length_allowlist.txt``: a new path, or a raised cap.
+- knip config (``knip.json``, ``knip.jsonc``, ``.knip.json``, ``.knip.jsonc``,
+  ``knip.ts``/``knip.js``/``knip.config.ts``/``knip.config.js``, the ``knip`` key
+  of any ``package.json``): every ``ignore*`` key at any depth, as a set of
+  (key path, value); any entry not in the old set. A knip ``.ts``/``.js`` config
+  cannot be compared, so adding one is a violation.
+- ``.jscpd*.json``: the same ``ignore*`` rule, plus a raised ``threshold``,
+  ``minLines`` or ``minTokens`` (or a removed ``threshold``).
+
+CI's policy job sees neither the PR body nor the labels, so the reference lives
+in the diff: ``# epic:refactor #123`` on an allowlist line, ``// epic:refactor
+#123`` in JSONC, or a ``"//": "epic:refactor #123"`` key in JSON. One reference
+per file is enough; this is a speed bump that sits behind CODEOWNERS review, and
+it does not check that the issue exists. Not covered: knip ``project`` negations,
+source ignore comments, workflow flags.
 
 Usage: ``python3 scripts/policy/check_grandfather_lists.py --diff-base origin/dev``
-(run from anywhere; ``--root DIR`` overrides the repo root). Lowering an
-allowlist cap, or moving an existing entry, is not an addition.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-EPIC_REF = re.compile(r"epic:refactor\s+#\d+")
+MARKER = re.compile(r"(?:epic:refactor|owner-approved)\s+#\d+")
 ALLOWLIST_FILE = "scripts/file_length_allowlist.txt"
-IGNORE_KEY = re.compile(r'"(ignore\w*)"\s*:')
-JSON_GRANDFATHER_FILES = ("frontend/knip.json", ".jscpd.json", ".jscpd.tests.json")
-GRANDFATHER_FILES = (ALLOWLIST_FILE, *JSON_GRANDFATHER_FILES)
-_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
-_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+KNIP_JSON = re.compile(r"(^|/)\.?knip\.jsonc?$")
+KNIP_CODE = re.compile(r"(^|/)knip(\.config)?\.(ts|js)$")
+JSCPD = re.compile(r"(^|/)\.jscpd[^/]*\.json$")
+PACKAGE_JSON = re.compile(r"(^|/)package\.json$")
+LOOSENING_KEYS = ("threshold", "minLines", "minTokens")
 
 
 @dataclass(frozen=True)
@@ -47,115 +58,137 @@ class Violation:
         return f"{self.path}: [{self.check}] {self.message}"
 
 
-def _strip_jsonc_comment(line: str) -> str:
-    """Drop a ``//`` comment that sits outside any string literal."""
+def is_guarded(path: str) -> bool:
+    return bool(
+        path == ALLOWLIST_FILE
+        or KNIP_JSON.search(path)
+        or KNIP_CODE.search(path)
+        or JSCPD.search(path)
+        or PACKAGE_JSON.search(path)
+    )
+
+
+def parse_jsonc(text: str):
+    """Parse JSON with ``//`` and ``/* */`` comments and trailing commas."""
+    out: list[str] = []
+    i, n = 0, len(text)
     in_str = False
-    i = 0
-    while i < len(line):
-        ch = line[i]
+    while i < n:
+        ch = text[i]
         if in_str:
-            if ch == "\\":
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
                 i += 1
             elif ch == '"':
                 in_str = False
         elif ch == '"':
             in_str = True
-        elif line.startswith("//", i):
-            return line[:i]
-        i += 1
-    return line
-
-
-def ignore_entry_lines(text: str) -> dict[int, str]:
-    """Lines (1-based) inside ``ignore*`` keys of a JSON/JSONC file that carry
-    a string entry, mapped to their comment-stripped text."""
-    found: dict[int, str] = {}
-    depth = 0
-    inside = False
-    for n, raw in enumerate(text.splitlines(), 1):
-        code = _strip_jsonc_comment(raw)
-        key = IGNORE_KEY.search(code) if not inside else None
-        if key:
-            inside = True
-            depth = 0
-        if not inside:
+            out.append(ch)
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                i += 1
             continue
-        body = code
-        if key:
-            body = code[: key.start()] + code[key.end() :]
-        if _STRING.search(body):
-            found[n] = body.strip()
-        stripped = _STRING.sub('""', code)
-        depth += stripped.count("[") + stripped.count("{")
-        depth -= stripped.count("]") + stripped.count("}")
-        if depth <= 0:
-            inside = False
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 1
+        else:
+            out.append(ch)
+        i += 1
+    return json.loads(re.sub(r",(\s*[}\]])", r"\1", "".join(out)))
+
+
+def _flatten(prefix: tuple, value) -> set[tuple]:
+    if isinstance(value, dict):
+        found: set[tuple] = set()
+        for k, v in value.items():
+            found |= _flatten((*prefix, k), v)
+        return found
+    if isinstance(value, list):
+        return {(prefix, json.dumps(v, sort_keys=True)) for v in value}
+    return {(prefix, json.dumps(value, sort_keys=True))}
+
+
+def ignore_entries(data, prefix: tuple = ()) -> set[tuple]:
+    """Every entry under an ``ignore*`` key at any depth, as (key path, value)."""
+    found: set[tuple] = set()
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if isinstance(k, str) and k.startswith("ignore"):
+                found |= _flatten((*prefix, k), v)
+            else:
+                found |= ignore_entries(v, (*prefix, k))
+    elif isinstance(data, list):
+        for v in data:
+            found |= ignore_entries(v, prefix)
     return found
 
 
-def parse_diff(diff: str) -> dict[str, tuple[dict[int, str], list[str]]]:
-    """Zero-context unified diff -> {path: ({new_line_no: added}, [removed])}."""
-    files: dict[str, tuple[dict[int, str], list[str]]] = {}
-    path = None
-    new_no = 0
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
-            tgt = line[4:].strip()
-            path = tgt[2:] if tgt.startswith("b/") else None
-            if path is not None:
-                files.setdefault(path, ({}, []))
-            continue
-        if line.startswith("--- ") or path is None:
-            continue
-        m = _HUNK.match(line)
-        if m:
-            new_no = int(m.group(1))
-        elif line.startswith("+"):
-            files[path][0][new_no] = line[1:]
-            new_no += 1
-        elif line.startswith("-"):
-            files[path][1].append(line[1:])
-    return files
+def _allowlist(text: str | None) -> dict[str, int]:
+    caps: dict[str, int] = {}
+    for raw in (text or "").splitlines():
+        parts = raw.split("#", 1)[0].split()
+        if len(parts) == 2 and parts[1].isdigit():
+            caps[parts[0]] = int(parts[1])
+    return caps
 
 
-def _allowlist_entry(text: str) -> tuple[str, int] | None:
-    parts = text.split("#", 1)[0].split()
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0], int(parts[1])
-    return None
+def _config(path: str, text: str | None):
+    if text is None:
+        return {}
+    data = parse_jsonc(text)
+    if PACKAGE_JSON.search(path):
+        data = data.get("knip", {}) if isinstance(data, dict) else {}
+    return data
 
 
-def check_grandfather_diff(
-    diff: str, read_new: Callable[[str], str | None]
-) -> list[Violation]:
-    """Violations for exceptions ``diff`` adds without an epic:refactor
-    reference in the same file. ``read_new(path)`` returns the new file text."""
-    out: list[Violation] = []
-    for path, (added, removed) in parse_diff(diff).items():
-        if path not in GRANDFATHER_FILES:
-            continue
-        offenders: list[str] = []
-        if path == ALLOWLIST_FILE:
-            old = {e[0]: e[1] for e in map(_allowlist_entry, removed) if e}
-            for text in added.values():
-                entry = _allowlist_entry(text)
-                if entry and (entry[0] not in old or entry[1] > old[entry[0]]):
-                    offenders.append(text.strip())
-        else:
-            new_text = read_new(path)
-            if new_text is None:
+def new_exceptions(path: str, old: str | None, new: str | None) -> list[str]:
+    """Human-readable exceptions present in ``new`` but not in ``old``."""
+    if new is None:
+        return []
+    if path == ALLOWLIST_FILE:
+        before, after = _allowlist(old), _allowlist(new)
+        return [
+            f"{p} {c}" for p, c in after.items() if p not in before or c > before[p]
+        ]
+    if KNIP_CODE.search(path):
+        return [] if old is not None else [f"{path} (knip code config added)"]
+    try:
+        before_cfg, after_cfg = _config(path, old), _config(path, new)
+    except ValueError as exc:
+        return [f"unparseable JSON ({exc})"]
+    found = [
+        f"{'.'.join(map(str, key))}: {val}"
+        for key, val in sorted(
+            ignore_entries(after_cfg) - ignore_entries(before_cfg), key=str
+        )
+    ]
+    if JSCPD.search(path) and isinstance(after_cfg, dict):
+        old_cfg = before_cfg if isinstance(before_cfg, dict) else {}
+        for key in LOOSENING_KEYS:
+            was, now = old_cfg.get(key), after_cfg.get(key)
+            if old is None or was is None:
                 continue
-            removed_norm = {_strip_jsonc_comment(r).strip() for r in removed}
-            entries = ignore_entry_lines(new_text)
-            for no, text in added.items():
-                if no in entries and entries[no] not in removed_norm:
-                    offenders.append(entries[no])
-        if offenders and not any(EPIC_REF.search(t) for t in added.values()):
+            if now is None and key == "threshold":
+                found.append("threshold removed")
+            elif isinstance(now, (int, float)) and now > was:
+                found.append(f"{key} raised {was} -> {now}")
+    return found
+
+
+def check_changes(changes: dict[str, tuple]) -> list[Violation]:
+    """``changes``: {path: (old_text | None, new_text | None, added_lines)}."""
+    out: list[Violation] = []
+    for path, (old, new, added) in sorted(changes.items()):
+        if not is_guarded(path):
+            continue
+        found = new_exceptions(path, old, new)
+        if found and not any(MARKER.search(line) for line in added):
             out.append(
                 Violation(
                     path,
                     "grandfather-list",
-                    f"adds {len(offenders)} exception(s) (first: {offenders[0]!r}) "
+                    f"adds {len(found)} exception(s) or loosening (first: {found[0]!r}) "
                     "without a linked epic:refactor issue; fix the code instead, or "
                     "add a line containing 'epic:refactor #NNN' in the same file.",
                 )
@@ -163,19 +196,39 @@ def check_grandfather_diff(
     return out
 
 
-def diff_against(root: Path, base: str) -> str:
-    cmd = ["git", "diff", "-U0", "--no-color", f"{base}...HEAD", "--"]
+def _run(root: Path, *args: str) -> str:
     try:
         return subprocess.run(
-            [*cmd, *GRANDFATHER_FILES],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=True,
+            ["git", *args], cwd=root, capture_output=True, text=True, check=True
         ).stdout
     except (OSError, subprocess.CalledProcessError):
         # Fail closed: an unreadable diff must not look like "no additions".
-        raise SystemExit(f"grandfather-lists: cannot diff against {base}") from None
+        raise SystemExit(f"grandfather-lists: git {args[0]} failed") from None
+
+
+def collect_changes(root: Path, base: str) -> dict[str, tuple]:
+    merge_base = _run(root, "merge-base", base, "HEAD").strip()
+    names = _run(
+        root, "diff", "--name-only", "--diff-filter=ACMR", f"{merge_base}...HEAD"
+    ).splitlines()
+    changes: dict[str, tuple] = {}
+    for path in filter(is_guarded, names):
+        try:
+            old = _run(root, "show", f"{merge_base}:{path}")
+        except SystemExit:
+            old = None
+        target = root / path
+        new = target.read_text(errors="replace") if target.is_file() else None
+        diff = _run(
+            root, "diff", "-U0", "--no-color", f"{merge_base}...HEAD", "--", path
+        )
+        added = [
+            ln[1:]
+            for ln in diff.splitlines()
+            if ln.startswith("+") and not ln.startswith("+++")
+        ]
+        changes[path] = (old, new, added)
+    return changes
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -183,13 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
     ap.add_argument("--diff-base", required=True, help="ref the PR branches from")
     args = ap.parse_args(argv)
-    root = Path(args.root)
-
-    def read_new(rel: str) -> str | None:
-        p = root / rel
-        return p.read_text(errors="replace") if p.is_file() else None
-
-    violations = check_grandfather_diff(diff_against(root, args.diff_base), read_new)
+    violations = check_changes(collect_changes(Path(args.root), args.diff_base))
     in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     for v in violations:
         print(f"::error file={v.path}::{v}" if in_actions else v)

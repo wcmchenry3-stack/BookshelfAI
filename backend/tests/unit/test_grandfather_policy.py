@@ -1,14 +1,17 @@
-"""Tests for the grandfather-list rule in scripts/policy/check_grandfather_lists.py (#820).
+"""Tests for scripts/policy/check_grandfather_lists.py (#820).
 
-A PR may not add an exception to a gate (file-length allowlist, knip ignore*,
-jscpd ignore) without an ``epic:refactor #NNN`` reference in the same file.
+A PR may not add an exception to a gate, or loosen one, without an
+``epic:refactor #NNN`` (or ``owner-approved #NNN``) line in the same file.
+Detection compares the old and new collections, not diff lines.
 """
 
 import importlib.util
-import shutil
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPT = REPO / "scripts" / "policy" / "check_grandfather_lists.py"
@@ -20,129 +23,239 @@ _spec.loader.exec_module(policy)
 
 ALLOW = "scripts/file_length_allowlist.txt"
 KNIP = "frontend/knip.json"
+JSCPD = ".jscpd.json"
 
 
-def _diff(path: str, added=(), removed=(), start=1) -> str:
-    body = [f"-{r}" for r in removed] + [f"+{a}" for a in added]
-    return (
-        f"--- a/{path}\n+++ b/{path}\n"
-        f"@@ -1,{len(removed)} +{start},{len(added)} @@\n" + "\n".join(body) + "\n"
-    )
+def _check(path, old, new, added=()):
+    return policy.check_changes({path: (old, new, list(added))})
 
 
-def _gf(diff: str, new_text: str | None = None):
-    return policy.check_grandfather_diff(diff, lambda _p: new_text)
+def _bad(path, old, new, added=()):
+    found = _check(path, old, new, added)
+    assert [v.check for v in found] == ["grandfather-list"]
+    assert found[0].path == path
 
 
-def _checks(violations) -> set[str]:
-    return {v.check for v in violations}
-
-
-def test_allowlist_new_entry_without_ref_fails():
-    found = _gf(_diff(ALLOW, ["backend/app/big.py 700"]))
-    assert _checks(found) == {"grandfather-list"}
-    assert found[0].path == ALLOW
-
-
-def test_allowlist_new_entry_with_epic_ref_passes():
-    line = "backend/app/big.py 700  # epic:refactor #123 split planned"
-    assert _gf(_diff(ALLOW, [line])) == []
-
-
-def test_allowlist_comment_only_addition_passes():
-    assert _gf(_diff(ALLOW, ["# just a note"])) == []
-
-
-def test_allowlist_shrinking_a_cap_passes_but_growing_fails():
-    shrink = _diff(ALLOW, ["a/b.py 650"], removed=["a/b.py 700"])
-    assert _gf(shrink) == []
-    grow = _diff(ALLOW, ["a/b.py 750"], removed=["a/b.py 700"])
-    assert _checks(_gf(grow)) == {"grandfather-list"}
-
-
-KNIP_TEXT = """{
+KNIP_OLD = """{
   // reasons live here
+  "entry": ["app/**/*.ts"],
   "ignoreDependencies": [
     "@babel/core",
-    "new-dep"
-  ],
-  "entry": ["app/**/*.ts"]
+    "react-test-renderer"
+  ]
 }
 """
 
 
-def test_knip_new_ignore_entry_without_ref_fails():
-    diff = _diff(KNIP, ['    "new-dep"'], start=5)
-    assert _checks(_gf(diff, KNIP_TEXT)) == {"grandfather-list"}
+# --- allowlist ---------------------------------------------------------------
 
 
-def test_knip_new_ignore_entry_with_epic_ref_passes():
-    text = KNIP_TEXT.replace('    "new-dep"', '    // epic:refactor #99\n    "new-dep"')
-    diff = _diff(KNIP, ["    // epic:refactor #99", '    "new-dep"'], start=5)
-    assert _gf(diff, text) == []
+def test_allowlist_new_entry_without_marker_fails():
+    _bad(ALLOW, "# header\n", "# header\nbackend/app/big.py 700\n")
 
 
-def test_knip_change_outside_ignore_keys_passes():
-    diff = _diff(KNIP, ['  "entry": ["app/**/*.ts"]'], start=7)
-    assert _gf(diff, KNIP_TEXT) == []
+@pytest.mark.parametrize("marker", ["epic:refactor #123", "owner-approved #9"])
+def test_allowlist_new_entry_with_marker_passes(marker):
+    line = f"backend/app/big.py 700  # {marker}"
+    assert _check(ALLOW, "", line + "\n", [line]) == []
 
 
-def test_knip_new_ignore_key_with_entries_fails_but_empty_passes():
-    text = '{\n  "ignoreIssues": {\n    "a.ts": ["exports"]\n  }\n}\n'
-    diff = _diff(
-        KNIP, ['  "ignoreIssues": {', '    "a.ts": ["exports"]', "  }"], start=2
+def test_allowlist_comment_only_addition_passes():
+    assert _check(ALLOW, "# a\n", "# a\n# note\n", ["# note"]) == []
+
+
+def test_allowlist_lowering_removing_and_reordering_pass():
+    old = "a.py 700\nb.py 800\n"
+    assert _check(ALLOW, old, "a.py 650\nb.py 800\n") == []
+    assert _check(ALLOW, old, "b.py 800\n") == []
+    assert _check(ALLOW, old, "b.py 800\na.py 700\n") == []
+
+
+def test_allowlist_raising_a_cap_fails():
+    _bad(ALLOW, "a.py 700\n", "a.py 750\n")
+
+
+# --- knip / ignore* collections -----------------------------------------------
+
+
+def test_deleting_the_last_entry_is_not_a_new_exception():
+    new = KNIP_OLD.replace('"@babel/core",\n    "react-test-renderer"', '"@babel/core"')
+    # The diff line for "@babel/core" changed (trailing comma dropped): line-based
+    # detection flagged it, collection-based detection must not.
+    assert _check(KNIP, KNIP_OLD, new, ['    "@babel/core"']) == []
+
+
+def test_reordering_entries_passes():
+    new = KNIP_OLD.replace(
+        '"@babel/core",\n    "react-test-renderer"',
+        '"react-test-renderer",\n    "@babel/core"',
     )
-    assert _checks(_gf(diff, text)) == {"grandfather-list"}
-    empty = '{\n  "ignore": [],\n  "entry": []\n}\n'
-    assert _gf(_diff(KNIP, ['  "ignore": [],'], start=2), empty) == []
+    assert _check(KNIP, KNIP_OLD, new, ['    "react-test-renderer",']) == []
 
 
-def test_jscpd_ignore_entry_needs_ref():
-    text = '{\n  "ignore": [\n    "**/node_modules/**",\n    "**/new/**"\n  ]\n}\n'
-    diff = _diff(".jscpd.json", ['    "**/new/**"'], start=4)
-    assert _checks(_gf(diff, text)) == {"grandfather-list"}
-    ref = _diff(
+def test_appending_to_an_existing_array_fails():
+    new = KNIP_OLD.replace(
+        '"react-test-renderer"', '"react-test-renderer",\n    "new-dep"'
+    )
+    _bad(KNIP, KNIP_OLD, new)
+
+
+def test_renaming_a_key_to_ignore_fails():
+    new = KNIP_OLD.replace('"entry"', '"ignore"')
+    _bad(KNIP, KNIP_OLD, new, ['  "ignore": ["app/**/*.ts"],'])
+
+
+def test_new_entry_with_marker_in_jsonc_passes():
+    new = KNIP_OLD.replace(
+        '"react-test-renderer"',
+        '"react-test-renderer",\n    // epic:refactor #99\n    "new-dep"',
+    )
+    assert (
+        _check(KNIP, KNIP_OLD, new, ["    // epic:refactor #99", '    "new-dep"']) == []
+    )
+
+
+def test_nested_ignore_keys_are_found():
+    old = '{"workspaces": {"a": {"ignore": ["x"]}}}'
+    new = '{"workspaces": {"a": {"ignore": ["x", "y"]}}}'
+    _bad(KNIP, old, new)
+    _bad(KNIP, old, '{"workspaces": {"b": {"ignoreIssues": {"f.ts": ["exports"]}}}}')
+
+
+def test_changes_outside_ignore_keys_pass():
+    new = KNIP_OLD.replace('"app/**/*.ts"', '"app/**/*.ts", "lib/**/*.ts"')
+    assert _check(KNIP, KNIP_OLD, new) == []
+
+
+def test_empty_ignore_keys_pass_and_new_file_with_entries_fails():
+    assert _check(KNIP, "{}", '{"ignore": [], "ignoreIssues": {}}') == []
+    _bad(KNIP, None, '{"ignore": ["a.ts"]}')
+
+
+def test_unparseable_config_fails_closed():
+    _bad(KNIP, KNIP_OLD, "{ not json")
+
+
+# --- guarded file set -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "knip.json",
+        "knip.jsonc",
+        ".knip.json",
+        ".knip.jsonc",
+        "frontend/knip.json",
+        "frontend/.knip.jsonc",
+        "frontend/package.json",
         ".jscpd.json",
-        ['    "**/new/**"', '  "//": "epic:refactor #7 until split"'],
-        start=4,
+        ".jscpd.tests.json",
+        ALLOW,
+        "frontend/knip.ts",
+        "frontend/knip.config.ts",
+        "frontend/knip.js",
+        "frontend/knip.config.js",
+    ],
+)
+def test_every_knip_and_jscpd_config_is_guarded(path):
+    assert policy.is_guarded(path)
+
+
+@pytest.mark.parametrize("path", ["docs/testing.md", "frontend/lib/knip.tsx", "a.json"])
+def test_other_files_are_not_guarded(path):
+    assert not policy.is_guarded(path)
+    assert _check(path, "{}", '{"ignore": ["x"]}') == []
+
+
+@pytest.mark.parametrize("path", ["frontend/knip.ts", "knip.config.js"])
+def test_adding_a_knip_code_config_fails(path):
+    _bad(path, None, "export default {};\n")
+    assert _check(path, "export default {};\n", "export default {a: 1};\n") == []
+
+
+def test_knip_key_in_package_json_is_guarded():
+    pkg = "frontend/package.json"
+    old = json.dumps({"name": "x", "knip": {"ignoreDependencies": ["a"]}})
+    new = json.dumps({"name": "x", "knip": {"ignoreDependencies": ["a", "b"]}})
+    _bad(pkg, old, new)
+    other = json.dumps({"name": "y", "knip": {"ignoreDependencies": ["a"]}})
+    assert _check(pkg, old, other) == []
+    marked = json.dumps(
+        {"//": "epic:refactor #1", "knip": {"ignoreDependencies": ["a", "b"]}}
     )
-    assert _gf(ref, text) == []
+    assert _check(pkg, old, marked, ['"//": "epic:refactor #1"']) == []
 
 
-def test_reordered_ignore_entry_passes():
-    diff = _diff(KNIP, ['    "new-dep"'], removed=['    "new-dep"'], start=5)
-    assert _gf(diff, KNIP_TEXT) == []
+# --- jscpd loosening ---------------------------------------------------------------
 
 
-def test_unwatched_files_are_ignored():
-    assert _gf(_diff("docs/x.md", ["- ignore: foo"])) == []
+JS_OLD = '{"threshold": 0.1, "minLines": 5, "minTokens": 50, "ignore": ["a"]}'
 
 
-def test_parse_diff_tracks_new_line_numbers():
-    d = _diff(KNIP, ["a", "b"], start=10)
-    assert policy.parse_diff(d)[KNIP][0] == {10: "a", 11: "b"}
+@pytest.mark.parametrize(
+    "field,value", [("threshold", 0.5), ("minLines", 6), ("minTokens", 60)]
+)
+def test_jscpd_loosening_fails(field, value):
+    cfg = json.loads(JS_OLD)
+    cfg[field] = value
+    _bad(JSCPD, JS_OLD, json.dumps(cfg))
+    cfg["//"] = "epic:refactor #7 reason"
+    assert (
+        _check(JSCPD, JS_OLD, json.dumps(cfg), ['"//": "epic:refactor #7 reason"'])
+        == []
+    )
 
 
-def test_cli_diff_base_end_to_end(tmp_path):
+def test_jscpd_tightening_passes_and_removing_threshold_fails():
+    tight = '{"threshold": 0.05, "minLines": 4, "minTokens": 40, "ignore": ["a"]}'
+    assert _check(JSCPD, JS_OLD, tight) == []
+    _bad(JSCPD, JS_OLD, '{"minLines": 5, "minTokens": 50, "ignore": ["a"]}')
+
+
+def test_jscpd_ignore_entry_needs_marker():
+    _bad(JSCPD, JS_OLD, JS_OLD.replace('["a"]', '["a", "b"]'))
+
+
+# --- parser + CLI -----------------------------------------------------------------
+
+
+def test_parse_jsonc_handles_comments_urls_and_trailing_commas():
+    text = '{\n  "u": "https://x.test/a", // note\n  /* block */ "a": [1, 2,],\n}'
+    assert policy.parse_jsonc(text) == {"u": "https://x.test/a", "a": [1, 2]}
+
+
+def test_real_repo_configs_parse():
+    for rel in ("frontend/knip.json", ".jscpd.json", ".jscpd.tests.json"):
+        policy.parse_jsonc((REPO / rel).read_text())
+
+
+def test_cli_end_to_end(tmp_path):
     ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
 
     def sh(*args):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
 
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "backend/app/ai").mkdir(parents=True)
-    shutil.copy(
-        REPO / "backend/app/ai/models_allowlist.py",
-        tmp_path / "backend/app/ai/models_allowlist.py",
-    )
+    (tmp_path / "frontend").mkdir()
     allow = tmp_path / ALLOW
+    knip = tmp_path / KNIP
     allow.write_text("# header\n")
+    knip.write_text('{"ignoreDependencies": ["a", "b"]}\n')
     sh("init", "-q", "-b", "main")
     sh(*ident, "add", "-A")
     sh(*ident, "commit", "-qm", "base")
+    sh("branch", "base")
+    args = ["--root", str(tmp_path), "--diff-base", "base"]
+
+    knip.write_text('{"ignoreDependencies": ["a"]}\n')  # removal: fine
+    sh(*ident, "commit", "-qam", "remove")
+    assert policy.main(args) == 0
+
     allow.write_text("# header\nbackend/app/big.py 700\n")
     sh(*ident, "commit", "-qam", "add")
-    assert policy.main(["--root", str(tmp_path), "--diff-base", "HEAD~1"]) == 1
+    assert policy.main(args) == 1
+
     allow.write_text("# header\nbackend/app/big.py 700 # epic:refactor #5\n")
-    sh(*ident, "commit", "-qam", "ref")
-    assert policy.main(["--root", str(tmp_path), "--diff-base", "HEAD~2"]) == 0
+    sh(*ident, "commit", "-qam", "marker")
+    assert policy.main(args) == 0

@@ -161,7 +161,7 @@ jobs:
       # ignore entry without an `epic:refactor #NNN` line in the same file.
       # Reuses this job so no new required status check name is needed.
       - name: No new grandfather-list entries
-        if: github.event_name == 'pull_request'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           BASE_REF: ${{ github.base_ref }}
         run: python3 scripts/policy/check_grandfather_lists.py --diff-base "origin/$BASE_REF"
