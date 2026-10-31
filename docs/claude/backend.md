@@ -71,6 +71,8 @@ pytest tests/ --cov=app --cov-fail-under=80
 # Lint + format
 ruff check .
 black --check .
+# Every `# noqa: CODE` / `# type: ignore[code]` in app/ ends with ` - <reason>`
+# (enforced by tests/unit/test_suppression_reasons.py; ruff RUF100 drops stale ones)
 
 # Dead code (vulture, #813; config and whitelist in pyproject.toml [tool.vulture])
 vulture app --min-confidence 60

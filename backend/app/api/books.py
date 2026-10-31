@@ -95,7 +95,7 @@ async def _mark_library(
         logger.warning("books/search: library check failed (%s)", type(exc).__name__)
         try:
             await db.rollback()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - best-effort rollback
             logger.warning("books/search: rollback after the library check failed")
         for book in books:
             book.ownership = NOT_OWNED

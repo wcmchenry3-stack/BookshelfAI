@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
@@ -18,6 +19,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models._mixins import IdMixin, TimestampMixin, UserOwnedMixin
+
+if TYPE_CHECKING:
+    from app.models.book import Book
+    from app.models.edition import Edition
+    from app.models.user_custom_book import UserCustomBook
 
 VALID_STATUSES = ("wishlisted", "purchased", "reading", "read")
 # The status a new entry starts with (POST /wishlist, unverified adds).
@@ -144,12 +150,8 @@ class UserBook(IdMixin, UserOwnedMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
-    book: Mapped["Book | None"] = relationship(  # noqa: F821
-        "Book", back_populates="user_books"
-    )
-    custom_book: Mapped["UserCustomBook | None"] = relationship(  # noqa: F821
-        "UserCustomBook"
-    )
+    book: Mapped["Book | None"] = relationship("Book", back_populates="user_books")
+    custom_book: Mapped["UserCustomBook | None"] = relationship("UserCustomBook")
 
     @classmethod
     def live(cls):
@@ -186,4 +188,4 @@ class UserBook(IdMixin, UserOwnedMixin, TimestampMixin, Base):
         """Whether this is the user's own unverified entry (#616)."""
         return self.custom_book_id is not None
 
-    edition: Mapped["Edition | None"] = relationship("Edition")  # noqa: F821
+    edition: Mapped["Edition | None"] = relationship("Edition")

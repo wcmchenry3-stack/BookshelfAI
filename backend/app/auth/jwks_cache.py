@@ -106,7 +106,7 @@ class JwksCache:
                     )
                     return self._jwks
                 raise
-            return self._jwks  # type: ignore[return-value]
+            return self._jwks  # type: ignore[return-value] - _fetch sets _jwks on success
 
     async def _fetch(self, now: float) -> None:
         self._last_attempt = now

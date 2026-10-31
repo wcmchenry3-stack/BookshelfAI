@@ -160,6 +160,6 @@ def _alert_authenticated_rejection(scope: Scope) -> int | None:
             sentry_scope.set_tag("path", _path_tag(scope.get("path")))
             sentry_scope.set_extra("rejected_since_last", count)
             sentry_sdk.capture_message(ALERT_MESSAGE, level="error")
-    except Exception:  # pragma: no cover - alerting must not break the 403
+    except Exception:  # alerting must not break the 403
         logger.exception("origin_auth_alert_failed")
     return count

@@ -357,7 +357,7 @@ async def health_db(request: Request) -> JSONResponse:
             )
         db_status = "ok"
     # Any DB failure (including a timeout) means the health check reports "error".
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - any DB failure = error
         db_status = "error"
 
     healthy = db_status == "ok"
@@ -372,7 +372,7 @@ if not settings.is_hardened:
     @app.get("/debug/sentry-test")
     @limiter.limit("5/minute")
     async def sentry_test(request: Request) -> JSONResponse:
-        1 / 0  # noqa: B018 — intentional, triggers Sentry capture
+        1 / 0  # noqa: B018 - intentional, triggers Sentry capture
 
     @app.post("/auth/test-login")
     @limiter.limit("2/minute")

@@ -280,3 +280,18 @@ def test_control_chars_sanitized_in_tag_and_log(alerts, client, caplog):
 def test_method_capped():
     scope = {"type": "http", "method": "M" * 50, "path": "/x", "headers": []}
     assert origin_auth._clean(scope["method"], origin_auth._MAX_METHOD) == "M" * 16
+
+
+def test_alerting_failure_is_logged_and_never_breaks_the_403(
+    alerts, client, monkeypatch, caplog
+):
+    """A Sentry failure while alerting is swallowed: the request is still a 403."""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("sentry down")
+
+    monkeypatch.setattr(origin_auth.sentry_sdk, "capture_message", boom)
+    with caplog.at_level(logging.ERROR, logger=origin_auth.logger.name):
+        response = client.get("/x", headers=_bearer())
+    assert response.status_code == 403
+    assert any(r.getMessage() == "origin_auth_alert_failed" for r in caplog.records)

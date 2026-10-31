@@ -41,7 +41,7 @@ async def recover_session(db: AsyncSession, user: User | None = None) -> None:
         await db.rollback()
         if user is not None:
             await db.refresh(user)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - best-effort recovery
         logger.warning(
             "scan: session recovery after a scan-record failure failed (%s)",
             type(exc).__name__,
