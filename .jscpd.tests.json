@@ -1,4 +1,5 @@
 {
+  "//": "Tests have their own budget (epic:refactor #820). Ignore entries: build output, locales, data and shared helpers.",
   "path": ["backend/tests", "frontend/__tests__"],
   "format": ["python", "typescript", "tsx"],
   "ignore": [
