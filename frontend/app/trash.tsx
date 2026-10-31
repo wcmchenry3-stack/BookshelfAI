@@ -1,14 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  Image,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -74,7 +65,7 @@ export default function TrashScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showBanner and t are omitted on purpose: load is built once so the focus effect does not refire on banner or language changes
   }, []);
 
   useFocusEffect(

@@ -4,7 +4,7 @@
 type RouterModule = typeof import('expo-router');
 
 function getRouter(): RouterModule['router'] {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberate lazy require: expo-router is loaded on first navigation, not at import
   return (require('expo-router') as RouterModule).router;
 }
 
