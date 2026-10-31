@@ -95,7 +95,36 @@ def parse_jsonc(text: str):
         else:
             out.append(ch)
         i += 1
-    return json.loads(re.sub(r",(\s*[}\]])", r"\1", "".join(out)))
+    return json.loads(_drop_trailing_commas("".join(out)))
+
+
+def _drop_trailing_commas(text: str) -> str:
+    """Remove a comma before ``}``/``]``, but never one inside a string."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+            out.append(ch)
+        elif ch == ",":
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            if j >= n or text[j] not in "}]":
+                out.append(ch)
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _flatten(prefix: tuple, value) -> set[tuple]:

@@ -225,6 +225,17 @@ def test_parse_jsonc_handles_comments_urls_and_trailing_commas():
     assert policy.parse_jsonc(text) == {"u": "https://x.test/a", "a": [1, 2]}
 
 
+def test_parse_jsonc_keeps_commas_inside_strings():
+    text = '{"ignore": ["**/*.{ts,tsx,}", "a,]", "b",],}'
+    assert policy.parse_jsonc(text) == {"ignore": ["**/*.{ts,tsx,}", "a,]", "b"]}
+
+
+def test_changing_a_comma_inside_an_ignore_glob_fails():
+    old = '{"ignore": ["**/*.{ts,tsx}"]}'
+    new = '{"ignore": ["**/*.{ts,tsx,}"]}'
+    _bad(KNIP, old, new)
+
+
 def test_real_repo_configs_parse():
     for rel in ("frontend/knip.json", ".jscpd.json", ".jscpd.tests.json"):
         policy.parse_jsonc((REPO / rel).read_text())
