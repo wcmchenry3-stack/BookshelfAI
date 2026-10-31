@@ -216,7 +216,11 @@ describe('one drain at a time', () => {
       await jest.advanceTimersByTimeAsync(0);
     });
     expect(sent(deps)).toEqual(['a']);
-    hold.resolve();
+    await act(async () => {
+      hold.resolve();
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    expect(deps.drainingRef.current).toBe(false);
   });
 
   it('restartScanSchedule hands a photo to the running drain via drainAgainRef', async () => {
@@ -327,6 +331,8 @@ describe('retry timer', () => {
     await act(async () => {
       await jest.advanceTimersByTimeAsync(SCAN_RETRY_DELAYS_MS[0] * 2);
     });
+    // The old timer never fired: it would have checked connectivity first.
+    expect(mockNetFetch).not.toHaveBeenCalled();
     expect(sent(deps)).toEqual([]);
   });
 

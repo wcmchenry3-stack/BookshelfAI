@@ -6,10 +6,12 @@ import { BannerProvider } from '../../contexts/BannerContext';
 import { useScanJobs } from '../../hooks/useScanJobs';
 
 // #805: moving the queue and review logic into hooks must not make the
-// provider publish more context values. One full scan lifecycle (load,
-// capture, upload, open the review, close it) re-renders a consumer no more often than
-// the provider did before the split (measured on dev at 40fd4aa: 6).
+// provider publish more context values or recreate its callbacks. One full
+// scan lifecycle (load, capture, upload, open the review, close it) is
+// measured against dev at 40fd4aa: 6 consumer renders, and the reconnect
+// listener subscribed twice (mount, then once when the queue has loaded).
 const RENDERS_BEFORE_SPLIT = 6;
+const NETINFO_SUBSCRIPTIONS_BEFORE_SPLIT = 2;
 
 const mockPost = jest.fn();
 jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
@@ -24,11 +26,12 @@ jest.mock('../../lib/scanJobStorage', () => ({
   sweepOrphanedScanFiles: () => Promise.resolve(0),
   deleteScanImage: jest.fn(),
 }));
+const mockAddEventListener = jest.fn(() => () => {});
 jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: {
     fetch: () => Promise.resolve({ isConnected: true }),
-    addEventListener: () => () => {},
+    addEventListener: () => mockAddEventListener(),
   },
 }));
 jest.mock('../../lib/sentry', () => ({
@@ -46,8 +49,10 @@ it('one scan lifecycle does not re-render consumers more than before the split',
   });
   let renders = 0;
   let ctx: ScanJobContextValue | null = null;
+  let first: ScanJobContextValue | null = null;
   function Consumer() {
     ctx = useScanJobs();
+    if (!first) first = ctx;
     renders += 1;
     return null;
   }
@@ -73,4 +78,12 @@ it('one scan lifecycle does not re-render consumers more than before the split',
   });
   expect(ctx!.jobs).toEqual([]);
   expect(renders).toBeLessThanOrEqual(RENDERS_BEFORE_SPLIT);
+  // An unstable drainQueue would re-subscribe the listener on every render.
+  expect(mockAddEventListener).toHaveBeenCalledTimes(NETINFO_SUBSCRIPTIONS_BEFORE_SPLIT);
+  // The queue callbacks keep their identity across the whole lifecycle.
+  const last = ctx!;
+  expect(last.resumeQueue).toBe(first!.resumeQueue);
+  expect(last.startScan).toBe(first!.startScan);
+  expect(last.retryScan).toBe(first!.retryScan);
+  expect(last.restartScanSchedule).toBe(first!.restartScanSchedule);
 });

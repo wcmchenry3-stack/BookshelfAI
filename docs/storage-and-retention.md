@@ -43,8 +43,8 @@ Notes on the photo size:
 | `MAX_QUEUE_SIZE` | 50 | `frontend/lib/scanJob.ts:7`; enforced `ScanJobContext.tsx:451` (`isQueueFull`) and the backstop `:459-461` | jobs with status `queued` or `pending` (`isPendingUpload`, `scanJob.ts:60`). Does not count `searching`, `complete` or `failed` jobs, nor text searches' (zero) photos. The comment at `scanJob.ts:3-6` says so |
 | `FAILED_SCAN_RETENTION_MS` | 7 days | `scanJob.ts:10`, `isFailedScanExpired` `:111` | age of a `failed` job, counted from `failedAt`, or `createdAt` for jobs saved before #605 (`failedTimeOf` `:106`) |
 | `SCAN_RETRY_DELAYS_MS` | 30 s, 10 min, 1 h, 4 h | `frontend/lib/scanErrors.ts:130-135` | waits before attempts 2 to 5 of a photo after `503 scan_unavailable` (#604) |
-| `MAX_SCAN_ATTEMPTS` | 5 | `scanErrors.ts:145` | attempts per photo; after the 5th the job is `failed` (`ScanJobContext.tsx:1006-1012`). Total wait on the schedule: 4 h 40 min 30 s |
-| `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `scanErrors.ts:142` | no retry is scheduled further ahead than this; also applied to saved times on launch (`ScanJobContext.tsx:240`) |
+| `MAX_SCAN_ATTEMPTS` | 5 | `scanErrors.ts:145` | attempts per photo; after the 5th the job is `failed` (attempt counted at `lib/scan/executeScan.ts:111`, failed at `lib/scan/scanOutcomes.ts:98-104`). Total wait on the schedule: 4 h 40 min 30 s |
+| `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `scanErrors.ts:142` | no retry is scheduled further ahead than this; also applied to saved times on launch (`ScanJobContext.tsx:270`) |
 | `MAX_RETRIES` | 3 | `hooks/useScanQueue.ts:18`, used `:343` | manual "Retry" presses per job; the 4th puts the job back to `queued` with the banner `maxRetries` |
 | `MAX_IN_PROGRESS_RETRIES` | 3 | `scanErrors.ts:99` | silent retries of `429 scan_in_progress` |
 | `MAX_DRAIN_PASSES` | 3 | `hooks/useScanQueue.ts:21` | passes of the upload drain per trigger |
