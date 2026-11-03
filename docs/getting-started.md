@@ -86,6 +86,8 @@ DATABASE_URL=postgresql+asyncpg://<your-mac-username>@localhost:5432/bookshelf
 ```
 If you set a password on your local Postgres, include it: `postgresql+asyncpg://user:password@localhost:5432/bookshelf`.
 
+Leave `MIGRATION_DATABASE_URL` unset locally: Alembic then uses `DATABASE_URL`, which here is your own (owner) user. It only matters on Render, where the app connects as the DML-only `bookshelf_app` role and migrations need the owner (#696, see [RENDER.md](RENDER.md#database-role)).
+
 ### Auth — Google OAuth
 
 You need three Google OAuth client IDs (one per platform) from the same Google Cloud project. Create them at **Google Cloud Console → APIs & Services → Credentials → Create Credentials → OAuth client ID**:

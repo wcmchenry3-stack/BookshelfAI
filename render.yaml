@@ -43,6 +43,12 @@ services:
       # only; see docs/RENDER.md.
       - key: DATABASE_URL
         sync: false
+      # Owner-role (postgres) session pooler URL, used only by the
+      # preDeployCommand's `alembic upgrade head`: DATABASE_URL is the DML-only
+      # bookshelf_app role, which cannot run DDL (#696). Dashboard secret only;
+      # unset = alembic falls back to DATABASE_URL. See docs/RENDER.md.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
       - key: ENVIRONMENT
         value: production
       - key: CORS_ORIGINS
@@ -151,6 +157,11 @@ services:
         fromDatabase:
           name: bookshelf-db
           property: connectionString
+      # Owner-role DSN for `alembic upgrade head` once DATABASE_URL is switched
+      # to the DML-only bookshelf_app role (#696). Unset = alembic uses
+      # DATABASE_URL. Dashboard secret only; see docs/RENDER.md.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
       # staging, not development: Settings.is_hardened (PR #448) treats every
       # environment except development/test as hardened (TrustedHost,
       # /docs disabled, HSTS, /auth/test-login

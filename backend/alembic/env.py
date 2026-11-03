@@ -10,7 +10,15 @@ from app.core.config import settings
 from app.core.database import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.async_database_url)
+# Migrations run as the owner role (#696): MIGRATION_DATABASE_URL when set,
+# else DATABASE_URL. This engine is built below from the URL alone, so it gets
+# neither the app engine's statement_timeout server setting nor its checkout
+# listener (app/core/database.py): a long migration is never cancelled by it.
+# Note: ConfigParser treats "%" as interpolation, so escape it (percent-encoded
+# passwords in the DSN).
+config.set_main_option(
+    "sqlalchemy.url", settings.async_migration_database_url.replace("%", "%%")
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

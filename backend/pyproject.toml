@@ -55,6 +55,7 @@ ignore_names = [
   "scan_premium_daily_limit",  # read by getattr(settings, f"scan_{tier}_daily_limit") in ai/settings.py
   "scan_free_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
   "scan_premium_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
+  "async_migration_database_url",  # read by alembic/env.py (vulture scans app/ only) (#696)
   # --- Test seam ---
   "reset_cache",  # ai/settings.py cache reset, called from tests/ (vulture scans app/ only)
   # --- PENDING OWNER DECISION (#830): unread settings ---
