@@ -46,8 +46,9 @@ class TestVerifyNonce:
         uid = _user()
         nonce = issue_nonce(uid, _SECRET)
         payload_b64, sig_b64 = nonce.split(".", 1)
-        # Flip last char of payload
-        tampered = payload_b64[:-1] + ("A" if payload_b64[-1] != "A" else "B")
+        # Flip first char (always in a full base64 group; bottom-2 padding bits
+        # in the last char of a XYZ= group would make the tamper a no-op)
+        tampered = ("A" if payload_b64[0] != "A" else "B") + payload_b64[1:]
         assert not verify_nonce(f"{tampered}.{sig_b64}", uid, _SECRET)
 
     def test_tampered_signature_rejected(self):
