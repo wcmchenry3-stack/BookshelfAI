@@ -113,8 +113,9 @@ the whole `git diff` afterwards and restore anything prebuild removed:
 | The Sentry fallback in the "Bundle React Native code and images" build phase | Keep it (see § Sentry bundling fallback) |
 | `project.pbxproj` CocoaPods integration (Pods groups, `[Expo] Configure project`, `[CP] Embed Pods Frameworks`, `OTHER_SWIFT_FLAGS`, `REACT_NATIVE_PATH`, `USE_HERMES`, ...) | These come from `pod install`, not prebuild. Start from the committed `project.pbxproj` and apply only what prebuild adds (new source files, build-phase script changes) |
 | `Info.plist` `RCTNewArchEnabled` and tab formatting | `pod install` writes them back; keep them |
-| `Info.plist` `CFBundleShortVersionString` (prebuild writes `app.json` `version`, `0.1.0`) | Keep the committed `1.0.0` |
-| `Images.xcassets` app icon, `SplashScreenLegacy`/`SplashScreenBackground` assets and `SplashScreen.storyboard` | Keep the committed ones. SDK 58 without the `expo-splash-screen` plugin points the storyboard at an image it does not create, and regenerates the app icon from `assets/icon.png` (an owner decision, not part of a regeneration) |
+| `Info.plist` `CFBundleShortVersionString` / `CFBundleVersion` (prebuild writes the literal `app.json` `version` / `ios.buildNumber`) | Restore `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`. `sync-native-versions.yml` updates only those build settings in `project.pbxproj`, never Info.plist, so a literal goes stale after the next release (it shipped 1.0.0 that way until #713) |
+| `Images.xcassets` app icon | Prebuild regenerates it from `assets/icon.png`; the committed icon is that file (owner decision, #713), so the result should be unchanged |
+| `SplashScreenLegacy`/`SplashScreenBackground` assets and `SplashScreen.storyboard` | Keep the committed ones. SDK 58 without the `expo-splash-screen` plugin points the storyboard at an image it does not create (follow-up #891) |
 | The `fmt` consteval patch at the end of the Podfile `post_install` | Hand-kept (not owned by a plugin); restore it. It is a no-op when the `fmt` header does not match |
 
 `PrivacyInfo.xcprivacy` is generated from `app.json` `ios.privacyManifests`, so
