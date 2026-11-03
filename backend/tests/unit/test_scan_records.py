@@ -350,7 +350,7 @@ async def _one_cleanup_run(factory, purge):
     from app.services.token_cleanup import cleanup_expired_tokens
 
     with (
-        patch("app.services.token_cleanup.AsyncSessionLocal", factory),
+        patch("app.services.token_cleanup.JobSessionLocal", factory),
         patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
         patch(
             "app.services.token_cleanup.rollup_and_purge",

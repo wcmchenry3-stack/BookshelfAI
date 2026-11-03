@@ -153,19 +153,18 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
-    # Owner-role DSN for Alembic only (#696): DATABASE_URL is the DML-only
-    # bookshelf_app role. Empty = use DATABASE_URL (local dev, CI).
+    # Owner DSN for Alembic only (#696); empty = DATABASE_URL (local dev, CI).
     migration_database_url: str = ""
     # Bounded async pool per instance. Render zero-downtime deploys run 2
-    # instances concurrently during a deploy, plus a one-off `alembic upgrade
-    # head` connection: 2 * (db_pool_size + db_max_overflow) + 1 must stay
-    # under the small Supabase session pooler's 15-client cap.
-    # 2 * (3 + 2) + 1 = 11 <= 15.
+    # instances concurrently, plus a one-off `alembic upgrade head`
+    # connection: 2 * (db_pool_size + db_max_overflow) + 1 must stay under
+    # the small Supabase session pooler's 15-client cap (2 * (3 + 2) + 1 = 11).
     db_pool_size: int = 3
     db_max_overflow: int = 2
-    # App engine statement_timeout in ms (#696): a longer query is cancelled and
-    # the request gets 503. 0 disables it (not in production).
+    # statement_timeout in ms (#696): a longer request query is cancelled (503).
+    # The daily purge jobs (JobSessionLocal) use the job value. 0 disables.
     statement_timeout_ms: int = 5000
+    statement_timeout_job_ms: int = 60000
 
     # Auth
     google_client_id: str = ""

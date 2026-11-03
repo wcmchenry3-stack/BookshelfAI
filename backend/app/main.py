@@ -19,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
+from app.ai.alerts import capture_service_warning
 from app.ai.settings import seed_ai_settings_at_startup
 from app.api.attestation import router as attestation_router
 from app.api.auth import router as auth_router
@@ -28,7 +29,7 @@ from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
 from app.core import catalog_token
 from app.core.config import check_turnstile_configured, settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, log_db_role
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
 from app.core.origin_auth import OriginAuthMiddleware
@@ -245,6 +246,9 @@ async def lifespan(app: FastAPI):
     # Insert any missing ai_settings rows from the env. Never raises: with the
     # DB down the app still starts and scans fail closed until it is back.
     await seed_ai_settings_at_startup()
+    # Which DB role this process runs as (#696): bookshelf_app once
+    # DATABASE_URL is switched. Never raises.
+    await log_db_role()
     cleanup_task = asyncio.create_task(cleanup_expired_tokens())
     yield
     cleanup_task.cancel()
@@ -288,6 +292,36 @@ def _is_query_canceled(exc: BaseException) -> bool:
     return False
 
 
+# Stable 503 ``detail`` code for a cancelled query (docs/api.md). The frontend
+# reads ``detail`` (frontend/lib/apiError.ts); the code is not in its scan
+# code lists, so a /scan that hits it shows the generic error state.
+DB_TIMEOUT_DETAIL = "db_timeout"
+
+
+def _route_template(request: Request) -> str:
+    """The matched route's path template (``/user-books/{book_id}``), never the
+    concrete path, so a Sentry tag carries no ids."""
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
+
+
+def _report_statement_timeout(request: Request) -> None:
+    """One warning-level Sentry event per cancelled query (#696 review): the
+    503 path would otherwise send nothing, since Sentry only captures
+    unhandled errors. Grouped by a fixed fingerprint and tagged with the route
+    template only; captured through ``capture_service_warning``, which drops
+    the request block, user and breadcrumbs. Never raises into the 503."""
+    try:
+        capture_service_warning(
+            "database statement timeout",
+            fingerprint=["db-statement-timeout"],
+            tags={"route": _route_template(request)},
+            extras={"statement_timeout_ms": settings.statement_timeout_ms},
+        )
+    except Exception:
+        logger.exception("statement_timeout_report_failed")
+
+
 def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return 503 when Postgres cancels a query due to statement_timeout (#696).
 
@@ -295,8 +329,9 @@ def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
     re-raised unchanged, so it reaches ServerErrorMiddleware (500) and Sentry
     exactly as it would with no handler registered.
 
-    Logs the route path only — never SQL text, bound values or other details
-    that might contain user data.
+    The body is the API's standard ``{"detail": "<code>"}`` shape. Logs the
+    route path only, never SQL text, bound values or other details that might
+    contain user data, and sends one Sentry warning.
     """
     if not _is_query_canceled(exc):
         raise exc
@@ -304,16 +339,11 @@ def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
         "statement_timeout_canceled path=%s",
         request.url.path,
     )
+    _report_statement_timeout(request)
     return JSONResponse(
         status_code=503,
         headers={"Retry-After": str(_TIMEOUT_RETRY_AFTER)},
-        content={
-            "error": {
-                "code": "SERVICE_TEMPORARILY_UNAVAILABLE",
-                "message": "The server is busy, please retry shortly.",
-            },
-            "retry_after": _TIMEOUT_RETRY_AFTER,
-        },
+        content={"detail": DB_TIMEOUT_DETAIL},
     )
 
 

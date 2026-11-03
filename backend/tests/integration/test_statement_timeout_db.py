@@ -6,6 +6,9 @@
   rejects it), which is why the docs do not ask for it.
 - A query that exceeds the timeout, run through ``get_db`` in a route, comes
   back as HTTP 503 + Retry-After and the connection goes back to the pool.
+- Background-job sessions (``JobSessionLocal``) run every transaction, also
+  after a commit, under STATEMENT_TIMEOUT_JOB_MS, and the longer value never
+  leaks onto the pooled connection a request gets next.
 """
 
 import pytest
@@ -18,6 +21,7 @@ from app.core import database
 from app.core.config import settings
 from app.core.database import (
     AsyncSessionLocal,
+    JobSessionLocal,
     _statement_timeout_connect_args,
     engine,
     get_db,
@@ -97,10 +101,39 @@ async def test_query_over_the_timeout_returns_503_and_frees_the_connection(
         response = await client.get("/probe/slow")
 
     assert response.status_code == 503
-    assert response.json()["error"]["code"] == "SERVICE_TEMPORARILY_UNAVAILABLE"
+    assert response.json() == {"detail": "db_timeout"}
     assert response.headers["retry-after"] == "5"
 
     # The session closed and the connection went back to the pool, usable.
     assert fresh_app_engine.sync_engine.pool.checkedout() == 0
     async with AsyncSessionLocal() as session:
         assert (await session.execute(sa.text("SELECT 1"))).scalar_one() == 1
+
+
+async def test_job_sessions_use_the_job_timeout_without_leaking_it(
+    fresh_app_engine, monkeypatch
+):
+    monkeypatch.setattr(settings, "statement_timeout_job_ms", 61234)
+    async with JobSessionLocal() as session:
+        first = (await session.execute(_CURRENT_TIMEOUT_MS)).scalar_one()
+        await session.commit()  # the purges commit per batch
+        second = (await session.execute(_CURRENT_TIMEOUT_MS)).scalar_one()
+        await session.rollback()
+    assert (first, second) == ("61234", "61234")
+
+    # Pool of one connection after dispose: a request session reuses the very
+    # connection the job just returned, and gets the request timeout back.
+    async with AsyncSessionLocal() as session:
+        value = (await session.execute(_CURRENT_TIMEOUT_MS)).scalar_one()
+    assert value == str(settings.statement_timeout_ms)
+    assert fresh_app_engine.sync_engine.pool.checkedout() == 0
+
+
+async def test_job_session_survives_a_query_longer_than_the_request_timeout(
+    fresh_app_engine, monkeypatch
+):
+    """A job query that runs past the request timeout is not cancelled."""
+    monkeypatch.setattr(settings, "statement_timeout_ms", 50)
+    monkeypatch.setattr(settings, "statement_timeout_job_ms", 5000)
+    async with JobSessionLocal() as session:
+        await session.execute(sa.text("SELECT pg_sleep(0.2)"))

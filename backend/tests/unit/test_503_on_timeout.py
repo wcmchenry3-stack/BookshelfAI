@@ -25,14 +25,17 @@ from sqlalchemy.dialects.postgresql.asyncpg import (
 )
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from app import main as main_module
 from app.main import (
     _TIMEOUT_RETRY_AFTER,
+    DB_TIMEOUT_DETAIL,
     _is_query_canceled,
     _query_canceled_handler,
     app,
     limiter,
     settings,
 )
+from tests.unit._sentry_capture import captured_app_events
 
 _STATEMENT = "SELECT * FROM users WHERE email = $1"
 _PARAMS = ("someone@example.com",)
@@ -66,9 +69,12 @@ def _unique_violation() -> DBAPIError:
     )
 
 
-def _request(path: str) -> MagicMock:
+def _request(path: str, template: str | None = None) -> MagicMock:
     request = MagicMock()
     request.url.path = path
+    route = MagicMock()
+    route.path = template or path
+    request.scope = {"route": route}
     return request
 
 
@@ -128,13 +134,9 @@ def test_handler_returns_503_for_wrapped_timeout():
 
     assert response.status_code == 503
     body = json.loads(response.body)
-    assert body == {
-        "error": {
-            "code": "SERVICE_TEMPORARILY_UNAVAILABLE",
-            "message": "The server is busy, please retry shortly.",
-        },
-        "retry_after": _TIMEOUT_RETRY_AFTER,
-    }
+    # The API's standard error shape (docs/api.md), which the frontend reads.
+    assert body == {"detail": "db_timeout"}
+    assert DB_TIMEOUT_DETAIL == "db_timeout"
     assert response.headers["retry-after"] == str(_TIMEOUT_RETRY_AFTER)
 
 
@@ -194,8 +196,7 @@ async def test_wrapped_timeout_returns_503_over_http(probe_app):
         response = await client.get("/probe/timeout")
 
     assert response.status_code == 503
-    assert response.json()["error"]["code"] == "SERVICE_TEMPORARILY_UNAVAILABLE"
-    assert response.json()["retry_after"] == _TIMEOUT_RETRY_AFTER
+    assert response.json() == {"detail": "db_timeout"}
     assert response.headers["retry-after"] == str(_TIMEOUT_RETRY_AFTER)
 
 
@@ -218,3 +219,72 @@ async def test_other_db_error_propagates_unchanged(probe_app):
     ) as client:
         with pytest.raises(IntegrityError):
             await client.get("/probe/integrity")
+
+
+# --- Sentry: one warning per cancelled query ---------------------------------
+
+
+@pytest.fixture
+def probe_app_with_ids(probe_app) -> FastAPI:
+    @probe_app.get("/probe/users/{user_id}/timeout")
+    @limiter.limit(settings.rate_limit_reads)
+    async def probe_user_timeout(request: Request, user_id: str):
+        raise _timeout_error()
+
+    return probe_app
+
+
+async def test_timeout_sends_one_scrubbed_sentry_warning(probe_app_with_ids):
+    """The 503 path captures exactly one warning event, grouped by a fixed
+    fingerprint and tagged with the route template: no concrete path, ids,
+    SQL, parameters or request data (real SDK client, app integrations)."""
+    secret_id = "a2c4e6f8-1111-2222-3333-444455556666"
+    with captured_app_events() as events:
+        async with AsyncClient(
+            transport=ASGITransport(app=probe_app_with_ids), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                f"/probe/users/{secret_id}/timeout",
+                headers={"Authorization": "Bearer not-a-real-token"},
+            )
+
+    assert response.status_code == 503
+    assert len(events) == 1
+    event = events[0]
+    assert event["level"] == "warning"
+    assert event["message"] == "database statement timeout"
+    assert event["fingerprint"] == ["db-statement-timeout"]
+    assert event["tags"]["route"] == "/probe/users/{user_id}/timeout"
+    blob = json.dumps(event)
+    for forbidden in (secret_id, "not-a-real-token", _STATEMENT, _PARAMS[0]):
+        assert forbidden not in blob
+    assert "request" not in event and "user" not in event
+
+
+async def test_other_db_error_is_not_reported_as_a_timeout(probe_app):
+    with captured_app_events() as events:
+        async with AsyncClient(
+            transport=ASGITransport(app=probe_app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            await client.get("/probe/integrity")
+
+    assert all(e.get("fingerprint") != ["db-statement-timeout"] for e in events)
+
+
+def test_sentry_failure_does_not_break_the_503(monkeypatch, caplog):
+    def boom(*_a, **_k):
+        raise RuntimeError("sentry down")
+
+    monkeypatch.setattr(main_module, "capture_service_warning", boom)
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        response = _query_canceled_handler(_request("/scan"), _timeout_error())
+
+    assert response.status_code == 503
+    assert "statement_timeout_report_failed" in caplog.text
+
+
+def test_route_template_falls_back_when_no_route_matched():
+    request = MagicMock()
+    request.scope = {}
+    assert main_module._route_template(request) == "unmatched"
