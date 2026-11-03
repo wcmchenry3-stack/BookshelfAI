@@ -15,7 +15,10 @@ type SentryHint = Parameters<
   NonNullable<NonNullable<Parameters<typeof Sentry.init>[0]>['beforeSend']>
 >[1];
 
-export function sentryBeforeSend(event: Sentry.ErrorEvent, hint: SentryHint): Sentry.ErrorEvent | null {
+export function sentryBeforeSend(
+  event: Sentry.ErrorEvent,
+  hint: SentryHint
+): Sentry.ErrorEvent | null {
   const kept = filterExpectedNetworkNoise(event, hint, () =>
     Sentry.addBreadcrumb({
       category: 'sentry.filter',
