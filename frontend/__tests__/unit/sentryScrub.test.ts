@@ -45,7 +45,7 @@ function makeClient(envelopes: Envelope[], scrub: boolean) {
     dsn: 'https://pub@example.invalid/1',
     stackParser: defaultStackParser,
     integrations: [],
-    ...(scrub ? { beforeSend: sentryBeforeSend as any } : {}),
+    ...(scrub ? { beforeSend: sentryBeforeSend } : {}),
     transport: () => ({
       send: async (env: Envelope) => {
         envelopes.push(env);

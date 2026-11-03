@@ -4,6 +4,10 @@ import { scrubBreadcrumb, scrubSentryEvent } from './sentryScrub';
 
 const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 
+type SentryHint = Parameters<
+  NonNullable<NonNullable<Parameters<typeof Sentry.init>[0]>['beforeSend']>
+>[1];
+
 /**
  * #701: drop only known-benign user-environment network noise (narrow matcher
  * in sentryFilter.ts); leave a breadcrumb so an outage is visible.
@@ -11,10 +15,6 @@ const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
  * redact auth headers / config / bodies / bearer tokens from extra, contexts
  * and mechanism data (sentryScrub.ts).
  */
-type SentryHint = Parameters<
-  NonNullable<NonNullable<Parameters<typeof Sentry.init>[0]>['beforeSend']>
->[1];
-
 export function sentryBeforeSend(
   event: Sentry.ErrorEvent,
   hint: SentryHint
