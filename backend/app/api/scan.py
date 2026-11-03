@@ -4,6 +4,7 @@ imported under the names tests patch on this module."""
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated
 
@@ -11,8 +12,16 @@ import anyio
 import anyio.to_thread
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
+
+from app.core.attestation import (
+    LiveAndroidIntegrityVerifier,
+    StubAppleAttestVerifier,
+    verify_nonce,
+)
+from app.models.device_key import DeviceKey
 
 from app.ai import breaker, ledger, quota, scan_records
 from app.ai.entitlements import Tier
@@ -255,6 +264,103 @@ async def _check_turnstile(token: str | None) -> None:
             )
 
 
+async def _check_bot_protection(
+    *,
+    cf_token: str | None,
+    attest_platform: str | None,
+    attest_key_id: str | None,
+    attest_assertion: str | None,
+    attest_token: str | None,
+    attest_nonce: str | None,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> None:
+    """Bot protection for /scan (#753): attestation first, Turnstile fallback.
+
+    If the client sends attestation data (nonce + platform), it is verified
+    first. A valid assertion / Play Integrity token grants immediate access
+    without a Turnstile check.  If attestation is absent or fails, the
+    standard Turnstile path runs (TURNSTILE_REQUIRED still applies).
+    """
+    if attest_nonce and attest_platform:
+        verified = await _verify_attestation(
+            platform=attest_platform,
+            key_id=attest_key_id,
+            assertion_b64=attest_assertion,
+            integrity_token=attest_token,
+            nonce=attest_nonce,
+            user_id=user_id,
+            db=db,
+        )
+        if verified:
+            return
+        if settings.attestation_required:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Attestation verification failed",
+            )
+    await _check_turnstile(cf_token)
+
+
+async def _verify_attestation(
+    *,
+    platform: str,
+    key_id: str | None,
+    assertion_b64: str | None,
+    integrity_token: str | None,
+    nonce: str,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> bool:
+    """Verify a device assertion (#753).  Returns True on success."""
+    if not verify_nonce(nonce, user_id, settings.attestation_nonce_secret):
+        return False
+
+    if platform == "ios":
+        if not key_id or not assertion_b64:
+            return False
+        row = (
+            await db.execute(
+                select(DeviceKey).where(
+                    DeviceKey.user_id == user_id,
+                    DeviceKey.key_id == key_id,
+                    DeviceKey.platform == "ios",
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return False
+        verifier = StubAppleAttestVerifier()
+        result = await verifier.verify_assertion(
+            key_id=key_id,
+            assertion_b64=assertion_b64,
+            public_key_cbor=row.public_key_cbor,
+            nonce=nonce,
+            stored_counter=row.counter,
+        )
+        if result is None:
+            return False
+        row.counter = result.counter
+        row.last_used_at = datetime.now(UTC)
+        await db.commit()
+        return True
+
+    if platform == "android":
+        if not integrity_token:
+            return False
+        pkg = settings.attestation_android_package_name
+        if not pkg:
+            return False
+        verifier = LiveAndroidIntegrityVerifier()
+        return await verifier.verify_token(
+            token=integrity_token,
+            nonce=nonce,
+            package_name=pkg,
+        )
+
+    return False
+
+
 async def _normalise_image(image_bytes: bytes, feature: str, ai: AISettings) -> bytes:
     """Normalise before any credit or quota check, so a bad image never uses a
     scan: full decode (415 image_undecodable), pixel cap from
@@ -479,13 +585,32 @@ async def scan(
     attempt: Annotated[int, Form(ge=SCAN_ATTEMPT_MIN, le=SCAN_ATTEMPT_MAX)] = (
         SCAN_ATTEMPT_MIN
     ),
+    # Device attestation — alternative bot signal for native clients (#753).
+    # Clients that have registered an App Attest key (iOS) or hold a Play
+    # Integrity token (Android) send these fields instead of (or in addition
+    # to) the Turnstile token.  All are optional; a valid assertion bypasses
+    # the Turnstile check regardless of TURNSTILE_REQUIRED.
+    attest_platform: str | None = Form(None, alias="attestation-platform"),
+    attest_key_id: str | None = Form(None, alias="attestation-key-id"),
+    attest_assertion: str | None = Form(None, alias="attestation-assertion"),
+    attest_token: str | None = Form(None, alias="attestation-token"),
+    attest_nonce: str | None = Form(None, alias="attestation-nonce"),
 ) -> ScanResponse:
     ai = await _load_scan_settings(db, enhanced)
 
     # --- /scan requests per user per UTC day (#586): after the kill
     # switches, before any other work (see _count_scan_request) ---
     await _count_scan_request(db, current_user, ai)
-    await _check_turnstile(cf_turnstile_response)
+    await _check_bot_protection(
+        cf_token=cf_turnstile_response,
+        attest_platform=attest_platform,
+        attest_key_id=attest_key_id,
+        attest_assertion=attest_assertion,
+        attest_token=attest_token,
+        attest_nonce=attest_nonce,
+        user_id=current_user.id,
+        db=db,
+    )
     image_bytes = await _read_validated_upload(file)
 
     # The client only chooses standard vs enhanced; the gateway's registry
