@@ -159,6 +159,13 @@ class Settings(BaseSettings):
     # 2 * (3 + 2) + 1 = 11 <= 15.
     db_pool_size: int = 3
     db_max_overflow: int = 2
+    # Statement timeout applied to every connection on checkout (#696). A query
+    # that runs longer than this is cancelled by the server and the endpoint
+    # returns 503. Set to 0 to disable (not recommended in production).
+    # Background jobs that need more time may pass a longer value when they
+    # open their own engine / connection.
+    # Kept in milliseconds to match Postgres's statement_timeout unit.
+    statement_timeout_ms: int = 5000
 
     # Auth
     google_client_id: str = ""

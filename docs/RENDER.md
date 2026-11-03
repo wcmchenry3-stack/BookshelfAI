@@ -41,6 +41,55 @@ prod hostname starts **empty** — by design (a clean production start), not
 data loss: the old data stays reachable on the dev stack
 (`bookshelfapi-dev.buffingchi.com`, still on `bookshelf-db`).
 
+## Database role
+
+The app connects as the **`bookshelf_app`** role — a least-privilege login role
+that can only run `SELECT`, `INSERT`, `UPDATE`, `DELETE` on app tables and
+`USAGE` on sequences. It cannot run DDL (`DROP TABLE`, `ALTER TABLE`, `CREATE`,
+…). Alembic migrations continue to run as the owner (`postgres` on Supabase).
+
+### Creating the role (owner step — do this before running migration 0028)
+
+Run in the Supabase SQL editor for **dev** and **prod** separately. Never
+commit the password to this repo.
+
+```sql
+-- Supabase SQL editor (dev then prod).  Use a strong random password.
+CREATE ROLE bookshelf_app LOGIN PASSWORD '<strong random password>';
+-- Generate one with: openssl rand -hex 32
+```
+
+Then update `DATABASE_URL` on the Render service (`bookshelf-api-dev` /
+`bookshelf-api`) to include the statement_timeout option:
+
+```
+postgresql://bookshelf_app:<password>@<supabase-session-pooler-host>/postgres?options=-c%20statement_timeout%3D5000
+```
+
+The `options=-c statement_timeout=5000` suffix sets the 5-second statement
+timeout in the DSN; the pool checkout event in `app/core/database.py` applies
+it again so it survives Supabase's pgBouncer session-mode pooler.
+
+Migration 0028 (`alembic upgrade head`, run automatically as `preDeployCommand`)
+grants the role the DML privileges and `BYPASSRLS` it needs. It will fail with
+an informative error if the role does not exist yet.
+
+### Statement timeout
+
+Every connection runs with `statement_timeout = STATEMENT_TIMEOUT_MS`
+(default 5000 ms = 5 s). A query that exceeds the timeout is cancelled by
+Postgres and the API returns `HTTP 503` with:
+
+```json
+{"error": {"code": "SERVICE_TEMPORARILY_UNAVAILABLE",
+           "message": "The server is busy, please retry shortly."},
+ "retry_after": 5}
+```
+
+and a `Retry-After: 5` header. To adjust the timeout, set
+`STATEMENT_TIMEOUT_MS` on the Render service (0 disables it, not recommended
+in production).
+
 ## Connecting to Supabase (production only)
 
 Supabase is used as plain Postgres. The app does not use Supabase Auth,
@@ -58,8 +107,8 @@ Storage, or the Data API.
   directly.
 - **RLS on for every table, with no policies** (migration 0020). If the Data
   API were ever switched back on, `anon` and `authenticated` would still see
-  no rows. The app connects as `postgres` (table owner, `BYPASSRLS`), so it is
-  unaffected. A new table's migration must run
+  no rows. The app connects as `bookshelf_app` (`BYPASSRLS`, see above), so it
+  is unaffected. A new table's migration must run
   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
   `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
 - **No table or sequence privileges for `anon` / `authenticated`** (migration

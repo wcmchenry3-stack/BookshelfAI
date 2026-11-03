@@ -59,8 +59,11 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 - Account deletion (#291) must delete trashed rows at once, not leave them to the purge.
 
 ### Database
-- Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as the table owner and bypasses it; it only locks out Supabase's `anon`/`authenticated` roles. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
+- The app connects as **`bookshelf_app`** (#696) — a least-privilege login role with `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all app tables and `USAGE` on sequences. It cannot run DDL. Alembic migrations run as the **owner** (`postgres` on Supabase), which is not `bookshelf_app`. When testing migrations locally, run `alembic upgrade head` as the owner, not the app role.
+- Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as `bookshelf_app` which has `BYPASSRLS`, so it behaves like the owner for row visibility. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
 - Never `GRANT` anything to `anon` or `authenticated`. Migration 0023 revoked their table and sequence privileges, including the migrating role's default privileges, so a new table needs no extra step (#704)
+- Migration 0028 set default privileges on the owner role so every future table / sequence created by the owner automatically inherits DML grants for `bookshelf_app`. No per-table grant is needed in new migrations.
+- **Statement timeout**: every connection from the app pool runs `SET statement_timeout = STATEMENT_TIMEOUT_MS` (default 5 s). A cancelled query surfaces as `HTTP 503` (see `_query_canceled_handler` in `app/main.py`). Background jobs that need more time should open a separate engine with a higher or zero timeout.
 
 ## Commands
 

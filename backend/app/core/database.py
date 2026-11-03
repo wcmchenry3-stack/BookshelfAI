@@ -1,3 +1,4 @@
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -33,6 +34,30 @@ engine = create_async_engine(
     hide_parameters=True,
     **_engine_kwargs,
 )
+
+
+def _set_statement_timeout(dbapi_conn, connection_record) -> None:
+    """Set statement_timeout on every connection checkout from the pool (#696).
+
+    The DSN option ``?options=-c statement_timeout=N`` is the first layer; this
+    SET is the second layer that survives Supabase's pgBouncer session-mode
+    pooler resetting connection parameters between clients. Together they ensure
+    the timeout is always active. Skipped for SQLite (no-op / unsupported).
+    """
+    if settings.async_database_url.startswith("sqlite"):
+        return
+    ms = settings.statement_timeout_ms
+    if ms <= 0:
+        return
+    cursor = dbapi_conn.cursor()
+    cursor.execute(f"SET statement_timeout = {ms}")
+    cursor.close()
+
+
+# Register on the sync engine that underlies the async wrapper. The "checkout"
+# event fires whenever asyncpg hands a connection from the pool to a caller.
+event.listen(engine.sync_engine, "checkout", _set_statement_timeout)
+
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

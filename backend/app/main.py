@@ -17,6 +17,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
+try:
+    import asyncpg.exceptions as _asyncpg_exc
+
+    _QueryCanceledError = _asyncpg_exc.QueryCanceledError
+except ImportError:  # pragma: no cover — asyncpg is always present; guards tests
+    _QueryCanceledError = None  # type: ignore[assignment,misc]
+
+# Retry-After hint in seconds returned when statement_timeout cancels a query.
+_TIMEOUT_RETRY_AFTER = 5
+
 from app.ai.settings import seed_ai_settings_at_startup
 from app.api.attestation import router as attestation_router
 from app.api.auth import router as auth_router
@@ -260,8 +270,33 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Re
     return _slowapi_429(request, exc)
 
 
+def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return 503 when Postgres cancels a query due to statement_timeout (#696).
+
+    Logs the route path only — never SQL text, bound values or other details
+    that might contain user data.
+    """
+    logger.warning(
+        "statement_timeout_canceled path=%s",
+        request.url.path,
+    )
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": str(_TIMEOUT_RETRY_AFTER)},
+        content={
+            "error": {
+                "code": "SERVICE_TEMPORARILY_UNAVAILABLE",
+                "message": "The server is busy, please retry shortly.",
+            },
+            "retry_after": _TIMEOUT_RETRY_AFTER,
+        },
+    )
+
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+if _QueryCanceledError is not None:
+    app.add_exception_handler(_QueryCanceledError, _query_canceled_handler)
 
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).
