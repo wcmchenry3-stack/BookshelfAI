@@ -20,6 +20,7 @@ on:
       - frontend/package-lock.json
       - frontend/app.json
       - frontend/plugins/**
+      - .github/workflows/podfile-lock.yml
   workflow_dispatch:
 
 permissions:

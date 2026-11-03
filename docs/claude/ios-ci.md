@@ -49,7 +49,7 @@ CocoaPods, so `.github/workflows/podfile-lock.yml` ("Podfile lock", job
 
 - It runs on PRs that touch `frontend/ios/Podfile`, `Podfile.lock`,
   `Podfile.properties.json`, `frontend/package-lock.json`, `frontend/app.json`
-  or `frontend/plugins/**`, and by manual dispatch (Actions → Podfile lock →
+  `frontend/plugins/**` or the workflow itself, and by manual dispatch (Actions → Podfile lock →
   Run workflow, pick the branch).
 - It runs `npm ci`, then `pod install --repo-update` in `frontend/ios` (3
   attempts, back-off 30 s then 60 s) against the committed lock. If CocoaPods
@@ -96,11 +96,13 @@ committed `ios/` directory directly.
 
 ### Regenerating `ios/` with `expo prebuild`
 
-Run `npx expo prebuild --platform ios --no-install` from `frontend/`. **Never
-add `--clean`.** `--clean` deletes and recreates `ios/`, and the template does
-not contain our hand-kept files. On SDK 58 prebuild printed "Clearing ios" and
-did the same even without `--clean` (#713), so after every prebuild review the
-whole `git diff` and restore what it removed:
+Run `npx expo prebuild --platform ios --no-install --no-clean` from
+`frontend/`. **Always pass `--no-clean`.** From SDK 58 the Expo CLI cleans by
+default (`clean: !args['--no-clean']`): without it, prebuild prints "Clearing
+ios", deletes `ios/` and recreates it from the template, which does not contain
+our hand-kept files (this is what happened in #713). `--no-clean` applies the
+changes to the existing folder instead. Never pass `--clean`. Either way, review
+the whole `git diff` afterwards and restore anything prebuild removed:
 
 | Removed or changed by prebuild | What to do |
 |---|---|
