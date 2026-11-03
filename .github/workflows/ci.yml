@@ -6,6 +6,7 @@ on:
     # Default types plus ready_for_review, so the native build checks (skipped
     # on drafts) run when a draft PR is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
   push:
     branches: [dev, main]
   workflow_call:

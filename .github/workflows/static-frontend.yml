@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main, dev]
     # No paths filter: the job must always report, so it can be a required check.
+  merge_group:
   push:
     branches: [dev]
 

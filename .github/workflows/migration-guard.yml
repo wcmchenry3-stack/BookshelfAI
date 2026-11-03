@@ -11,6 +11,7 @@ on:
     branches: [dev, main]
     # No paths filter: the job must always report, so it can be a required check.
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  merge_group:
 
 permissions:
   contents: read
