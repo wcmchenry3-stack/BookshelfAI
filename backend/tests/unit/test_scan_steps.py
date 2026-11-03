@@ -395,7 +395,9 @@ class TestCheckTurnstile:
     async def test_refusals(self, token, valid, code):
         with (
             patch.object(scan_api.settings, "turnstile_required", True),
-            patch.object(bot_check_api, "_verify_turnstile", AsyncMock(return_value=valid)),
+            patch.object(
+                bot_check_api, "_verify_turnstile", AsyncMock(return_value=valid)
+            ),
             pytest.raises(HTTPException) as err,
         ):
             await scan_api._check_turnstile(token)
