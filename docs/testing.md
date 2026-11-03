@@ -191,7 +191,7 @@ async def test_dedup_across_editions(db_session: AsyncSession):
 ## Frontend (Jest + Expo)
 
 **Location:** `frontend/__tests__/`
-**Config:** `frontend/package.json → jest` key (preset `jest-expo`, transform-ignore-patterns)
+**Config:** `frontend/jest.config.js` (two projects, see `docs/claude/testing.md`) (preset `jest-expo`, transform-ignore-patterns)
 **Setup:** `frontend/jest.setup.ts` (initializes i18n synchronously, configures RNTL with `concurrentRoot: false` to avoid waitFor races on CI)
 
 ### Structure
@@ -205,7 +205,7 @@ frontend/__tests__/
 
 ### Shared helpers (`__tests__/helpers/`)
 
-`package.json → jest.testPathIgnorePatterns` keeps this folder out of the test run. Use these before copying a mock block into a new test file (#816).
+`jest.config.js` `testPathIgnorePatterns` keeps this folder out of the test run. Use these before copying a mock block into a new test file (#816).
 
 | File | Exports | Use it for |
 |---|---|---|
@@ -443,7 +443,7 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 ## Coverage targets
 
 - **Backend:** 98% line coverage of app code (`pytest --cov=. --cov-fail-under=98`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
-- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `test-frontend` job passes `coverage-threshold: 90` (#820), the lowest of the four Jest floors, because the caller input is a single number for an org workflow that does not document which metric it reads; every measured metric (96.34 / 91.97 / 93.69 / 97.74) clears it. Jest's `coverageThreshold` is the real per-metric gate and already fails the run on its own. Keep the CI input at or below the lowest Jest floor and never above what is measured.
+- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from `frontend/jest.config.js` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `test-frontend` job passes `coverage-threshold: 90` (#820), the lowest of the four Jest floors, because the caller input is a single number for an org workflow that does not document which metric it reads; every measured metric (96.34 / 91.97 / 93.69 / 97.74) clears it. Jest's `coverageThreshold` is the real per-metric gate and already fails the run on its own. Keep the CI input at or below the lowest Jest floor and never above what is measured.
   - **Ratchet:** the Jest `coverageThreshold` is the floor and it only goes up. Any PR that raises a metric by 1 point or more may bump that floor (rounded down to the whole percent). Never lower it without an owner decision.
 
 ## End-to-end

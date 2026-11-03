@@ -7,7 +7,7 @@ Where everything lives + the naming conventions + "how to add a ..." recipes. Fo
 ```
 book_app/
 ├── backend/               FastAPI + SQLAlchemy + Alembic (Python 3.12)
-├── frontend/              Expo SDK 55 (React Native + Web, iOS + Android)
+├── frontend/              Expo SDK 58 (React Native + Web, iOS + Android)
 ├── docs/                  All project documentation (this tree)
 ├── .github/               CI workflows, PR template, rulesets, CODEOWNERS
 ├── CLAUDE.md              Hard rules + detail-doc links for Claude sessions

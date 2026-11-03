@@ -4,7 +4,7 @@
  * getStateFromPath and checks decoded params come out.
  */
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getStateFromPath } = require('expo-router/build/react-navigation/core/getStateFromPath');
+const { getStateFromPath } = require('expo-router/build/fork/getStateFromPath');
 
 const config = { screens: { book: 'book' } };
 

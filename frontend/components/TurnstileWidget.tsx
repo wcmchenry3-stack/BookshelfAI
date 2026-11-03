@@ -45,7 +45,7 @@ export const TURNSTILE_REMOUNT_DELAYS_MS: readonly number[] = [5_000, 30_000, 12
  * on iOS `reload()` can load the base URL instead of the inline page.
  */
 export function TurnstileWidget({ broker, siteKey, baseUrl }: TurnstileWidgetProps) {
-  const ref = useRef<WebView>(null);
+  const ref = useRef<WebView<object>>(null);
   const html = useMemo(() => buildTurnstileHtml(siteKey), [siteKey]);
   // Bumped to remount the WebView with a fresh page.
   const [instance, setInstance] = useState(0);
@@ -137,6 +137,7 @@ export function TurnstileWidget({ broker, siteKey, baseUrl }: TurnstileWidgetPro
       style={styles.hidden}
       pointerEvents="none"
       accessible={false}
+      focusable={false}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     >
@@ -165,7 +166,6 @@ export function TurnstileWidget({ broker, siteKey, baseUrl }: TurnstileWidgetPro
         allowsInlineMediaPlayback={false}
         webviewDebuggingEnabled={false}
         scrollEnabled={false}
-        focusable={false}
       />
     </View>
   );
