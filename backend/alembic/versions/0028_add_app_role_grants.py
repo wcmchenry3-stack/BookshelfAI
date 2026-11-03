@@ -79,8 +79,7 @@ def upgrade() -> None:
     # Pre-flight: the role must exist before the grants can be issued.  The
     # owner creates it by hand in the Supabase SQL editor; see the PR
     # description for the exact CREATE ROLE statement.
-    op.execute(
-        f"""
+    op.execute(f"""
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{_APP_ROLE}') THEN
@@ -91,8 +90,7 @@ def upgrade() -> None:
             END IF;
         END
         $$
-        """
-    )
+        """)
 
     # Table grants: DML only, no DDL.
     for table in _TABLES:
@@ -101,9 +99,7 @@ def upgrade() -> None:
         )
 
     # Sequence grants: USAGE lets the role call nextval / currval.
-    op.execute(
-        f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {_APP_ROLE}"
-    )
+    op.execute(f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {_APP_ROLE}")
 
     # BYPASSRLS: the app role behaves like the owner for row visibility.
     # RLS (0020) is still on; BYPASSRLS is simpler than per-table policies.
@@ -123,8 +119,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Skip silently when the role doesn't exist (e.g. a CI rollback).
-    op.execute(
-        f"""
+    op.execute(f"""
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{_APP_ROLE}') THEN
@@ -146,5 +141,4 @@ def downgrade() -> None:
             REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {_APP_ROLE};
         END
         $$
-        """
-    )
+        """)
