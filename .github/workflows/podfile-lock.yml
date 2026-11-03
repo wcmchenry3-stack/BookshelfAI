@@ -58,6 +58,9 @@ jobs:
       - name: pod install
         working-directory: frontend/ios
         run: |
+          # Without an explicit `shell: bash`, Actions runs `bash -e` (no
+          # pipefail), so `pod install | tee` would report tee's exit code.
+          set -o pipefail
           pod --version
           log="$RUNNER_TEMP/pod-install.log"
           delay=30
