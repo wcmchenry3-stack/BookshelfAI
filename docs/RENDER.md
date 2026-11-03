@@ -46,39 +46,78 @@ data loss: the old data stays reachable on the dev stack
 The app connects as the **`bookshelf_app`** role — a least-privilege login role
 that can only run `SELECT`, `INSERT`, `UPDATE`, `DELETE` on app tables and
 `USAGE` on sequences. It cannot run DDL (`DROP TABLE`, `ALTER TABLE`, `CREATE`,
-…). Alembic migrations continue to run as the owner (`postgres` on Supabase).
+…). Alembic migrations keep running as the owner (`postgres` on Supabase),
+through a separate env var (`MIGRATION_DATABASE_URL`, below).
 
-### Creating the role (owner step — do this before running migration 0028)
+| Env var | Role | Used by |
+| --- | --- | --- |
+| `DATABASE_URL` | `bookshelf_app` (DML only) | the app (uvicorn) |
+| `MIGRATION_DATABASE_URL` | owner (`postgres`) | `alembic upgrade head` only (the `preDeployCommand`). Unset = falls back to `DATABASE_URL`, which is what local dev and CI rely on |
 
-Run in the Supabase SQL editor for **dev** and **prod** separately. Never
-commit the password to this repo.
+Both are `sync: false` dashboard secrets on `bookshelf-api`.
+
+### Creating the role (owner step — before migration 0028 deploys)
+
+Do this once per database (dev and prod). Never commit the password, or put
+it in a PR, chat or MCP tool argument.
+
+**1. Create the role while connected as `postgres`** (Supabase: the SQL
+editor, which runs as `postgres`). This matters on Supabase: its `postgres`
+role is **not a superuser** (prod is Postgres 17); it has `CREATEROLE` and
+`BYPASSRLS`. Migration 0028 runs `ALTER ROLE bookshelf_app BYPASSRLS`, which a
+non-superuser may only do on a role it holds `ADMIN OPTION` on — and since
+Postgres 16 a `CREATEROLE` role gets that automatically only for roles **it
+created itself**. A role created by any other user makes 0028 fail with
+`permission denied to alter role`.
 
 ```sql
--- Supabase SQL editor (dev then prod).  Use a strong random password.
+-- Supabase SQL editor (connected as postgres). Strong random password,
+-- e.g. from: openssl rand -hex 32
 CREATE ROLE bookshelf_app LOGIN PASSWORD '<strong random password>';
--- Generate one with: openssl rand -hex 32
+-- Optional: grant BYPASSRLS up front (0028 then just re-applies it):
+-- CREATE ROLE bookshelf_app LOGIN BYPASSRLS PASSWORD '<strong random password>';
 ```
 
-Then update `DATABASE_URL` on the Render service (`bookshelf-api-dev` /
-`bookshelf-api`) to include the statement_timeout option:
+**2. On the Render API service, set `MIGRATION_DATABASE_URL` to the current
+owner DSN** — the value `DATABASE_URL` has today (the `postgres.<project-ref>`
+session pooler URL, port 5432). Do this *before* step 3, so the next deploy's
+`alembic upgrade head` already runs as the owner.
+
+**3. Deploy** (migration 0028 runs in the `preDeployCommand` as the owner and
+grants the role its DML privileges, `BYPASSRLS` and default privileges; it
+stops with an informative error if the role does not exist yet).
+
+**4. Switch `DATABASE_URL` to the app role**: same session pooler host and
+port (5432), user `bookshelf_app.<project-ref>` (Supabase's pooler takes
+`<role>.<project-ref>` as the user name), the role's password
+(percent-encoded if it has special characters), e.g.
 
 ```
-postgresql://bookshelf_app:<password>@<supabase-session-pooler-host>/postgres?options=-c%20statement_timeout%3D5000
+postgresql://bookshelf_app.<project-ref>:<password>@<region>.pooler.supabase.com:5432/postgres
 ```
 
-The `options=-c statement_timeout=5000` suffix sets the 5-second statement
-timeout in the DSN; the pool checkout event in `app/core/database.py` applies
-it again so it survives Supabase's pgBouncer session-mode pooler.
+Do **not** append `?options=-c statement_timeout=...`: SQLAlchemy hands URL
+query parameters to `asyncpg.connect()`, which has no `options` argument, so
+every connection would fail with `TypeError` (checked against Postgres 16 and
+in `tests/integration/test_statement_timeout_db.py`). The app sets the timeout
+itself (below).
 
-Migration 0028 (`alembic upgrade head`, run automatically as `preDeployCommand`)
-grants the role the DML privileges and `BYPASSRLS` it needs. It will fail with
-an informative error if the role does not exist yet.
+**5. Verify**: a scan completes; `/health/db` is ok; and in the SQL editor,
+`SET ROLE bookshelf_app; ALTER TABLE users ADD COLUMN _probe int;` fails with
+`permission denied` (then `RESET ROLE;`).
+
+To roll back, set `DATABASE_URL` back to the owner DSN; nothing else changes.
 
 ### Statement timeout
 
-Every connection runs with `statement_timeout = STATEMENT_TIMEOUT_MS`
-(default 5000 ms = 5 s). A query that exceeds the timeout is cancelled by
-Postgres and the API returns `HTTP 503` with:
+Every app connection runs with `statement_timeout = STATEMENT_TIMEOUT_MS`
+(default 5000 ms = 5 s), set in `app/core/database.py` in two layers: as an
+asyncpg startup parameter (`server_settings`) when the connection opens, and
+again with `SET` on every pool checkout, in case the pooler does not pass the
+startup parameter through. Migrations are never subject to it: Alembic builds
+its own engine from `MIGRATION_DATABASE_URL` without either layer. A query
+that exceeds the timeout is cancelled by Postgres and the API returns
+`HTTP 503` with:
 
 ```json
 {"error": {"code": "SERVICE_TEMPORARILY_UNAVAILABLE",

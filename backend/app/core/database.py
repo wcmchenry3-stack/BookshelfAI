@@ -15,9 +15,11 @@ from app.core.config import settings
 # 2 * (db_pool_size + db_max_overflow) + 1 must stay under the ~15-client cap
 # of a small Supabase session pooler. With the defaults (3, 2) that's
 # 2 * (3 + 2) + 1 = 11.
+_is_sqlite = settings.async_database_url.startswith("sqlite")
+
 _engine_kwargs = (
     {}
-    if settings.async_database_url.startswith("sqlite")
+    if _is_sqlite
     else {
         "pool_size": settings.db_pool_size,
         "max_overflow": settings.db_max_overflow,
@@ -26,23 +28,49 @@ _engine_kwargs = (
     }
 )
 
+
+def _statement_timeout_connect_args() -> dict:
+    """asyncpg connect args that set statement_timeout at connection startup (#696).
+
+    asyncpg takes Postgres startup parameters as ``server_settings``. A libpq
+    style ``?options=-c statement_timeout=...`` on DATABASE_URL does NOT work
+    here: SQLAlchemy passes URL query keys to ``asyncpg.connect()``, which has
+    no ``options`` argument, so every connect fails with TypeError. Applies to
+    the app engine only; Alembic builds its own engine (alembic/env.py) and
+    is never subject to this timeout.
+    """
+    ms = settings.statement_timeout_ms
+    if _is_sqlite or ms <= 0:
+        return {}
+    return {"server_settings": {"statement_timeout": str(ms)}}
+
+
 # hide_parameters: a DB error's message must not carry the bound values
 # (google_id, names, emails) into logs or Sentry (#688 review).
 engine = create_async_engine(
     settings.async_database_url,
     echo=False,
     hide_parameters=True,
+    connect_args=_statement_timeout_connect_args(),
     **_engine_kwargs,
 )
 
 
 def _set_statement_timeout(dbapi_conn, _connection_record, _connection_proxy) -> None:
-    """Set statement_timeout on every connection checkout from the pool (#696).
+    """Re-apply statement_timeout on every pool checkout (#696).
 
-    The DSN option ``?options=-c statement_timeout=N`` is the first layer; this
-    SET is the second layer that survives Supabase's pgBouncer session-mode
-    pooler resetting connection parameters between clients. Together they ensure
-    the timeout is always active. Skipped for SQLite (no-op / unsupported).
+    The startup parameter above is the first layer. This SET is the second,
+    because the startup parameter alone is not guaranteed in prod: the app
+    reaches Supabase through its Supavisor *session* pooler (port 5432, see
+    config.py), and a pooler may not forward client startup parameters to the
+    server connection it hands us. In session mode the server connection stays
+    ours for the life of the client connection and is not reset under us, so
+    one SET per connection would usually do; it runs per checkout instead
+    because it executes inside the adapter's implicit transaction, and a
+    rollback at check-in (the pool's reset-on-return) undoes a SET made in a
+    transaction. One cheap round trip per checkout keeps the timeout in force
+    whatever the pooler or the previous checkout did. Skipped for SQLite and
+    when the timeout is disabled (0 or negative).
     """
     if settings.async_database_url.startswith("sqlite"):
         return

@@ -1,9 +1,11 @@
-"""Unit tests for the pool-checkout ``statement_timeout`` listener (#696).
+"""Unit tests for how the app engine applies ``statement_timeout`` (#696).
 
-``_set_statement_timeout`` runs ``SET statement_timeout`` on every connection
-the pool hands out, except on SQLite or when the setting is 0/negative. The
-DBAPI connection is a mock here; the real-Postgres behaviour is covered by
-tests/integration/test_db_role.py.
+Two layers: ``_statement_timeout_connect_args`` sets it as an asyncpg startup
+parameter (``server_settings``), and ``_set_statement_timeout`` runs
+``SET statement_timeout`` on every pool checkout. Both are skipped on SQLite
+or when the setting is 0/negative. The DBAPI connection is a mock here; the
+real-Postgres behaviour is covered by
+tests/integration/test_statement_timeout_db.py.
 """
 
 from unittest.mock import MagicMock
@@ -12,7 +14,11 @@ import pytest
 from sqlalchemy import event
 
 from app.core import database
-from app.core.database import _set_statement_timeout, engine
+from app.core.database import (
+    _set_statement_timeout,
+    _statement_timeout_connect_args,
+    engine,
+)
 
 _PG_URL = "postgresql://u:p@db.example:5432/app"
 
@@ -79,3 +85,27 @@ def test_listener_accepts_the_pool_checkout_signature(monkeypatch):
     engine.sync_engine.pool.dispatch.checkout(conn, MagicMock(), MagicMock())
 
     cursor.execute.assert_called_once_with("SET statement_timeout = 5000")
+
+
+def test_connect_args_set_startup_parameter(monkeypatch):
+    monkeypatch.setattr(database, "_is_sqlite", False)
+    monkeypatch.setattr(database.settings, "statement_timeout_ms", 5000)
+
+    assert _statement_timeout_connect_args() == {
+        "server_settings": {"statement_timeout": "5000"}
+    }
+
+
+@pytest.mark.parametrize("ms", [0, -1])
+def test_connect_args_empty_when_disabled(monkeypatch, ms):
+    monkeypatch.setattr(database, "_is_sqlite", False)
+    monkeypatch.setattr(database.settings, "statement_timeout_ms", ms)
+
+    assert _statement_timeout_connect_args() == {}
+
+
+def test_connect_args_empty_on_sqlite(monkeypatch):
+    monkeypatch.setattr(database, "_is_sqlite", True)
+    monkeypatch.setattr(database.settings, "statement_timeout_ms", 5000)
+
+    assert _statement_timeout_connect_args() == {}
