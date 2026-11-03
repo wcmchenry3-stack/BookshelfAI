@@ -39,7 +39,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: backup-restore
+    # Read-only checkout of scripts/db/ only (the restore runbook's grants
+    # script, #696); nothing else in the job uses GITHUB_TOKEN.
+    permissions:
+      contents: read
     steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/db
+          sparse-checkout-cone-mode: false
+
       - name: Check required secrets
         env:
           BACKUP_AGE_IDENTITY: ${{ secrets.BACKUP_AGE_IDENTITY }}
@@ -265,6 +276,26 @@ jobs:
           else
             check "users: non-empty" 1
           fi
+
+          # The restore runbook's app-role step (docs/backups.md, #696): a
+          # --no-acl restore has no grants for bookshelf_app, so create the
+          # role, run scripts/db/app_role_grants.sql, and require DML on every
+          # table in public except alembic_version. Pass/fail only.
+          grants_failed=1
+          missing_sql="select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relname <> 'alembic_version'
+              and not (has_table_privilege('bookshelf_app', c.oid, 'SELECT')
+                and has_table_privilege('bookshelf_app', c.oid, 'INSERT')
+                and has_table_privilege('bookshelf_app', c.oid, 'UPDATE')
+                and has_table_privilege('bookshelf_app', c.oid, 'DELETE'))"
+          if q "create role bookshelf_app nologin" >/dev/null 2>&1 \
+            && docker run --rm -i --network host -e PGPASSWORD=drill "postgres:${PG_MAJOR}" \
+              psql -h localhost -U postgres -d restore_drill -v ON_ERROR_STOP=1 -q \
+              < scripts/db/app_role_grants.sql >/dev/null 2>&1 \
+            && [ "$(q "$missing_sql")" = "0" ]; then
+            grants_failed=0
+          fi
+          check "app role grants re-applied" "$grants_failed"
 
           if [ -n "$EXPECTED_REVISION" ]; then
             if [ "$version" = "$EXPECTED_REVISION" ]; then

@@ -1,23 +1,25 @@
 """Integration tests for the bookshelf_app DB role (#696).
 
-Tests:
-  1. SELECT works under bookshelf_app.
-  2. DROP TABLE / ALTER TABLE fails (DDL denied).
-  3. A query that exceeds statement_timeout raises QueryCanceledError (or a
-     SQLAlchemy wrapper with QueryCanceledError in its cause chain).
+On a database built by ``alembic upgrade head`` (migration 0028 has run):
 
-All schema changes run in a transaction that is rolled back, so the DB state is
-unchanged after the test run. Role creation is also transactional (Postgres
-rolls back CREATE ROLE inside a transaction).
+- the role exists, can log in, has ``BYPASSRLS`` and no superuser /
+  ``CREATEROLE`` / ``CREATEDB``;
+- DML works under the role;
+- DDL is denied with SQLSTATE 42501 (insufficient_privilege): ``DROP TABLE``,
+  ``ALTER TABLE`` and ``CREATE TABLE`` in schema ``public``;
+- every table in ``public`` (except ``alembic_version``) has exactly
+  ``SELECT, INSERT, UPDATE, DELETE`` for the role and every sequence has
+  ``USAGE`` only, so a table or sequence added without grants fails the build;
+- ``scripts/db/app_role_grants.sql`` (the restore runbook's grants,
+  docs/backups.md) brings those grants back after they are lost.
 
-These tests require a real PostgreSQL instance with:
-  - alembic upgrade head already applied (the alembic_version table present)
-  - The DATABASE_URL environment variable set to a non-dummy URL
-
-They are skipped automatically when no real DB is configured (see conftest.py).
+A missing role or missing grants FAIL these tests; they never skip for it.
+The only skip is for a database that was not built by alembic (no
+``alembic_version``), like every other migration-dependent integration test.
+Every change runs in a transaction that is rolled back.
 """
 
-import uuid
+from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -26,69 +28,33 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
+from app.core.database import APP_DB_ROLE
 
 pytestmark = pytest.mark.integration
 
-_APP_ROLE = "bookshelf_app"
+_INSUFFICIENT_PRIVILEGE = "42501"
+_DML = ("SELECT", "INSERT", "UPDATE", "DELETE")
+_NOT_GRANTED = ("TRUNCATE", "REFERENCES", "TRIGGER")
+_GRANTS_SQL = Path(__file__).resolve().parents[3] / "scripts/db/app_role_grants.sql"
+
+_APP_TABLES = sa.text("""
+    SELECT c.relname FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+      AND c.relname <> 'alembic_version'
+    ORDER BY c.relname
+    """)
+_SEQUENCES = sa.text("""
+    SELECT c.relname FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'S'
+    ORDER BY c.relname
+    """)
 
 
-def _role_exists(connection, role: str) -> bool:
-    return bool(
-        connection.execute(
-            sa.text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role}
-        ).scalar()
-    )
-
-
-def _test_select_works(connection) -> None:
-    """SELECT on a real table succeeds under the app role."""
-    if not _role_exists(connection, _APP_ROLE):
-        pytest.skip(f"Role {_APP_ROLE!r} does not exist on this server")
-
-    # Insert a row as the owner so there's something to select.
-    uid = uuid.uuid4()
-    connection.execute(
-        sa.text("INSERT INTO users (id, email, google_id) VALUES (:id, :e, :g)"),
-        {"id": uid, "e": f"{uid}@example.com", "g": f"g-{uid}"},
-    )
-
-    connection.execute(sa.text(f"SET LOCAL ROLE {_APP_ROLE}"))
-    count = connection.execute(
-        sa.text("SELECT count(*) FROM users WHERE id = :id"), {"id": uid}
-    ).scalar_one()
-    connection.execute(sa.text("RESET ROLE"))
-
-    assert count == 1, f"expected 1 row, got {count}"
-
-
-def _test_ddl_is_denied(connection) -> None:
-    """DROP TABLE and ALTER TABLE are denied for the app role."""
-    if not _role_exists(connection, _APP_ROLE):
-        pytest.skip(f"Role {_APP_ROLE!r} does not exist on this server")
-
-    # DROP TABLE must fail.
-    connection.execute(sa.text("SAVEPOINT before_drop"))
-    connection.execute(sa.text(f"SET LOCAL ROLE {_APP_ROLE}"))
-    with pytest.raises(ProgrammingError):
-        connection.execute(sa.text("DROP TABLE users"))
-    # The failed DDL aborts the transaction, so roll back to the savepoint
-    # (which also undoes SET LOCAL ROLE) before running anything else.
-    connection.execute(sa.text("ROLLBACK TO SAVEPOINT before_drop"))
-    connection.execute(sa.text("RESET ROLE"))
-
-    # ALTER TABLE ADD COLUMN must fail.
-    connection.execute(sa.text("SAVEPOINT before_alter"))
-    connection.execute(sa.text(f"SET LOCAL ROLE {_APP_ROLE}"))
-    with pytest.raises(ProgrammingError):
-        connection.execute(sa.text("ALTER TABLE users ADD COLUMN _probe_col int"))
-    # The failed DDL aborts the transaction, so roll back to the savepoint
-    # (which also undoes SET LOCAL ROLE) before running anything else.
-    connection.execute(sa.text("ROLLBACK TO SAVEPOINT before_alter"))
-    connection.execute(sa.text("RESET ROLE"))
-
-
-async def test_select_works_under_app_role():
-    """SELECT on users succeeds under bookshelf_app."""
+async def run_rolled_back(fn) -> None:
+    """Run ``fn(sync_connection)`` in a transaction that is always rolled back,
+    on a database built by alembic (skip otherwise)."""
     engine = create_async_engine(settings.async_database_url)
     try:
         async with engine.connect() as conn:
@@ -96,68 +62,194 @@ async def test_select_works_under_app_role():
                 lambda c: inspect(c).has_table("alembic_version")
             ):
                 pytest.skip("database not built by alembic upgrade head")
-        async with engine.connect() as conn:
+            await conn.rollback()  # end the inspector's autobegun transaction
             trans = await conn.begin()
             try:
-                await conn.run_sync(_test_select_works)
+                await conn.run_sync(fn)
             finally:
                 await trans.rollback()
     finally:
         await engine.dispose()
+
+
+def _scalar(connection, sql: str, **params):
+    return connection.execute(sa.text(sql), params).scalar()
+
+
+def _assert_denied(connection, statement: str) -> None:
+    """``statement`` run as the app role fails with insufficient_privilege."""
+    connection.execute(sa.text("SAVEPOINT probe"))
+    connection.execute(sa.text(f"SET LOCAL ROLE {APP_DB_ROLE}"))
+    with pytest.raises(ProgrammingError) as exc_info:
+        connection.execute(sa.text(statement))
+    # A failed statement aborts the transaction: roll back to the savepoint
+    # (which also undoes SET LOCAL ROLE) before running anything else.
+    connection.execute(sa.text("ROLLBACK TO SAVEPOINT probe"))
+    connection.execute(sa.text("RESET ROLE"))
+    sqlstate = getattr(exc_info.value.orig, "sqlstate", None)
+    assert (
+        sqlstate == _INSUFFICIENT_PRIVILEGE
+    ), f"{statement!r} failed with {sqlstate}, not 42501"
+
+
+def _table_privileges(connection, table: str) -> dict[str, bool]:
+    return {
+        p: bool(
+            _scalar(
+                connection,
+                "SELECT has_table_privilege(:r, :t, :p)",
+                r=APP_DB_ROLE,
+                t=f"public.{table}",
+                p=p,
+            )
+        )
+        for p in _DML + _NOT_GRANTED
+    }
+
+
+def _sequence_problems(connection) -> list[str]:
+    problems = []
+    for sequence in connection.execute(_SEQUENCES).scalars().all():
+        for privilege, expected in (
+            ("USAGE", True),
+            ("SELECT", False),
+            ("UPDATE", False),
+        ):
+            held = _scalar(
+                connection,
+                "SELECT has_sequence_privilege(:r, :s, :p)",
+                r=APP_DB_ROLE,
+                s=f"public.{sequence}",
+                p=privilege,
+            )
+            if bool(held) != expected:
+                problems.append(f"sequence {sequence}: {privilege} is {held}")
+    return problems
+
+
+def grant_problems(connection) -> list[str]:
+    """Every way the app role's grants differ from what 0028 sets up."""
+    tables = connection.execute(_APP_TABLES).scalars().all()
+    assert "users" in tables and "scan_records" in tables, tables
+    problems = []
+    for table in tables:
+        privileges = _table_privileges(connection, table)
+        missing = [p for p in _DML if not privileges[p]]
+        extra = [p for p in _NOT_GRANTED if privileges[p]]
+        if missing:
+            problems.append(f"{table}: missing {', '.join(missing)}")
+        if extra:
+            problems.append(f"{table}: unexpected {', '.join(extra)}")
+    problems += _sequence_problems(connection)
+    alembic = _table_privileges(connection, "alembic_version")
+    if any(alembic.values()):
+        problems.append(f"alembic_version: unexpected {alembic}")
+    return problems
+
+
+def _assert_no_problems(problems: list[str]) -> None:
+    assert problems == [], "\n".join(problems)
+
+
+async def test_app_role_exists_with_only_the_expected_attributes():
+    def check(connection):
+        row = connection.execute(
+            sa.text(
+                "SELECT rolcanlogin, rolbypassrls, rolsuper, rolcreaterole, "
+                "rolcreatedb FROM pg_roles WHERE rolname = :r"
+            ),
+            {"r": APP_DB_ROLE},
+        ).one_or_none()
+        assert row is not None, (
+            f"role {APP_DB_ROLE!r} does not exist on a migrated database "
+            "(migration 0028 requires it)"
+        )
+        assert tuple(row) == (True, True, False, False, False), row
+
+    await run_rolled_back(check)
+
+
+async def test_dml_works_under_app_role():
+    """SELECT / INSERT / UPDATE / DELETE on users succeed as bookshelf_app."""
+
+    def check(connection):
+        uid = _scalar(connection, "SELECT gen_random_uuid()")
+        count = "SELECT count(*) FROM users WHERE id = :id"
+        connection.execute(sa.text(f"SET LOCAL ROLE {APP_DB_ROLE}"))
+        connection.execute(
+            sa.text("INSERT INTO users (id, email, google_id) VALUES (:id, :e, :g)"),
+            {"id": uid, "e": f"{uid}@example.com", "g": f"g-{uid}"},
+        )
+        connection.execute(
+            sa.text("UPDATE users SET display_name = 'x' WHERE id = :id"), {"id": uid}
+        )
+        assert _scalar(connection, count, id=uid) == 1
+        connection.execute(sa.text("DELETE FROM users WHERE id = :id"), {"id": uid})
+        assert _scalar(connection, count, id=uid) == 0
+        connection.execute(sa.text("RESET ROLE"))
+
+    await run_rolled_back(check)
 
 
 async def test_ddl_is_denied_for_app_role():
-    """DROP TABLE and ALTER TABLE fail under bookshelf_app."""
-    engine = create_async_engine(settings.async_database_url)
-    try:
-        async with engine.connect() as conn:
-            if not await conn.run_sync(
-                lambda c: inspect(c).has_table("alembic_version")
-            ):
-                pytest.skip("database not built by alembic upgrade head")
-        async with engine.connect() as conn:
-            trans = await conn.begin()
-            try:
-                await conn.run_sync(_test_ddl_is_denied)
-            finally:
-                await trans.rollback()
-    finally:
-        await engine.dispose()
+    """DROP / ALTER on an app table and CREATE in schema public all fail with
+    42501 (security review S1: CREATE is checked explicitly, since Supabase
+    sets its own grants on schema public)."""
+
+    def check(connection):
+        _assert_denied(connection, "DROP TABLE users")
+        _assert_denied(connection, "ALTER TABLE users ADD COLUMN _probe_col int")
+        _assert_denied(connection, "CREATE TABLE public._probe_create (id int)")
+        has_create = _scalar(
+            connection,
+            "SELECT has_schema_privilege(:r, 'public', 'CREATE')",
+            r=APP_DB_ROLE,
+        )
+        assert has_create is False
+
+    await run_rolled_back(check)
 
 
-async def test_query_timeout_raises_query_canceled_error():
-    """A query exceeding statement_timeout raises QueryCanceledError."""
-    try:
-        import asyncpg.exceptions as _asyncpg_exc
-    except ImportError:
-        pytest.skip("asyncpg not installed")
+async def test_every_app_table_and_sequence_is_granted():
+    """Every table in public (except alembic_version) has exactly DML for the
+    app role and every sequence has USAGE only. A table or sequence added
+    without grants (e.g. created by a role whose default privileges do not
+    cover it) fails here instead of 500ing once DATABASE_URL is the app role."""
+    await run_rolled_back(lambda c: _assert_no_problems(grant_problems(c)))
 
-    # Use a very short timeout (1 ms) on a dedicated connection so this test
-    # doesn't affect the shared pool.
-    engine = create_async_engine(settings.async_database_url, pool_size=1)
-    try:
-        async with engine.connect() as conn:
-            if not await conn.run_sync(
-                lambda c: inspect(c).has_table("alembic_version")
-            ):
-                pytest.skip("database not built by alembic upgrade head")
-            # Set a 1 ms timeout, then run pg_sleep(1) which will exceed it.
-            await conn.execute(sa.text("SET statement_timeout = 1"))
-            with pytest.raises(Exception) as exc_info:
-                await conn.execute(sa.text("SELECT pg_sleep(1)"))
-            # asyncpg may wrap the exception; walk the cause chain.
-            cause = exc_info.value
-            found = False
-            while cause is not None:
-                if isinstance(cause, _asyncpg_exc.QueryCanceledError):
-                    found = True
-                    break
-                cause = getattr(cause, "__cause__", None) or getattr(
-                    cause, "__context__", None
-                )
-            assert found, (
-                f"expected QueryCanceledError in the exception chain; "
-                f"got: {exc_info.value!r}"
+
+async def test_grant_check_catches_a_missing_grant():
+    """The check above is not vacuous: revoking one table grant and one
+    sequence grant makes it report both."""
+
+    def check(connection):
+        sequence = connection.execute(_SEQUENCES).scalars().first()
+        assert sequence is not None
+        connection.execute(sa.text(f"REVOKE DELETE ON scan_records FROM {APP_DB_ROLE}"))
+        connection.execute(
+            sa.text(f"REVOKE USAGE ON SEQUENCE public.{sequence} FROM {APP_DB_ROLE}")
+        )
+        problems = grant_problems(connection)
+        assert "scan_records: missing DELETE" in problems
+        assert f"sequence {sequence}: USAGE is False" in problems
+
+    await run_rolled_back(check)
+
+
+async def test_restore_grants_script_reapplies_every_grant():
+    """docs/backups.md's restore step: after a --no-acl restore the role has
+    no grants; scripts/db/app_role_grants.sql (run as the owner) brings back
+    exactly what 0028 set up, and running it twice is harmless."""
+
+    def check(connection):
+        for kind in ("TABLES", "SEQUENCES"):
+            connection.execute(
+                sa.text(f"REVOKE ALL ON ALL {kind} IN SCHEMA public FROM {APP_DB_ROLE}")
             )
-    finally:
-        await engine.dispose()
+        assert grant_problems(connection) != []
+        script = _GRANTS_SQL.read_text()
+        connection.exec_driver_sql(script)
+        connection.exec_driver_sql(script)
+        _assert_no_problems(grant_problems(connection))
+
+    await run_rolled_back(check)
