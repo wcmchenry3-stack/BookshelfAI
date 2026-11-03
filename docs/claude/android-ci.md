@@ -75,10 +75,58 @@ Always install JS dependencies before any Gradle command — both locally and in
 
 ```bash
 cd frontend
-npx expo prebuild --platform android --no-install
+CI=1 EXPO_OFFLINE=1 EXPO_NO_TELEMETRY=1 npx expo prebuild --platform android --no-install
+git diff -- android   # review every hunk by hand before committing
 git add android/
 git commit -m "chore(android): regenerate prebuild after <reason>"
 ```
+
+Don't pass `--clean`. Even without it, prebuild may clear and recreate
+`android/` when the Expo template changes (it did on the SDK 58 upgrade), so
+**always restore these hand edits after a prebuild**:
+
+| File | Hand edit | Why |
+|---|---|---|
+| `android/settings.gradle` | JDK preflight block at the top of `pluginManagement` | Fails fast on JDK 24+ (book_app#178). Prebuild drops it. |
+| `android/.gitignore` | `*.keystore` / `*.jks` lines | Never commit a keystore (CLAUDE.md rule 17). Prebuild drops them. |
+| `android/gradle.properties` | `android.enableMinifyInReleaseBuilds=false` | The SDK 58 template defaults to `true` (R8 on in release). Kept off until R8 is enabled on purpose (see below). |
+| `android/app/src/main/res/` splash files | `drawable-*/splashscreen_logo.png`, `values/{colors,strings,styles}.xml`, `values-night/colors.xml` kept from before SDK 58 | Without `expo-splash-screen` installed, SDK 58 prebuild no longer turns app.json `splash` into resources. It leaves the template's placeholder grid image as a full-screen `windowBackground`. |
+| `android/gradle/wrapper/gradle-wrapper.jar` | Official jar for the Gradle version in `gradle-wrapper.properties` | The SDK 58 template ships the Gradle **9.3.1** jar while pinning the 9.4.1 distribution. We commit the 9.4.1 jar (sha256 `55243ef5…e1145c`, from `gradle wrapper --gradle-version 9.4.1`). It matches the gradle/actions checksum list and `@react-native/gradle-plugin`'s jar. |
+
+`versionCode` / `versionName` in `app/build.gradle` come from `app.json`
+(`expo.android.versionCode`, `expo.version`). The `sync-native-versions`
+workflow patches both files with `sed`, so keep the `versionCode N` /
+`versionName "x.y.z"` line format.
+
+## Toolchain versions (Expo SDK 58 / React Native 0.88.1)
+
+| | Before (SDK 56 / RN 0.85.3) | Now (SDK 58 / RN 0.88.1) | Source |
+|---|---|---|---|
+| Gradle (wrapper) | 9.0.0 | **9.4.1** | Expo template |
+| Android Gradle Plugin | 8.12.0 | **9.2.1** | `react-native/gradle/libs.versions.toml` |
+| Kotlin | 2.1.20 | **2.2.0** | same catalog (override with `android.kotlinVersion`) |
+| compileSdk / buildTools | 36 / 36.0.0 | **37 / 37.0.0** | same catalog |
+| targetSdk | 36 | 36 | same catalog |
+| minSdk | 24 | 24 | same catalog |
+| NDK | 27.1.12297006 | 27.1.12297006 | same catalog |
+
+Compatibility (CLAUDE.md rule 18): the AGP 9.2 release notes say it needs
+**Gradle 9.4.1 or newer** and JDK 17 or newer, and supports API level 37.
+So Gradle 9.0.0 can't run AGP 9.2.1, and 9.4.1 is the minimum.
+`@react-native/gradle-plugin` (RN 0.88.1) is built with Gradle 9.4.1 too.
+Don't bump the wrapper past what the AGP in RN's version catalog supports.
+
+The template's AGP 9 opt-outs in `gradle.properties` (`android.builtInKotlin=false`,
+`android.newDsl=false`) are kept. AGP 10 will remove them.
+
+### R8 / minify in release
+
+The SDK 58 template turns R8 on in release builds
+(`android.enableMinifyInReleaseBuilds=true`, with the
+`proguard-android-optimize.txt` preset). We keep it **off** for now, which
+keeps pre-SDK-58 release behaviour. Turning it on needs owner sign-off,
+keep rules checked against our native modules, and Sentry ProGuard mapping
+upload confirmed. That is tracked as a follow-up to #714.
 
 ## Signing
 
