@@ -27,6 +27,12 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>bookshelf</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
 				<string>com.googleusercontent.apps.648904540482-07ckrnvv97q5if96fh3sjjj2kmet306n</string>
 			</array>
 		</dict>

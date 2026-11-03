@@ -20,6 +20,9 @@
         "ITSAppUsesNonExemptEncryption": false,
         "CFBundleURLTypes": [
           {
+            "CFBundleURLSchemes": ["bookshelf"]
+          },
+          {
             "CFBundleURLSchemes": [
               "com.googleusercontent.apps.648904540482-07ckrnvv97q5if96fh3sjjj2kmet306n"
             ]
