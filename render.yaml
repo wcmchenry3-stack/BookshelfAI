@@ -147,6 +147,9 @@ services:
     region: oregon
     plan: starter
     branch: dev
+    # Manual deploys, matching the dashboard. The DML-only role rollout
+    # (docs/RENDER.md) relies on 0028 not running before the role exists.
+    autoDeploy: false
     buildCommand: pip install -r requirements.txt
     # --no-proxy-headers: the socket peer must never be rewritten from
     # X-Forwarded-For; app/core/client_ip.py decides the client IP.

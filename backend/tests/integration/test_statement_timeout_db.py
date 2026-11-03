@@ -113,6 +113,8 @@ async def test_query_over_the_timeout_returns_503_and_frees_the_connection(
 async def test_job_sessions_use_the_job_timeout_without_leaking_it(
     fresh_app_engine, monkeypatch
 ):
+    # The connect-time startup parameter, fixed when the engine was created.
+    startup_value = str(settings.statement_timeout_ms)
     monkeypatch.setattr(settings, "statement_timeout_job_ms", 61234)
     async with JobSessionLocal() as session:
         first = (await session.execute(_CURRENT_TIMEOUT_MS)).scalar_one()
@@ -122,10 +124,13 @@ async def test_job_sessions_use_the_job_timeout_without_leaking_it(
     assert (first, second) == ("61234", "61234")
 
     # Pool of one connection after dispose: a request session reuses the very
-    # connection the job just returned, and gets the request timeout back.
+    # connection the job just returned. Turn the per-checkout SET off so it
+    # can't mask a leak: only a transaction-scoped SET LOCAL leaves the
+    # connection at the startup value (a plain SET would read 61234).
+    monkeypatch.setattr(settings, "statement_timeout_ms", 0)
     async with AsyncSessionLocal() as session:
         value = (await session.execute(_CURRENT_TIMEOUT_MS)).scalar_one()
-    assert value == str(settings.statement_timeout_ms)
+    assert value == startup_value
     assert fresh_app_engine.sync_engine.pool.checkedout() == 0
 
 

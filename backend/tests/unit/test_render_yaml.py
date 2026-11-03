@@ -137,6 +137,14 @@ def test_dev_api_deploys_from_dev_branch():
     assert dev_api["branch"] == "dev"
 
 
+def test_dev_api_auto_deploy_is_off():
+    """#696: the role rollout (docs/RENDER.md) relies on migration 0028 not
+    running on merge to dev, before the role exists on the dev branch."""
+    config = _load_render_yaml()
+    dev_api = _service(config, "bookshelf-api-dev")
+    assert dev_api["autoDeploy"] is False
+
+
 # --- Prod web (bookshelf-web) ------------------------------------------------
 
 
