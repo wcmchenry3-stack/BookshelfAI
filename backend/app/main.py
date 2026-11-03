@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import ClassVar
 
 import sentry_sdk
+from asyncpg.exceptions import QueryCanceledError
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,19 +14,10 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from slowapi import _rate_limit_exceeded_handler as _slowapi_429
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
-
-try:
-    import asyncpg.exceptions as _asyncpg_exc
-
-    _QueryCanceledError = _asyncpg_exc.QueryCanceledError
-except ImportError:  # pragma: no cover — asyncpg is always present; guards tests
-    _QueryCanceledError = None  # type: ignore[assignment,misc] - fallback when asyncpg is absent
-
-# Retry-After hint in seconds returned when statement_timeout cancels a query.
-_TIMEOUT_RETRY_AFTER = 5
 
 from app.ai.settings import seed_ai_settings_at_startup
 from app.api.attestation import router as attestation_router
@@ -60,6 +52,12 @@ if settings.sentry_dsn:
     )
 
 logger = logging.getLogger(__name__)
+
+# Retry-After hint in seconds returned when statement_timeout cancels a query.
+_TIMEOUT_RETRY_AFTER = 5
+# SQLSTATE query_canceled: raised when statement_timeout (or a cancel request)
+# stops a statement.
+_QUERY_CANCELED_SQLSTATE = "57014"
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -270,12 +268,38 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Re
     return _slowapi_429(request, exc)
 
 
+def _is_query_canceled(exc: BaseException) -> bool:
+    """True when ``exc`` (or the driver error it wraps) is a Postgres
+    query_canceled error, SQLSTATE 57014.
+
+    Through SQLAlchemy a statement_timeout surfaces as ``DBAPIError`` whose
+    ``orig`` is the adapter's error (carrying ``sqlstate``) and whose
+    ``orig.__cause__`` is asyncpg's ``QueryCanceledError``, so check each link.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, QueryCanceledError):
+            return True
+        if getattr(cur, "sqlstate", None) == _QUERY_CANCELED_SQLSTATE:
+            return True
+        cur = getattr(cur, "orig", None) or cur.__cause__
+    return False
+
+
 def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return 503 when Postgres cancels a query due to statement_timeout (#696).
+
+    Registered for ``sqlalchemy.exc.DBAPIError``. Any other database error is
+    re-raised unchanged, so it reaches ServerErrorMiddleware (500) and Sentry
+    exactly as it would with no handler registered.
 
     Logs the route path only — never SQL text, bound values or other details
     that might contain user data.
     """
+    if not _is_query_canceled(exc):
+        raise exc
     logger.warning(
         "statement_timeout_canceled path=%s",
         request.url.path,
@@ -295,8 +319,7 @@ def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-if _QueryCanceledError is not None:
-    app.add_exception_handler(_QueryCanceledError, _query_canceled_handler)
+app.add_exception_handler(DBAPIError, _query_canceled_handler)
 
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).
