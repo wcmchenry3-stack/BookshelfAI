@@ -76,6 +76,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_device_keys_user_id", "device_keys", ["user_id"])
     op.create_index("ix_device_keys_key_id", "device_keys", ["key_id"])
+    op.execute("ALTER TABLE device_keys ENABLE ROW LEVEL SECURITY")
 
 
 def downgrade() -> None:

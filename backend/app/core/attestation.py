@@ -201,7 +201,7 @@ class LiveAndroidIntegrityVerifier:
     _DECODE_URL = (
         "https://playintegrity.googleapis.com/v1/{package_name}:decodeIntegrityToken"
     )
-    _REQUIRED_DEVICE_VERDICTS = {"MEETS_DEVICE_INTEGRITY"}  # noqa: RUF012
+    _REQUIRED_DEVICE_VERDICTS = {"MEETS_DEVICE_INTEGRITY"}  # noqa: RUF012 - constant
     _REQUIRED_APP_VERDICT = "PLAY_RECOGNIZED"
 
     async def verify_token(self, token: str, nonce: str, package_name: str) -> bool:

@@ -1983,7 +1983,7 @@
         "index": null,
         "unique": null,
         "default": "value:0",
-        "server_default": "sql:0",
+        "server_default": "value:'0'",
         "onupdate": null,
         "foreign_keys": []
       },
