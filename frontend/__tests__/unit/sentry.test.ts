@@ -41,7 +41,28 @@ describe('initSentry', () => {
       enabled: true,
       beforeSend: expect.any(Function),
       beforeBreadcrumb: expect.any(Function),
+      beforeSendTransaction: expect.any(Function),
+      integrations: expect.any(Function),
     });
+  });
+
+  it('drops the ExpoRouter navigation integration and keeps the others (#715)', () => {
+    process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://example@sentry.io/123';
+    const { initSentry } = require('../../lib/sentry');
+    mockInit.mockClear();
+    initSentry();
+
+    const { integrations, beforeSendTransaction } = mockInit.mock.calls[0][0];
+    const defaults = [
+      { name: 'ExpoRouter' },
+      { name: 'ReactNativeTracing' },
+      { name: 'Breadcrumbs' },
+    ];
+    expect(integrations(defaults).map((i: { name: string }) => i.name)).toEqual([
+      'ReactNativeTracing',
+      'Breadcrumbs',
+    ]);
+    expect(typeof beforeSendTransaction).toBe('function');
   });
 
   it('does not call Sentry.init when DSN is missing', () => {

@@ -135,7 +135,7 @@ export function redactString(s: string): string {
 }
 
 type Obj = Record<string, unknown>;
-type St = { changed: boolean };
+type St = { changed: boolean; str?: (s: string) => string };
 
 function mark<V>(st: St, v: V): V {
   st.changed = true;
@@ -175,7 +175,10 @@ function scrubValue(
   selfKey: string,
   st: St
 ): unknown {
-  if (typeof v === 'string') return mask(st, redactString(v), v);
+  if (typeof v === 'string') {
+    const r = redactString(v);
+    return mask(st, st.str ? st.str(r) : r, v);
+  }
   if (v === null || typeof v !== 'object') return v;
   if (v instanceof Date) return v;
   if (v instanceof Error) {
@@ -309,4 +312,68 @@ export function scrubBreadcrumb<T>(breadcrumb: T): T | null {
     guarded(out, field, st, (v) => scrubValue(v, 0, new WeakSet(), field, st));
   }
   return st.changed ? (out as unknown as T) : breadcrumb;
+}
+
+// ---- Transactions (#715) ---------------------------------------------------
+
+const EMAIL_LOCAL = /[A-Za-z0-9._%+-]/;
+const EMAIL_DOMAIN = /[A-Za-z0-9.-]/;
+const URL_QUERY_RE = /(\bhttps?:\/\/[^\s?#]*)[?#]\S*/g;
+const PATH_QUERY_RE = /^(\/[^\s?#]*)[?#]\S*/;
+
+/** Replace `local@domain.tld` with `[email]`. A manual scan, linear in the input. */
+export function redactEmails(s: string): string {
+  let at = s.indexOf('@');
+  if (at === -1) return s;
+  let out = '';
+  let last = 0;
+  while (at !== -1) {
+    let a = at;
+    while (a > last && EMAIL_LOCAL.test(s.charAt(a - 1))) a--;
+    let b = at + 1;
+    while (b < s.length && EMAIL_DOMAIN.test(s.charAt(b))) b++;
+    const domain = s.slice(at + 1, b).replace(/\.+$/, '');
+    if (a < at && domain.includes('.') && !domain.startsWith('.')) {
+      out += s.slice(last, a) + '[email]';
+      last = at + 1 + domain.length;
+      b = last;
+    }
+    at = s.indexOf('@', Math.max(b, at + 1));
+  }
+  return out + s.slice(last);
+}
+
+/** Drop the query string and fragment from URLs inside a string, then mask emails. */
+function scrubTransactionString(s: string): string {
+  return redactEmails(s.replace(URL_QUERY_RE, '$1').replace(PATH_QUERY_RE, '$1'));
+}
+
+/**
+ * `beforeSendTransaction`: the event scrub rules (tokens, headers, bearer/JWT)
+ * applied to the transaction name, tags, extra, contexts, request, breadcrumbs
+ * and every span (description, data, tags), plus URL query/fragment removal
+ * and email masking. Same identity / fail-closed rules as `scrubSentryEvent`:
+ * a field that cannot be scrubbed is deleted; an uncopyable transaction is dropped.
+ */
+export function scrubSentryTransaction<T>(event: T): T | null {
+  if (event === null || typeof event !== 'object') return event;
+  const st: St = { changed: false, str: scrubTransactionString };
+  let out: Obj;
+  try {
+    out = { ...(event as unknown as Obj) };
+  } catch {
+    return null;
+  }
+  for (const field of [
+    'transaction',
+    'tags',
+    'extra',
+    'contexts',
+    'breadcrumbs',
+    'spans',
+  ] as const) {
+    guarded(out, field, st, (v) => scrubValue(v, 0, new WeakSet(), field, st));
+  }
+  guarded(out, 'request', st, (v) => scrubRequest(v, st));
+  return st.changed ? (out as unknown as T) : event;
 }

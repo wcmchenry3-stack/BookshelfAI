@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/react-native';
 import { filterExpectedNetworkNoise } from './sentryFilter';
-import { scrubBreadcrumb, scrubSentryEvent } from './sentryScrub';
+import { scrubBreadcrumb, scrubSentryEvent, scrubSentryTransaction } from './sentryScrub';
 
 const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 
@@ -37,10 +37,27 @@ export function sentryBeforeBreadcrumb<T extends Sentry.Breadcrumb>(breadcrumb: 
   return scrubBreadcrumb(breadcrumb);
 }
 
+/** #715: transactions get the event scrub plus URL query/fragment and email removal. */
+export function sentryBeforeSendTransaction<T extends Sentry.TransactionEvent>(
+  transaction: T
+): T | null {
+  return scrubSentryTransaction(transaction);
+}
+
+/**
+ * #715 (owner decision): @sentry/react-native 8 adds `expoRouterIntegration`
+ * (name 'ExpoRouter') by default when tracing + enableAutoPerformanceTracing are
+ * on; it registers `reactNavigationIntegration`, which sends navigation spans and
+ * `navigation` breadcrumbs that v7 did not. Drop only that integration.
+ */
+function sentryIntegrations<T extends { name: string }>(defaults: T[]): T[] {
+  return defaults.filter((i) => i.name !== 'ExpoRouter');
+}
+
 /**
  * Initialise Sentry (both JS and native layers).
  *
- * @sentry/react-native v7 auto-initialises the native SDK via the RN
+ * @sentry/react-native auto-initialises the native SDK via the RN
  * bridge (autoInitializeNativeSdk defaults to true) — no separate native
  * call in AppDelegate is needed.
  *
@@ -63,6 +80,8 @@ export function initSentry(): void {
       enabled: !!DSN,
       beforeSend: sentryBeforeSend,
       beforeBreadcrumb: sentryBeforeBreadcrumb,
+      beforeSendTransaction: sentryBeforeSendTransaction,
+      integrations: sentryIntegrations,
     });
 
     Sentry.addBreadcrumb({
