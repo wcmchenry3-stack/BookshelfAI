@@ -694,7 +694,9 @@ describe('beforeSendTransaction scrub (#715)', () => {
         run(make(20000))(); // warm up
         const t1 = median(run(make(20000)));
         const t2 = median(run(make(40000)));
-        expect(t2).toBeLessThan(4 * t1 + 50);
+        // Doubling n: linear ~2x, quadratic ~4x. 3x separates them; +50 ms absorbs
+        // sub-millisecond jitter on fast inputs.
+        expect(t2).toBeLessThan(3 * t1 + 50);
       });
     }
   });
