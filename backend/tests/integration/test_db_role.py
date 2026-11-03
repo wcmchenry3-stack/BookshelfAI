@@ -71,16 +71,20 @@ def _test_ddl_is_denied(connection) -> None:
     connection.execute(sa.text(f"SET LOCAL ROLE {_APP_ROLE}"))
     with pytest.raises(ProgrammingError):
         connection.execute(sa.text("DROP TABLE users"))
-    connection.execute(sa.text("RESET ROLE"))
+    # The failed DDL aborts the transaction, so roll back to the savepoint
+    # (which also undoes SET LOCAL ROLE) before running anything else.
     connection.execute(sa.text("ROLLBACK TO SAVEPOINT before_drop"))
+    connection.execute(sa.text("RESET ROLE"))
 
     # ALTER TABLE ADD COLUMN must fail.
     connection.execute(sa.text("SAVEPOINT before_alter"))
     connection.execute(sa.text(f"SET LOCAL ROLE {_APP_ROLE}"))
     with pytest.raises(ProgrammingError):
         connection.execute(sa.text("ALTER TABLE users ADD COLUMN _probe_col int"))
-    connection.execute(sa.text("RESET ROLE"))
+    # The failed DDL aborts the transaction, so roll back to the savepoint
+    # (which also undoes SET LOCAL ROLE) before running anything else.
     connection.execute(sa.text("ROLLBACK TO SAVEPOINT before_alter"))
+    connection.execute(sa.text("RESET ROLE"))
 
 
 async def test_select_works_under_app_role():
