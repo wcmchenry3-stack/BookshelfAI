@@ -52,8 +52,11 @@ CocoaPods, so `.github/workflows/podfile-lock.yml` ("Podfile lock", job
   or `frontend/plugins/**`, and by manual dispatch (Actions → Podfile lock →
   Run workflow, pick the branch).
 - It runs `npm ci`, then `pod install --repo-update` in `frontend/ios` (3
-  attempts, back-off 30 s then 60 s). It does not run xcodebuild;
-  `ios-build-check` does that.
+  attempts, back-off 30 s then 60 s) against the committed lock. If CocoaPods
+  reports the committed snapshot as incompatible ("could not find compatible
+  versions", e.g. after an RN/Expo SDK upgrade), it deletes the lock and
+  resolves from scratch, as `ios-build-check` does, with a warning. It does not
+  run xcodebuild; `ios-build-check` does that.
 - To get the lock: open the job log and copy everything between
   `===BEGIN PODFILE.LOCK===` and `===END PODFILE.LOCK===` (both marker lines
   excluded) into `frontend/ios/Podfile.lock`, or download the `Podfile.lock`

@@ -49,15 +49,26 @@ jobs:
             : > "$RUNNER_TEMP/Podfile.lock.committed"
           fi
 
+      # First try against the committed lock (the normal consistency check). If
+      # CocoaPods says the committed snapshot is incompatible with the Podfile
+      # (e.g. an RN/Expo SDK upgrade changes ReactNativeDependencies or
+      # hermes-engine), resolve from scratch instead, as ios-build-check does.
+      # Other failures (network) are retried against the committed lock.
       - name: pod install
         working-directory: frontend/ios
         run: |
           pod --version
+          log="$RUNNER_TEMP/pod-install.log"
           delay=30
           for attempt in 1 2 3; do
             echo "=== pod install attempt $attempt ==="
-            if pod install --repo-update; then
-              break
+            if pod install --repo-update 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            if grep -q 'could not find compatible versions' "$log" && [ -f Podfile.lock ]; then
+              echo "::warning::The committed Podfile.lock is incompatible with the Podfile; resolving from scratch."
+              rm -f Podfile.lock
+              continue
             fi
             if [ "$attempt" -eq 3 ]; then
               echo "::error::pod install failed after 3 attempts"
@@ -67,6 +78,8 @@ jobs:
             sleep "$delay"
             delay=$((delay * 2))
           done
+          echo "::error::pod install failed after 3 attempts"
+          exit 1
 
       - name: Print generated Podfile.lock
         working-directory: frontend/ios
