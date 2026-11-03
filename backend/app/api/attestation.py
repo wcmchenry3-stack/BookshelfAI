@@ -6,9 +6,8 @@ POST /attestation/register — register an iOS App Attest key (iOS only)
 
 import logging
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
