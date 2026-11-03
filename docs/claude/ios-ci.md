@@ -237,9 +237,27 @@ points at it, because the iOS 27 SDK requires the scene life cycle.
 no longer does. The template `AppDelegate` also dropped its
 `application(_:open:options:)` (Linking API) and
 `application(_:continue:restorationHandler:)` (Universal Links) overrides that
-called `RCTLinkingManager`. #713 kept exactly what prebuild generates; checking
-deep links and OAuth redirects under the scene life cycle, and any porting, is
-#598.
+called `RCTLinkingManager`. Expo's `ExpoAppSceneDelegate` now forwards cold-start
+URLs, `openURLContexts` and `scene(_:continue:)` to `RCTLinkingManager`, so no
+manual forwarding code is needed (#598).
+
+### URL types (`bookshelf://`)
+
+`Info.plist` `CFBundleURLTypes` lists two schemes: `bookshelf` and the Google
+reversed client id (used by `expo-auth-session`'s Google redirect). On iOS,
+`app.json` `ios.infoPlist.CFBundleURLTypes` **replaces** the top-level `scheme`
+(prebuild logs "Ignoring abstract property scheme"), so `bookshelf` must be
+listed there explicitly as well as in the committed `Info.plist`. Guarded by
+`__tests__/unit/IosUrlSchemes.test.ts`.
+
+Device QA for deep links (Simulator or device with a TestFlight build):
+
+1. Cold start: force-quit the app, then
+   `xcrun simctl openurl booted "bookshelf://"` (add a path to test a route).
+   The app must launch and land on the route.
+2. Warm: leave the app backgrounded and run the same command; it must come to
+   the foreground on the route without a relaunch.
+3. Google sign-in still returns to the app.
 
 ## Intel workers and Homebrew (build 156, Oct 2026, #718)
 
