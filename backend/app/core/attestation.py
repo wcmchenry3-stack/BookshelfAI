@@ -224,7 +224,9 @@ class LiveAndroidIntegrityVerifier:
                 )
                 resp.raise_for_status()
             outer = resp.json().get("tokenPayloadExternal", {})
-        except Exception as exc:  # noqa: BLE001 - any API/network failure = not verified
+        except (
+            Exception  # noqa: BLE001 - any API/network failure = not verified
+        ) as exc:
             logger.warning("Play Integrity API call failed: %s", exc)
             return False
 
