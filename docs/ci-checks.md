@@ -4,7 +4,7 @@ Every PR into `dev` shows about 40 checks. This page says what each one is for, 
 
 Source of truth is `.github/workflows/`. This page is a snapshot taken from `dev` at `9c0be9f` (full SHA `9c0be9fa4f460a7808cec4eddd7e504332f10f13`, committed 2026-10-30). If it disagrees with the workflow files, the workflow files win. For how the test layers fit together see [testing.md](testing.md); for the native build pipelines see [ios-ci.md](claude/ios-ci.md) and [android-ci.md](claude/android-ci.md); for the git workflow see [git.md](claude/git.md).
 
-The repo merges PRs with **merge commits**. Squash merging is refused: a squash merge through the API returned HTTP 405 "Squash merges are not allowed" on 2026-10-31 while merging the #803 PRs (to confirm in GitHub settings; decision tracked in #858). [git.md](claude/git.md) still says "squash merge into `dev`"; that line is out of date.
+PRs into `dev` are **squash-merged through a merge queue**; releases (`dev` into `main`) are **merge commits**. Squash is allowed on `dev` only and merge commits on `main` only; two rulesets enforce the split (see [Branch protection](#branch-protection)). This replaces the earlier setup where squash was refused with HTTP 405 on 2026-10-31 (#858) and there was no queue (#859); this change resolves both. The repo-level merge-button options in Settings, General must allow both squash and merge commits (rebase off); the rulesets decide which applies to which branch. Whether the rulesets are applied is **to confirm in GitHub settings**.
 
 ## Summary
 
@@ -25,7 +25,7 @@ A PR into `dev` triggers **43 workflow jobs** in 11 workflow files: 27 in `ci.ym
 - **Check**: the exact check-run name as GitHub shows it, taken from the check runs of PRs #848 and #852. For a job that calls a reusable workflow it is `<job id> / <inner job name>`. Branch protection matches on that full string.
 - **Workflow:job**: the file and job id. Reusable workflows live in `wcmchenry3-stack/.github`, which is not readable from this repository, and every call is pinned to `@main`. Where a purpose can only be inferred from the job name or its `with:` inputs, the cell says "inferred".
 - **Introduced**: the earliest commit on `origin/dev` that adds the job id to the workflow file (`git log -S '<job id>:' --reverse`), with the PR or issue number from the commit subject if it has one. Many early jobs first appear in a sync or bulk commit, so this is "first seen on `dev`", not necessarily the first time the job existed. The four org-template workflows (`commitlint`, `design-token-check`, `gemini-policy`, `openai-policy`) were added by "sync community health files from org template" commits; their real origin is "origin unclear".
-- **Gating**: **Always** means the job starts on every PR into `dev` and `main`. **Conditional** means a path filter, `if:` or branch filter can stop it starting. **Advisory** means it runs on PRs but is not in `.github/rulesets/protect-main-dev.json`, or it cannot fail. "Tier 0/1/2" is explained in the next section. "Required (file)" means the context is listed in the ruleset file; whether GitHub enforces it is to confirm in GitHub settings.
+- **Gating**: **Always** means the job starts on every PR into `dev` and `main`. **Conditional** means a path filter, `if:` or branch filter can stop it starting. **Advisory** means it runs on PRs but is not in `.github/rulesets/protect-dev.json` and `protect-main.json`, or it cannot fail. "Tier 0/1/2" is explained in the next section. "Required (file)" means the context is listed in the ruleset file; whether GitHub enforces it is to confirm in GitHub settings.
 - **Time**: wall-clock `completed_at - started_at` of the job on a sampled successful run. It excludes queueing and runner start-up. Sampled runs are all on PR #848 (2026-10-31): `ci.yml` run **41164807416**, `repo-hygiene` **41164358342**, `security` **41164358430**, `e2e-web` **41164358382**, `static-frontend` **41164358308**, `migration-guard` **41164358292**, `doc-reminder` **41164358383**, `design-token-check` **41164358579**, `openai-policy-check` **41164358575**, `gemini-policy-check` **41164358627**. `ci.yml` jobs come from the jobs API for that run; the others from the check-run timestamps of the same runs. "skipped on sampled run" means that job did not run on it; "not measured" means no sample.
 - A skipped job reports as success to required checks, but a reusable-workflow caller skipped by `if:` reports under its plain job id (`ios-build-check`), never `ios-build-check / Xcode Build (no signing)`. That is why `native-build-gate` exists.
 
@@ -52,7 +52,7 @@ Gate    native-build-gate (if: always())
 
 - `gate-main-source` is Tier 0 but is not in the Tier 1 `needs:` list, so a failure there does not skip Tier 1.
 - If `lint-python`, `lint-frontend` or `secret-scan` fails, every Tier 1 and Tier 2 job is skipped (their `needs:` failed). Skipped counts as passing for required checks, but the failed lint job is itself required, so the merge stays blocked.
-- `podfile-lock-check` and `gradle-wrapper-check` have `if: github.event_name == 'pull_request'`, so they run on PRs only.
+- `podfile-lock-check` and `gradle-wrapper-check` have `if: github.event_name == 'pull_request'`, so they run on PRs only (skipped in the merge queue, as is the grandfather-list step of `claude-policy`; see [Branch protection](#branch-protection)).
 - `backend-health` has `if: github.workflow != 'Deploy'` so a production outage cannot block the deploy that would fix it (the workflow is also called from `deploy.yml`).
 - **Stand-alone workflows** (`commitlint`, `design-token-check`, `gemini-policy`, `openai-policy`, `migration-guard`, `static-frontend`, `repo-hygiene`, `doc-reminder`, `e2e-web`, `security`) have no `needs:` and start immediately, in parallel with Tier 0.
 - **Draft PRs.** Only `ios-build-check` and `android-build-check` skip on drafts (`github.event.pull_request.draft != true`). Everything else, including `e2e-web` and the `security.yml` jobs, runs on drafts. `ready_for_review` is in the `ci.yml` trigger types, so marking a draft ready starts a new run that includes the native builds.
@@ -174,21 +174,32 @@ None of these is defined under `.github/workflows/`, so their configuration is "
 
 ## Branch protection
 
-`.github/rulesets/protect-main-dev.json` is a ruleset export. GitHub does not read it from the repo; the owner imports it in Settings, Rules, Rulesets. Whether it has been imported, is `active`, and has not drifted is **to confirm in GitHub settings**.
+`.github/rulesets/protect-dev.json` and `.github/rulesets/protect-main.json` are ruleset exports. GitHub does not read them from the repo; the owner imports each in Settings, Rules, Rulesets. Whether they have been imported, are `active`, and have not drifted is **to confirm in GitHub settings**.
 
-What the file declares for `refs/heads/main` and `refs/heads/dev`, with enforcement `active` and no bypass actors:
+Both rulesets have enforcement `active`, no bypass actors, and the same rules except where noted: block deletion, block non-fast-forward (force) pushes, block creation; pull requests need 1 approving review, stale reviews dismissed on push, code-owner review, last-push approval not required; and the same 30 required status contexts listed under [Recommended required checks](#recommended-required-checks) below (unchanged for `main`).
 
-- block deletion, block non-fast-forward (force) pushes, block creation;
-- `required_linear_history`;
-- pull requests: 1 approving review, stale reviews dismissed on push, code-owner review required, last-push approval not required, allowed merge methods `squash` and `merge`;
-- required status checks, with `strict_required_status_checks_policy: true` (branch must be up to date; merge queue vs up-to-date branches on `dev` is an open owner decision, #859; nothing has been chosen and any ruleset change stays owner-applied): the 30 contexts listed under [Recommended required checks](#recommended-required-checks) below.
+| | `protect-dev.json` (`refs/heads/dev`) | `protect-main.json` (`refs/heads/main`) |
+| --- | --- | --- |
+| Allowed merge methods | `squash` only | `merge` only (no squash, no rebase) |
+| `required_linear_history` | yes | no (it forbids merge commits) |
+| Merge queue | yes: `ALLGREEN`, `SQUASH`, up to 5 entries built and merged together, 60 minute check timeout | no |
+| `strict_required_status_checks_policy` | `false` (the queue tests each entry on top of the ones ahead of it, so PRs need not be rebased by hand; this closes #859's two-PRs-pass-separately race) | `true` (branch must be up to date, as before) |
+
+The `main` release flow (merge commit from `dev`, then `sync-main-to-dev.yml` and release-please) is unchanged. Ruleset changes stay owner-applied.
+
+**Merge queue (`merge_group`).** The workflows that supply required checks (`ci.yml`, `repo-hygiene.yml`, `static-frontend.yml`, `migration-guard.yml`, `design-token-check.yml`, `gemini-policy.yml`, `openai-policy.yml`) also trigger on `merge_group` (`types: [checks_requested]`), so the required contexts report on each queue entry. In the queue:
+
+- `detect-changes` diffs against `github.event.merge_group.base_sha`, so the iOS and Android builds (about 19 minutes each) run only when a native path changed.
+- `migration-guard` skips its scan and passes: `github.base_ref` and the PR labels (and so the `destructive-migration-approved` approval) do not exist on `merge_group`, and every PR was already scanned by its own required `pull_request` run before it could be queued.
+- `podfile-lock-check`, `gradle-wrapper-check` and the grandfather-list step of `claude-policy` are PR-only (`if: github.event_name == 'pull_request'`) and are skipped in the queue; a skipped job counts as passing, so the Gradle wrapper validation, the `Podfile`/`Podfile.lock` pairing and the grandfather check are not re-run on the merged result.
+- The reusable workflows in `wcmchenry3-stack/.github@main` (`gate-main-source`, `design-token-check`, `gemini-policy`, `openai-policy` and others) are not visible from this repo. After applying the `dev` ruleset, enqueue one trivial PR and confirm every required context reports on its `merge_group` run before relying on the queue.
 
 `.github/CODEOWNERS` names `@wcmchenry3` as owner of everything, including `.github/`, `backend/app/auth/`, `backend/app/core/`, `backend/tests/security/` and the migration guard.
 
 **Things that only GitHub settings can confirm:**
 
 - whether the ruleset above (or any classic branch protection) is applied, and to which branches;
-- merge methods actually enabled. Squash was refused with HTTP 405 on 2026-10-31 (see #858), which contradicts the file's `allowed_merge_methods` list; merge commits are what is used. `required_linear_history` as written would normally forbid merge commits, so the live settings probably differ from the file. See [Observations](#observations-suggestions-only);
+- merge methods enabled in Settings, General (must allow squash and merge commits, rebase off), and that the merge queue is active on `dev`;
 - whether the single code owner can satisfy "1 approving review" and "code-owner review" on PRs they opened themselves;
 - whether any check outside the file (for example `Supabase Preview`) is required.
 
@@ -225,6 +236,5 @@ These are not decisions.
 - **Native builds are triggered broadly.** `native` is true whenever `frontend/package.json`, `frontend/package-lock.json` or `ci.yml` changes, so every dependency bump and every CI edit pays for a 15-minute iOS build.
 - **Drafts run almost everything.** Only the two native builds skip on drafts; `e2e-web` and the `security.yml` jobs also run on every push to a draft.
 - **`repo-hygiene` reports one failure at a time.** Its steps have no `if: !cancelled()`, so a file-length failure hides any later jscpd or lychee failure until the next push. Unlike the other stand-alone workflows it has no `branches:` filter, so it also runs on PRs into any other branch.
-- **Merge method mismatch.** The ruleset file requires linear history and lists `squash` and `merge`; the repository has squash disabled and merges with merge commits, and [git.md](claude/git.md) says squash into `dev`. One of the three should be updated once the live settings are confirmed.
 - **Reusable workflows are in another repo and pinned to `@main`.** `provenance-coverage`, `feedback-token-lint`, `sentry-check`, `gate-main-source`, `commitlint` and the policy checks cannot be explained from here, and a change on the org's `main` changes these checks across all repos at once. A short header comment in each `called-*.yml`, or pinning to a SHA as `sync-main-to-dev.yml` does, would close both gaps.
 - **Stale statements elsewhere:** `android-bundle-check` has a comment that still mentions EAS Build.
