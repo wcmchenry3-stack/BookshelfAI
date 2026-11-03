@@ -11,7 +11,11 @@ const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
  * redact auth headers / config / bodies / bearer tokens from extra, contexts
  * and mechanism data (sentryScrub.ts).
  */
-export function sentryBeforeSend(event: Sentry.ErrorEvent, hint: any): Sentry.ErrorEvent | null {
+type SentryHint = Parameters<
+  NonNullable<NonNullable<Parameters<typeof Sentry.init>[0]>['beforeSend']>
+>[1];
+
+export function sentryBeforeSend(event: Sentry.ErrorEvent, hint: SentryHint): Sentry.ErrorEvent | null {
   const kept = filterExpectedNetworkNoise(event, hint, () =>
     Sentry.addBreadcrumb({
       category: 'sentry.filter',
