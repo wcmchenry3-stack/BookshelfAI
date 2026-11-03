@@ -1,6 +1,5 @@
 /**
- * Expo Router's deep-link / URL param parsing goes through query-string@7 and
- * so through decode-uri-component (#779). This drives the router's own
+ * Expo Router's deep-link query param parsing. This drives the router's own
  * getStateFromPath and checks decoded params come out.
  */
 // eslint-disable-next-line @typescript-eslint/no-require-imports
