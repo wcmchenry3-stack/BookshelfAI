@@ -36,7 +36,7 @@ engine = create_async_engine(
 )
 
 
-def _set_statement_timeout(dbapi_conn, connection_record) -> None:
+def _set_statement_timeout(dbapi_conn, _connection_record, _connection_proxy) -> None:
     """Set statement_timeout on every connection checkout from the pool (#696).
 
     The DSN option ``?options=-c statement_timeout=N`` is the first layer; this

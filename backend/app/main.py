@@ -22,7 +22,7 @@ try:
 
     _QueryCanceledError = _asyncpg_exc.QueryCanceledError
 except ImportError:  # pragma: no cover — asyncpg is always present; guards tests
-    _QueryCanceledError = None  # type: ignore[assignment,misc]
+    _QueryCanceledError = None  # type: ignore[assignment,misc] - fallback when asyncpg is absent
 
 # Retry-After hint in seconds returned when statement_timeout cancels a query.
 _TIMEOUT_RETRY_AFTER = 5
