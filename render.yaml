@@ -7,9 +7,11 @@
 #                       never the 6543 transaction pooler; Render has no
 #                       outbound IPv6, so Supabase's direct host is unreachable
 #                       from it).
-# Dev  (branch `dev`):  bookshelf-api-dev + bookshelf-web-dev — new services.
-#                       DATABASE_URL is Render Postgres `bookshelf-db` (see
-#                       `databases:` below).
+# Dev  (branch `dev`):  bookshelf-api-dev + bookshelf-web-dev. DATABASE_URL is
+#                       the session pooler URL of the persistent Supabase
+#                       branch `dev` (dashboard secret). Render Postgres
+#                       `bookshelf-db` (`databases:` below) is legacy and
+#                       suspended since 2026-10-22; nothing references it.
 #
 # The prod DATABASE_URL lives ONLY in the Render dashboard (`sync: false` below)
 # — never in this file, a PR, or a chat/tool argument. Prod deploys happen only
@@ -42,6 +44,12 @@ services:
       # the 6543 transaction pooler, never the Render dev DB). Dashboard secret
       # only; see docs/RENDER.md.
       - key: DATABASE_URL
+        sync: false
+      # Owner-role (postgres) session pooler URL, used only by the
+      # preDeployCommand's `alembic upgrade head`: DATABASE_URL is the DML-only
+      # bookshelf_app role, which cannot run DDL (#696). Dashboard secret only;
+      # unset = alembic falls back to DATABASE_URL. See docs/RENDER.md.
+      - key: MIGRATION_DATABASE_URL
         sync: false
       - key: ENVIRONMENT
         value: production
@@ -139,6 +147,9 @@ services:
     region: oregon
     plan: starter
     branch: dev
+    # Manual deploys, matching the dashboard. The DML-only role rollout
+    # (docs/RENDER.md) relies on 0028 not running before the role exists.
+    autoDeploy: false
     buildCommand: pip install -r requirements.txt
     # --no-proxy-headers: the socket peer must never be rewritten from
     # X-Forwarded-For; app/core/client_ip.py decides the client IP.
@@ -147,10 +158,15 @@ services:
     healthCheckPath: /health
     rootDir: backend
     envVars:
+      # Supabase `dev` branch session pooler URL (port 5432) as the DML-only
+      # bookshelf_app role (#696). Dashboard secret only; see docs/RENDER.md.
       - key: DATABASE_URL
-        fromDatabase:
-          name: bookshelf-db
-          property: connectionString
+        sync: false
+      # Owner-role (postgres) session pooler URL of the Supabase `dev` branch,
+      # used only by the preDeployCommand's `alembic upgrade head` (#696).
+      # Dashboard secret only; unset = alembic uses DATABASE_URL.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
       # staging, not development: Settings.is_hardened (PR #448) treats every
       # environment except development/test as hardened (TrustedHost,
       # /docs disabled, HSTS, /auth/test-login
@@ -244,9 +260,11 @@ services:
         value: staging
 
 databases:
-  # Dev only. Production uses Supabase — see the header comment above and
-  # docs/RENDER.md. No `main`-branch service may reference this via
-  # fromDatabase; backend/tests/unit/test_render_yaml.py enforces that.
+  # Legacy, suspended since 2026-10-22: dev moved to the Supabase `dev` branch
+  # and no service references this any more. Kept so the blueprint does not
+  # delete it. Production uses Supabase — see docs/RENDER.md. No `main`-branch
+  # service may reference this via fromDatabase;
+  # backend/tests/unit/test_render_yaml.py enforces that.
   - name: bookshelf-db
     plan: basic-256mb
     region: oregon

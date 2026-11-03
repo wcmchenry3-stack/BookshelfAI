@@ -9,7 +9,7 @@ from app.services.token_cleanup import cleanup_expired_tokens
 
 
 def _make_db_mock(rowcount: int = 3):
-    """Return an AsyncMock that mimics AsyncSessionLocal as an async context manager."""
+    """Return an AsyncMock that mimics JobSessionLocal as an async context manager."""
     mock_result = MagicMock()
     mock_result.rowcount = rowcount
 
@@ -33,7 +33,7 @@ class TestCleanupExpiredTokens:
         mock_factory, mock_session, _mock_result = _make_db_mock(rowcount=5)
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 0),
             pytest.raises(asyncio.CancelledError),
@@ -55,7 +55,7 @@ class TestCleanupExpiredTokens:
         mock_factory, mock_session, _ = _make_db_mock()
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
             pytest.raises(asyncio.CancelledError),
@@ -92,7 +92,7 @@ class TestCleanupExpiredTokens:
         mock_session.execute = flaky_execute
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 0),
             caplog.at_level(logging.ERROR, logger="app.services.token_cleanup"),
@@ -114,7 +114,7 @@ class TestCleanupExpiredTokens:
         """asyncio.CancelledError must propagate so the lifespan can await the task."""
         mock_factory, _mock_session, _ = _make_db_mock()
 
-        with patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory), patch(
+        with patch("app.services.token_cleanup.JobSessionLocal", mock_factory), patch(
             "app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0
         ):
 
@@ -136,7 +136,7 @@ class TestAIQuotaPurge:
         purge = AsyncMock(return_value=2)
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", purge),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
@@ -159,7 +159,7 @@ class TestAIQuotaPurge:
         mock_factory, mock_session, _ = _make_db_mock()
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch(
                 "app.services.token_cleanup.purge_old_quota",
                 AsyncMock(side_effect=ValueError("db down")),
@@ -189,7 +189,7 @@ class TestAISpendPurge:
         purge = AsyncMock(return_value=1)
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
             patch(
                 "app.services.token_cleanup.rollup_and_purge",
@@ -217,7 +217,7 @@ class TestAISpendPurge:
         mock_factory, mock_session, _ = _make_db_mock()
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
             patch(
                 "app.services.token_cleanup.rollup_and_purge",
@@ -250,7 +250,7 @@ class TestTransientRetry:
     def _patches(quota, base_delay=0):
         mock_factory, mock_session, _ = _make_db_mock()
         patches = [
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", quota),
             patch(
                 "app.services.token_cleanup.rollup_and_purge",

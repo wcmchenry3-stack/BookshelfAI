@@ -10,6 +10,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 cp .env.example .env   # fill in your values
+psql -d bookshelf -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # once per cluster; migration 0028 needs it (#696)
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
@@ -59,8 +60,12 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 - Account deletion (#291) must delete trashed rows at once, not leave them to the purge.
 
 ### Database
-- Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as the table owner and bypasses it; it only locks out Supabase's `anon`/`authenticated` roles. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
+- The app connects as **`bookshelf_app`** (#696) — a least-privilege login role with `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all app tables and `USAGE` on sequences. It cannot run DDL. Alembic migrations run as the **owner** (`postgres` on Supabase): `alembic/env.py` uses `settings.async_migration_database_url`, i.e. `MIGRATION_DATABASE_URL` when set, else `DATABASE_URL` (local dev and CI connect as the owner, so they leave it unset). Never point Alembic at the app engine or `settings.async_database_url`.
+- Every new table's migration enables row level security (`op.execute('ALTER TABLE "<name>" ENABLE ROW LEVEL SECURITY')`), with no policies. The app connects as `bookshelf_app` which has `BYPASSRLS`, so it behaves like the owner for row visibility. `tests/integration/test_rls_enabled_db.py` fails otherwise (#677)
 - Never `GRANT` anything to `anon` or `authenticated`. Migration 0023 revoked their table and sequence privileges, including the migrating role's default privileges, so a new table needs no extra step (#704)
+- Migration 0028 set default privileges on the owner role so every future table / sequence created by the owner automatically inherits DML grants for `bookshelf_app`. No per-table grant is needed in new migrations.
+- **Statement timeout**: the app engine sets `statement_timeout = STATEMENT_TIMEOUT_MS` (default 5 s) as an asyncpg startup parameter (`connect_args={"server_settings": ...}`) and again with `SET` on every pool checkout (`app/core/database.py`). Never put a libpq `?options=` query on `DATABASE_URL`: asyncpg rejects it. Through SQLAlchemy a timeout surfaces as `sqlalchemy.exc.DBAPIError` with SQLSTATE `57014` on `exc.orig`; `_query_canceled_handler` in `app/main.py` turns that into `HTTP 503 {"detail": "db_timeout"}` + `Retry-After`, logs the path, sends one Sentry warning (fingerprint `db-statement-timeout`, route-template tag only) and re-raises every other `DBAPIError`. Background jobs that need more time open their sessions from `JobSessionLocal` (`app/core/database.py`), which runs `SET LOCAL statement_timeout = STATEMENT_TIMEOUT_JOB_MS` (default 60 s) at the start of every transaction; the daily purges in `app/services/token_cleanup.py` do. Never raise the request timeout for a job.
+- **Role check at startup**: `log_db_role()` logs `db_role current_user=<role>` once from the lifespan, as a warning when a hardened environment is not on `bookshelf_app`. After a restore, re-apply the role's grants with `scripts/db/app_role_grants.sql` (`docs/backups.md`); every table in `public` must have DML for the role (`tests/integration/test_db_role.py`).
 
 ## Commands
 

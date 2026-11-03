@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import ClassVar
 
 import sentry_sdk
+from asyncpg.exceptions import QueryCanceledError
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,10 +14,12 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from slowapi import _rate_limit_exceeded_handler as _slowapi_429
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
+from app.ai.alerts import capture_service_warning
 from app.ai.settings import seed_ai_settings_at_startup
 from app.api.attestation import router as attestation_router
 from app.api.auth import router as auth_router
@@ -26,7 +29,7 @@ from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
 from app.core import catalog_token
 from app.core.config import check_turnstile_configured, settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, log_db_role
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
 from app.core.origin_auth import OriginAuthMiddleware
@@ -50,6 +53,12 @@ if settings.sentry_dsn:
     )
 
 logger = logging.getLogger(__name__)
+
+# Retry-After hint in seconds returned when statement_timeout cancels a query.
+_TIMEOUT_RETRY_AFTER = 5
+# SQLSTATE query_canceled: raised when statement_timeout (or a cancel request)
+# stops a statement.
+_QUERY_CANCELED_SQLSTATE = "57014"
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -237,6 +246,9 @@ async def lifespan(app: FastAPI):
     # Insert any missing ai_settings rows from the env. Never raises: with the
     # DB down the app still starts and scans fail closed until it is back.
     await seed_ai_settings_at_startup()
+    # Which DB role this process runs as (#696): bookshelf_app once
+    # DATABASE_URL is switched. Never raises.
+    await log_db_role()
     cleanup_task = asyncio.create_task(cleanup_expired_tokens())
     yield
     cleanup_task.cancel()
@@ -260,8 +272,84 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Re
     return _slowapi_429(request, exc)
 
 
+def _is_query_canceled(exc: BaseException) -> bool:
+    """True when ``exc`` (or the driver error it wraps) is a Postgres
+    query_canceled error, SQLSTATE 57014.
+
+    Through SQLAlchemy a statement_timeout surfaces as ``DBAPIError`` whose
+    ``orig`` is the adapter's error (carrying ``sqlstate``) and whose
+    ``orig.__cause__`` is asyncpg's ``QueryCanceledError``, so check each link.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, QueryCanceledError):
+            return True
+        if getattr(cur, "sqlstate", None) == _QUERY_CANCELED_SQLSTATE:
+            return True
+        cur = getattr(cur, "orig", None) or cur.__cause__
+    return False
+
+
+# Stable 503 ``detail`` code for a cancelled query (docs/api.md). The frontend
+# reads ``detail`` (frontend/lib/apiError.ts); the code is not in its scan
+# code lists, so a /scan that hits it shows the generic error state.
+DB_TIMEOUT_DETAIL = "db_timeout"
+
+
+def _route_template(request: Request) -> str:
+    """The matched route's path template (``/user-books/{book_id}``), never the
+    concrete path, so a Sentry tag carries no ids."""
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
+
+
+def _report_statement_timeout(request: Request) -> None:
+    """One warning-level Sentry event per cancelled query (#696 review): the
+    503 path would otherwise send nothing, since Sentry only captures
+    unhandled errors. Grouped by a fixed fingerprint and tagged with the route
+    template only; captured through ``capture_service_warning``, which drops
+    the request block, user and breadcrumbs. Never raises into the 503."""
+    try:
+        capture_service_warning(
+            "database statement timeout",
+            fingerprint=["db-statement-timeout"],
+            tags={"route": _route_template(request)},
+            extras={"statement_timeout_ms": settings.statement_timeout_ms},
+        )
+    except Exception:
+        logger.exception("statement_timeout_report_failed")
+
+
+def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return 503 when Postgres cancels a query due to statement_timeout (#696).
+
+    Registered for ``sqlalchemy.exc.DBAPIError``. Any other database error is
+    re-raised unchanged, so it reaches ServerErrorMiddleware (500) and Sentry
+    exactly as it would with no handler registered.
+
+    The body is the API's standard ``{"detail": "<code>"}`` shape. Logs the
+    route path only, never SQL text, bound values or other details that might
+    contain user data, and sends one Sentry warning.
+    """
+    if not _is_query_canceled(exc):
+        raise exc
+    logger.warning(
+        "statement_timeout_canceled path=%s",
+        request.url.path,
+    )
+    _report_statement_timeout(request)
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": str(_TIMEOUT_RETRY_AFTER)},
+        content={"detail": DB_TIMEOUT_DETAIL},
+    )
+
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(DBAPIError, _query_canceled_handler)
 
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).

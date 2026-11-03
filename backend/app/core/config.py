@@ -16,6 +16,7 @@ from app.ai.models_allowlist import (
     MAX_TOKENS_BOUNDS,
     TIMEOUT_S_BOUNDS,
 )
+from app.core.db_url import to_async_url
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
 # asyncpg's server-side prepared statements, which asyncpg uses by default. It
@@ -152,13 +153,18 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
+    # Owner DSN for Alembic only (#696); empty = DATABASE_URL (local dev, CI).
+    migration_database_url: str = ""
     # Bounded async pool per instance. Render zero-downtime deploys run 2
-    # instances concurrently during a deploy, plus a one-off `alembic upgrade
-    # head` connection: 2 * (db_pool_size + db_max_overflow) + 1 must stay
-    # under the small Supabase session pooler's 15-client cap.
-    # 2 * (3 + 2) + 1 = 11 <= 15.
+    # instances concurrently, plus a one-off `alembic upgrade head`
+    # connection: 2 * (db_pool_size + db_max_overflow) + 1 must stay under
+    # the small Supabase session pooler's 15-client cap (2 * (3 + 2) + 1 = 11).
     db_pool_size: int = 3
     db_max_overflow: int = 2
+    # statement_timeout in ms (#696): a longer request query is cancelled (503).
+    # The daily purge jobs (JobSessionLocal) use the job value. 0 disables.
+    statement_timeout_ms: int = 5000
+    statement_timeout_job_ms: int = 60000
 
     # Auth
     google_client_id: str = ""
@@ -499,18 +505,19 @@ class Settings(BaseSettings):
             self.trusted_proxy_mode = "cloudflare" if self.is_hardened else "none"
         return self
 
-    @field_validator("database_url")
+    @field_validator("database_url", "migration_database_url")
     @classmethod
-    def reject_transaction_pooler_port(cls, v: str) -> str:
+    def reject_transaction_pooler_port(cls, v: str, info) -> str:
         # Value-free messages: urllib's own text echoes parts of the URL (a
         # password, for a malformed one), and boot logs must never carry it.
+        name = info.field_name.upper()
         try:
             port = urlsplit(v).port
         except ValueError:
-            raise ValueError("DATABASE_URL is not a valid URL") from None
+            raise ValueError(f"{name} is not a valid URL") from None
         if port == _SUPABASE_TRANSACTION_POOLER_PORT:
             raise ValueError(
-                f"DATABASE_URL uses port {_SUPABASE_TRANSACTION_POOLER_PORT} "
+                f"{name} uses port {_SUPABASE_TRANSACTION_POOLER_PORT} "
                 "(Supabase's transaction pooler), which breaks asyncpg's "
                 "server-side prepared statements. Use the session pooler on "
                 "port 5432 instead."
@@ -554,13 +561,12 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
-        # Normalize any postgres:// or postgresql:// scheme to postgresql+asyncpg://
-        # and sqlite:// to sqlite+aiosqlite:// (used by schema-check CI with SQLite)
-        import re
+        return to_async_url(self.database_url)
 
-        url = re.sub(r"^postgres(ql)?://", "postgresql+asyncpg://", self.database_url)
-        url = re.sub(r"^sqlite:///", "sqlite+aiosqlite:///", url)
-        return url
+    @property
+    def async_migration_database_url(self) -> str:
+        """Alembic's DSN: MIGRATION_DATABASE_URL if non-blank, else DATABASE_URL."""
+        return to_async_url(self.migration_database_url.strip() or self.database_url)
 
     @property
     def google_client_ids(self) -> list[str]:

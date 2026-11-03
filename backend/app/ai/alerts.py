@@ -4,7 +4,8 @@ Used by the cost breaker's spend alerts (#531, ``app/ai/breaker.py``) and the
 zero-result enhanced-scan warning (#533, ``app/ai/quota/sentry_warnings.py``), and by the
 refresh-token reuse alert (#690, ``app/auth/refresh_family.py``), which passes
 the user id and family id as tags itself and must not carry the request body
-(it holds the refresh token). The request's
+(it holds the refresh token), and by the statement-timeout 503 handler (#696,
+``app/main.py``), which tags the route template only. The request's
 scopes carry the user id (``set_sentry_user`` in ``get_current_user``), tags
 and breadcrumbs; these warnings are about the service, not a user. So the
 event is captured in forked, emptied isolation and current scopes (nothing of

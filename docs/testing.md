@@ -127,7 +127,8 @@ Run it locally (about 75 s for all three scenarios):
 ```bash
 cd backend
 pip install -r requirements-perf.txt
-createdb bs539_perf && DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf alembic upgrade head   # a THROWAWAY database, its name must contain "perf"
+createdb bs539_perf && psql -d bs539_perf -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # role: once per cluster, skip if it exists (#696)
+DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf alembic upgrade head   # a THROWAWAY database, its name must contain "perf"
 PERF_CONFIRM_ISOLATED_DB=yes DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf \
   python perf/run_scan_abuse.py                      # or --scenario abuse|breaker|kill
 ```
@@ -347,6 +348,7 @@ Every scenario also runs `@axe-core/playwright` with the tags `wcag2a, wcag2aa, 
 
 ```bash
 createdb bookshelf_e2e
+psql -d bookshelf_e2e -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # once per cluster, skip if it exists (#696)
 cd backend && DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e alembic upgrade head
 cd ../frontend
 npm ci
@@ -369,7 +371,7 @@ Every CI check (what it does, what it prevents, where it is defined, when it was
 
 - `test-python`: `pytest` with coverage (default, no integration). It also runs the `security`-marked tests (see "When the security suite runs" above).
 - `test-frontend`: `npx jest --coverage`; fails below the Jest `coverageThreshold` floor (see Coverage targets).
-- `test-migrations`: against a Postgres 16 service, `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres).
+- `test-migrations`: against a Postgres 16 service, create the `bookshelf_app` role (migration 0028 needs it, #696), then `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres).
 - `lint-frontend`: `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint).
 - `typecheck-frontend`: `npm run typecheck` (`tsc --noEmit`, covers tests too).
 - `static-frontend`: its own workflow (`static-frontend.yml`; every PR to `dev`/`main` with no paths filter so it can be required, and pushes to `dev`): `npm ci` then `npm run knip` (#768, #771).

@@ -54,6 +54,11 @@ brew services start postgresql@15
 # Create the DB
 createdb bookshelf
 
+# Create the least-privilege app role once per Postgres cluster (#696).
+# Migration 0028 grants it DML rights and stops if the role is missing.
+# Locally you can keep connecting as your own (owner) user.
+psql -d bookshelf -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"
+
 # Run migrations
 cd ../backend
 source .venv/bin/activate
@@ -80,6 +85,8 @@ Fill in each required variable. Skip anything marked *optional*.
 DATABASE_URL=postgresql+asyncpg://<your-mac-username>@localhost:5432/bookshelf
 ```
 If you set a password on your local Postgres, include it: `postgresql+asyncpg://user:password@localhost:5432/bookshelf`.
+
+Leave `MIGRATION_DATABASE_URL` unset locally: Alembic then uses `DATABASE_URL`, which here is your own (owner) user. It only matters on Render, where the app connects as the DML-only `bookshelf_app` role and migrations need the owner (#696, see [RENDER.md](RENDER.md#database-role)).
 
 ### Auth — Google OAuth
 
@@ -240,6 +247,7 @@ First-time Android build also needs a debug keystore — see [android-ci.md](cla
 | Symptom | Cause | Fix |
 |---|---|---|
 | `psql: FATAL: database "bookshelf" does not exist` | skipped `createdb bookshelf` | Run step 2 |
+| `Role "bookshelf_app" does not exist` during `alembic upgrade head` | skipped the role step | Run the `CREATE ROLE bookshelf_app ...` line in step 2, then re-run `alembic upgrade head` |
 | `alembic.util.exc.CommandError: Can't locate revision` | wrong alembic version | `alembic upgrade head` from `backend/` with venv active |
 | Backend starts but `/health/db` returns `db: error` | `DATABASE_URL` wrong or Postgres down | Check `brew services list`, verify username + DB name |
 | Sign-in fails with 401 | email not in `ALLOWED_EMAILS` | add to `.env`, restart uvicorn |

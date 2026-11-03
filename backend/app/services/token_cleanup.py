@@ -30,6 +30,12 @@ The same daily run also purges, in bounded batches:
   (default 30) days ago, under a Postgres advisory lock so two instances
   never run it at once (app/services/trash.py, #683).
 
+Every step opens its session from ``JobSessionLocal``, so each transaction
+runs under ``STATEMENT_TIMEOUT_JOB_MS`` (default 60 s) rather than the 5 s
+request ``statement_timeout`` (#696). A step whose query is still cancelled
+(SQLSTATE 57014, not transient) logs one ``logger.exception`` and waits for
+the next run.
+
 The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
 
@@ -56,7 +62,7 @@ from app.ai.ledger import rollup_and_purge
 from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
 from app.auth.refresh_family import purge_refresh_tokens
-from app.core.database import AsyncSessionLocal
+from app.core.database import JobSessionLocal
 from app.services.trash import purge_trash
 
 logger = logging.getLogger(__name__)
@@ -143,13 +149,13 @@ async def _run_step(step: Callable[[], Awaitable[None]], label: str = "") -> Non
 
 
 async def _purge_quota() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_quota(db)
         logger.info("token_cleanup: purged %d old ai_quota row(s)", purged)
 
 
 async def _purge_usage() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         rolled, purged = await rollup_and_purge(db)
         logger.info(
             "token_cleanup: rolled up %d ai_usage row(s), "
@@ -160,13 +166,13 @@ async def _purge_usage() -> None:
 
 
 async def _purge_spend() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_spend(db, utc_today())
         logger.info("token_cleanup: purged %d old ai_spend_daily row(s)", purged)
 
 
 async def _purge_zero_results() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_zero_results(db)
         logger.info(
             "token_cleanup: purged %d old ai_enhanced_zero_results row(s)", purged
@@ -174,13 +180,13 @@ async def _purge_zero_results() -> None:
 
 
 async def _purge_scan_records() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_scan_records(db)
         logger.info("token_cleanup: purged %d old scan_records row(s)", purged)
 
 
 async def _purge_refresh_tokens() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         deleted = await purge_refresh_tokens(db)
         logger.info(
             "token_cleanup: deleted %d expired or revoked refresh token(s)", deleted
@@ -188,7 +194,7 @@ async def _purge_refresh_tokens() -> None:
 
 
 async def _purge_trash() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_trash(db)
         logger.info("token_cleanup: purged %d trashed library entr(ies)", purged)
 

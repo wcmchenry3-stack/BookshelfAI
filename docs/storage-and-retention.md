@@ -11,7 +11,7 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 - **Raw per-call data lives 30 days, aggregates up to 400 days, per-user scan answers 30 days at most, counters 90 days.** Aggregates carry no user ID.
 - **On the phone, the photo is the only thing that is big.** A scan photo is kept until it is scanned and dismissed, or 7 days after it failed. The pending queue is capped at 50 photos; failed photos have an age limit and no count limit, and completed photos the user has not reviewed have no limit until the next app launch (G3). Everything else on the device is small and bounded.
 - **Today the app stores the camera's full-size JPEG** (quality 0.7). The server shrinks every photo to 1,568 px on the long edge anyway. Recommendation: shrink once at capture to the same size (G2), which cuts the queue from about 125 MB to about 15 MB (estimates).
-- **Plan limits are not in the repo**: Render Postgres is `basic-256mb` (`render.yaml` `databases:` `bookshelf-db` `plan`); Supabase's plan and size are not recorded. Confirm both before the 1,000-user mark (see [growth](#expected-growth)). The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
+- **Plan limits are not in the repo**: Supabase's plan and size are not recorded (dev is a Supabase branch since 2026-10-22; the Render Postgres `bookshelf-db`, `basic-256mb`, is suspended). Confirm both before the 1,000-user mark (see [growth](#expected-growth)). The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
 
 ---
 
@@ -210,7 +210,7 @@ Plan limits:
 | Environment | Database | Plan in the repo | Storage limit |
 |---|---|---|---|
 | Production (`bookshelf-api`) | Supabase Postgres, session pooler (`render.yaml` header comment; `docs/RENDER.md` `## Connecting to Supabase (production only)`) | the repo says to upgrade to Pro before store submission (`docs/RENDER.md` `## First production deploy — cutover checklist`); the current plan is not recorded | plan limit to confirm |
-| Staging / dev (`bookshelf-api-dev`) | Render Postgres `bookshelf-db`, `basic-256mb` (`render.yaml` `databases:` `bookshelf-db`; `docs/deployment.md` `### Database`) | `basic-256mb` | plan limit to confirm (no `diskSizeGB` in `render.yaml`) |
+| Staging / dev (`bookshelf-api-dev`) | the persistent Supabase branch `dev` of the production project (`docs/RENDER.md`); the Render Postgres `bookshelf-db` it used before (`basic-256mb`) is suspended since 2026-10-22 | not recorded | plan limit to confirm |
 
 Reading the table: at 100 users the purgeable data (about 50 MB) is small against any paid plan. At 1,000 users it is about 500 MB, which is where the plan's limit must be known. At 10,000 users it is about 5 GB plus 3 GB a year of library growth. The backup job dumps the whole database daily and keeps 30 dumps (`docs/backups.md` `## Cost`): at 5 GB uncompressed that is up to 30 x the compressed size in R2's 10 GB free tier, so the backup retention needs a look at the same time (G8).
 

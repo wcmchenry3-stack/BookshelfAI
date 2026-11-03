@@ -33,7 +33,8 @@ For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](clau
 ENVIRONMENT=production
 CORS_ORIGINS=["https://bookshelfai.buffingchi.com"]
 TRUSTED_HOSTS=["bookshelfapi.buffingchi.com"]
-DATABASE_URL              (auto, from bookshelf-db)
+DATABASE_URL              (sync:false — Supabase session pooler URL as the bookshelf_app role, #696)
+MIGRATION_DATABASE_URL    (sync:false — owner-role DSN for `alembic upgrade head`, #696)
 TURNSTILE_SECRET_KEY      (sync:false — set in dashboard)
 SENTRY_DSN                (sync:false — set in dashboard)
 ```
@@ -94,7 +95,10 @@ All settings are read from the environment by `Settings` in `backend/app/core/co
 
 | Name | Required? | Default | Allowed values / range | Blank |
 |---|---|---|---|---|
-| `DATABASE_URL` | required | none | Postgres URL; port 6543 (Supabase transaction pooler) refused | error (no default) |
+| `DATABASE_URL` | required | none | Postgres URL the app connects with (the DML-only `bookshelf_app` role in prod, #696); port 6543 (Supabase transaction pooler) refused. Do not add a libpq `?options=` query: asyncpg rejects it and every connect fails | error (no default) |
+| `MIGRATION_DATABASE_URL` | required in prod once `DATABASE_URL` is `bookshelf_app` | empty (use `DATABASE_URL`) | owner-role Postgres URL, used only by `alembic` (Render's `preDeployCommand`); port 6543 refused (#696) | blank = unset |
+| `STATEMENT_TIMEOUT_MS` | optional | `5000` | milliseconds; app engine only (never migrations). 0 or less disables it (not in production) | blank = default |
+| `STATEMENT_TIMEOUT_JOB_MS` | optional | `60000` | milliseconds; the daily purge jobs' transactions (`JobSessionLocal`, `SET LOCAL`). 0 or less disables it for jobs | blank = default |
 | `JWT_PRIVATE_KEY` | required when `ENVIRONMENT` is not `development`/`test` | empty | non-empty secret (the catalog-token key derives from it) | blank = unset, then the hardened check fails |
 | `JWT_ACCESS_TTL_MINUTES` | optional | `15` | 1-60 (access-token lifetime, #689) | blank = default |
 | `REFRESH_REUSE_GRACE_SECONDS` | optional | `30` | 0-120 (seconds after a refresh-token rotation in which replaying the old token is a client retry, not reuse; 0 = every later replay is reuse; concurrent duplicates still get a replacement, #690) | blank = default |
@@ -124,7 +128,7 @@ It builds `Settings` as boot does and runs the database-free checks (such as `JW
 
 ### Database
 
-`bookshelf-db` — Postgres, `basic-256mb` plan, Oregon. Connection string is auto-injected into the API service.
+Supabase Postgres: the production project for `bookshelf-api`, its persistent branch `dev` for `bookshelf-api-dev`, both through the session pooler (port 5432). `DATABASE_URL` (app role `bookshelf_app`) and `MIGRATION_DATABASE_URL` (owner) are dashboard secrets on each service; see [`RENDER.md` → Database role](RENDER.md#database-role). The Render Postgres `bookshelf-db` that dev used before is suspended (since 2026-10-22) and no longer referenced.
 
 ### Release process (backend)
 
@@ -284,7 +288,7 @@ See [`getting-started.md`](getting-started.md) for the full local-env setup.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Render deploy fails at `alembic upgrade head` | migration error | fix the migration, re-push; the old version keeps serving traffic |
-| `/health/db` returns 503 after deploy | DB unreachable | check `bookshelf-db` status in Render dashboard |
+| `/health/db` returns 503 after deploy | DB unreachable, or `DATABASE_URL` points at a role without grants | check the Supabase project (prod) or `dev` branch status, then the startup log line `db_role current_user=...` and [`RENDER.md` → Database role](RENDER.md#database-role) |
 | Web site serving old JS | browser cached `/*` | `Cache-Control: no-cache` is set on HTML but browsers sometimes cache aggressively — hard-reload |
 | iOS build fails at `ci_post_clone.sh` | Node version mismatch (rule #12) | see `claude/ios-ci.md` |
 | Android `bundleRelease` fails with CMake error | JDK 24+ on path | `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` (rule #22, preflight in `settings.gradle`) |
