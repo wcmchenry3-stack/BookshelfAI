@@ -385,13 +385,16 @@ class TestTurnstileProtection:
         app.dependency_overrides[get_current_user] = lambda: FAKE_USER
         app.dependency_overrides[get_db] = _fake_db
 
-        with patch("app.api.scan.settings") as mock_settings:
+        with (
+            patch("app.api.scan.settings") as mock_settings,
+            patch("app.api._bot_check.settings") as mock_bc_settings,
+        ):
             mock_settings.rate_limit_scan = "10/minute"
-            mock_settings.turnstile_required = True
-            mock_settings.turnstile_secret_key = (
+            mock_settings.clamav_enabled = False
+            mock_bc_settings.turnstile_required = True
+            mock_bc_settings.turnstile_secret_key = (
                 "0x0000000000000000000000000000000000000000"
             )
-            mock_settings.clamav_enabled = False
             yield TestClient(app), mock_settings
 
         app.dependency_overrides.clear()
