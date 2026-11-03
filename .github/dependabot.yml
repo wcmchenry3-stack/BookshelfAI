@@ -148,15 +148,6 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
-      # query-string is a devDependency pinned to the exact version expo-router
-      # resolves (#779), so QueryStringDecode.test.ts exercises the same parser
-      # the app ships. Any bump decouples the test from the app (closed PR
-      # #879). Bump only alongside expo-router's own query-string.
-      - dependency-name: "query-string"
-        update-types:
-          - "version-update:semver-major"
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
       # Expo SDK 58 compatibility matrix requires ~8.28.0 — block all bumps until
       # Expo explicitly supports a newer major.
       - dependency-name: "@sentry/react-native"
