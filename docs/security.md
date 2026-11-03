@@ -112,6 +112,34 @@ Library pins: `Pillow` and `pillow-heif` are pinned exactly in `backend/requirem
 - **Sign-out:** a token request in flight is aborted with the scan and its token is never used; the next account's scans run their own challenges.
 - Tokens are never logged; breadcrumbs carry only the outcome (`timeout`, `error`, ...).
 
+## Device Attestation on /scan
+
+`POST /scan` supports device / app attestation as a stronger bot signal than Turnstile (#753).
+A valid assertion or integrity token grants immediate access and skips the Turnstile check entirely.
+
+**iOS — Apple App Attest (two-step):**
+
+1. `POST /attestation/nonce` — client calls this (auth required) to get a short-lived HMAC-signed nonce (5-minute TTL, stateless — no DB write).
+2. `POST /attestation/register` (key_id + attestation_b64 + nonce) — server verifies the App Attest cert chain via `StubAppleAttestVerifier` (stub until ATTESTATION_APPLE_APP_ID is set) and stores the public key + counter in `device_keys`.
+3. `POST /scan` (key_id + assertion_b64 + nonce) — `_check_bot_protection()` in `backend/app/api/_bot_check.py` calls `_verify_attestation()`, which verifies the assertion signature and counter against the stored key.
+
+**Android — Play Integrity (stateless per request):**
+
+1. `POST /attestation/nonce` — same endpoint; nonce embeds the user ID and timestamp.
+2. Client requests a Play Integrity token from Google with the nonce as the request hash.
+3. `POST /scan` (platform=android + integrity_token + nonce) — server calls the Google `decodeIntegrityToken` API via `LiveAndroidIntegrityVerifier`, checks the nonce, `requestPackageName`, `MEETS_DEVICE_INTEGRITY` verdict and `PLAY_RECOGNIZED` app verdict.
+
+**Kill switches:**
+
+| Env var | Effect |
+|---|---|
+| `ATTESTATION_REQUIRED=true` | Unattestation requests to `/scan` → `403 attestation_required`; Turnstile fallback is skipped |
+| `ATTESTATION_REQUIRED=false` (default) | Failed or absent attestation falls through to the Turnstile check |
+| `ATTESTATION_APPLE_APP_ID` unset | `StubAppleAttestVerifier` is used — all iOS attestations are rejected (default until owner sets up) |
+| `ATTESTATION_GOOGLE_CREDENTIALS_JSON` unset | Android integrity verifier logs a warning and returns false |
+
+See `docs/RENDER.md` → "Enabling device attestation" for the owner setup guide.
+
 ## Client IP and origin lockdown
 
 Per-IP rate limits are only as good as the client IP they key on, and the API
