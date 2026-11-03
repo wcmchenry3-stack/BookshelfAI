@@ -350,6 +350,23 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 
 **Volume and retention:** about 150 bytes per row, one row per refresh. Since #689 the access token lives 15 minutes, so a user refreshes about once per 15 minutes of use (a refresh happens only on a request after expiry): an hour of use a day is about 4 rows a day, about 30 live rows per user (about 5 KB); a heavy user (8 hours a day) about 220 rows (about 35 KB). The daily cleanup task (`app/services/token_cleanup.py` → `app/auth/refresh_family.py:purge_refresh_tokens`) deletes a row once `expires_at` has passed, or once it is revoked without having been rotated (logout, logout-all: nothing reads it again). Rotated rows stay until they expire (at most 7 days), because reuse detection needs them. Since #690 the purge runs in batches of 5,000 rows, at most 20 batches per run, with a commit per batch, and never waits for a row lock (`FOR UPDATE SKIP LOCKED` on the batch and on the rows pointing at it; a skipped row goes in a later run). Migration 0024 adds about 50 bytes per row (two UUIDs and two timestamps) plus the `replaced_by_id` index, so about 190 bytes per row. Rows go with the user (cascade). **Phase 2 account deletion and data export must include this table.**
 
+### `device_keys` (`backend/app/models/device_key.py`)
+
+Stores registered iOS App Attest public keys for `/scan` bot protection (#753).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK | `IdMixin` |
+| user_id | UUID FK | CASCADE delete on `users.id`, indexed (`UserOwnedMixin`) |
+| platform | ENUM `device_key_platform` | `ios` or `android` (android rows unused — Play Integrity is stateless) |
+| key_id | VARCHAR(256) | Hex key id from `DCAppAttestService.generateKey()` |
+| public_key_cbor | BYTEA | COSE-encoded public key from the Apple attestation object |
+| counter | BIGINT | Strictly-monotonic assertion counter; reset on re-registration |
+| last_used_at | TIMESTAMPTZ | Set on each successful `/scan` assertion |
+| created_at | TIMESTAMPTZ | Server default (`CreatedAtMixin`) |
+
+Unique constraint: `(user_id, key_id)` — one row per device per user; re-registering replaces the key.
+
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 
 Per-user count of AI calls reserved, per quota key and window (#528). Backs the daily found and no-match scan allowances (#577), the global daily ceiling and, under its own key, the per-user daily `/scan` request limit (#586). There is no monthly allowance since #582: month rows are legacy, no longer read or written ([architecture.md](architecture.md#book-identification--dedup-pipeline)).
@@ -627,6 +644,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0024_refresh_token_families.py` — refresh-token families (#690): adds the nullable columns `refresh_tokens.family_id` (UUID), `used_at` (timestamptz), `replaced_by_id` (UUID, self-FK `refresh_tokens_replaced_by_id_fkey`, `ON DELETE SET NULL`, index `ix_refresh_tokens_replaced_by_id`) and `displaced_at` (timestamptz); additive (expand only). Backfills `family_id = id` for every existing row (each its own family) in one UPDATE written with SQLAlchemy Core (the migration's transaction already holds ACCESS EXCLUSIVE on the table, so batching would not shorten any lock). `family_id` stays nullable so the previous release can keep inserting rows during the deploy; a later contract migration may make it NOT NULL. The downgrade drops the index, the FK and the four columns
 - `0025_catalog_user_split.py` — catalog/user split (#682): adds `user_books.title_override`, `author_override`, `cover_url_override` (nullable; checks for 1–500 / 1–500 / 1–2048 characters and none on unverified entries), `books.source` (nullable, check `google_books` / `open_library` / `scan`), `books.fetched_at` (nullable) and `books.merged_into_id` (self-FK `ON DELETE RESTRICT`, index `ix_books_merged_into_id`, never itself); expand only. Backfills `source` (by `source_of`'s rule) and `fetched_at = created_at` for existing books in one UPDATE. The downgrade drops the columns, constraints and index (user overrides and provenance are lost; `books` values are untouched)
 - `0026_soft_delete_trash.py` — soft delete with a 30-day trash (#683); expand only. Adds nullable `deleted_at` (timestamptz) to `user_books` and `user_custom_books`; replaces the unique constraint `uq_user_books_user_book (user_id, book_id)` with the partial unique index `uq_user_books_user_book_live` on the same columns `WHERE deleted_at IS NULL` (built before the constraint is dropped; with no trashed rows yet it enforces exactly the same thing, so nothing is lost); adds the partial index `ix_user_books_deleted_at` on `(deleted_at) WHERE deleted_at IS NOT NULL`. **The downgrade loses the trash**: it hard-deletes every trashed row (the `user_custom_books` of trashed entries, cascading to their library rows, then the remaining trashed `user_books`), since a trashed and a live entry of the same book would block the full constraint, then restores the constraint and drops the indexes and columns
+- `0027_device_attestation.py` — device attestation (#753); expand only. Adds the `device_key_platform` ENUM (`ios`, `android`) and the `device_keys` table (UUID PK, `user_id` FK CASCADE, `platform`, `key_id` VARCHAR(256), `public_key_cbor` BYTEA, `counter` BIGINT, `last_used_at` TIMESTAMPTZ nullable, `created_at` server default; unique `(user_id, key_id)`). The downgrade drops the table and the ENUM
 
 ### Writing a new migration
 
