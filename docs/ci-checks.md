@@ -176,20 +176,22 @@ None of these is defined under `.github/workflows/`, so their configuration is "
 
 `.github/rulesets/protect-dev.json` and `.github/rulesets/protect-main.json` are ruleset exports. GitHub does not read them from the repo; the owner imports each in Settings, Rules, Rulesets. Whether they have been imported, are `active`, and have not drifted is **to confirm in GitHub settings**.
 
-Both rulesets have enforcement `active`, no bypass actors, and the same rules except where noted: block deletion, block non-fast-forward (force) pushes, block creation; pull requests need 1 approving review, stale reviews dismissed on push, code-owner review, last-push approval not required; and the same 30 required status contexts listed under [Recommended required checks](#recommended-required-checks) below (unchanged for `main`).
+Both rulesets have enforcement `active`, no bypass actors, and the same rules except where noted: block deletion, block non-fast-forward (force) pushes, block creation; pull requests need 1 approving review, stale reviews dismissed on push, code-owner review, last-push approval not required; and the same 30 required status contexts listed under [Recommended required checks](#recommended-required-checks) below (unchanged for `main`; `strict_required_status_checks_policy` differs, see below).
 
 | | `protect-dev.json` (`refs/heads/dev`) | `protect-main.json` (`refs/heads/main`) |
 | --- | --- | --- |
 | Allowed merge methods | `squash` only | `merge` only (no squash, no rebase) |
 | `required_linear_history` | yes | no (it forbids merge commits) |
 | Merge queue | yes: `ALLGREEN`, `SQUASH`, up to 5 entries built and merged together, 60 minute check timeout | no |
-| `strict_required_status_checks_policy` | `false` (the queue tests each entry on top of the ones ahead of it, so PRs need not be rebased by hand; this closes #859's two-PRs-pass-separately race) | `true` (branch must be up to date, as before) |
+| `strict_required_status_checks_policy` | `false` (the queue tests each entry on top of the ones ahead of it, so PRs need not be rebased by hand; this closes #859's two-PRs-pass-separately race) | `false` (see the note below) |
 
 The `main` release flow (merge commit from `dev`, then `sync-main-to-dev.yml` and release-please) is unchanged. Ruleset changes stay owner-applied.
 
+**Why `main` is not strict (owner decision).** After a release, `sync-main-to-dev.yml` opens a `main` to `dev` PR. With `dev` squash-only that PR lands as a squash, so `main`'s release merge commit never becomes an ancestor of `dev`. With `strict_required_status_checks_policy: true` on `main`, every later `dev` to `main` release PR would be permanently "out of date" and "Update branch" cannot fix it on a protected `dev`. So `main` is non-strict. Release PRs must still pass every required check on their own head. The squashed sync still brings any `main`-only content (hotfixes) into `dev`, and git merges identical changes made on both sides cleanly.
+
 **Merge queue (`merge_group`).** The workflows that supply required checks (`ci.yml`, `repo-hygiene.yml`, `static-frontend.yml`, `migration-guard.yml`, `design-token-check.yml`, `gemini-policy.yml`, `openai-policy.yml`) also trigger on `merge_group` (`types: [checks_requested]`), so the required contexts report on each queue entry. In the queue:
 
-- `detect-changes` diffs against `github.event.merge_group.base_sha`, so the iOS and Android builds (about 19 minutes each) run only when a native path changed.
+- `detect-changes` diffs against `github.event.merge_group.base_sha`, so the iOS (about 15.5 minutes) and Android (about 7 minutes) builds run only when a native path changed.
 - `migration-guard` skips its scan and passes: `github.base_ref` and the PR labels (and so the `destructive-migration-approved` approval) do not exist on `merge_group`, and every PR was already scanned by its own required `pull_request` run before it could be queued.
 - `podfile-lock-check`, `gradle-wrapper-check` and the grandfather-list step of `claude-policy` are PR-only (`if: github.event_name == 'pull_request'`) and are skipped in the queue; a skipped job counts as passing, so the Gradle wrapper validation, the `Podfile`/`Podfile.lock` pairing and the grandfather check are not re-run on the merged result.
 - The reusable workflows in `wcmchenry3-stack/.github@main` (`gate-main-source`, `design-token-check`, `gemini-policy`, `openai-policy` and others) are not visible from this repo. After applying the `dev` ruleset, enqueue one trivial PR and confirm every required context reports on its `merge_group` run before relying on the queue.
@@ -203,7 +205,7 @@ The `main` release flow (merge commit from `dev`, then `sync-main-to-dev.yml` an
 - whether the single code owner can satisfy "1 approving review" and "code-owner review" on PRs they opened themselves;
 - whether any check outside the file (for example `Supabase Preview`) is required.
 
-`backend/tests/unit/test_ruleset_required_checks.py` (run by `test-python`) fails when a required context matches no workflow job, when its workflow has a `paths` filter or does not run on PRs into `dev`, or when a native build job is required directly. It does not check inner names after the `/`.
+`backend/tests/unit/test_ruleset_required_checks.py` (run by `test-python`) checks both ruleset files (`dev` and `main`, each against PRs into its own branch). It fails when a required context matches no workflow job, when its workflow has a `paths` filter or does not run on PRs into that branch, when a native build job is required directly, when the two files list different contexts, or when a workflow supplying a `protect-dev.json` context has no `merge_group` (`checks_requested`) trigger (it would stall the queue). It does not check inner names after the `/`.
 
 ### Recommended required checks
 
