@@ -131,8 +131,9 @@ psql -d bookshelf_restore -c "select version_num from alembic_version"
 ```
 
 Delete `restore.dump` and any copy of the key when finished. To recover
-production, restore into a fresh database, verify, then repoint
-`DATABASE_URL`; do not restore over a live database.
+production, restore into a fresh database, verify, re-apply the app role's
+grants ([below](#restoring-the-app-role)), then repoint `DATABASE_URL` and
+`MIGRATION_DATABASE_URL`; do not restore over a live database.
 
 **Restoring into a Supabase project.** The dump has no grants (`--no-acl`),
 and `alembic_version` already says 0023, so migration 0023 (#704) won't run
@@ -161,6 +162,53 @@ WHERE d.defaclrole = 'postgres'::regrole AND d.defaclnamespace = 'public'::regna
   AND a.grantee::regrole::text IN ('anon', 'authenticated');
 ```
 
+### Restoring: the app role
+
+The app connects as `bookshelf_app` (#696, [`RENDER.md` → Database
+role](RENDER.md#database-role)). A restored database has none of its grants:
+`--no-acl` drops every grant and default privilege, roles are cluster-level
+and are not in the dump (a new Supabase project has no `bookshelf_app` at
+all), and `alembic_version` already says 0028, so migration 0028 will not run
+again on deploy. Pointing the app at it as is gives `permission denied` on
+every table. After the steps above (and the `anon` / `authenticated` revoke
+on Supabase), as the owner (`postgres` on Supabase):
+
+1. **Make sure the role exists on the target.** On a new project or server,
+   create it while connected as `postgres` (so `postgres` holds `ADMIN
+   OPTION` on it; see RENDER.md for why), with a new strong password:
+
+   ```sql
+   SELECT 1 FROM pg_roles WHERE rolname = 'bookshelf_app';  -- 0 rows: create it
+   CREATE ROLE bookshelf_app LOGIN PASSWORD '<strong random password>';
+   ```
+
+2. **Re-apply the grants** with
+   [`scripts/db/app_role_grants.sql`](../scripts/db/app_role_grants.sql)
+   (paste it into the SQL editor, or `psql -v ON_ERROR_STOP=1 -f
+   scripts/db/app_role_grants.sql`). It is idempotent and gives the same end
+   state as 0028: DML on every table in `public` except `alembic_version`,
+   `USAGE` on every sequence, `BYPASSRLS`, and the owner's default privileges
+   for later tables. It stops with an error if the role does not exist.
+   `tests/integration/test_db_role.py` checks that it restores every grant.
+
+3. **Verify**: this must return 0 rows (every app table has DML for the role):
+
+   ```sql
+   SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname <> 'alembic_version'
+     AND NOT (has_table_privilege('bookshelf_app', c.oid, 'SELECT')
+          AND has_table_privilege('bookshelf_app', c.oid, 'INSERT')
+          AND has_table_privilege('bookshelf_app', c.oid, 'UPDATE')
+          AND has_table_privilege('bookshelf_app', c.oid, 'DELETE'));
+   ```
+
+4. **Repoint the services**: `MIGRATION_DATABASE_URL` to the restored
+   database's owner DSN and `DATABASE_URL` to it as `bookshelf_app`
+   (`bookshelf_app.<project-ref>` on the Supabase session pooler, port 5432),
+   then check the boot log shows `db_role current_user=bookshelf_app`.
+
+The DB Restore Drill runs steps 1-3 against every restored backup.
+
 ## Restore drill
 
 Run **DB Restore Drill** (Actions > DB Restore Drill > Run workflow) at least
@@ -181,7 +229,12 @@ The drill fails when any of these is true:
 - `expected_revision` was given and does not match;
 - `pg_restore` reports an error that is not on the allowlist below;
 - the newest backup object is older than 36 hours (the "backup freshness"
-  check). The restore still runs in that case, so the other checks report too.
+  check). The restore still runs in that case, so the other checks report too;
+- after creating `bookshelf_app` (no login) and running
+  `scripts/db/app_role_grants.sql`, some table in `public` other than
+  `alembic_version` lacks `SELECT`, `INSERT`, `UPDATE` or `DELETE` for it (the
+  "app role grants re-applied" check, which proves the restore runbook's
+  grant step works on a real dump).
 
 `pg_restore` stderr is written to a runner-local temporary file that is deleted
 in cleanup and never uploaded as an artifact. The log and summary show only the

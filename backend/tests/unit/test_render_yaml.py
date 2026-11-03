@@ -3,8 +3,10 @@
 Prod (`bookshelf-api`, `bookshelf-web`, branch `main`) must never reference a
 Render-managed database — production data lives in Supabase, configured only
 through dashboard secrets (`sync: false`). Dev (`bookshelf-api-dev`,
-`bookshelf-web-dev`, branch `dev`) keeps using the Render Postgres
-`bookshelf-db`, and runs with `ENVIRONMENT=staging` (not `development`) so it
+`bookshelf-web-dev`, branch `dev`) uses the Supabase `dev` branch, also
+through dashboard secrets (#696: the app connects as the DML-only
+`bookshelf_app` role, which a Render `fromDatabase` owner URL cannot be), and
+runs with `ENVIRONMENT=staging` (not `development`) so it
 exercises the same hardened code path as prod (`Settings.is_hardened`, #448).
 These tests also guard against secret-shaped env vars carrying a literal
 `value` and against literal Postgres connection strings anywhere in the file.
@@ -119,11 +121,14 @@ def test_dev_api_environment_is_staging():
     assert value == "staging"
 
 
-def test_dev_api_database_url_comes_from_render_database():
+def test_dev_api_database_urls_are_dashboard_secrets():
+    """#696: dev runs as bookshelf_app on the Supabase `dev` branch, so both
+    DATABASE_URL (app role) and MIGRATION_DATABASE_URL (owner) are set in the
+    dashboard, never from the legacy Render `bookshelf-db`."""
     config = _load_render_yaml()
     dev_api = _service(config, "bookshelf-api-dev")
-    database_url = _env_var(dev_api, "DATABASE_URL")
-    assert database_url["fromDatabase"]["name"] == "bookshelf-db"
+    for key in ("DATABASE_URL", "MIGRATION_DATABASE_URL"):
+        assert _env_var(dev_api, key) == {"key": key, "sync": False}
 
 
 def test_dev_api_deploys_from_dev_branch():

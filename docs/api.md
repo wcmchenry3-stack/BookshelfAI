@@ -46,7 +46,7 @@ Common status codes:
 | 402 | Payment Required | not returned by `/scan` since #582 (there is no monthly limit; older servers sent `scan_limit_reached` / `enhanced_limit_reached`) |
 | 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), the user's `/scan` requests for the day used up (`scan_requests_daily_limit`, #586), another scan still running (`scan_in_progress`), enhanced scans throttled after repeated empty enhanced scans (`enhanced_throttled`). `Retry-After` is listed in `Access-Control-Expose-Headers`, so browser clients can read it on cross-origin responses |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
-| 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity |
+| 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity, a database query ran longer than the statement timeout (`db_timeout`, any endpoint, with `Retry-After: 5`; #696) |
 
 ### Rate limits
 
