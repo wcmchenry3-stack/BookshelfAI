@@ -75,15 +75,17 @@ Always install JS dependencies before any Gradle command — both locally and in
 
 ```bash
 cd frontend
-CI=1 EXPO_OFFLINE=1 EXPO_NO_TELEMETRY=1 npx expo prebuild --platform android --no-install
+CI=1 EXPO_OFFLINE=1 EXPO_NO_TELEMETRY=1 npx expo prebuild --platform android --no-install --no-clean
 git diff -- android   # review every hunk by hand before committing
 git add android/
 git commit -m "chore(android): regenerate prebuild after <reason>"
 ```
 
-Don't pass `--clean`. Even without it, prebuild may clear and recreate
-`android/` when the Expo template changes (it did on the SDK 58 upgrade), so
-**always restore these hand edits after a prebuild**:
+Always pass `--no-clean` and never `--clean`. From SDK 58 the Expo CLI cleans
+by default (`clean: !args['--no-clean']`): without `--no-clean`, prebuild
+deletes `android/` and recreates it from the template, which is what happened
+on the SDK 58 upgrade (#714). Template changes can still overwrite files, so
+**review the diff and restore these hand edits after a prebuild**:
 
 | File | Hand edit | Why |
 |---|---|---|
