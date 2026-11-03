@@ -86,6 +86,7 @@ See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md)
 - Tabs: `app/(tabs)/<name>.tsx`
 - Auth: `app/(auth)/<name>.tsx`
 - Modals: `app/<name>.tsx` with `presentation: 'modal'`
+- Async (lazy) routes are **off** on every platform: `app.json` sets `["expo-router", { "asyncRoutes": false }]` (#712). The SDK 58 expo-router plugin turns them on for web by default; SDK 56 did not. With them on, the `--dev` web export used by the e2e suite names every chunk `<basename>-<md5 of ''>.js` (`@expo/metro-config` skips content hashing in dev), so the `my-books`, `settings` and `wishlist` route chunks are overwritten by the lazily loaded locale files with the same basename and those tabs crash with "Requiring unknown module". Turning lazy web routes on is a separate decision and needs that collision handled first. Guarded by `__tests__/unit/AppConfigAsyncRoutes.test.ts`.
 
 ### Internationalisation (i18n)
 

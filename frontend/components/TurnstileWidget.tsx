@@ -166,6 +166,7 @@ export function TurnstileWidget({ broker, siteKey, baseUrl }: TurnstileWidgetPro
         allowsInlineMediaPlayback={false}
         webviewDebuggingEnabled={false}
         scrollEnabled={false}
+        focusable={false}
       />
     </View>
   );
