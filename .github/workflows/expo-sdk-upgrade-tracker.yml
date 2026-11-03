@@ -132,7 +132,7 @@ jobs:
               "1. In \`frontend/package.json\` set \`\"expo\": \"^${LATEST}\"\`" \
               "2. Run \`npx expo install --fix\` — this re-pins all managed dependencies to the new SDK range" \
               "3. Run \`npm install\` and commit the updated \`package-lock.json\`" \
-              "4. Run \`expo prebuild --platform android\` and commit any \`android/\` changes" \
+              "4. Run \`npx expo prebuild --platform android --no-install --no-clean\` (and the same for \`ios\`), restore the hand edits listed in docs/claude/android-ci.md and ios-ci.md, and commit" \
               "5. Open a PR targeting \`dev\` — CI will validate everything" \
               "" \
               "_Checked automatically · ${DATE}_" \
