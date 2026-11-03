@@ -40,7 +40,7 @@ Monorepo: `backend/` · `frontend/` · `.github/` · `docs/`
 13. First import in `app/_layout.tsx` must always be `from '../lib/sentry'` — Sentry must self-init before any other module.
 14. Read `docs/claude/ios-ci.md` before modifying `ci_post_clone.sh`, `ci_post_xcodebuild.sh`, or anything in `ci_scripts/`.
 15. After any change to Podfile, `.xcode.env`, or `ci_scripts/*`, verify `js-bundle-check` and `ios-build-check` CI jobs pass before merging.
-16. Before modifying files under `frontend/android/`: run `expo prebuild --platform android` locally and commit the result.
+16. Before modifying files under `frontend/android/`: run `expo prebuild --platform android --no-install --no-clean` locally and commit the result. Always pass `--no-clean` (from SDK 58 prebuild otherwise deletes and recreates `android/`, dropping hand edits), then restore the hand edits listed in `docs/claude/android-ci.md`.
 17. `frontend/android/app/debug.keystore` is gitignored — CI generates it at build time. Never commit a keystore.
 18. Never change the Gradle wrapper version (`gradle-wrapper.properties`) without verifying compatibility with current AGP and RN Gradle Plugin.
 19. Read `docs/claude/android-ci.md` before modifying `build.gradle`, `settings.gradle`, or `gradle.properties`.
