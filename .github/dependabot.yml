@@ -147,12 +147,19 @@ updates:
       # @sentry/browser and @sentry/core are devDependencies used only by
       # __tests__/unit/sentryScrub.test.ts. They are pinned to the exact version
       # @sentry/react-native bundles (#736) so the scrub test exercises the same
-      # Sentry the app ships. Remove this ignore when @sentry/react-native moves
-      # to @sentry/core 11, and bump both packages together.
+      # Sentry the app ships, so every update type is ignored, matching the
+      # @sentry/react-native ignore above. Bump all three together when Expo
+      # allows a newer @sentry/react-native.
       - dependency-name: "@sentry/browser"
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
       - dependency-name: "@sentry/core"
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     labels:
       - "dependencies"
       - "frontend"
