@@ -3,8 +3,6 @@
 import time
 import uuid
 
-import pytest
-
 from app.core.attestation import _NONCE_TTL_SECONDS, issue_nonce, verify_nonce
 
 _SECRET = "test-secret-at-least-32-bytes-long-here"

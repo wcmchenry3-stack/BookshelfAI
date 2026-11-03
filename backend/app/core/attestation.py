@@ -76,7 +76,7 @@ def verify_nonce(nonce: str, user_id: uuid.UUID, secret: str) -> bool:
     try:
         payload = _b64url_decode(parts[0])
         sig = _b64url_decode(parts[1])
-    except Exception:
+    except Exception:  # noqa: BLE001 - malformed nonce, treat as invalid
         return False
     expected = hmac.new(secret.encode(), payload, hashlib.sha256).digest()
     if not hmac.compare_digest(sig, expected):
@@ -201,7 +201,7 @@ class LiveAndroidIntegrityVerifier:
     _DECODE_URL = (
         "https://playintegrity.googleapis.com/v1/{package_name}:decodeIntegrityToken"
     )
-    _REQUIRED_DEVICE_VERDICTS = {"MEETS_DEVICE_INTEGRITY"}
+    _REQUIRED_DEVICE_VERDICTS = {"MEETS_DEVICE_INTEGRITY"}  # noqa: RUF012
     _REQUIRED_APP_VERDICT = "PLAY_RECOGNIZED"
 
     async def verify_token(self, token: str, nonce: str, package_name: str) -> bool:
@@ -224,7 +224,7 @@ class LiveAndroidIntegrityVerifier:
                 )
                 resp.raise_for_status()
             outer = resp.json().get("tokenPayloadExternal", {})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - any API/network failure = not verified
             logger.warning("Play Integrity API call failed: %s", exc)
             return False
 

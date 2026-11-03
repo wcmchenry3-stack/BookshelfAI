@@ -6,7 +6,6 @@ Services and DB are mocked; no real database or network calls.
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.core.attestation import AttestationResult, issue_nonce
@@ -161,7 +160,6 @@ class TestRegister:
 
     def test_apple_verifier_returns_none_gives_400(self, monkeypatch):
         """Stub verifier (default) returns None → 400 attestation_invalid."""
-        from app.api.attestation import get_apple_verifier
         from app.auth.dependencies import get_current_user
         from app.core.database import get_db
 
