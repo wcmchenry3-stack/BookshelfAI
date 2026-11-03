@@ -21,6 +21,7 @@ from app.ai import quota
 from app.ai.entitlements import Tier
 from app.ai.gateway import AIResult, FeatureDisabledError
 from app.ai.providers.base import ProviderTimeoutError
+from app.api import _bot_check as bot_check_api
 from app.api import scan as scan_api
 from app.models.ai_usage import (
     STATUS_ERROR,
@@ -382,7 +383,7 @@ class TestCheckTurnstile:
         verify = AsyncMock()
         with (
             patch.object(scan_api.settings, "turnstile_required", False),
-            patch.object(scan_api, "_verify_turnstile", verify),
+            patch.object(bot_check_api, "_verify_turnstile", verify),
         ):
             await scan_api._check_turnstile(None)
         verify.assert_not_awaited()
@@ -394,7 +395,7 @@ class TestCheckTurnstile:
     async def test_refusals(self, token, valid, code):
         with (
             patch.object(scan_api.settings, "turnstile_required", True),
-            patch.object(scan_api, "_verify_turnstile", AsyncMock(return_value=valid)),
+            patch.object(bot_check_api, "_verify_turnstile", AsyncMock(return_value=valid)),
             pytest.raises(HTTPException) as err,
         ):
             await scan_api._check_turnstile(token)
@@ -404,7 +405,7 @@ class TestCheckTurnstile:
         verify = AsyncMock(return_value=True)
         with (
             patch.object(scan_api.settings, "turnstile_required", True),
-            patch.object(scan_api, "_verify_turnstile", verify),
+            patch.object(bot_check_api, "_verify_turnstile", verify),
         ):
             await scan_api._check_turnstile("tok")
         verify.assert_awaited_once_with("tok")

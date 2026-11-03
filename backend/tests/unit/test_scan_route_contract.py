@@ -38,7 +38,6 @@ PATCHED_BY_NAME = [
     "_reserve_scan_quota",
     "_refund_scan_quota",
     "_release_scan_lease",
-    "_verify_turnstile",
     "_usage_row",
     "_settlement",
     "_dedupe_enriched",

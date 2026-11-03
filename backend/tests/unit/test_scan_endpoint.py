@@ -404,7 +404,7 @@ class TestTurnstileProtection:
 
     def test_returns_403_when_token_invalid(self, client_with_turnstile):
         client, _ = client_with_turnstile
-        with patch("app.api.scan._verify_turnstile", new=AsyncMock(return_value=False)):
+        with patch("app.api._bot_check._verify_turnstile", new=AsyncMock(return_value=False)):
             resp = client.post(
                 "/scan",
                 files={"file": _image_file()},
@@ -416,7 +416,7 @@ class TestTurnstileProtection:
     def test_proceeds_when_token_valid(self, client_with_turnstile):
         client, _ = client_with_turnstile
         with (
-            patch("app.api.scan._verify_turnstile", new=AsyncMock(return_value=True)),
+            patch("app.api._bot_check._verify_turnstile", new=AsyncMock(return_value=True)),
             patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
