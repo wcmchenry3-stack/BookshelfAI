@@ -23,6 +23,8 @@ describe('expo-router URL param parsing', () => {
 
   it('survives a malformed sequence without throwing', () => {
     expect(() => paramsOf('/book?title=%E0%A4%A')).not.toThrow();
-    expect(paramsOf('/book?title=%E0%A4%A')).toEqual({ title: '%E0%A4%A' });
+    // The exact value is the router's own decoder's choice since SDK 58 (#884);
+    // only "does not throw" is ours to guarantee (#712 owner decision).
+    expect(typeof paramsOf('/book?title=%E0%A4%A').title).toBe('string');
   });
 });
