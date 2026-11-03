@@ -1,0 +1,87 @@
+{
+  "name": "Protect dev (squash + merge queue)",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/dev"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "creation"
+    },
+    {
+      "type": "required_linear_history"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": true,
+        "require_last_push_approval": false,
+        "allowed_merge_methods": ["squash"]
+      }
+    },
+    {
+      "type": "merge_queue",
+      "parameters": {
+        "check_response_timeout_minutes": 60,
+        "grouping_strategy": "ALLGREEN",
+        "max_entries_to_build": 5,
+        "max_entries_to_merge": 5,
+        "merge_method": "SQUASH",
+        "min_entries_to_merge": 1,
+        "min_entries_to_merge_wait_minutes": 0
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "secret-scan / Secret scan (gitleaks)" },
+          { "context": "lint-python / Lint Python (black + ruff)" },
+          { "context": "lint-frontend / Lint frontend (eslint + prettier)" },
+          { "context": "test-python / Test Python (pytest)" },
+          { "context": "test-frontend / Test frontend (jest/vitest)" },
+          { "context": "cve-python / CVE scan Python (pip-audit)" },
+          { "context": "cve-frontend / CVE scan frontend (npm audit)" },
+          { "context": "test-migrations" },
+          { "context": "sast-python" },
+          { "context": "js-bundle-check" },
+          { "context": "native-build-gate" },
+          { "context": "expo-compat / Expo Compatibility Check" },
+          { "context": "local-path-check / Local Path Detection" },
+          { "context": "podfile-lock-check" },
+          { "context": "migration-guard" },
+          { "context": "typecheck-frontend" },
+          { "context": "claude-policy" },
+          { "context": "android-bundle-check" },
+          { "context": "gradle-wrapper-check" },
+          { "context": "static-frontend" },
+          { "context": "repo-hygiene" },
+          { "context": "gate-main-source / Verify PR source is dev" },
+          { "context": "backend-health / Backend Health" },
+          { "context": "sentry-check / Sentry Check" },
+          { "context": "openai-policy / OpenAI API Policy Check" },
+          { "context": "openai-policy-check / OpenAI API Policy Check" },
+          { "context": "gemini-policy-check / Gemini API Policy Check" },
+          { "context": "provenance-coverage / Provenance Coverage" },
+          { "context": "feedback-token-lint / Feedback Token Lint" },
+          { "context": "design-token-check / Design Tokens & Accessibility Check" }
+        ]
+      }
+    }
+  ],
+  "bypass_actors": []
+}

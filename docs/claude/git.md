@@ -3,7 +3,7 @@
 See [~/.claude/standards/git.md](~/.claude/standards/git.md) for the full workflow, branching strategy, conventional commits, and PR process.
 
 ## book_app specific
-- Squash merge into `dev`; merge commit into `main` for releases
+- Squash merge into `dev` (through the merge queue); merge commit into `main` for releases. Rulesets enforce this: `.github/rulesets/protect-dev.json` is squash-only plus merge queue, `protect-main.json` is merge-commit-only. Never squash a release PR into `main`. `protect-main.json` has `strict_required_status_checks_policy: false` on purpose: the post-release `sync-main-to-dev` PR lands on `dev` as a squash, so `main`'s release merge commit never becomes an ancestor of `dev` and a strict `main` would leave every later release PR permanently out of date. Release PRs still pass every required check on their own head (see `docs/ci-checks.md`, Branch protection).
 - Draft PRs only — Claude opens them; user reviews and merges
 
 ## Hooks (`.claude/hooks/`, registered in `.claude/settings.json`)
