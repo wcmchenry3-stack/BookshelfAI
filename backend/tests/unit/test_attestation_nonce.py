@@ -78,7 +78,8 @@ class TestVerifyNonce:
         uid = _user()
         now = int(time.time())
         monkeypatch.setattr(
-            "app.core.attestation.time.time", lambda: float(now - _NONCE_TTL_SECONDS + 1)
+            "app.core.attestation.time.time",
+            lambda: float(now - _NONCE_TTL_SECONDS + 1),
         )
         nonce = issue_nonce(uid, _SECRET)
         monkeypatch.undo()

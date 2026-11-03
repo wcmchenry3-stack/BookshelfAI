@@ -143,5 +143,7 @@ async def register_device(
         row.counter = result.counter
 
     await db.commit()
-    logger.info("device_key registered user=%s key_id=%.16s", current_user.id, body.key_id)
+    logger.info(
+        "device_key registered user=%s key_id=%.16s", current_user.id, body.key_id
+    )
     return RegisterResponse(registered=True)

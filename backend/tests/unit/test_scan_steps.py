@@ -555,7 +555,7 @@ class _Pipeline:
     STEPS = (
         "_load_scan_settings",
         "_count_scan_request",
-        "_check_turnstile",
+        "_check_bot_protection",
         "_read_validated_upload",
         "_normalise_image",
         "_serve_saved_answer",

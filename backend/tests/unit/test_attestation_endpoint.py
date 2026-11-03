@@ -63,9 +63,7 @@ class TestNonce:
     def test_unconfigured_secret_returns_503(self, monkeypatch):
         from app.auth.dependencies import get_current_user
 
-        monkeypatch.setattr(
-            "app.api.attestation.settings.attestation_nonce_secret", ""
-        )
+        monkeypatch.setattr("app.api.attestation.settings.attestation_nonce_secret", "")
         app.dependency_overrides[get_current_user] = lambda: FAKE_USER
         try:
             resp = TestClient(app).post("/attestation/nonce")
@@ -110,9 +108,7 @@ class TestRegister:
         from app.auth.dependencies import get_current_user
         from app.core.database import get_db
 
-        monkeypatch.setattr(
-            "app.api.attestation.settings.attestation_apple_app_id", ""
-        )
+        monkeypatch.setattr("app.api.attestation.settings.attestation_apple_app_id", "")
         monkeypatch.setattr(
             "app.api.attestation.settings.attestation_nonce_secret", _TEST_SECRET
         )

@@ -42,9 +42,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "CREATE TYPE device_key_platform AS ENUM ('ios', 'android')"
-    )
+    op.execute("CREATE TYPE device_key_platform AS ENUM ('ios', 'android')")
     op.create_table(
         "device_keys",
         sa.Column("id", UUID(as_uuid=True), primary_key=True),

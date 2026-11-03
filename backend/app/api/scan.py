@@ -4,7 +4,6 @@ imported under the names tests patch on this module."""
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated
 
@@ -12,16 +11,8 @@ import anyio
 import anyio.to_thread
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
-
-from app.core.attestation import (
-    LiveAndroidIntegrityVerifier,
-    StubAppleAttestVerifier,
-    verify_nonce,
-)
-from app.models.device_key import DeviceKey
 
 from app.ai import breaker, ledger, quota, scan_records
 from app.ai.entitlements import Tier
@@ -34,6 +25,11 @@ from app.ai.gateway import (
 )
 from app.ai.registry import get_feature
 from app.ai.settings import AISettings, AISettingsUnavailableError, get_ai_settings
+from app.api._bot_check import (
+    _check_bot_protection,
+    _check_turnstile,  # noqa: F401 — re-exported for test patching
+    _verify_turnstile,  # noqa: F401 — re-exported for test patching
+)
 from app.auth.dependencies import get_current_user
 from app.core import catalog_token
 from app.core.config import settings
@@ -87,7 +83,6 @@ router = APIRouter(tags=["scan"])
 # token, ``enhanced``, ``attempt``), which together are a few KB.
 SCAN_UPLOAD_PATH = "/scan"
 MAX_SCAN_REQUEST_BYTES = MAX_IMAGE_BYTES + 1024 * 1024
-TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 # The ``attempt`` form field (#603): 1 is the first try, 2..6 the app's
 # scheduled retries (#574). Recorded only (ledger row and scan_record log
 # line); never used for charging, limits or ordering.
@@ -99,27 +94,6 @@ SCAN_ATTEMPT_MAX = 6
 # and at most SCAN_NORMALISE_CONCURRENCY run at once per process to bound
 # peak memory. Requests over the limit wait for a slot.
 _NORMALISE_LIMITER = anyio.CapacityLimiter(settings.scan_normalise_concurrency)
-
-
-async def _verify_turnstile(token: str) -> bool:
-    """Verify a Cloudflare Turnstile token against the siteverify endpoint.
-
-    Returns True if the token is valid, False otherwise.
-    A 5-second timeout prevents a Turnstile outage from blocking the endpoint.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-            resp = await client.post(
-                TURNSTILE_VERIFY_URL,
-                data={"secret": settings.turnstile_secret_key, "response": token},
-            )
-            resp.raise_for_status()
-            return bool(resp.json().get("success"))
-    # Any Turnstile failure (network, timeout, malformed response) is treated as
-    # verification failure rather than propagating.
-    except Exception as exc:  # noqa: BLE001 - any failure = not verified
-        logger.warning("Turnstile verification failed: %s", exc)
-        return False
 
 
 async def _enrich(candidates: list) -> tuple[list[EnrichedBook], bool]:
@@ -245,120 +219,6 @@ async def _load_scan_settings(db: AsyncSession, enhanced: bool) -> AISettings:
             detail="enhanced_scan_disabled",
         )
     return ai
-
-
-async def _check_turnstile(token: str | None) -> None:
-    """Cloudflare Turnstile bot check, enabled when TURNSTILE_REQUIRED=true
-    (the default). The startup handler already confirmed the secret key is
-    present when required. 400 without a token, 403 when it fails."""
-    if settings.turnstile_required:
-        if not token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing Turnstile token",
-            )
-        if not await _verify_turnstile(token):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Turnstile verification failed",
-            )
-
-
-async def _check_bot_protection(
-    *,
-    cf_token: str | None,
-    attest_platform: str | None,
-    attest_key_id: str | None,
-    attest_assertion: str | None,
-    attest_token: str | None,
-    attest_nonce: str | None,
-    user_id: uuid.UUID,
-    db: AsyncSession,
-) -> None:
-    """Bot protection for /scan (#753): attestation first, Turnstile fallback.
-
-    If the client sends attestation data (nonce + platform), it is verified
-    first. A valid assertion / Play Integrity token grants immediate access
-    without a Turnstile check.  If attestation is absent or fails, the
-    standard Turnstile path runs (TURNSTILE_REQUIRED still applies).
-    """
-    if attest_nonce and attest_platform:
-        verified = await _verify_attestation(
-            platform=attest_platform,
-            key_id=attest_key_id,
-            assertion_b64=attest_assertion,
-            integrity_token=attest_token,
-            nonce=attest_nonce,
-            user_id=user_id,
-            db=db,
-        )
-        if verified:
-            return
-        if settings.attestation_required:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Attestation verification failed",
-            )
-    await _check_turnstile(cf_token)
-
-
-async def _verify_attestation(
-    *,
-    platform: str,
-    key_id: str | None,
-    assertion_b64: str | None,
-    integrity_token: str | None,
-    nonce: str,
-    user_id: uuid.UUID,
-    db: AsyncSession,
-) -> bool:
-    """Verify a device assertion (#753).  Returns True on success."""
-    if not verify_nonce(nonce, user_id, settings.attestation_nonce_secret):
-        return False
-
-    if platform == "ios":
-        if not key_id or not assertion_b64:
-            return False
-        row = (
-            await db.execute(
-                select(DeviceKey).where(
-                    DeviceKey.user_id == user_id,
-                    DeviceKey.key_id == key_id,
-                    DeviceKey.platform == "ios",
-                )
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            return False
-        verifier = StubAppleAttestVerifier()
-        result = await verifier.verify_assertion(
-            key_id=key_id,
-            assertion_b64=assertion_b64,
-            public_key_cbor=row.public_key_cbor,
-            nonce=nonce,
-            stored_counter=row.counter,
-        )
-        if result is None:
-            return False
-        row.counter = result.counter
-        row.last_used_at = datetime.now(UTC)
-        await db.commit()
-        return True
-
-    if platform == "android":
-        if not integrity_token:
-            return False
-        pkg = settings.attestation_android_package_name
-        if not pkg:
-            return False
-        verifier = LiveAndroidIntegrityVerifier()
-        return await verifier.verify_token(
-            token=integrity_token,
-            nonce=nonce,
-            package_name=pkg,
-        )
-
-    return False
 
 
 async def _normalise_image(image_bytes: bytes, feature: str, ai: AISettings) -> bytes:
