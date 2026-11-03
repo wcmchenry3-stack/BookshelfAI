@@ -16,8 +16,6 @@
     "@babel/core",
     // Peer dep of @testing-library/react-native, loaded by it at runtime, never imported.
     "react-test-renderer",
-    // Named by the jest-expo preset's transform and resolved by Jest itself (jest.config.js spreads the preset), never imported.
-    "babel-jest",
     // Implied by app.json userInterfaceStyle:automatic; install at next Mac native build to fix Android system UI. Suppression is permanent until then.
     "expo-system-ui",
     // Not used (no OTA updates — native builds via Xcode Cloud and Play Console). Suppression is permanent.
