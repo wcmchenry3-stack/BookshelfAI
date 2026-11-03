@@ -1,5 +1,4 @@
 import * as Sentry from '@sentry/react-native';
-import type { EventHint } from '@sentry/core';
 import { filterExpectedNetworkNoise } from './sentryFilter';
 import { scrubBreadcrumb, scrubSentryEvent } from './sentryScrub';
 
@@ -12,7 +11,7 @@ const DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
  * redact auth headers / config / bodies / bearer tokens from extra, contexts
  * and mechanism data (sentryScrub.ts).
  */
-export function sentryBeforeSend<T extends Sentry.ErrorEvent>(event: T, hint: EventHint): T | null {
+export function sentryBeforeSend(event: Sentry.ErrorEvent, hint: any): Sentry.ErrorEvent | null {
   const kept = filterExpectedNetworkNoise(event, hint, () =>
     Sentry.addBreadcrumb({
       category: 'sentry.filter',
