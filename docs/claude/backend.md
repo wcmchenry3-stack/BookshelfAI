@@ -10,6 +10,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 cp .env.example .env   # fill in your values
+psql -d bookshelf -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # once per cluster; migration 0028 needs it (#696)
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
