@@ -1,7 +1,7 @@
 # Frontend Conventions
 
 ## Stack
-Expo SDK 55 · Expo Router · React Native · TypeScript · axios · expo-secure-store
+Expo SDK 58 · Expo Router · React Native · TypeScript · axios · expo-secure-store
 
 ## Running Locally
 
@@ -86,6 +86,7 @@ See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md)
 - Tabs: `app/(tabs)/<name>.tsx`
 - Auth: `app/(auth)/<name>.tsx`
 - Modals: `app/<name>.tsx` with `presentation: 'modal'`
+- Async (lazy) routes are **off** on every platform: `app.json` sets `["expo-router", { "asyncRoutes": false }]` (#712). The SDK 58 expo-router plugin turns them on for web by default; SDK 56 did not. With them on, the `--dev` web export used by the e2e suite names every chunk `<basename>-<md5 of ''>.js` (`@expo/metro-config` skips content hashing in dev), so the `my-books`, `settings` and `wishlist` route chunks are overwritten by the lazily loaded locale files with the same basename and those tabs crash with "Requiring unknown module". Turning lazy web routes on is a separate decision and needs that collision handled first. Guarded by `__tests__/unit/AppConfigAsyncRoutes.test.ts`.
 
 ### Internationalisation (i18n)
 
@@ -200,7 +201,7 @@ Call the backend through the `api` instance in `lib/api.ts` (never bare `axios`,
 
 ### Dependencies: vendored `decode-uri-component` (#779)
 
-`expo-router` -> `query-string@7.1.3` -> `decode-uri-component@^0.2.2` is affected by CVE-2026-118664 (DoS via quadratic replacement of percent-encoded runs; fixed in 0.5.1). The fixed releases (>= 0.3) are ESM-only while `query-string@7` `require()`s the package, and expo-router (SDK 56-58) keeps `query-string@^7.1.3`, and no patched 7.x exists, so a plain override would break Metro and Jest. Instead `frontend/vendor/decode-uri-component/` holds a CommonJS port of the 0.5.1 algorithm (MIT, licence file kept; package version `0.5.1+bookshelf.0`, which semver compares equal to 0.5.1, so Trivy no longer matches the CVE range). `package.json` lists it as `"decode-uri-component": "file:./vendor/decode-uri-component"` and the `overrides` entry `"$decode-uri-component"` forces every consumer onto it (a `file:` path directly in `overrides` resolves relative to the dependent and breaks). No `patch-package` or `postinstall`. Expo SDK 56, 57 and 58 all pin `query-string@^7.1.3` (verified with `npm view`). **Removal trigger:** on each Expo SDK bump, run `npm view expo-router@<sdk> dependencies.query-string`; once it is `>=8` (or `query-string` no longer depends on `decode-uri-component <0.5.1`), delete `vendor/decode-uri-component/`, the `dependencies` entry and the `overrides` entry, then re-run `npm install`. `vendor/` is excluded from Prettier and ESLint so the file stays comparable with upstream. Tests: `__tests__/unit/QueryStringDecode.test.ts`, `__tests__/unit/RouterParamParsing.test.ts`.
+`expo-router` -> `query-string@7.1.3` -> `decode-uri-component@^0.2.2` is affected by CVE-2026-118664 (DoS via quadratic replacement of percent-encoded runs; fixed in 0.5.1). The fixed releases (>= 0.3) are ESM-only while `query-string@7` `require()`s the package, and no patched 7.x exists, so a plain override would break Metro and Jest. Instead `frontend/vendor/decode-uri-component/` holds a CommonJS port of the 0.5.1 algorithm (MIT, licence file kept; package version `0.5.1+bookshelf.0`, which semver compares equal to 0.5.1, so Trivy no longer matches the CVE range). `package.json` lists it as `"decode-uri-component": "file:./vendor/decode-uri-component"` and the `overrides` entry `"$decode-uri-component"` forces every consumer onto it (a `file:` path directly in `overrides` resolves relative to the dependent and breaks). No `patch-package` or `postinstall`. As of SDK 58, `expo-router@58.0.29` no longer declares `query-string` at all (`npm view expo-router@58.0.29 dependencies.query-string` is empty; 58.0.0 still had `^7.1.3`) and its `getStateFromPath` decodes params itself, so the vendored package is now reached only through the `query-string@7.1.3` devDependency (used by `QueryStringDecode.test.ts`). Whether to remove the vendor dir, the `overrides` entry and that devDependency is pending owner decision #884; do not remove them until it is made. **Removal trigger:** on each Expo SDK bump, run `npm view expo-router@<sdk> dependencies.query-string`; once it is `>=8` (or `query-string` no longer depends on `decode-uri-component <0.5.1`), delete `vendor/decode-uri-component/`, the `dependencies` entry and the `overrides` entry, then re-run `npm install`. `vendor/` is excluded from Prettier and ESLint so the file stays comparable with upstream. Tests: `__tests__/unit/QueryStringDecode.test.ts`, `__tests__/unit/RouterParamParsing.test.ts` (imports `expo-router/build/fork/getStateFromPath` since SDK 58).
 
 ## Lint
 

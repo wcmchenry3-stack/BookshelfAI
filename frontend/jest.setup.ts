@@ -64,3 +64,13 @@ jest.mock('react-native-webview', () => {
     __mock: { injectJavaScript, reload, mount },
   };
 });
+
+// expo-font (SDK 58) resolves each font through expo-asset's asset registry, which
+// has no entries under Jest, so @expo/vector-icons' componentDidMount font load
+// rejected with `Module "N" is missing from the asset registry`. No real fonts load
+// in tests: report every family as loaded and make loadAsync a no-op.
+jest.mock('expo-font', () => ({
+  ...jest.requireActual('expo-font'),
+  loadAsync: jest.fn().mockResolvedValue(undefined),
+  isLoaded: jest.fn().mockReturnValue(true),
+}));

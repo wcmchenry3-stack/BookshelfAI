@@ -125,10 +125,9 @@ updates:
           - "version-update:semver-minor"
       - dependency-name: "react"
         update-types: ["version-update:semver-major"]
-      # Expo SDK 56 pins jest to ~29.7.0 and @types/jest to 29.5.14, and
-      # jest-expo@56 still depends on jest 29 packages. Bumping to jest 30
-      # fails the expo-compat check (see closed PR #441). Revisit when an
-      # Expo SDK release moves to jest 30.
+      # Expo SDK 58 pins jest to ~30.5.2 and @types/jest to 30.0.0 (jest-expo@58
+      # runs on jest 30). Move them only with the SDK: a bump past the SDK's
+      # range fails the expo-compat check (see closed PR #441).
       - dependency-name: "jest"
         update-types:
           - "version-update:semver-major"
@@ -137,7 +136,28 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
-      # Expo SDK 56 compatibility matrix requires ~7.11.0 — block all bumps until
+      # jest-environment-jsdom must match the jest major (SDK 58: ~30.5.2). Bump
+      # together with jest on the Expo SDK upgrade (see closed PR #865).
+      - dependency-name: "jest-environment-jsdom"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # SDK-managed native module: Expo SDK 58 expects 14.0.1; a bump past that
+      # fails expo-compat (see closed PR #864). Move it with the SDK.
+      - dependency-name: "react-native-webview"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # query-string is a devDependency pinned to the exact version expo-router
+      # resolves (#779), so QueryStringDecode.test.ts exercises the same parser
+      # the app ships. Any bump decouples the test from the app (closed PR
+      # #879). Bump only alongside expo-router's own query-string.
+      - dependency-name: "query-string"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      # Expo SDK 58 compatibility matrix requires ~8.28.0 — block all bumps until
       # Expo explicitly supports a newer major.
       - dependency-name: "@sentry/react-native"
         update-types:
