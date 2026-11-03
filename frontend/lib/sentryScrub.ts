@@ -386,11 +386,15 @@ function stripUrlQueries(s: string): string {
     }
     return j;
   };
+  // URL schemes are case-insensitive (`HTTPS://`). Scan an ASCII-only
+  // lower-cased copy: A-Z -> a-z keeps every index identical to `s` (unlike
+  // toLowerCase on non-ASCII text), and cutting still happens on `s`.
+  const lower = s.replace(/[A-Z]/g, (c) => c.toLowerCase());
   let i = 0;
   if (s.charCodeAt(0) === 47) i = cut(1);
-  for (let h = s.indexOf('http', i); h !== -1; h = s.indexOf('http', i)) {
+  for (let h = lower.indexOf('http', i); h !== -1; h = lower.indexOf('http', i)) {
     let p = h + 4;
-    if (s.charAt(p) === 's') p++;
+    if (lower.charAt(p) === 's') p++;
     if (s.startsWith('://', p) && (h === 0 || !isWord(s.charCodeAt(h - 1)))) {
       i = cut(p + 3);
     } else {

@@ -668,6 +668,15 @@ describe('beforeSendTransaction scrub (#715)', () => {
     expect(out.transaction).toBe('GET http://a/b then https://c/d and xhttp://e/f?k=1 end');
   });
 
+  it('matches URL schemes case-insensitively and keeps the original casing', () => {
+    const out = scrubSentryTransaction({
+      transaction: 'GET HTTPS://Api.Example.com/Books?isbn=978123#private and Http://x/Y#z',
+      spans: [{ description: 'İstanbul HTTP://h/p?q=1 ok' }],
+    }) as { transaction: string; spans: { description: string }[] };
+    expect(out.transaction).toBe('GET HTTPS://Api.Example.com/Books and Http://x/Y');
+    expect(out.spans[0].description).toBe('İstanbul HTTP://h/p ok');
+  });
+
   describe('linear time', () => {
     const median = (f: () => void) => {
       const t: number[] = [];
