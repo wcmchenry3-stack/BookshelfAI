@@ -362,5 +362,6 @@ def test_delete_from_is_flagged(stmt):
 
 
 def test_ruleset_requires_migration_guard():
-    ruleset = REPO / ".github" / "rulesets" / "protect-main-dev.json"
-    assert '"context": "migration-guard"' in ruleset.read_text()
+    for name in ("protect-dev.json", "protect-main.json"):
+        ruleset = REPO / ".github" / "rulesets" / name
+        assert '"context": "migration-guard"' in ruleset.read_text()
