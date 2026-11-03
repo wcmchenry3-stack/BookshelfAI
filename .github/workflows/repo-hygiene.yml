@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: File length cap (600 lines)
-        run: python3 scripts/check_file_length.py
+        run: python3 scripts/check_file_length.py --strict
 
       - name: Backend dead-code check (vulture)
         # Installs only the vulture pin from backend/requirements-dev.txt into a
@@ -53,8 +53,13 @@ jobs:
           "$RUNNER_TEMP/vulture-venv/bin/pip" install --quiet --only-binary=:all: "$spec"
           "$RUNNER_TEMP/vulture-venv/bin/vulture" app --min-confidence 60
 
-      - name: Copy-paste detection (jscpd)
+      - name: Copy-paste detection (jscpd, source)
         run: npx --yes "jscpd@${JSCPD_VERSION}" --config .jscpd.json
+
+      - name: Copy-paste detection (jscpd, tests)
+        # Tests have their own, looser budget (.jscpd.tests.json) so source
+        # duplication cannot hide in it. Report lands in jscpd-report/tests/.
+        run: npx --yes "jscpd@${JSCPD_VERSION}" --config .jscpd.tests.json
 
       - name: Upload jscpd report
         if: always()

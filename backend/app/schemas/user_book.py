@@ -119,7 +119,7 @@ def normalise_user_isbn(value: str) -> str:
         and (compact[9].isdigit() or compact[9] == "X")
         and _isbn_10_valid(compact)
     ):
-        return isbn_10_to_13(compact)  # type: ignore[return-value]
+        return isbn_10_to_13(compact)  # type: ignore[return-value] - None only for an invalid ISBN-10, checked above
     raise ValueError("isbn must be a valid ISBN-13 or ISBN-10")
 
 
@@ -340,7 +340,7 @@ class UserBookRead(BaseModel):
                     for field, column in OVERRIDE_COLUMNS.items()
                 },
             }
-        custom = data.custom_book  # type: ignore[attr-defined]
+        custom = data.custom_book  # type: ignore[attr-defined] - custom_book is a relationship attribute set at load time
         return {
             **{name: getattr(data, name, None) for name in row_fields},
             "book": {
@@ -366,7 +366,7 @@ class TrashedUserBookRead(UserBookRead):
 
     deleted_at: datetime
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[prop-decorator] - mypy does not model computed_field over property
     @property
     def purge_after(self) -> datetime:
         return self.deleted_at + timedelta(days=settings.trash_retention_days)

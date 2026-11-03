@@ -2,3 +2,4 @@
 # Format: <repo-relative path> <max_lines>. The cap is the file's length when it
 # was allowlisted: a file may shrink but never grow. When you shrink one, lower
 # its number here (or delete the line once it is under 600).
+# Empty since #820 (strict mode is the CI default). A new entry needs owner sign-off and a trailing '# epic:refactor #NNN' on its line, or the policy job fails.

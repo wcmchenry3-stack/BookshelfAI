@@ -159,7 +159,7 @@ class _Book(BaseModel):
     def _text(cls, value: Any) -> str:
         if not isinstance(value, str):
             # pydantic turns ValueError (not TypeError) into a validation error.
-            raise ValueError("must be a string")  # noqa: TRY004
+            raise ValueError("must be a string")  # noqa: TRY004 - see above
         value = value.strip()
         if not value or len(value) > MAX_TEXT_LENGTH:
             raise ValueError("empty or too long")

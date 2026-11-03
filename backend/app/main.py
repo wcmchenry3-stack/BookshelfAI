@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
 from app.ai.settings import seed_ai_settings_at_startup
+from app.api.attestation import router as attestation_router
 from app.api.auth import router as auth_router
 from app.api.books import router as books_router
 from app.api.scan import MAX_SCAN_REQUEST_BYTES, SCAN_UPLOAD_PATH
@@ -321,6 +322,7 @@ class _HealthExemptTrustedHost(TrustedHostMiddleware):
 if settings.is_hardened:
     app.add_middleware(_HealthExemptTrustedHost, allowed_hosts=settings.trusted_hosts)
 
+app.include_router(attestation_router)
 app.include_router(auth_router)
 app.include_router(books_router)
 app.include_router(scan_router)
@@ -357,7 +359,7 @@ async def health_db(request: Request) -> JSONResponse:
             )
         db_status = "ok"
     # Any DB failure (including a timeout) means the health check reports "error".
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - any DB failure = error
         db_status = "error"
 
     healthy = db_status == "ok"
@@ -372,7 +374,7 @@ if not settings.is_hardened:
     @app.get("/debug/sentry-test")
     @limiter.limit("5/minute")
     async def sentry_test(request: Request) -> JSONResponse:
-        1 / 0  # noqa: B018 — intentional, triggers Sentry capture
+        1 / 0  # noqa: B018 - intentional, triggers Sentry capture
 
     @app.post("/auth/test-login")
     @limiter.limit("2/minute")

@@ -5,6 +5,7 @@ from app.models.ai_settings import AISetting
 from app.models.ai_spend import AISpendDaily
 from app.models.ai_usage import AIUsage, AIUsageDaily
 from app.models.book import Book
+from app.models.device_key import DeviceKey
 from app.models.edition import Edition
 from app.models.refresh_token import RefreshToken
 from app.models.scan_correction import ScanCorrection, ScanCorrectionDaily
@@ -22,6 +23,7 @@ __all__ = [
     "AIUsage",
     "AIUsageDaily",
     "Book",
+    "DeviceKey",
     "Edition",
     "RefreshToken",
     "ScanCorrection",

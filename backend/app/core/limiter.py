@@ -34,7 +34,7 @@ def _get_user_id_or_ip(request: Request) -> str:
                 return f"user:{sub}"
             logger.debug("Rate-limit key: falling back to IP (not an access token)")
         # Any decode failure falls back to IP-based limiting below.
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - fall back to IP limiting
             logger.debug(
                 "Rate-limit key: falling back to IP (token decode failed: %s)", exc
             )

@@ -352,6 +352,6 @@ async def rollup_and_purge(
         logger.warning("ledger: scan_corrections purge failed (%s)", type(exc).__name__)
         try:
             await db.rollback()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - best-effort rollback
             logger.warning("ledger: rollback after the scan_corrections purge failed")
     return rolled, purged

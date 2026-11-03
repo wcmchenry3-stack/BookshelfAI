@@ -22,6 +22,7 @@ from sqlalchemy.dialects import postgresql
 from app.ai import quota, scan_records
 from app.ai import settings as ai_settings
 from app.ai.providers.base import ProviderResult
+from app.api import _bot_check as bot_check_api
 from app.api import scan as scan_api
 from app.core.config import settings
 from app.core.limiter import limiter
@@ -297,7 +298,7 @@ class TestScanEndpoint:
             patch.object(quota, "reserve", reserve),
             patch.object(scan_api, "sanitize_image", sanitize),
             patch.object(scan_records, "fingerprint", fingerprint),
-            patch.object(scan_api, "_verify_turnstile", turnstile),
+            patch.object(bot_check_api, "_verify_turnstile", turnstile),
             patch.object(settings, "turnstile_required", True),
         ):
             resp = client.post(

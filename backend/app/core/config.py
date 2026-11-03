@@ -68,7 +68,7 @@ class _BlankGuardSource(PydanticBaseSettingsSource):
 
     # Abstract hook required by PydanticBaseSettingsSource. Never called
     # directly: pydantic resolves fields via __call__.
-    def get_field_value(self, field, field_name):  # pragma: no cover - abstract hook
+    def get_field_value(self, field, field_name):
         return None, field_name, False
 
     @staticmethod
@@ -288,6 +288,22 @@ class Settings(BaseSettings):
     # Set TURNSTILE_REQUIRED=false to explicitly opt out (dev / test environments).
     turnstile_secret_key: str = ""
     turnstile_required: bool = True
+
+    # Device attestation (#753) — Apple App Attest and Android Play Integrity.
+    # attestation_required=true: every /scan from a native client must carry a
+    # valid assertion/token; Turnstile is still accepted as a fallback for web.
+    # Set ATTESTATION_REQUIRED=false (the default) until native clients ship.
+    attestation_required: bool = False
+    # HMAC secret for stateless nonces (generate: openssl rand -hex 32).
+    # Required when any attestation endpoint is called.
+    attestation_nonce_secret: str = ""
+    # <TEAM_ID>.<BUNDLE_ID> — required to verify iOS App Attest certificates.
+    attestation_apple_app_id: str = ""
+    # Android package name, e.g. "com.example.app" — required for Play Integrity.
+    attestation_android_package_name: str = ""
+    # Google service-account JSON for calling the Play Integrity API.
+    # Store the entire JSON value in a single env var.
+    attestation_google_credentials_json: str = ""
 
     # ClamAV antivirus — optional malware scan on uploaded images.
     # Requires a running ClamAV daemon (clamd) and pyclamd installed.

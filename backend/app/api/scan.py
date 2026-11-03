@@ -25,6 +25,11 @@ from app.ai.gateway import (
 )
 from app.ai.registry import get_feature
 from app.ai.settings import AISettings, AISettingsUnavailableError, get_ai_settings
+from app.api._bot_check import (
+    _check_bot_protection,
+    _check_turnstile,  # noqa: F401 — re-exported for test patching
+    _verify_turnstile,  # noqa: F401 — re-exported for test patching
+)
 from app.auth.dependencies import get_current_user
 from app.core import catalog_token
 from app.core.config import settings
@@ -78,7 +83,6 @@ router = APIRouter(tags=["scan"])
 # token, ``enhanced``, ``attempt``), which together are a few KB.
 SCAN_UPLOAD_PATH = "/scan"
 MAX_SCAN_REQUEST_BYTES = MAX_IMAGE_BYTES + 1024 * 1024
-TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 # The ``attempt`` form field (#603): 1 is the first try, 2..6 the app's
 # scheduled retries (#574). Recorded only (ledger row and scan_record log
 # line); never used for charging, limits or ordering.
@@ -90,27 +94,6 @@ SCAN_ATTEMPT_MAX = 6
 # and at most SCAN_NORMALISE_CONCURRENCY run at once per process to bound
 # peak memory. Requests over the limit wait for a slot.
 _NORMALISE_LIMITER = anyio.CapacityLimiter(settings.scan_normalise_concurrency)
-
-
-async def _verify_turnstile(token: str) -> bool:
-    """Verify a Cloudflare Turnstile token against the siteverify endpoint.
-
-    Returns True if the token is valid, False otherwise.
-    A 5-second timeout prevents a Turnstile outage from blocking the endpoint.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-            resp = await client.post(
-                TURNSTILE_VERIFY_URL,
-                data={"secret": settings.turnstile_secret_key, "response": token},
-            )
-            resp.raise_for_status()
-            return bool(resp.json().get("success"))
-    # Any Turnstile failure (network, timeout, malformed response) is treated as
-    # verification failure rather than propagating.
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Turnstile verification failed: %s", exc)
-        return False
 
 
 async def _enrich(candidates: list) -> tuple[list[EnrichedBook], bool]:
@@ -236,23 +219,6 @@ async def _load_scan_settings(db: AsyncSession, enhanced: bool) -> AISettings:
             detail="enhanced_scan_disabled",
         )
     return ai
-
-
-async def _check_turnstile(token: str | None) -> None:
-    """Cloudflare Turnstile bot check, enabled when TURNSTILE_REQUIRED=true
-    (the default). The startup handler already confirmed the secret key is
-    present when required. 400 without a token, 403 when it fails."""
-    if settings.turnstile_required:
-        if not token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing Turnstile token",
-            )
-        if not await _verify_turnstile(token):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Turnstile verification failed",
-            )
 
 
 async def _normalise_image(image_bytes: bytes, feature: str, ai: AISettings) -> bytes:
@@ -479,13 +445,32 @@ async def scan(
     attempt: Annotated[int, Form(ge=SCAN_ATTEMPT_MIN, le=SCAN_ATTEMPT_MAX)] = (
         SCAN_ATTEMPT_MIN
     ),
+    # Device attestation — alternative bot signal for native clients (#753).
+    # Clients that have registered an App Attest key (iOS) or hold a Play
+    # Integrity token (Android) send these fields instead of (or in addition
+    # to) the Turnstile token.  All are optional; a valid assertion bypasses
+    # the Turnstile check regardless of TURNSTILE_REQUIRED.
+    attest_platform: str | None = Form(None, alias="attestation-platform"),
+    attest_key_id: str | None = Form(None, alias="attestation-key-id"),
+    attest_assertion: str | None = Form(None, alias="attestation-assertion"),
+    attest_token: str | None = Form(None, alias="attestation-token"),
+    attest_nonce: str | None = Form(None, alias="attestation-nonce"),
 ) -> ScanResponse:
     ai = await _load_scan_settings(db, enhanced)
 
     # --- /scan requests per user per UTC day (#586): after the kill
     # switches, before any other work (see _count_scan_request) ---
     await _count_scan_request(db, current_user, ai)
-    await _check_turnstile(cf_turnstile_response)
+    await _check_bot_protection(
+        cf_token=cf_turnstile_response,
+        attest_platform=attest_platform,
+        attest_key_id=attest_key_id,
+        attest_assertion=attest_assertion,
+        attest_token=attest_token,
+        attest_nonce=attest_nonce,
+        user_id=current_user.id,
+        db=db,
+    )
     image_bytes = await _read_validated_upload(file)
 
     # The client only chooses standard vs enhanced; the gateway's registry

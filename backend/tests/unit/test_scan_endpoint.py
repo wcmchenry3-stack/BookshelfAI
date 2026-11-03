@@ -385,13 +385,16 @@ class TestTurnstileProtection:
         app.dependency_overrides[get_current_user] = lambda: FAKE_USER
         app.dependency_overrides[get_db] = _fake_db
 
-        with patch("app.api.scan.settings") as mock_settings:
+        with (
+            patch("app.api.scan.settings") as mock_settings,
+            patch("app.api._bot_check.settings") as mock_bc_settings,
+        ):
             mock_settings.rate_limit_scan = "10/minute"
-            mock_settings.turnstile_required = True
-            mock_settings.turnstile_secret_key = (
+            mock_settings.clamav_enabled = False
+            mock_bc_settings.turnstile_required = True
+            mock_bc_settings.turnstile_secret_key = (
                 "0x0000000000000000000000000000000000000000"
             )
-            mock_settings.clamav_enabled = False
             yield TestClient(app), mock_settings
 
         app.dependency_overrides.clear()
@@ -404,7 +407,9 @@ class TestTurnstileProtection:
 
     def test_returns_403_when_token_invalid(self, client_with_turnstile):
         client, _ = client_with_turnstile
-        with patch("app.api.scan._verify_turnstile", new=AsyncMock(return_value=False)):
+        with patch(
+            "app.api._bot_check._verify_turnstile", new=AsyncMock(return_value=False)
+        ):
             resp = client.post(
                 "/scan",
                 files={"file": _image_file()},
@@ -416,7 +421,9 @@ class TestTurnstileProtection:
     def test_proceeds_when_token_valid(self, client_with_turnstile):
         client, _ = client_with_turnstile
         with (
-            patch("app.api.scan._verify_turnstile", new=AsyncMock(return_value=True)),
+            patch(
+                "app.api._bot_check._verify_turnstile", new=AsyncMock(return_value=True)
+            ),
             patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),

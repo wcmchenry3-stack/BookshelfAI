@@ -37,8 +37,9 @@ never to make _unintended behaviour_ pass.
 - **Snapshots:** updating them (`-u`) without saying which snapshots changed
   and why each one did.
 - **Relaxed thresholds:** raising tolerances, timeouts or retry counts;
-  lowering coverage thresholds (backend `coverage-threshold: 80` in
-  `ci.yml`, or any frontend `coverageThreshold`); relaxing the accuracy
+  lowering coverage thresholds (backend `coverage-threshold: 98` and the
+  frontend `coverage-threshold: 90` in `ci.yml`, or any frontend Jest
+  `coverageThreshold`); relaxing the accuracy
   tests' thresholds (`backend/tests/accuracy/`).
 - **Making a security test pass by changing what it attacks:** editing a
   payload, an expected rejection, or a rate-limit count in

@@ -2,7 +2,7 @@ import base64
 import json
 import logging
 
-import httpx  # noqa: F401  (kept so tests can patch app.auth.google.httpx)
+import httpx  # noqa: F401 - kept so tests can patch app.auth.google.httpx
 from authlib.jose import jwt as authlib_jwt
 
 from app.auth.jwks_cache import JwksCache

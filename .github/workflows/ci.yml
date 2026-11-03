@@ -154,7 +154,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the grandfather-list step diffs against the base branch
       - run: python3 scripts/policy/check_claude_policy.py
+      # #820: a PR may not add a file-length allowlist, knip ignore* or jscpd
+      # ignore entry without an `epic:refactor #NNN` line in the same file.
+      # Reuses this job so no new required status check name is needed.
+      - name: No new grandfather-list entries
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/policy/check_grandfather_lists.py --diff-base "origin/$BASE_REF"
 
   provenance-coverage:
     needs: [lint-python, lint-frontend, secret-scan]
@@ -182,7 +192,13 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-test-frontend.yml@main
     with:
       working-directory: frontend
-      coverage-threshold: 80
+      # Aligned in #820 with the Jest coverageThreshold floors in
+      # frontend/package.json (statements 95, branches 90, functions 92, lines
+      # 97; measured 96.34 / 91.97 / 93.69 / 97.74). The caller input is one
+      # number and the org workflow does not say which metric it reads, so it
+      # is the lowest Jest floor (90), which every measured metric clears.
+      # Jest itself enforces the per-metric floors. Never set it above 90.
+      coverage-threshold: 90
     secrets: inherit
 
   cve-python:

@@ -214,7 +214,7 @@ async def record_quietly(db: AsyncSession, **fields) -> None:
         logger.warning("scan_corrections: not recorded (%s)", type(exc).__name__)
         try:
             await db.rollback()
-        except Exception as rollback_exc:  # noqa: BLE001
+        except Exception as rollback_exc:  # noqa: BLE001 - best-effort rollback
             logger.warning(
                 "scan_corrections: rollback failed (%s)", type(rollback_exc).__name__
             )

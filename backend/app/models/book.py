@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     ARRAY,
@@ -15,6 +16,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models._mixins import IdMixin, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.edition import Edition
+    from app.models.user_book import UserBook
 
 # Where a catalog row's data came from (#682), ``books.source``:
 # - ``google_books``: a Google Books volume matched (``google_books_id`` set).
@@ -80,10 +85,10 @@ class Book(IdMixin, TimestampMixin, Base):
     # Deleting a Book never deletes or orphans children: passive_deletes="all"
     # stops the ORM from nulling out loaded children's book_id, so the
     # ON DELETE RESTRICT FKs reject the delete.
-    editions: Mapped[list["Edition"]] = relationship(  # noqa: F821
+    editions: Mapped[list["Edition"]] = relationship(
         "Edition", back_populates="book", passive_deletes="all"
     )
-    user_books: Mapped[list["UserBook"]] = relationship(  # noqa: F821
+    user_books: Mapped[list["UserBook"]] = relationship(
         "UserBook", back_populates="book", passive_deletes="all"
     )
     # The surviving row (#682). Never lazy-loaded: callers that may meet a
