@@ -51,6 +51,14 @@ const ALWAYS_KEYS: ReadonlySet<string> = new Set([
   'apikey',
   'api-key',
 ]);
+// Transactions only (#715): URL query / fragment attributes are dropped wholesale.
+const QUERY_KEYS: ReadonlySet<string> = new Set([
+  'http.query',
+  'url.query',
+  'http.fragment',
+  'url.fragment',
+  'query_string',
+]);
 const HTTP_CONTAINERS: ReadonlySet<string> = new Set(['config', 'request']);
 const XHR_REQUEST_KEYS = [
   'headers',
@@ -135,7 +143,7 @@ export function redactString(s: string): string {
 }
 
 type Obj = Record<string, unknown>;
-type St = { changed: boolean; str?: (s: string) => string };
+type St = { changed: boolean; str?: (s: string) => string; txn?: boolean };
 
 function mark<V>(st: St, v: V): V {
   st.changed = true;
@@ -157,8 +165,15 @@ function hasAny(o: Obj, keys: readonly string[]): boolean {
 }
 
 /** Should `key: val` inside `obj` (reached via `selfKey`) be replaced wholesale? */
-function shouldRedact(key: string, val: unknown, obj: Obj, selfKey: string): boolean {
+function shouldRedact(
+  key: string,
+  val: unknown,
+  obj: Obj,
+  selfKey: string,
+  txn?: boolean
+): boolean {
   if (ALWAYS_KEYS.has(key)) return true;
+  if (txn && QUERY_KEYS.has(key)) return true;
   if (key === 'config') return isPlainObject(val) && hasAny(val, CONFIG_KEYS);
   if (key === 'request') return isPlainObject(val) && hasAny(val, XHR_REQUEST_KEYS);
   if (key === 'headers' || key === 'data') {
@@ -193,7 +208,7 @@ function scrubValue(
     const out: Obj = {};
     for (const [k, val] of Object.entries(v)) {
       const key = k.toLowerCase();
-      out[k] = shouldRedact(key, val, v, selfKey)
+      out[k] = shouldRedact(key, val, v, selfKey, st.txn)
         ? mark(st, FILTERED)
         : scrubValue(val, depth + 1, ancestors, key, st);
     }
@@ -239,6 +254,7 @@ function scrubRequest(req: unknown, st: St): unknown {
   for (const k of ['url', 'query_string'] as const) {
     if (out[k] !== undefined) out[k] = scrubValue(out[k], 0, new WeakSet(), k, st);
   }
+  if (st.txn && out.query_string !== undefined) out.query_string = mark(st, FILTERED);
   if (out.cookies !== undefined) out.cookies = mark(st, FILTERED);
   return out;
 }
@@ -318,10 +334,11 @@ export function scrubBreadcrumb<T>(breadcrumb: T): T | null {
 
 const EMAIL_LOCAL = /[A-Za-z0-9._%+-]/;
 const EMAIL_DOMAIN = /[A-Za-z0-9.-]/;
-const URL_QUERY_RE = /(\bhttps?:\/\/[^\s?#]*)[?#]\S*/g;
-const PATH_QUERY_RE = /^(\/[^\s?#]*)[?#]\S*/;
+const isWs = (c: number) => c === 32 || (c >= 9 && c <= 13);
+const isWord = (c: number) =>
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
 
-/** Replace `local@domain.tld` with `[email]`. A manual scan, linear in the input. */
+/** Replace `local@domain.tld` with `[email]` (ASCII local part only). Linear. */
 export function redactEmails(s: string): string {
   let at = s.indexOf('@');
   if (at === -1) return s;
@@ -332,20 +349,59 @@ export function redactEmails(s: string): string {
     while (a > last && EMAIL_LOCAL.test(s.charAt(a - 1))) a--;
     let b = at + 1;
     while (b < s.length && EMAIL_DOMAIN.test(s.charAt(b))) b++;
-    const domain = s.slice(at + 1, b).replace(/\.+$/, '');
+    let e = b;
+    while (e > at + 1 && s.charCodeAt(e - 1) === 46) e--; // trailing dots
+    const domain = s.slice(at + 1, e);
     if (a < at && domain.includes('.') && !domain.startsWith('.')) {
       out += s.slice(last, a) + '[email]';
-      last = at + 1 + domain.length;
-      b = last;
+      last = e;
+      b = e;
     }
     at = s.indexOf('@', Math.max(b, at + 1));
   }
   return out + s.slice(last);
 }
 
-/** Drop the query string and fragment from URLs inside a string, then mask emails. */
+/**
+ * Drop the query string / fragment of every `http(s)://` URL in `s`, and of `s`
+ * itself when it is an absolute path. One left-to-right pass: each character is
+ * visited a bounded number of times (no backtracking).
+ */
+function stripUrlQueries(s: string): string {
+  let out = '';
+  let last = 0;
+  const cut = (from: number): number => {
+    // from = index just after the scheme / the path start; returns end of the URL token.
+    let j = from;
+    while (j < s.length) {
+      const c = s.charCodeAt(j);
+      if (isWs(c)) return j;
+      if (c === 63 || c === 35) {
+        out += s.slice(last, j);
+        while (j < s.length && !isWs(s.charCodeAt(j))) j++;
+        last = j;
+        return j;
+      }
+      j++;
+    }
+    return j;
+  };
+  let i = 0;
+  if (s.charCodeAt(0) === 47) i = cut(1);
+  for (let h = s.indexOf('http', i); h !== -1; h = s.indexOf('http', i)) {
+    let p = h + 4;
+    if (s.charAt(p) === 's') p++;
+    if (s.startsWith('://', p) && (h === 0 || !isWord(s.charCodeAt(h - 1)))) {
+      i = cut(p + 3);
+    } else {
+      i = h + 4;
+    }
+  }
+  return last === 0 ? s : out + s.slice(last);
+}
+
 function scrubTransactionString(s: string): string {
-  return redactEmails(s.replace(URL_QUERY_RE, '$1').replace(PATH_QUERY_RE, '$1'));
+  return redactEmails(stripUrlQueries(s));
 }
 
 /**
@@ -357,7 +413,7 @@ function scrubTransactionString(s: string): string {
  */
 export function scrubSentryTransaction<T>(event: T): T | null {
   if (event === null || typeof event !== 'object') return event;
-  const st: St = { changed: false, str: scrubTransactionString };
+  const st: St = { changed: false, str: scrubTransactionString, txn: true };
   let out: Obj;
   try {
     out = { ...(event as unknown as Obj) };

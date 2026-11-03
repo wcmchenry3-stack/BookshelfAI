@@ -46,12 +46,13 @@ export function sentryBeforeSendTransaction<T extends Sentry.TransactionEvent>(
 
 /**
  * #715 (owner decision): @sentry/react-native 8 adds `expoRouterIntegration`
- * (name 'ExpoRouter') by default when tracing + enableAutoPerformanceTracing are
+ * (keyed on the SDK's own `expoRouterIntegration().name`) by default when tracing + enableAutoPerformanceTracing are
  * on; it registers `reactNavigationIntegration`, which sends navigation spans and
  * `navigation` breadcrumbs that v7 did not. Drop only that integration.
  */
-function sentryIntegrations<T extends { name: string }>(defaults: T[]): T[] {
-  return defaults.filter((i) => i.name !== 'ExpoRouter');
+export function sentryIntegrations<T extends { name: string }>(defaults: T[]): T[] {
+  const navigation = Sentry.expoRouterIntegration().name;
+  return defaults.filter((i) => i.name !== navigation);
 }
 
 /**

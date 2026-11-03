@@ -619,6 +619,7 @@ describe('beforeSendTransaction scrub (#715)', () => {
     };
     const out = scrubSentryTransaction(bad) as Record<string, unknown>;
     expect(out.transaction).toBe('/x');
+    expect('tags' in out).toBe(false);
     const uncopyable = new Proxy(
       {},
       {
@@ -630,15 +631,71 @@ describe('beforeSendTransaction scrub (#715)', () => {
     expect(scrubSentryTransaction(uncopyable)).toBeNull();
   });
 
-  it('redactEmails handles edge shapes in linear passes', () => {
+  it('filters query / fragment attributes and request.query_string wholesale', () => {
+    const out = scrubSentryTransaction({
+      request: { url: 'https://x/y?a=1', query_string: 'q=my+secret+book' },
+      contexts: { trace: { data: { 'url.query': '?z=1', 'url.fragment': '#f' } } },
+      spans: [
+        {
+          data: {
+            'http.query': '?q=my+secret+book&isbn=978',
+            'http.fragment': '#me',
+            url: 'https://x/y?a=1',
+            keep: 'ok',
+          },
+        },
+      ],
+    }) as never;
+    const json = JSON.stringify(out);
+    for (const leak of ['secret', 'isbn', '#me', 'a=1', 'z=1', '#f']) {
+      expect(json).not.toContain(leak);
+    }
+    expect(json).toContain('"keep":"ok"');
+    expect(json).toContain('https://x/y"');
+  });
+
+  it('redactEmails handles edge shapes', () => {
     expect(redactEmails('no at sign')).toBe('no at sign');
     expect(redactEmails('a@b.co, c.d+e@f-g.org.')).toBe('[email], [email].');
     expect(redactEmails('@ alone, x@nodot, @y.com')).toBe('@ alone, x@nodot, @y.com');
     expect(redactEmails('a@a@a@a@a@a.com')).toContain('[email]');
-    const long = '@'.repeat(40000);
-    const t0 = Date.now();
-    redactEmails(long);
-    redactEmails('a'.repeat(40000) + '@');
-    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
+  it('keeps text around URLs and cuts several URLs in one string', () => {
+    const out = scrubSentryTransaction({
+      transaction: 'GET http://a/b?x=1 then https://c/d#f and xhttp://e/f?k=1 end',
+    }) as { transaction: string };
+    expect(out.transaction).toBe('GET http://a/b then https://c/d and xhttp://e/f?k=1 end');
+  });
+
+  describe('linear time', () => {
+    const median = (f: () => void) => {
+      const t: number[] = [];
+      for (let r = 0; r < 5; r++) {
+        const a = process.hrtime.bigint();
+        f();
+        t.push(Number(process.hrtime.bigint() - a) / 1e6);
+      }
+      return t.sort((x, y) => x - y)[2];
+    };
+    const inputs: Record<string, (n: number) => string> = {
+      dots: (n) => 'a@' + '.'.repeat(n) + 'x',
+      schemes: (n) => 'http://'.repeat(n),
+      ats: (n) => '@'.repeat(n),
+      locals: (n) => 'a'.repeat(n) + '@',
+      slashes: (n) => '/'.repeat(n),
+      query: (n) => 'https://h/' + '?'.repeat(n),
+      httpNoScheme: (n) => 'http'.repeat(n),
+    };
+    for (const [name, make] of Object.entries(inputs)) {
+      it(`transaction string scrub is linear for ${name}`, () => {
+        const run = (v: string) => () =>
+          scrubSentryTransaction({ transaction: v, spans: [{ description: v }] });
+        run(make(20000))(); // warm up
+        const t1 = median(run(make(20000)));
+        const t2 = median(run(make(40000)));
+        expect(t2).toBeLessThan(4 * t1 + 50);
+      });
+    }
   });
 });

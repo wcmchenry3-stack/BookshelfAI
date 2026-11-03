@@ -11,6 +11,7 @@ jest.mock('@sentry/react-native', () => ({
   addBreadcrumb: mockAddBreadcrumb,
   captureException: mockCaptureException,
   wrap: mockWrap,
+  expoRouterIntegration: () => ({ name: 'ExpoRouter' }),
 }));
 
 beforeEach(() => {
