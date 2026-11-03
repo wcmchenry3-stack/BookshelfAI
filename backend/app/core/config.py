@@ -289,6 +289,22 @@ class Settings(BaseSettings):
     turnstile_secret_key: str = ""
     turnstile_required: bool = True
 
+    # Device attestation (#753) — Apple App Attest and Android Play Integrity.
+    # attestation_required=true: every /scan from a native client must carry a
+    # valid assertion/token; Turnstile is still accepted as a fallback for web.
+    # Set ATTESTATION_REQUIRED=false (the default) until native clients ship.
+    attestation_required: bool = False
+    # HMAC secret for stateless nonces (generate: openssl rand -hex 32).
+    # Required when any attestation endpoint is called.
+    attestation_nonce_secret: str = ""
+    # <TEAM_ID>.<BUNDLE_ID> — required to verify iOS App Attest certificates.
+    attestation_apple_app_id: str = ""
+    # Android package name, e.g. "com.example.app" — required for Play Integrity.
+    attestation_android_package_name: str = ""
+    # Google service-account JSON for calling the Play Integrity API.
+    # Store the entire JSON value in a single env var.
+    attestation_google_credentials_json: str = ""
+
     # ClamAV antivirus — optional malware scan on uploaded images.
     # Requires a running ClamAV daemon (clamd) and pyclamd installed.
     # Set CLAMAV_ENABLED=true when the Render instance has sufficient RAM (~300 MB).

@@ -62,4 +62,12 @@ ignore_names = [
   # changes the env surface.
   "google_client_secret",  # kept by owner decision #830 until deploy config is confirmed
   "openai_max_tokens",  # kept by owner decision #830 until deploy config is confirmed
+  # --- Device attestation (#753): Protocol classes and ORM columns ---
+  "last_used_at",  # DeviceKey column: write-only audit timestamp set on each assertion, never read by app code
+  "registered",  # RegisterResponse pydantic field; serialised by FastAPI, not called by name
+  "app_id",  # AppleAttestVerifier.verify_attestation parameter; unused in the stub but required by the Protocol
+  "stored_counter",  # AppleAttestVerifier.verify_assertion parameter; unused in the stub but required by the Protocol
+  "AppleAttestVerifier",  # typing.Protocol class; used as a type annotation in _bot_check.py
+  "AndroidIntegrityVerifier",  # typing.Protocol class; used as a type annotation in _bot_check.py
+  "StubAndroidIntegrityVerifier",  # always-reject Android stub; kept alongside StubAppleAttestVerifier for symmetry
 ]

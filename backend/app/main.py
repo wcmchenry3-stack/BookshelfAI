@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
 from app.ai.settings import seed_ai_settings_at_startup
+from app.api.attestation import router as attestation_router
 from app.api.auth import router as auth_router
 from app.api.books import router as books_router
 from app.api.scan import MAX_SCAN_REQUEST_BYTES, SCAN_UPLOAD_PATH
@@ -321,6 +322,7 @@ class _HealthExemptTrustedHost(TrustedHostMiddleware):
 if settings.is_hardened:
     app.add_middleware(_HealthExemptTrustedHost, allowed_hosts=settings.trusted_hosts)
 
+app.include_router(attestation_router)
 app.include_router(auth_router)
 app.include_router(books_router)
 app.include_router(scan_router)

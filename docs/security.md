@@ -22,7 +22,8 @@ See [~/.claude/standards/security.md](~/.claude/standards/security.md) for unive
 | Host header spoofing | `TrustedHostMiddleware` (hardened only — staging + production) rejects requests with Host header outside `TRUSTED_HOSTS`; only `/health` (not `/health/db`) is exempted via `_HealthExemptTrustedHost` so origin-direct liveness probes still work |
 | Request size limit | `RequestSizeLimitMiddleware` (pure ASGI, #557) caps every request body: 6 MB on `POST /scan` (`MAX_SCAN_REQUEST_BYTES` = the 5 MB image limit + 1 MB multipart overhead), 10 MB elsewhere. A declared `Content-Length` over the cap → 413 without reading the body; otherwise the bytes are counted as they arrive, so a chunked body (no `Content-Length`) is cut off with 413 as soon as it passes the cap and no handler runs on it. A malformed `Content-Length` (non-numeric, negative, conflicting values) → 400 |
 | DDoS / Bot protection | Cloudflare free tier (Bot Fight Mode, HTTP DDoS protection) |
-| Bot protection on /scan | Cloudflare Turnstile. When `TURNSTILE_REQUIRED=true` (the default; boot fails without `TURNSTILE_SECRET_KEY`), every `POST /scan` must carry `cf-turnstile-response`, verified against Cloudflare siteverify with a 5 s timeout (missing → `400 "Missing Turnstile token"`, rejected or siteverify unreachable → `403 "Turnstile verification failed"`). The check runs after the per-user daily request count and before the upload is read. Production currently runs `TURNSTILE_REQUIRED=false` until the app's site key is live; see [Turnstile on /scan](#turnstile-on-scan) |
+| Bot protection on /scan | Cloudflare Turnstile + device attestation (#738, #753). **Attestation** (iOS App Attest / Android Play Integrity) is the primary signal: a valid assertion/token grants immediate access and skips Turnstile. When `ATTESTATION_REQUIRED=true` and attestation fails → `403 "Attestation verification failed"`. When attestation is absent or fails and `ATTESTATION_REQUIRED=false`, the Turnstile fallback runs. When `TURNSTILE_REQUIRED=true` (the default; boot fails without `TURNSTILE_SECRET_KEY`), every `POST /scan` that lacks a valid attestation must carry `cf-turnstile-response`, verified against Cloudflare siteverify with a 5 s timeout (missing → `400 "Missing Turnstile token"`, rejected or siteverify unreachable → `403 "Turnstile verification failed"`). Production currently runs `TURNSTILE_REQUIRED=false` and `ATTESTATION_REQUIRED=false` until keys are live; see [Turnstile on /scan](#turnstile-on-scan) and [Device Attestation on /scan](#device-attestation-on-scan). |
+| Device key storage | `device_keys` table stores iOS public keys (COSE CBOR), key_id (string, 256 char max), assertion counter (BigInteger), and `last_used_at`. One row per registered iOS device per user. Android keys are NOT stored — Play Integrity is a per-request token that Google verifies. CASCADE delete on `users.id`: device keys are purged when the account is deleted. No explicit cap on stored keys per user (one per device). |
 | CORS | Explicit method/header allowlist; wildcard origins rejected at config validation; only `Retry-After` is exposed to scripts (`expose_headers`): the scan 429s and the API client's retry backoff (#766) read it; asserted by `tests/unit/test_cors_expose_headers.py` |
 | Input validation | Pydantic on all endpoints; extension + MIME + size + magic bytes on uploads |
 | Upload normalisation | Every `/scan` image is fully decoded, bomb-checked, stripped of metadata, downscaled and re-encoded as JPEG before any paid call. See [Upload pipeline](#upload-pipeline-post-scan) |
@@ -110,6 +111,34 @@ Library pins: `Pillow` and `pillow-heif` are pinned exactly in `backend/requirem
 - **Failures never block a scan on the client:** the wait for a token is bounded at 10 s (`TURNSTILE_TOKEN_TIMEOUT_MS`); on a timeout, widget error, script load failure or sign-out the request is sent without a token (or, after sign-out, not sent at all). A `400`/`403` Turnstile refusal is retryable (`lib/scanErrors.ts`, codes `turnstile_missing` / `turnstile_failed`) on the existing retry schedule and caps (5 attempts per photo), each attempt with a new token. Exception: when the build cannot produce tokens at all (no site key, or no native base URL: `useTurnstile().configured` is false), a `400 "Missing Turnstile token"` is a final failure at once, so photos do not run the whole schedule while holding the queue; a `403` stays retryable.
 - **Sign-out:** a token request in flight is aborted with the scan and its token is never used; the next account's scans run their own challenges.
 - Tokens are never logged; breadcrumbs carry only the outcome (`timeout`, `error`, ...).
+
+## Device Attestation on /scan
+
+`POST /scan` supports device / app attestation as a stronger bot signal than Turnstile (#753).
+A valid assertion or integrity token grants immediate access and skips the Turnstile check entirely.
+
+**iOS — Apple App Attest (two-step):**
+
+1. `POST /attestation/nonce` — client calls this (auth required) to get a short-lived HMAC-signed nonce (5-minute TTL, stateless — no DB write).
+2. `POST /attestation/register` (key_id + attestation_b64 + nonce) — server verifies the App Attest cert chain via `StubAppleAttestVerifier` (stub until ATTESTATION_APPLE_APP_ID is set) and stores the public key + counter in `device_keys`.
+3. `POST /scan` (key_id + assertion_b64 + nonce) — `_check_bot_protection()` in `backend/app/api/_bot_check.py` calls `_verify_attestation()`, which verifies the assertion signature and counter against the stored key.
+
+**Android — Play Integrity (stateless per request):**
+
+1. `POST /attestation/nonce` — same endpoint; nonce embeds the user ID and timestamp.
+2. Client requests a Play Integrity token from Google with the nonce as the request hash.
+3. `POST /scan` (platform=android + integrity_token + nonce) — server calls the Google `decodeIntegrityToken` API via `LiveAndroidIntegrityVerifier`, checks the nonce, `requestPackageName`, `MEETS_DEVICE_INTEGRITY` verdict and `PLAY_RECOGNIZED` app verdict.
+
+**Kill switches:**
+
+| Env var | Effect |
+|---|---|
+| `ATTESTATION_REQUIRED=true` | Unattestation requests to `/scan` → `403 attestation_required`; Turnstile fallback is skipped |
+| `ATTESTATION_REQUIRED=false` (default) | Failed or absent attestation falls through to the Turnstile check |
+| `ATTESTATION_APPLE_APP_ID` unset | `StubAppleAttestVerifier` is used — all iOS attestations are rejected (default until owner sets up) |
+| `ATTESTATION_GOOGLE_CREDENTIALS_JSON` unset | Android integrity verifier logs a warning and returns false |
+
+See `docs/RENDER.md` → "Enabling device attestation" for the owner setup guide.
 
 ## Client IP and origin lockdown
 
