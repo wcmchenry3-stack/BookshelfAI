@@ -104,7 +104,7 @@ workflow patches both files with `sed`, so keep the `versionCode N` /
 |---|---|---|---|
 | Gradle (wrapper) | 9.0.0 | **9.4.1** | Expo template |
 | Android Gradle Plugin | 8.12.0 | **9.2.1** | `react-native/gradle/libs.versions.toml` |
-| Kotlin | 2.1.20 | **2.2.0** | same catalog (override with `android.kotlinVersion`) |
+| Kotlin Gradle plugin | 2.1.20 | **2.2.10** (resolved) | RN catalog pins 2.2.0, but AGP 9 requires KGP ≥ 2.2.10 and upgrades it automatically; `android.kotlinVersion` can only raise it |
 | compileSdk / buildTools | 36 / 36.0.0 | **37 / 37.0.0** | same catalog |
 | targetSdk | 36 | 36 | same catalog |
 | minSdk | 24 | 24 | same catalog |
