@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-RULESET = REPO_ROOT / ".github" / "rulesets" / "protect-main-dev.json"
+RULESET = REPO_ROOT / ".github" / "rulesets" / "protect-dev.json"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 TARGET_BRANCH = "dev"
 NATIVE_DIRECT = {"ios-build-check", "android-build-check"}

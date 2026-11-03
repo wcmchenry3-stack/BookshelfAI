@@ -7,6 +7,7 @@ on:
     # on drafts) run when a draft PR is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
+    types: [checks_requested]
   push:
     branches: [dev, main]
   workflow_call:
@@ -18,7 +19,8 @@ concurrency:
 jobs:
   # === Change detection (#767) =============================================
   # One cheap job decides whether the expensive bundle/native build checks run.
-  # Plain `git diff` against the PR base (no third-party action). On push and
+  # Plain `git diff` against the PR base, or the merge queue's base_sha on
+  # merge_group (no third-party action). On push and
   # workflow_call (Deploy) there is no PR base, so both outputs are 'true' and
   # the checks always run. A job skipped via `if:` reports success to required
   # checks.
@@ -38,9 +40,10 @@ jobs:
         id: detect
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # PR base on pull_request; the branch tip the queue entry builds on for merge_group.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          if [ "$EVENT_NAME" != "pull_request" ]; then
+          if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "merge_group" ]; then
             echo "Event is $EVENT_NAME: running all checks"
             echo "native=true" >> "$GITHUB_OUTPUT"
             echo "frontend=true" >> "$GITHUB_OUTPUT"

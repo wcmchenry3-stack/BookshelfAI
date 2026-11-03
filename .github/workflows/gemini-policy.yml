@@ -5,6 +5,7 @@ on:
     types: [opened, edited, synchronize, reopened]
     branches: [main, dev]
   merge_group:
+    types: [checks_requested]
 
 jobs:
   gemini-policy-check:
