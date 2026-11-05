@@ -3,13 +3,6 @@
 # once it passes, so a suppression can never become permanent by accident.
 # Only dev / build-time tooling may be listed here, never shipped code.
 
-# body-parser 2.3.0 (frontend/package-lock.json), DoS via an unhandled
-# decompression stream error. Pulled in by @react-native-community/cli-server-api
-# (the Metro dev server), not shipped in the app or backend. The fix (2.4.0,
-# in range) was published 2026-10-22; bump it with `npm update body-parser`
-# once it is two weeks old (2026-11-05) and delete this entry.
-CVE-2026-111181 exp:2026-11-06
-
 # zod 3.25.76 under expo/node_modules (@expo/cli, Expo SDK 56), DoS via
 # unbounded array validation. Build-time CLI only. Fixed only in zod 4.6.6,
 # which @expo/cli ^3.25.76 does not accept; fix with the next Expo SDK
