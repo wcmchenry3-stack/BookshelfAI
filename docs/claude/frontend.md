@@ -87,7 +87,7 @@ cd frontend
 node scripts/ui-snapshots/capture.mjs --out ui-snapshots/current
 ```
 
-Set `CHROMIUM_PATH` to use an already-installed Chromium (cloud sessions: `/opt/pw-browsers/chromium`). Selectors are accessibility labels and `testID`s, so keep those stable when redesigning; when a screen's labels change, update the script in the same PR. Not covered: the native camera view, the scan queue, the add-it-yourself form, offline/quota notices.
+Add `--video` to also record one walkthrough per theme (`<out>/<theme>-walkthrough.mp4`; Chromium screencast frames encoded by `ffmpeg`, which must be on PATH), holding about 1.4 s on each screen and showing taps; `--themes light` limits the run. Set `CHROMIUM_PATH` to use an already-installed Chromium (cloud sessions: `/opt/pw-browsers/chromium`). Selectors are accessibility labels and `testID`s, so keep those stable when redesigning; when a screen's labels change, update the script in the same PR. Not covered: the native camera view, the scan queue, the add-it-yourself form, offline/quota notices.
 
 ### Accessibility
 See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md). WCAG 2.2 AA required on every interactive element. React Native: `accessibilityLabel`, `accessibilityRole`, `accessibilityHint` (if non-obvious), `minWidth/minHeight: 44` on all `Pressable`.

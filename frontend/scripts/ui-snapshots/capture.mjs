@@ -9,14 +9,21 @@
 //   node scripts/ui-snapshots/capture.mjs [--url http://localhost:8081] [--out ui-snapshots/current]
 //   (set CHROMIUM_PATH to use an already-installed Chromium)
 //
+// --video records one walkthrough per theme (<out>/<theme>-walkthrough.mp4),
+// holding on each screen and showing taps. It uses Chromium's screencast (no
+// Playwright ffmpeg download needed) and needs ffmpeg on PATH to encode.
+// --themes light,dark (default both) limits the run.
+//
 // The dev server is required (not a production export): sign-in uses the
 // __DEV__-only "Test Login" button, intercepted below. Web keeps tokens in
 // memory only, so the run signs in once per theme and then navigates by tapping,
 // never by reloading.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { Buffer } from 'node:buffer';
 import { URL } from 'node:url';
 
 import { coverSvg, searchResults, trash, usage, userBooks } from './fixtures.mjs';
@@ -33,6 +40,25 @@ const APP_URL = arg('--url', 'http://localhost:8081');
 const OUT = resolve(arg('--out', 'ui-snapshots/current'));
 const API = 'http://mock.api';
 const VIEWPORT = { width: 390, height: 844 };
+const VIDEO = args.includes('--video');
+const THEMES = arg('--themes', 'light,dark').split(',');
+// How long a recording holds on each captured screen.
+const HOLD_MS = VIDEO ? 1400 : 0;
+
+// Draws a fading dot wherever the run taps, so a recording shows the flow.
+const TAP_INDICATOR = `
+  window.addEventListener('pointerdown', (e) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:36px;height:36px;' +
+      'margin:-18px 0 0 -18px;border-radius:18px;background:rgba(15,66,111,.35);' +
+      'border:2px solid rgba(255,255,255,.9);transition:opacity .5s, transform .5s;';
+    d.style.left = e.clientX + 'px';
+    d.style.top = e.clientY + 'px';
+    document.documentElement.appendChild(d);
+    requestAnimationFrame(() => { d.style.opacity = '0'; d.style.transform = 'scale(1.6)'; });
+    setTimeout(() => d.remove(), 600);
+  }, true);
+`;
 
 const emptyLists = { value: false };
 const consoleErrors = new Set();
@@ -75,6 +101,7 @@ async function shot(page, dir, name) {
   const file = join(dir, `${name}.png`);
   await page.screenshot({ path: file });
   console.log(`  ✓ ${name}`);
+  if (HOLD_MS) await page.waitForTimeout(HOLD_MS);
 }
 
 const byLabel = (page, label) => page.locator(`[aria-label="${label}"]`).first();
@@ -117,7 +144,9 @@ async function runTheme(browser, scheme) {
     isMobile: true,
     hasTouch: true,
   });
+  if (VIDEO) await context.addInitScript(TAP_INDICATOR);
   const page = await context.newPage();
+  const recorder = VIDEO ? await startRecording(context, page, scheme) : null;
   page.on('pageerror', (e) => consoleErrors.add(`[pageerror] ${e.message.split('\n')[0]}`));
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrors.add(m.text().split('\n')[0].slice(0, 300));
@@ -210,7 +239,75 @@ async function runTheme(browser, scheme) {
     await shot(page, dir, '14-my-books-empty');
   });
 
+  if (recorder) await recorder.stop();
   await context.close();
+}
+
+// Records the page with Chromium's screencast: each frame is saved with its
+// timestamp, then ffmpeg turns them into a constant-30fps MP4.
+async function startRecording(context, page, scheme) {
+  const frameDir = join(OUT, `${scheme}-frames`);
+  rmSync(frameDir, { recursive: true, force: true });
+  mkdirSync(frameDir, { recursive: true });
+  const cdp = await context.newCDPSession(page);
+  const frames = [];
+  cdp.on('Page.screencastFrame', async ({ data, metadata, sessionId }) => {
+    const file = join(frameDir, `${String(frames.length).padStart(6, '0')}.jpg`);
+    writeFileSync(file, Buffer.from(data, 'base64'));
+    frames.push({ file, t: metadata.timestamp });
+    await cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await cdp.send('Page.startScreencast', {
+    format: 'jpeg',
+    quality: 85,
+    maxWidth: VIEWPORT.width * 2,
+    maxHeight: VIEWPORT.height * 2,
+  });
+  return {
+    async stop() {
+      await cdp.send('Page.stopScreencast').catch(() => {});
+      // Hold the last frame for a moment so the video doesn't end abruptly.
+      const end = (frames.at(-1)?.t ?? 0) + 1;
+      const lines = frames.map((f, i) => {
+        const next = frames[i + 1]?.t ?? end;
+        return `file '${f.file}'\nduration ${Math.max(0.001, next - f.t).toFixed(3)}`;
+      });
+      if (frames.length) lines.push(`file '${frames.at(-1).file}'`);
+      const list = join(frameDir, 'frames.txt');
+      writeFileSync(list, lines.join('\n') + '\n');
+      const mp4 = join(OUT, `${scheme}-walkthrough.mp4`);
+      const r = spawnSync(
+        'ffmpeg',
+        [
+          '-y',
+          '-loglevel',
+          'error',
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-i',
+          list,
+          '-vf',
+          'scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30',
+          '-c:v',
+          'libx264',
+          '-pix_fmt',
+          'yuv420p',
+          '-movflags',
+          '+faststart',
+          mp4,
+        ],
+        { stdio: 'inherit' }
+      );
+      if (r.status === 0) {
+        rmSync(frameDir, { recursive: true, force: true });
+        console.log(`  ▶ ${mp4}`);
+      } else {
+        console.warn(`  ✗ video: ffmpeg unavailable or failed; frames kept in ${frameDir}`);
+      }
+    },
+  };
 }
 
 // CHROMIUM_PATH: use a pre-installed browser when the pinned Playwright's own
@@ -219,7 +316,7 @@ const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}
 );
 try {
-  for (const scheme of ['light', 'dark']) await runTheme(browser, scheme);
+  for (const scheme of THEMES) await runTheme(browser, scheme);
 } finally {
   await browser.close();
 }
