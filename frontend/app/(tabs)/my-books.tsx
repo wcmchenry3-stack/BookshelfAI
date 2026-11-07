@@ -189,8 +189,8 @@ export default function MyBooksScreen() {
                 item={item}
                 categoryLabel={t(`status.${item.status}`)}
                 onPress={() => setSelected(item)}
-                // This label replaces the card's children for a screen reader,
-                // so the Unverified badge (#616) must be said here.
+                // This labels the card's tap target (the text is inert), so the
+                // Unverified badge (#616) must be said here.
                 accessibilityLabel={t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', {
                   title: item.book.title,
                   status: item.status,

@@ -60,6 +60,7 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 
 #### Library screens (My Books and Wishlist)
 - Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours and dark-mode top padding.
+- `BookRow` (tappable on My Books): the card is a `View`; the open-detail `Pressable` is an absolute-fill overlay *sibling* of the content, the text/cover are `pointerEvents="none"` and the `BookRowAction`s are siblings of the overlay (never nested interactive elements). Covers are a fixed 72x108 (2:3) frame, top-aligned; the card height follows the cover. `StatusTabs` is a fixed-height (`STATUS_TABS_HEIGHT`) `flexGrow: 0` ScrollView so it never collapses or stretches.
 - `hooks/useLibraryMutations.ts` owns advance-status and remove (the per-row in-flight guard, offline check, error alerts, the "moved to trash" banner). Each screen passes `onAdvanced` / `onRemoved` to update its own list, so My Books and Wishlist keep their different list rules. Put new shared row/header behaviour there, not in the screens.
 
 #### Logo / App Icon
