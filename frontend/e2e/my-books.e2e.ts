@@ -1,4 +1,5 @@
 import { expect, test } from './support/fixtures';
+import { openTab } from './support/flows';
 
 test.describe('My Books', () => {
   test.beforeEach(async ({ backend }) => {
@@ -13,6 +14,7 @@ test.describe('My Books', () => {
     expectNoA11yViolations,
   }) => {
     await signIn();
+    await openTab(page, 'Your book collection');
 
     // Library loads: every seeded book is listed.
     await expect(page.getByRole('button', { name: 'Dune — purchased' })).toBeVisible();
