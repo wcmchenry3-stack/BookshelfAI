@@ -125,6 +125,7 @@ export default function ScanScreen() {
               styles.searchInput,
               {
                 backgroundColor: theme.colors.surfaceContainerHighest,
+                borderColor: theme.colors.outlineField,
                 color: theme.colors.onSurface,
                 fontSize: theme.typography.fontSizeBase,
               },

@@ -4,9 +4,12 @@
  * `fontFor()` from theme/typography.ts), never with `fontWeight`.
  *
  * 1. No object literal in app/ or components/ sets `fontWeight` together with
- *    `fontFamily` (the bug as filed), reported as file:line.
+ *    `fontFamily` (the bug as filed; shorthand `{ fontWeight }` included),
+ *    reported as file:line.
  * 2. `fontWeight` appears only in files still waiting to be migrated
  *    (MIGRATION_PENDING). Do not add a file to that list: migrate the text.
+ *    The list may only shrink: a listed file without `fontWeight` fails, so
+ *    the entry is removed in the PR that migrates it.
  * 3. Every font file the typography module names is loaded by useFonts in
  *    app/_layout.tsx.
  */
@@ -21,14 +24,14 @@ const DIRS = ['app', 'components'];
 // Files owned by other in-flight PRs of epic #897 at the time of #912; each one
 // moves to variants in its own PR. The list may only shrink.
 const MIGRATION_PENDING = new Set([
-  'app/_layout.tsx', // header wordmark (header section owned by the app-shell PR)
   'components/InAppBanner.tsx',
   'components/library/BookRow.tsx',
   'components/library/StatusTabs.tsx',
 ]);
 
-// Same-object fontWeight + fontFamily still present, with the follow-up owner.
-const SAME_OBJECT_PENDING = new Set(['app/_layout.tsx:wordmark']);
+/** A style key in an object body: `key: value`, or the shorthand `{ key }` / `{ key, ... }`. */
+const hasKey = (body: string, key: string) =>
+  new RegExp(`(?:^|[,{\\s])${key}\\s*(?::|,|$)`).test(body);
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -55,35 +58,43 @@ const files = DIRS.flatMap((d) => walk(path.join(ROOT, d))).map((f) => ({
 describe('fontWeight is never combined with a custom font', () => {
   it('no style object sets fontWeight together with fontFamily', () => {
     const offenders: string[] = [];
-    const seenPending = new Set<string>();
     for (const { rel, src } of files) {
       // Innermost object literals: `name: { ... }` or `{ ... }` with no nested braces.
-      const re = /(?:(\w+)\s*:\s*)?\{([^{}]*)\}/g;
+      const re = /\{([^{}]*)\}/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(src))) {
-        const body = m[2];
-        if (/\bfontWeight\s*:/.test(body) && /\bfontFamily\s*:/.test(body)) {
-          const key = `${rel}:${m[1] ?? ''}`;
-          if (SAME_OBJECT_PENDING.has(key)) {
-            seenPending.add(key);
-            continue;
-          }
+        const body = m[1].trim();
+        if (hasKey(body, 'fontWeight') && hasKey(body, 'fontFamily')) {
           const line = src.slice(0, m.index).split('\n').length;
           offenders.push(`${rel}:${line}`);
         }
       }
     }
     expect(offenders).toEqual([]);
-    // A pending entry that has been fixed must be removed from the list.
-    expect([...seenPending].sort()).toEqual([...SAME_OBJECT_PENDING].sort());
+  });
+
+  it('the same-object rule also catches the shorthand form', () => {
+    expect(hasKey('fontWeight, fontFamily', 'fontWeight')).toBe(true);
+    expect(hasKey('fontFamily, fontWeight', 'fontWeight')).toBe(true);
+    expect(hasKey("fontWeight: '700'", 'fontWeight')).toBe(true);
+    expect(hasKey('fontFamily: theme.typography.fontWeightBold', 'fontWeight')).toBe(false);
   });
 
   it('fontWeight appears only in files still pending migration', () => {
     const withWeight = files
-      .filter(({ src }) => /\bfontWeight\s*:/.test(src))
+      .filter(({ src }) => /\bfontWeight\b/.test(src))
       .map(({ rel }) => rel)
       .filter((rel) => !MIGRATION_PENDING.has(rel));
     expect(withWeight).toEqual([]);
+  });
+
+  it('the pending list only shrinks: every listed file still has fontWeight', () => {
+    const migrated = [...MIGRATION_PENDING].filter((rel) => {
+      const f = files.find((x) => x.rel === rel);
+      return !f || !/\bfontWeight\b/.test(f.src);
+    });
+    // Remove these from MIGRATION_PENDING: they no longer use fontWeight.
+    expect(migrated).toEqual([]);
   });
 
   it('every typography font file is loaded by useFonts in app/_layout.tsx', () => {

@@ -19,7 +19,15 @@ export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps)
   const { topPad } = useLibraryAccent();
   return (
     <View style={[styles.searchRow, { paddingTop: 12 + topPad }]}>
-      <View style={[styles.searchWrap, { backgroundColor: theme.colors.surfaceContainerHighest }]}>
+      <View
+        style={[
+          styles.searchWrap,
+          {
+            backgroundColor: theme.colors.surfaceContainerHighest,
+            borderColor: theme.colors.outlineField,
+          },
+        ]}
+      >
         <MaterialIcons
           name="search"
           size={20}
@@ -49,6 +57,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 12,
+    borderWidth: 1,
     paddingHorizontal: 12,
     height: 48,
   },

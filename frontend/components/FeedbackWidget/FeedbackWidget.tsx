@@ -166,7 +166,7 @@ export function FeedbackWidget({ visible, onClose, onSubmitted }: Props) {
                   {
                     color: colors.onSurface,
                     backgroundColor: colors.surfaceContainerHigh,
-                    borderColor: descError ? colors.error : colors.outline,
+                    borderColor: descError ? colors.error : colors.outlineField,
                   },
                 ]}
                 value={description}

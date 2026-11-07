@@ -14,6 +14,7 @@ const APPROVED_LIGHT: Record<string, string> = {
   outline: '#E4DFD4',
   outlineCard: '#ECE7DC',
   outlineChip: '#DAD4C7',
+  outlineField: '#857F73',
   primary: '#0F426F',
   onPrimary: '#FFFFFF',
   primarySoft: '#DCE6F1',
@@ -37,6 +38,7 @@ const APPROVED_DARK: Record<string, string> = {
   onSurfaceVariant: '#A4A8AF',
   outline: '#2A2D33',
   outlineChip: '#33363C',
+  outlineField: '#7D786F',
   primary: '#A9C9EE',
   onPrimary: '#0B2540',
   primarySoft: '#22344A',
@@ -55,6 +57,7 @@ const NEW_ROLES = [
   'field',
   'outlineCard',
   'outlineChip',
+  'outlineField',
   'primarySoft',
   'danger',
   'dangerSoft',
@@ -199,5 +202,18 @@ describe('design tokens v2', () => {
       const ratio = contrast((c as Record<string, string>)[fg], (c as Record<string, string>)[bg]);
       expect(ratio).toBeGreaterThanOrEqual(4.5);
     });
+  });
+
+  // WCAG 1.4.11 (non-text contrast): input borders need 3:1 against the field
+  // fill and against the surface or background the field sits on.
+  it.each([
+    ['light', lightTheme, '#857F73'],
+    ['dark', darkTheme, '#7D786F'],
+  ])('%s outlineField is %s and reaches 3:1 on field, surface and background', (_m, t, hex) => {
+    const c = t.colors;
+    expect(c.outlineField).toBe(hex);
+    for (const bg of [c.field, c.surface, c.background]) {
+      expect(contrast(c.outlineField, bg)).toBeGreaterThanOrEqual(3);
+    }
   });
 });

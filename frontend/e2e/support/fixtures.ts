@@ -45,14 +45,6 @@ export const KNOWN_VIOLATIONS = {
     transient: true,
     issue: 'scan ActivityIndicator is a progressbar with no name (aria-progressbar-name, serious)',
   },
-  // InAppBanner, success type: white text on the #16a34a success colour.
-  successBannerContrast: {
-    rule: 'color-contrast',
-    html: /./,
-    message: /background color: #16a34a/,
-    transient: true,
-    issue: 'success banner text is 3.29:1 on #16a34a, needs 4.5:1 (color-contrast, serious)',
-  },
   // Wishlist cover placeholder: a <div aria-label="No cover available">
   // with no role.
   wishlistCoverPlaceholderLabel: {

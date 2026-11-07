@@ -50,10 +50,7 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
     await page.getByRole('tab', { name: 'Your book collection' }).click();
     await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toBeVisible();
     await expectNoA11yViolations('My Books after restoring', {
-      known: [
-        KNOWN_VIOLATIONS.bookCardNestedInteractive,
-        KNOWN_VIOLATIONS.successBannerContrast, // "Restored" banner
-      ],
+      known: [KNOWN_VIOLATIONS.bookCardNestedInteractive],
     });
   });
 });

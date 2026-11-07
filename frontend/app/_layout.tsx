@@ -28,6 +28,7 @@ import { useModalHandoff } from '../hooks/useModalHandoff';
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
 import { ThemeProvider } from '../theme';
+import { fontFor } from '../theme/typography';
 import { FeedbackProvider } from '../components/FeedbackWidget/FeedbackContext';
 import { HeaderFeedbackButton } from '../components/FeedbackWidget/HeaderFeedbackButton';
 import { SessionLogger } from '../components/FeedbackWidget/SessionLogger';
@@ -96,8 +97,7 @@ const headerStyles = StyleSheet.create({
   logo: { width: 40, height: 40, borderRadius: 8 },
   wordmark: {
     fontSize: 20,
-    fontFamily: 'NotoSerif_700Bold',
-    fontWeight: '700',
+    fontFamily: fontFor('700', 'serif'),
     letterSpacing: -0.3,
   },
 });

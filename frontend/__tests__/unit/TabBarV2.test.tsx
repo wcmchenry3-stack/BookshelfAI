@@ -89,7 +89,7 @@ describe.each([
     expect(style.borderTopWidth).toBeLessThanOrEqual(1);
   });
 
-  it('renders each label in sentence case with the tabLabel style', async () => {
+  it('renders each label with the tabLabel style and no uppercase transform', async () => {
     const opts = await renderIn(theme);
     const { getByText } = await render(
       opts.tabBarLabel({
@@ -118,6 +118,9 @@ describe.each([
     expect(s.color).toBe(theme.colors.primary);
   });
 
+  // React Navigation renders each tab icon twice (focused and unfocused, cross-
+  // faded by opacity), so in the app the pill element also exists, at opacity
+  // 0, on inactive tabs. This checks the two renders our tabBarIcon returns.
   it('active icon sits in a 56x30 primarySoft pill; inactive has no pill', async () => {
     await renderIn(theme);
     const scan = g.__screens.find((s: any) => s.name === 'scan');

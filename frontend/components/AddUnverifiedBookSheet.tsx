@@ -125,7 +125,7 @@ export function AddUnverifiedBookSheet({
     {
       color: colors.onSurface,
       backgroundColor: colors.surfaceContainerHigh,
-      borderColor: hasError ? colors.error : colors.outline,
+      borderColor: hasError ? colors.error : colors.outlineField,
       fontSize: theme.typography.fontSizeBase,
     },
   ];

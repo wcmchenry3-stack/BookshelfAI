@@ -116,7 +116,7 @@ export default function ScanQueueScreen() {
             </Pressable>
             <Pressable
               onPress={() => confirmDelete(job)}
-              style={[styles.button, { borderColor: theme.colors.outline, borderWidth: 1 }]}
+              style={[styles.button, { borderColor: theme.colors.outlineField, borderWidth: 1 }]}
               accessibilityRole="button"
               accessibilityLabel={t('queueDeleteA11y', { time: when })}
             >

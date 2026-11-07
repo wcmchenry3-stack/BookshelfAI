@@ -20,6 +20,8 @@ const light = {
   outline: '#E4DFD4',
   outlineCard: '#ECE7DC',
   outlineChip: '#DAD4C7',
+  // Input borders (WCAG 1.4.11): >= 3:1 against field, surface and background.
+  outlineField: '#857F73',
   primary: '#0F426F',
   onPrimary: '#FFFFFF',
   primarySoft: '#DCE6F1',
@@ -38,7 +40,7 @@ const light = {
 
 // Dark values not in the approved list (#898 gives none for them), chosen here
 // and flagged for owner review: outlineCard (= outline), dangerSoft, onDanger,
-// onSuccess.
+// onSuccess. outlineField (both modes) was added in review for input borders.
 const dark: Record<keyof typeof light, string> = {
   background: '#121417',
   surface: '#1B1E23',
@@ -49,6 +51,7 @@ const dark: Record<keyof typeof light, string> = {
   outline: '#2A2D33',
   outlineCard: '#2A2D33',
   outlineChip: '#33363C',
+  outlineField: '#7D786F',
   primary: '#A9C9EE',
   onPrimary: '#0B2540',
   primarySoft: '#22344A',
@@ -83,6 +86,7 @@ export const tokens = {
     outline: role('outline'),
     outlineCard: role('outlineCard'),
     outlineChip: role('outlineChip'),
+    outlineField: role('outlineField'),
     primary: role('primary'),
     onPrimary: role('onPrimary'),
     primarySoft: role('primarySoft'),

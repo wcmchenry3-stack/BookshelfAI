@@ -111,6 +111,19 @@ describe('ErrorBoundary', () => {
       expect(getByText('Try again')).toBeTruthy();
     });
 
+    it('with no ThemeProvider it uses the light errorBoundary tokens', async () => {
+      const { getByText, getByTestId } = await render(
+        <ErrorBoundary>
+          <Bomb shouldThrow={true} />
+        </ErrorBoundary>
+      );
+      const flat = (el: { props: Record<string, any> }) =>
+        Object.assign({}, ...[el.props.style].flat(Infinity).filter(Boolean));
+      const c = lightTheme.colors;
+      expect(flat(getByTestId('eb-root')).backgroundColor).toBe(c.errorBoundarySurface);
+      expect(flat(getByText('Something went wrong')).color).toBe(c.errorBoundaryTitle);
+    });
+
     it('renders the fallback when the theme context value is null', async () => {
       const { getByText } = await renderIn(null);
       expect(getByText('Something went wrong')).toBeTruthy();
