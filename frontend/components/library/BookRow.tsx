@@ -11,7 +11,10 @@ interface BookRowProps {
   item: LibraryBook;
   /** The small uppercase label above the title (e.g. the status). */
   categoryLabel: string;
-  /** When set the whole card is a button (My Books opens its detail sheet). */
+  /**
+   * When set the whole card is tappable (My Books opens its detail sheet). The
+   * button is a sibling overlay, not a wrapper of the actions.
+   */
   onPress?: () => void;
   accessibilityLabel?: string;
   accessibilityHint?: string;
@@ -37,82 +40,100 @@ export function BookRow({
     { backgroundColor: theme.colors.surfaceContainerLow, borderLeftColor: activeColor },
   ];
 
-  const body = (
-    <>
-      {/* Cover */}
-      {item.book.cover_url ? (
-        <Image
-          source={{ uri: item.book.cover_url }}
-          style={styles.cover}
-          resizeMode="cover"
-          accessibilityLabel={t('coverAlt', { title: item.book.title })}
-        />
-      ) : (
-        <View
-          style={[styles.cover, styles.coverPlaceholder, { backgroundColor: theme.colors.border }]}
-          accessibilityLabel={t('noCoverAvailable')}
-        />
-      )}
-
-      {/* Content */}
-      <View style={styles.content}>
-        <Text
-          style={[
-            styles.categoryLabel,
-            { color: activeColor, fontSize: theme.typography.fontSizeXS },
-          ]}
-        >
-          {categoryLabel}
-        </Text>
-
-        <Text
-          style={[
-            styles.bookTitle,
-            { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
-          ]}
-          numberOfLines={2}
-        >
-          {item.book.title}
-        </Text>
-
-        <Text
-          style={[
-            styles.bookAuthor,
-            { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-          ]}
-          numberOfLines={1}
-        >
-          {item.book.author}
-        </Text>
-        {item.unverified ? <UnverifiedBadge /> : null}
-
-        {item.edition?.publish_year ? (
-          <Text
-            style={[
-              styles.bookYear,
-              { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeXS },
-            ]}
-          >
-            {item.edition.publish_year}
-          </Text>
-        ) : null}
-
-        <View style={styles.actions}>{children}</View>
-      </View>
-    </>
+  const cover = item.book.cover_url ? (
+    <Image
+      source={{ uri: item.book.cover_url }}
+      style={styles.cover}
+      resizeMode="cover"
+      accessibilityLabel={t('coverAlt', { title: item.book.title })}
+      testID="book-row-cover"
+    />
+  ) : (
+    <View
+      style={[styles.cover, styles.coverPlaceholder, { backgroundColor: theme.colors.border }]}
+      accessibilityLabel={t('noCoverAvailable')}
+      testID="book-row-cover"
+    />
   );
 
-  if (!onPress) return <View style={cardStyle}>{body}</View>;
+  // When the card is tappable the text/cover are inert (`pointerEvents="none"`)
+  // so a tap falls through to the sibling overlay button; the action buttons
+  // are siblings of that overlay, never nested inside it (#907).
+  // Its label already carries title/status, so the inert block is also hidden
+  // from assistive tech to avoid announcing the same content twice.
+  const inertProps = onPress
+    ? ({
+        pointerEvents: 'none',
+        accessibilityElementsHidden: true,
+        importantForAccessibility: 'no-hide-descendants',
+        'aria-hidden': true,
+      } as const)
+    : ({ pointerEvents: 'auto' } as const);
+
   return (
-    <Pressable
-      style={cardStyle}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityHint={accessibilityHint}
-    >
-      {body}
-    </Pressable>
+    <View style={cardStyle}>
+      {onPress ? (
+        <Pressable
+          style={styles.cardPressable}
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityLabel}
+          accessibilityHint={accessibilityHint}
+          testID="book-row-body"
+        />
+      ) : null}
+      <View style={styles.cardContent} pointerEvents="box-none">
+        <View testID="book-row-cover-wrap" {...inertProps}>
+          {cover}
+        </View>
+        <View style={styles.content} pointerEvents="box-none">
+          <View style={styles.textBlock} testID="book-row-text" {...inertProps}>
+            <Text
+              style={[
+                styles.categoryLabel,
+                { color: activeColor, fontSize: theme.typography.fontSizeXS },
+              ]}
+            >
+              {categoryLabel}
+            </Text>
+
+            <Text
+              style={[
+                styles.bookTitle,
+                { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
+              ]}
+              numberOfLines={2}
+            >
+              {item.book.title}
+            </Text>
+
+            <Text
+              style={[
+                styles.bookAuthor,
+                { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
+              ]}
+              numberOfLines={1}
+            >
+              {item.book.author}
+            </Text>
+            {item.unverified ? <UnverifiedBadge /> : null}
+
+            {item.edition?.publish_year ? (
+              <Text
+                style={[
+                  styles.bookYear,
+                  { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeXS },
+                ]}
+              >
+                {item.edition.publish_year}
+              </Text>
+            ) : null}
+          </View>
+
+          <View style={styles.actions}>{children}</View>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -145,6 +166,7 @@ export function BookRowAction({
       ]}
       onPress={onPress}
       disabled={disabled}
+      hitSlop={ACTION_HIT_SLOP}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled }}
@@ -164,15 +186,29 @@ export function BookRowAction({
   );
 }
 
+/** 32px visual button + 6px slop top/bottom = 44px touch target. */
+const ACTION_HIT_SLOP = { top: 6, bottom: 6, left: 4, right: 4 };
+
+/** Fixed 2:3 cover frame; the card height follows it, never the reverse (#911). */
+const COVER_WIDTH = 72;
+const COVER_HEIGHT = 108;
+
 const styles = StyleSheet.create({
   card: {
-    flexDirection: 'row',
     borderRadius: 12,
     overflow: 'hidden',
-    minHeight: 120,
     borderLeftWidth: 4,
   },
-  cover: { width: 110, alignSelf: 'stretch' },
+  cardPressable: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  cardContent: { flexDirection: 'row', alignItems: 'flex-start' },
+  cover: {
+    width: COVER_WIDTH,
+    height: COVER_HEIGHT,
+    marginLeft: 12,
+    marginVertical: 12,
+    borderRadius: 6,
+  },
+  textBlock: { gap: 4 },
   coverPlaceholder: { opacity: 0.4 },
   content: { flex: 1, padding: 12, gap: 4 },
   categoryLabel: {
@@ -190,6 +226,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 6,
     minHeight: 32,
+    minWidth: 44,
     justifyContent: 'center',
   },
   actionText: { fontWeight: '600' },

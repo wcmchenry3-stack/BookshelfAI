@@ -198,9 +198,11 @@ describe('Unverified badge in the library (#616)', () => {
   ])('%s shows it on unverified entries only', async (_name, Screen) => {
     mockGet.mockResolvedValue({ data: [UNVERIFIED_ENTRY, CATALOG_ENTRY] });
     const { findByText, getAllByTestId } = await render(<Screen />);
-    expect(await findByText('Pond Notes')).toBeTruthy();
-    expect(await findByText('Dune')).toBeTruthy();
-    const badges = getAllByTestId('unverified-badge');
+    // My Books hides the card's text from assistive tech (the card label says it).
+    const hidden = { hidden: true };
+    expect(await findByText('Pond Notes', hidden)).toBeTruthy();
+    expect(await findByText('Dune', hidden)).toBeTruthy();
+    const badges = getAllByTestId('unverified-badge', hidden);
     expect(badges).toHaveLength(1);
     expect(badges[0].props.accessibilityLabel).toBe(
       'Unverified: added by you, not found in the catalog'
