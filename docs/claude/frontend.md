@@ -74,6 +74,21 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - Sheet colours come from `useTheme()`; the backdrop uses the `scrim` token. Keep the sheet/body `flexShrink: 1` (not `flex: 1`) or the body collapses to zero height and the sheet renders blank.
 - There is no floating button; do not add one over the tab bar.
 
+### UI snapshots (before/after for UI PRs)
+`scripts/ui-snapshots/capture.mjs` drives the Expo web dev server at iPhone size (390x844 @2x) against a mocked API (`fixtures.mjs`: public-domain titles, generated SVG covers) and saves every screen and main state in light and dark to `ui-snapshots/current/` (gitignored), plus `console-errors.txt`. Sign-in uses the `__DEV__` "Test Login" button, intercepted by the mock; web keeps tokens in memory, so the run navigates by tapping, never by reloading. Run it on `dev` and on your branch (`--out ui-snapshots/before` / `after`) and attach the pairs to UI PRs.
+
+```bash
+cd frontend
+EXPO_PUBLIC_API_URL=http://mock.api EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=snapshot npx expo start --web --port 8081
+```
+
+```bash
+cd frontend
+node scripts/ui-snapshots/capture.mjs --out ui-snapshots/current
+```
+
+Set `CHROMIUM_PATH` to use an already-installed Chromium (cloud sessions: `/opt/pw-browsers/chromium`). Selectors are accessibility labels and `testID`s, so keep those stable when redesigning; when a screen's labels change, update the script in the same PR. Not covered: the native camera view, the scan queue, the add-it-yourself form, offline/quota notices.
+
 ### Accessibility
 See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md). WCAG 2.2 AA required on every interactive element. React Native: `accessibilityLabel`, `accessibilityRole`, `accessibilityHint` (if non-obvious), `minWidth/minHeight: 44` on all `Pressable`.
 
