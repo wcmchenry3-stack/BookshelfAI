@@ -18,6 +18,7 @@ import {
   type UnverifiedDraft,
   type UnverifiedFailure,
 } from '../lib/unverified';
+import { fontFor } from '../theme/typography';
 
 const FAILURE_KEYS: Record<UnverifiedFailure, string> = {
   duplicate: 'addUnverified.duplicate',
@@ -124,7 +125,7 @@ export function AddUnverifiedBookSheet({
     {
       color: colors.onSurface,
       backgroundColor: colors.surfaceContainerHigh,
-      borderColor: hasError ? colors.error : colors.outline,
+      borderColor: hasError ? colors.error : colors.outlineField,
       fontSize: theme.typography.fontSizeBase,
     },
   ];
@@ -243,7 +244,7 @@ export function AddUnverifiedBookSheet({
 
 const styles = StyleSheet.create({
   body: { padding: 16, gap: 8 },
-  label: { fontWeight: '600', marginTop: 8 },
+  label: { fontFamily: fontFor('600'), marginTop: 8 },
   input: {
     borderWidth: 1,
     borderRadius: 8,
@@ -252,7 +253,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   fieldError: { fontSize: 13 },
-  formError: { fontSize: 14, fontWeight: '600', marginTop: 8 },
+  formError: { fontSize: 14, fontFamily: fontFor('600'), marginTop: 8 },
   saveButton: {
     borderRadius: 8,
     paddingVertical: 14,
@@ -261,5 +262,5 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   busy: { opacity: 0.6 },
-  saveText: { fontWeight: '600' },
+  saveText: { fontFamily: fontFor('600') },
 });

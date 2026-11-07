@@ -26,10 +26,7 @@ test.describe('Wishlist', () => {
     await expect(removeButton('Emma')).toBeVisible();
     await expect(removeButton('Dune')).toHaveCount(0); // purchased, not wishlisted
     await expectNoA11yViolations('Wishlist with one book', {
-      known: [
-        KNOWN_VIOLATIONS.wishlistCoverPlaceholderLabel,
-        KNOWN_VIOLATIONS.successBannerContrast, // "added to your wishlist" banner
-      ],
+      known: [KNOWN_VIOLATIONS.wishlistCoverPlaceholderLabel],
     });
 
     // Remove.

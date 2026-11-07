@@ -49,8 +49,7 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await page.getByRole('tab', { name: 'Your book collection' }).click();
     await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toBeVisible();
-    await expectNoA11yViolations('My Books after restoring', {
-      known: [KNOWN_VIOLATIONS.successBannerContrast], // "Restored" banner
-    });
+    // No allowances: #907 removed the nested buttons and #898's success colour passes contrast.
+    await expectNoA11yViolations('My Books after restoring');
   });
 });

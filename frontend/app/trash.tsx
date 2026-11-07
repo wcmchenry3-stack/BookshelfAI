@@ -13,6 +13,7 @@ import { listTrash, restoreUserBook, type TrashedUserBook } from '../lib/api';
 import { isServiceUnavailable } from '../lib/apiErrorReporting';
 import { notifyLibraryChanged } from '../lib/libraryChanged';
 import { formatLocalDate, leaveTrash, restoreFailure } from '../lib/trash';
+import { fontFor } from '../theme/typography';
 
 // The trash (#683): entries removed from the library, kept 30 days, newest
 // deletion first. Restore returns an entry to the library; the library tabs
@@ -337,12 +338,12 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
   header: { gap: 6, marginBottom: 8 },
   back: { minHeight: 44, minWidth: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-  backText: { fontWeight: '600' },
-  title: { fontWeight: '700', lineHeight: 48, letterSpacing: -0.5 },
+  backText: { fontFamily: fontFor('600') },
+  title: { fontFamily: fontFor('700', 'serif'), lineHeight: 48, letterSpacing: -0.5 },
   intro: { lineHeight: 20 },
   centered: { alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
   centeredText: { textAlign: 'center' },
-  emptyTitle: { fontWeight: '700', textAlign: 'center' },
+  emptyTitle: { fontFamily: fontFor('700'), textAlign: 'center' },
   retry: {
     minHeight: 44,
     paddingHorizontal: 24,
@@ -350,12 +351,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  retryText: { fontWeight: '600' },
+  retryText: { fontFamily: fontFor('600') },
   card: { flexDirection: 'row', borderRadius: 12, overflow: 'hidden', minHeight: 120 },
   cover: { width: 90, alignSelf: 'stretch' },
   coverPlaceholder: { opacity: 0.4 },
   content: { flex: 1, padding: 12, gap: 4 },
-  bookTitle: { fontWeight: '600', lineHeight: 22 },
+  bookTitle: { fontFamily: fontFor('600'), lineHeight: 22 },
   bookAuthor: { lineHeight: 18 },
   dates: { lineHeight: 16 },
   restore: {
@@ -366,6 +367,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 8,
   },
-  restoreText: { fontWeight: '600' },
+  restoreText: { fontFamily: fontFor('600') },
   disabled: { opacity: 0.5 },
 });

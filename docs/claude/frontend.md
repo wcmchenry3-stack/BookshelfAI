@@ -18,36 +18,72 @@ npx expo start
 - **All colours must come from `useTheme()`** — zero hardcoded colour values, ever
 - Import: `import { useTheme } from '../hooks/useTheme'`
 - Use `theme.colors.*`, `theme.spacing.*`, `theme.typography.*`, `theme.radius.*`
-- Color tokens follow the **Material Design 3** role naming convention (e.g. `primary`, `onPrimary`, `surfaceContainerLow`, `secondaryContainer`). See `frontend/theme/tokens.ts` for the full set.
-- Convenience aliases `background`, `text`, `textSecondary`, `border`, `iconActive`, `iconInactive`, `success` are kept for backward compatibility but prefer MD3 role names in new code.
+- New code uses the **v2 colour roles** (`background`, `surface`, `surfaceBar`, `field`, `onSurface`, `onSurfaceVariant`, `outline*`, `primary`, `onPrimary`, `primarySoft`, `danger*`, `success`, the status dots, `coverBlank` / `onCoverBlank`; table below). They keep the MD3 role naming style, but the older MD3 names (`surfaceContainerLow`, `secondaryContainer`, ...) are temporary aliases. See `frontend/theme/tokens.ts` for the full set.
+- **Design tokens v2 (#898)**: the approved values live in `palette` (`theme/tokens.ts`); `tokens.colors` exposes each role as `{ light, dark }` and `light.ts` / `dark.ts` resolve them with `colorsFor(mode)`. New code uses the v2 roles (table below).
+- **Temporary aliases (sunset plan):** the older MD3 roles (`primaryContainer`, `secondary*`, `tertiary*`, `surfaceContainer*`, `error*`, `outlineVariant`, ...) and the convenience aliases `background`, `text`, `textSecondary`, `border`, `iconActive`, `iconInactive` are mapped onto the v2 palette so untouched screens compile and pick up the new colours. Do not use them in new code; a follow-up removes each alias once no caller is left (`grep -rn "colors\.<alias>" app components`).
+- **Single accent:** `primary` is the only accent hue, in both modes. There is no gold dark-mode accent any more; `tertiary*` map onto `primary` / `primarySoft` (UnverifiedBadge's `tertiaryFixed` chip is now `primarySoft` with `primary` text). Never pick a colour by `theme.isDark`.
 - **Repo-wide colour check:** `__tests__/unit/noColourLiterals.test.ts` scans `app/`, `components/`, `contexts/`, `hooks/` and `lib/` (not `theme/` or tests) and fails on any string literal containing a hex colour (`#` + 3/4/6/8 hex digits) or an `rgb()/rgba()/hsl()/hsla()` call, anywhere inside the string (e.g. `'1px solid #fff'`), printing `file:line`. Comments are ignored; named colours such as `'white'` are not detected. There is no allowlist or baseline. It complements the org-level shared `design-token-check.yml` workflow.
-- **Translucent / fixed tokens:** `headerOverlay` (dark glass header; light transparent), `tabBarOverlay`, `outlineVariantFaint`, `shadow`, and the `errorBoundary*` set (fixed palette, identical in light and dark). Define new variants in `tokens.ts` with both modes, then add them to `light.ts` and `dark.ts`.
+- **Translucent / fixed tokens:** `headerOverlay` (dark glass header, `background` at 70%; light transparent), `tabBarOverlay` (`surfaceBar`; 85% in dark), `outlineVariantFaint` (dark `outline` at 40%; light transparent), `shadow`, and the `errorBoundary*` set (v2 roles per mode: `background`, `onSurface`, `onSurfaceVariant`, `danger`, `dangerSoft`, `primary`, `onPrimary`). In practice the ErrorBoundary always shows the light palette: it mounts above `ThemeProvider`, so it gets `ThemeContext`'s default (`lightTheme`). Define a new token in `tokens.ts` with both modes; `light.ts` and `dark.ts` pick it up automatically.
 - **ErrorBoundary** (a class, mounted above `ThemeProvider`) reads the theme via `ThemeContext.Consumer` and falls back to `lightTheme` if the context value is missing or malformed, so the error screen can never crash on theming.
 
 ### Design System
 
-#### Colors (MD3 roles — light / dark)
-Defined in `frontend/theme/tokens.ts`. Key roles:
+#### Colors (v2 roles — light / dark, #898)
+Defined in `frontend/theme/tokens.ts` (`palette`).
 
 | Role | Light | Dark | Use |
 |---|---|---|---|
-| `primary` | `#0f426f` | `#a0cafe` | Brand, active states, filled buttons |
-| `onPrimary` | `#ffffff` | `#003258` | Text/icon on primary bg |
-| `secondary` | `#47645d` | `#adcdc4` | Inactive tab icons, secondary text |
-| `secondaryContainer` | `#c6e7dd` | `#2f4c45` | "Read" status badge bg |
-| `surface` | `#fbf9f5` | `#131210` | Screen backgrounds |
-| `surfaceContainerLow` | `#f5f3ef` | `#1b1c1a` | Card backgrounds, tab bar bg |
-| `surfaceContainerHighest` | `#e4e2de` | `#343532` | Input fields |
-| `onSurface` | `#1b1c1a` | `#e5e3df` | Primary text |
-| `onSurfaceVariant` | `#42474f` | `#c4c9c1` | Secondary text, ghost button text |
-| `outline` | `#737780` | `#8e9299` | Borders, dividers |
+| `background` | `#F6F4EF` | `#121417` | Screen background |
+| `surface` | `#FFFFFF` | `#1B1E23` | Cards, sheets |
+| `surfaceBar` | `#FBFAF7` | `#16181C` | Tab bar, top bars |
+| `field` | `#ECE8DF` | `#1F2227` | Inputs, search, secondary buttons |
+| `onSurface` | `#1A1C20` | `#ECE9E3` | Primary text |
+| `onSurfaceVariant` | `#5E636B` | `#A4A8AF` | Secondary text, inactive icons, placeholders |
+| `outline` | `#E4DFD4` | `#2A2D33` | Hairlines, dividers (not for text) |
+| `outlineCard` | `#ECE7DC` | `#2A2D33`* | Card borders |
+| `outlineChip` | `#DAD4C7` | `#33363C` | Chip borders |
+| `outlineField` | `#857F73` | `#7D786F` | Input borders (TextInput, search fields, outlined buttons). Meets WCAG 1.4.11 3:1 against `field`, `surface` and `background` (light 3.25 / 3.98 / 3.62, dark 3.64 / 3.81 / 4.21). Use it, not `outline`, for any control boundary. |
+| `primary` | `#0F426F` | `#A9C9EE` | The single accent: active states, filled buttons, links |
+| `onPrimary` | `#FFFFFF` | `#0B2540` | Text/icon on `primary` |
+| `primarySoft` | `#DCE6F1` | `#22344A` | Active pill, soft accent chips |
+| `danger` / `onDanger` | `#B3261E` / `#FFFFFF` | `#FFB4AB` / `#690005`* | Destructive actions, errors |
+| `dangerSoft` | `#F7E3DF` | `#3A2220`* | Error banners |
+| `success` / `onSuccess` | `#2F7A4F` / `#FFFFFF` | `#7FC59B` / `#10291B`* | Success states |
+| `statusWishlist` · `statusPurchased` · `statusReading` · `statusRead` | `#A56A12` · `#5F6F86` · `#0F426F` · `#2F7A4F` | `#E0B062` · `#A3B1C6` · `#A9C9EE` · `#7FC59B` | Status dots |
+| `coverBlank` / `onCoverBlank` | `#E7E1D3` / `#4A4740` | `#2A2C30` / `#C9C4BA` | Cover placeholder |
 
-#### Typography
-- **Headline font**: Noto Serif (`NotoSerif_700Bold`, `NotoSerif_800ExtraBold`) — loaded via `useFonts` in `app/_layout.tsx` (if loading fails, e.g. the web 12s timeout, the app renders with system fonts rather than a blank screen)
-- **Body / label font**: Inter (`Inter_400Regular`, `Inter_500Medium`, `Inter_600SemiBold`, `Inter_700Bold`)
-- Token: `theme.typography.fontFamilyHeadline` → `'NotoSerif_700Bold'`
-- Token: `theme.typography.fontFamilyBody` → `'Inter_400Regular'`
-- Size scale: `fontSizeDisplay` (48) · `fontSizeH1` (40) · `fontSizeH2` (32) · `fontSizeH3` (24) · `fontSizeLG` (20) · `fontSizeBase` (16) · `fontSizeSM` (14)
+\* Dark values not in the approved list, chosen to pass AA; pending owner review.
+
+`__tests__/unit/themeTokensV2.test.ts` checks every value above, that every token exists in both themes, and WCAG AA (4.5:1) for `onSurface` / `onSurfaceVariant` / `primary` on `background` and `surface`, `onPrimary` on `primary`, `onCoverBlank` on `coverBlank` (and a few more pairs), in both themes.
+
+#### Spacing and radii
+- `theme.spacing`: `xs` 4 · `sm` 8 · `ms` 12 · `md` 16 · `lg` 24 · `xl` 32 · `xxl` 48.
+- `theme.radius`: `cover` 3 · `coverLarge` 5 · `field` 10 · `button` 12 · `card` 14 · `sheet` 16 · `chip` / `pill` full (9999). The older `sm`/`md`/`lg`/`xl`/`full` scale stays while screens move over.
+
+#### Typography (#899, #912)
+- **Font-file rule:** custom fonts ship one file per weight and Android ignores `fontWeight` on a custom family, so a weight is chosen by naming its font FILE. Never style text with `fontWeight`. Use `AppText` with a `variant`, or `fontFor(weight, family)` from `theme/typography.ts` in a StyleSheet (`fontFor('600')` -> `Inter_600SemiBold`, `fontFor('700', 'serif')` -> `NotoSerif_700Bold`; serif has 600 and 700 only).
+- Loaded in `app/_layout.tsx` `useFonts`: `NotoSerif_600SemiBold`, `NotoSerif_700Bold`, `Inter_400Regular`, `Inter_500Medium`, `Inter_600SemiBold`, `Inter_700Bold` (no unused files; 800 was dropped). If loading fails (e.g. the web 12 s timeout) the app renders with system fonts rather than a blank screen.
+- Variants (`textVariants`, also `theme.typography.variants`):
+
+| Variant | Font file | Size / line | Notes |
+|---|---|---|---|
+| `screenTitle` | `NotoSerif_700Bold` | 32 / 40 | tracking -0.4 |
+| `sheetTitle` | `NotoSerif_700Bold` | 24 / 30 | |
+| `bookTitle` | `NotoSerif_600SemiBold` | 16 / 21 | |
+| `body` | `Inter_400Regular` | 16 / 21 | default |
+| `bodyStrong` | `Inter_600SemiBold` | 16 / 21 | |
+| `secondary` | `Inter_400Regular` | 14 / 18 | |
+| `meta` | `Inter_400Regular` | 13 / 16 | |
+| `sectionLabel` | `Inter_600SemiBold` | 13 / 16 | uppercase, tracking +0.6, chrome |
+| `tabLabel` / `tabLabelActive` | `Inter_500Medium` / `Inter_600SemiBold` | 11 / 13 | sentence case, chrome |
+
+- **`AppText`** (`components/ui/AppText.tsx`): `<AppText variant="bookTitle" color="onSurfaceVariant">…</AppText>`. `variant` defaults to `body`, `color` (a theme colour role) to `onSurface`, read from `useTheme()`; a `style` prop is applied last. `allowFontScaling` is always on. **Dynamic Type cap:** chrome variants (`sectionLabel`, `tabLabel*`) set `maxFontSizeMultiplier` = `CHROME_MAX_FONT_SCALE` (1.3) because they sit in fixed bars; content variants are not capped.
+- `fontFamilyHeadline` (`NotoSerif_700Bold`) and `fontFamilyBody` (`Inter_400Regular`) remain as aliases while screens move to variants. The `fontWeight*` tokens were removed.
+- Guard: `__tests__/unit/noFontWeightWithCustomFont.test.ts` fails on a style object in `app/` or `components/` that sets `fontWeight` with `fontFamily`, on `fontWeight` in any file outside its `MIGRATION_PENDING` list (files owned by other #897 PRs; the list only shrinks), and checks `useFonts` loads exactly the typography font files.
+- Size scale (older tokens): `fontSizeDisplay` (48) · `fontSizeH1` (40) · `fontSizeH2` (32) · `fontSizeH3` (24) · `fontSizeLG` (20) · `fontSizeBase` (16) · `fontSizeSM` (14)
+
+#### Tab bar (#910)
+`app/(tabs)/_layout.tsx`: labels always visible (`tabLabel`, 600 when active, no uppercase), the bar sizes to its content (`height: 'auto'`) plus the bottom safe-area inset, with a `minHeight` floor of top padding + React Navigation's tab-button padding (5 on each side) + 30 pill + 4 gap + the label line at the 1.3 cap + bottom padding + inset; never a fixed number. Root cause of the clipped labels (#910): `dev` had a fixed height (`Platform.OS === 'ios' ? 80 : 64`) with fixed vertical padding and 10px uppercase labels with no line height, so the label had no room; the first fix in this PR computed a height (65) that still missed React Navigation's 5px button padding. Active tab: `primary` icon inside a 56×30 `primarySoft` pill behind the icon only; inactive `onSurfaceVariant`. Bar `surfaceBar` with a hairline `outline` top border, same in both themes. Tests: `TabBarV2.test.tsx`.
 
 #### Icons
 - Library: **MaterialIcons** from `@expo/vector-icons`
@@ -59,7 +95,7 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - `components/SheetModal.tsx` is the shared page-sheet modal scaffold (themed container, title + close header, body, bordered footer) used by `BookCandidatePicker` and `AddUnverifiedBookSheet`; pass the body as children and the primary action as `footer`.
 
 #### Library screens (My Books and Wishlist)
-- Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours and dark-mode top padding.
+- Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours (`primary` / `onPrimary` in both modes) and dark-mode top padding.
 - `BookRow` (tappable on My Books): the card is a `View`; the open-detail `Pressable` is an absolute-fill overlay *sibling* of the content, the text/cover are `pointerEvents="none"` and the `BookRowAction`s are siblings of the overlay (never nested interactive elements). Covers are a fixed 72x108 (2:3) frame, top-aligned; the card height follows the cover. `StatusTabs` is a fixed-height (`STATUS_TABS_HEIGHT`) `flexGrow: 0` ScrollView so it never collapses or stretches.
 - `hooks/useLibraryMutations.ts` owns advance-status and remove (the per-row in-flight guard, offline check, error alerts, the "moved to trash" banner). Each screen passes `onAdvanced` / `onRemoved` to update its own list, so My Books and Wishlist keep their different list rules. Put new shared row/header behaviour there, not in the screens.
 
