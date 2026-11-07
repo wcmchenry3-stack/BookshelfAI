@@ -42,11 +42,19 @@ export function InAppBanner() {
   const [screenReaderOn, setScreenReaderOn] = useState(false);
 
   useEffect(() => {
+    // react-native-web always reports a screen reader as on, which would make
+    // every action banner sticky: only query and subscribe on native.
+    if (Platform.OS === 'web') return;
     let alive = true;
+    let sawEvent = false;
     AccessibilityInfo.isScreenReaderEnabled()
-      .then((on) => alive && setScreenReaderOn(on))
+      // A late query result must not overwrite a newer change event.
+      .then((on) => alive && !sawEvent && setScreenReaderOn(on))
       .catch(() => {});
-    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', setScreenReaderOn);
+    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', (on) => {
+      sawEvent = true;
+      setScreenReaderOn(on);
+    });
     return () => {
       alive = false;
       sub.remove();

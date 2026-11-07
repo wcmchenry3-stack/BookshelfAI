@@ -56,7 +56,7 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - Do **not** use Ionicons — it has been replaced
 
 #### Shared sheets
-- `components/InAppBanner.tsx` is a floating rounded card inset 16px, placed at safe-area top + header height + 8 (below the header; just inset + 8 on the header-less `(auth)` route). Persistence (#909): every banner clears on a route change (`usePathname`); an `error` banner with actions stays until acted on or dismissed; any banner with actions also stays while a screen reader is on (`AccessibilityInfo`); otherwise banners with actions time out after `duration` or 10 s, others after `duration` or 5 s.
+- `components/InAppBanner.tsx` is a floating rounded card inset 16px, placed at safe-area top + header height + 8 (below the header; just inset + 8 on the header-less `(auth)` route). Persistence (#909): every banner clears on a route change (`usePathname`); an `error` banner with actions stays until acted on or dismissed; any banner with actions also stays while a screen reader is on (`AccessibilityInfo`; iOS and Android only, because react-native-web always reports `true`); otherwise banners with actions time out after `duration` or 10 s, others after `duration` or 5 s.
 - `components/SheetModal.tsx` is the shared page-sheet modal scaffold (themed container, title + close header, body, bordered footer) used by `BookCandidatePicker` and `AddUnverifiedBookSheet`; pass the body as children and the primary action as `footer`.
 
 #### Library screens (My Books and Wishlist)

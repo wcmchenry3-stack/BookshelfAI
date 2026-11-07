@@ -7,11 +7,9 @@ What the app does from a user's perspective, with flow diagrams. For the REST su
 Navigation is file-based via `expo-router`. Two route groups:
 
 ### `(auth)` — unauthenticated stack
-
 - **`login.tsx`** — Google Sign-In. The only screen reachable before auth. Tapping the Google button opens the system OAuth flow; on success the app exchanges the Google ID token for a Bookshelf access + refresh pair. If the OAuth prompt fails to start (network error, blocked popup) or Google returns an error, an inline localized error with a "Try again" button is shown instead of an unhandled promise rejection.
 
 ### `(tabs)` — authenticated tab bar
-
 - **Scan** (`scan.tsx`) — camera viewfinder (native) or file picker (web). Primary path into the app.
 - **My Books** (`my-books.tsx`) — the user's full library with a status filter (All / Wishlisted / Purchased / Reading / Read). Tapping a book opens its detail modal for notes, rating, status transitions, or delete. Since #683 a delete moves the entry to the server's trash (restorable for 30 days; deleting a book again replaces older trashed copies that hold no data of yours, such as notes, a rating, an edition, overrides or a status beyond wishlisted, while copies with your data stay restorable for 30 days; newest 1,000 kept); the app's Trash screen (below) lists and restores them. The app says so after a delete: a banner reads "Moved to Trash. You can restore it within 30 days." with a **View trash** action (My Books and Wishlist).
 - **Wishlist** (`wishlist.tsx`) — filtered view showing only `wishlisted` entries. One-tap "I bought this" transitions to `purchased`.
@@ -73,7 +71,6 @@ sequenceDiagram
 ```
 
 **Key implementation notes:**
-
 - The scan queue (jobs, results and photos) is cleared on sign-out, so another account never sees or uploads it; in-flight scans, searches and wishlist adds are aborted and their results dropped (#723; remaining bounding work in #669).
 - Images are persisted to `scan-queue/` (expo-file-system) on native so the job survives app backgrounding. Web doesn't persist — blob URLs die on navigation.
 - `ScanJobContext.startScan()` is wrapped in try/catch with Sentry capture; any sync throw (like a crypto/uuid failure) becomes a handled banner, not a crash.
@@ -82,12 +79,12 @@ sequenceDiagram
 - Text search (`/books/search`) uses the same `ScanJob` pipeline with `type='text'` — different input path, same state machine.
 - **Books you already have (#587).** Every scan and search result says whether the book is already in your library, by edition (`ownership`; the edition compared is the one the app would add). The results sheet shows "You already have this book" (the same edition, or when there is no ISBN to compare) or "You already have this book in another edition". Those books can't be ticked, preselected or picked by "Select all", since a library holds one entry per title; there is no "Add anyway" (#610). If one is sent anyway (an older saved result, or the library changed in between), `POST /wishlist` answers `409` and the app counts it as already in the library, not a failure: one book shows `"Dune" is already in your library.`, several `2 books are already in your library.`, and a mix `Added 2. 1 already in your library.`; the review closes and nothing is retried or reported to Sentry. Results saved before the server sent `ownership` fall back to the work-level "Already owned" badge.
 - **Books the catalog can't take (#612).** `POST /wishlist` answers `422 book_not_in_catalog` when a book has no Open Library / Google Books match (the server won't create shared catalog rows for it), and `422 catalog_token_invalid` when a scan or search result is stale or expired. The app shows the specific reason instead of the generic failure: `We couldn't find this book in our catalog. Search by title, or add it yourself.` or `This result is out of date. Scan or search for the book again.` (plural forms for several books). These books are counted as not saved in a mixed batch (for example `Added 1, 2 not saved. 1 not in our catalog: try searching by title. Tap Add to retry the others.`; the "Added" part is left out when nothing was added, and each reason carries its count). These banners show the whole text and stay longer than the usual 5 s, are never retried (only other failures stay in the review for Add) and are not reported to Sentry. Whenever a banner includes books not in the catalog it carries an **Add it yourself** action (#616, below).
-- **Add it yourself — unverified entries (#616).** A book neither Open Library nor Google Books finds can be saved as the user's own **unverified** entry. Two ways in: the **Add it yourself** action on the `book_not_in_catalog` banner (one form per refused book, in turn), and an **Add it yourself** button on a result in the review sheet that no catalog matched ("Not in our catalog"). The sheet closes without discarding the scan, and the form opens once it has gone (`hooks/useModalHandoff.ts`: on iOS after the sheet's `onDismiss`, so two sheets are never presented at once). When the form closes the review reopens on the scan's remaining books: a saved book leaves the scan, a cancelled one stays, and a scan whose last book was saved is discarded. When an add from the sheet has mixed results, books the catalog refused stay in the open sheet with their button. Banner persistence (#909, `components/InAppBanner.tsx`): every banner clears when the route changes; an `error` banner with an action stays until acted on or dismissed; any banner with an action also stays while a screen reader is on; otherwise a banner with an action times out after its `duration` or 10 s, and one without after its `duration` or 5 s. It floats below the header (below the safe-area inset only on the header-less sign-in route). The form (`components/AddUnverifiedBookSheet.tsx`, mounted globally in `app/_layout.tsx` from `ScanJobContext.unverifiedDrafts`) is pre-filled with the title, author and ISBN the scan read (`lib/unverified.ts` `draftFromBook`); the user corrects them and taps Save, which posts `POST /wishlist/unverified`. A blank title or author is caught before sending; the server's `409 unverified_duplicate` ("You've already added this book yourself."), `409 unverified_limit_reached` (the cap, default 200), an invalid ISBN and other failures show in the form (`unverifiedFailure`). On success the banner says `Added <title> to your wishlist as unverified.` The entry is visible only to the user and shows an **Unverified** badge (`components/UnverifiedBadge.tsx`) in My Books (list and detail) and the wishlist. Linking an unverified entry to a catalog book found later is out of scope.
+- **Banner persistence (#909, `components/InAppBanner.tsx`).** Every banner clears when the route changes. An `error` banner with an action stays until acted on or dismissed. On iOS and Android any banner with an action also stays while a screen reader is on (web never holds). Otherwise a banner with an action times out after its `duration` or 10 s, and one without after its `duration` or 5 s. It floats below the header (below the safe-area inset only on the header-less sign-in route).
+- **Add it yourself — unverified entries (#616).** A book neither Open Library nor Google Books finds can be saved as the user's own **unverified** entry. Two ways in: the **Add it yourself** action on the `book_not_in_catalog` banner (one form per refused book, in turn), and an **Add it yourself** button on a result in the review sheet that no catalog matched ("Not in our catalog"). The sheet closes without discarding the scan, and the form opens once it has gone (`hooks/useModalHandoff.ts`: on iOS after the sheet's `onDismiss`, so two sheets are never presented at once). When the form closes the review reopens on the scan's remaining books: a saved book leaves the scan, a cancelled one stays, and a scan whose last book was saved is discarded. When an add from the sheet has mixed results, books the catalog refused stay in the open sheet with their button. The form (`components/AddUnverifiedBookSheet.tsx`, mounted globally in `app/_layout.tsx` from `ScanJobContext.unverifiedDrafts`) is pre-filled with the title, author and ISBN the scan read (`lib/unverified.ts` `draftFromBook`); the user corrects them and taps Save, which posts `POST /wishlist/unverified`. A blank title or author is caught before sending; the server's `409 unverified_duplicate` ("You've already added this book yourself."), `409 unverified_limit_reached` (the cap, default 200), an invalid ISBN and other failures show in the form (`unverifiedFailure`). On success the banner says `Added <title> to your wishlist as unverified.` The entry is visible only to the user and shows an **Unverified** badge (`components/UnverifiedBadge.tsx`) in My Books (list and detail) and the wishlist. Linking an unverified entry to a catalog book found later is out of scope.
 
 ### Scan limits — what users see
 
 Every user has two daily allowances (#577). The numbers come from `GET /scan/usage`; no copy hardcodes them. The day is the UTC day.
-
 - **Scans** (the found counter): scans where the AI found books, plus anything below that used a scan. Standard and enhanced scans share it. Free 5 a day, Premium 5 (operator settings `quota.<tier>.found_daily`).
 - **Unrecognised photos** (the no-match counter): photos the AI read properly but found no book in. While this allowance lasts, such a photo does not use a scan, so an unlucky photo doesn't cost one. Free 5 a day, Premium 5 (`quota.<tier>.no_match_daily`). Once it is used up, a photo with no book found uses a scan.
 - A scan is refused only when the scans allowance is used up, even if unrecognised photos are left (the next photo might find books). Only real AI calls count: a re-uploaded photo answered from its saved record, an AI reply that could not be read, and an AI outage never use either allowance. Enhanced scans that find nothing still use a scan (the enhanced rule below).
@@ -161,7 +158,6 @@ sequenceDiagram
 ```
 
 **Key properties:**
-
 - `verify_google_id_token()` accepts tokens whose `aud` is any of the three configured client IDs (web, iOS, Android) — one API serves all platforms.
 - Refresh tokens are **single-use**: the old `jti` is revoked the instant a refresh happens. A stolen refresh token is invalidated by the legitimate client's next refresh.
 - `ALLOWED_EMAILS` lockdown rejects any authenticated email not in the allowlist (single-user app by default).
@@ -193,19 +189,16 @@ Non-canonical transitions (e.g. skipping states, re-reads) are allowed — the f
 Scan jobs persist locally so the user can keep scanning even without connectivity. `ScanJobContext` is the single source of truth.
 
 **Persistence:**
-
 - Every change to the jobs list is saved to `expo-file-system` via `saveJobs()` (`lib/scanJobStorage.ts`).
 - On app launch, `loadJobs()` restores the queue. Any job stuck in `searching` status (because the app was killed mid-scan) is reset to `pending`. A job on the retry schedule (#604) keeps its `attempts` and `nextAttemptAt`.
 
 **Queue draining:**
-
 - `NetInfo.addEventListener` watches for connectivity changes.
 - When the app comes online, `drainQueue()` picks up any `queued` jobs and retries them, with a `QUEUE_DRAIN_DELAY` (2s) between each to avoid thundering the backend.
 - `MAX_RETRIES` (3) caps how many times a single job auto-retries before it's parked in `queued` status for manual retry.
 - Retry schedule (#604): a photo that got 503 `scan_unavailable` waits in `queued` until its `nextAttemptAt`. The drain sends due photos first and sends no other photo while one is still waiting; a timer drains when the earliest one is due (cleared on unmount, never sending a job that is in flight, never waiting longer than 4 h, and checking again every minute while offline). A successful scan makes every waiting photo due now. After a final failure the rest of the queue is sent. After attempt 5 the photo is `failed`.
 
 **Job state machine:**
-
 ```
 pending ─▶ searching ─▶ complete
              │             │
@@ -223,32 +216,30 @@ pending ─▶ searching ─▶ complete
 
 **11 active locales** + 2 reserved for future RTL work.
 
-| Code    | Language             | Status                                                              |
-| ------- | -------------------- | ------------------------------------------------------------------- |
-| `en`    | English              | Bundled statically (always in initial bundle)                       |
-| `fr-CA` | French (Canadian)    | Lazy                                                                |
-| `es`    | Spanish              | Lazy                                                                |
-| `hi`    | Hindi                | Lazy                                                                |
-| `zh`    | Chinese (Simplified) | Lazy                                                                |
-| `ja`    | Japanese             | Lazy                                                                |
-| `ko`    | Korean               | Lazy                                                                |
-| `pt`    | Portuguese           | Lazy                                                                |
-| `de`    | German               | Lazy                                                                |
-| `nl`    | Dutch                | Lazy                                                                |
-| `ru`    | Russian              | Lazy                                                                |
-| `ar`    | Arabic               | Translations present, **disabled until RTL layout mirroring lands** |
-| `he`    | Hebrew               | Translations present, **disabled until RTL layout mirroring lands** |
+| Code | Language | Status |
+|---|---|---|
+| `en` | English | Bundled statically (always in initial bundle) |
+| `fr-CA` | French (Canadian) | Lazy |
+| `es` | Spanish | Lazy |
+| `hi` | Hindi | Lazy |
+| `zh` | Chinese (Simplified) | Lazy |
+| `ja` | Japanese | Lazy |
+| `ko` | Korean | Lazy |
+| `pt` | Portuguese | Lazy |
+| `de` | German | Lazy |
+| `nl` | Dutch | Lazy |
+| `ru` | Russian | Lazy |
+| `ar` | Arabic | Translations present, **disabled until RTL layout mirroring lands** |
+| `he` | Hebrew | Translations present, **disabled until RTL layout mirroring lands** |
 
 **Namespaces** (9): `common`, `auth`, `tabs`, `my-books`, `scan`, `settings`, `wishlist`, `components`, `feedback`. Each screen/context pulls only what it needs.
 
 **Loading strategy:**
-
 - `en` is a static import — always in the initial bundle, no flash-of-keys on first render, tests work without async setup.
 - All other locales are lazy via `i18next-resources-to-backend` with static `import()` paths (Metro requires them static; see the explicit `importMap` in `src/i18n/i18n.ts`).
 - Only the active locale's 8 namespaces are fetched at runtime — 80 of 88 JSON files stay deferred.
 
 **Adding a string** (rule #9: every user-facing string must be translated):
-
 1. Add the key to `src/i18n/locales/en/<namespace>.json`
 2. Add the same key to the `_meta/<namespace>.meta.json` file with description + context
 3. Translate into all 10 active non-en locales (or mark for translation and ship English fallback)

@@ -418,6 +418,40 @@ describe('InAppBanner', () => {
       expect(r.queryByText('Msg')).toBeNull();
     });
 
+    it('on web a screen reader reported on does not hold an action banner past 10 s', async () => {
+      const RN = require('react-native');
+      const original = RN.Platform.OS;
+      RN.Platform.OS = 'web';
+      try {
+        mockScreenReader = true;
+        const r = await show({ type: 'success', actions: view });
+        await advance(6000);
+        expect(r.queryByText('Msg')).toBeTruthy();
+        await advance(4000 + 500);
+        expect(r.queryByText('Msg')).toBeNull();
+      } finally {
+        RN.Platform.OS = original;
+      }
+    });
+
+    it('ignores a late isScreenReaderEnabled result after a change event arrived', async () => {
+      let resolveQuery: (on: boolean) => void = () => {};
+      (AccessibilityInfo.isScreenReaderEnabled as jest.Mock).mockImplementation(
+        () => new Promise<boolean>((res) => (resolveQuery = res))
+      );
+      const r = await render(
+        <BannerProvider>
+          <InAppBanner />
+          <Trigger type="success" actions={view} />
+        </BannerProvider>
+      );
+      await act(async () => mockSrListener?.(false));
+      await act(async () => resolveQuery(true)); // stale: must be ignored
+      await fireEvent.press(r.getByTestId('go'));
+      await advance(10000 + 500);
+      expect(r.queryByText('Msg')).toBeNull();
+    });
+
     it('sits just below the safe-area inset on the header-less login route', async () => {
       mockPathname = '/login';
       mockSegments = ['(auth)', 'login'];
