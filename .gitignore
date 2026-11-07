@@ -106,3 +106,6 @@ jscpd-report/
 # Playwright web e2e (frontend/e2e)
 frontend/test-results/
 frontend/playwright-report/
+
+# UI snapshot output (frontend/scripts/ui-snapshots/capture.mjs)
+frontend/ui-snapshots/

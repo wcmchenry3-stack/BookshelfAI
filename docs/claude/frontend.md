@@ -75,6 +75,21 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 - Sheet colours come from `useTheme()`; the backdrop uses the `scrim` token. Keep the sheet/body `flexShrink: 1` (not `flex: 1`) or the body collapses to zero height and the sheet renders blank.
 - There is no floating button; do not add one over the tab bar.
 
+### UI snapshots (before/after for UI PRs)
+`scripts/ui-snapshots/capture.mjs` drives the Expo web dev server at iPhone size (390x844 @2x) against a mocked API (`fixtures.mjs`: public-domain titles, generated SVG covers) and saves every screen and main state in light and dark to `ui-snapshots/current/` (gitignored), plus `console-errors.txt`. Sign-in uses the `__DEV__` "Test Login" button, intercepted by the mock; web keeps tokens in memory, so the run navigates by tapping, never by reloading. Run it on `dev` and on your branch (`--out ui-snapshots/before` / `after`) and attach the pairs to UI PRs.
+
+```bash
+cd frontend
+EXPO_PUBLIC_API_URL=http://mock.api EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=snapshot npx expo start --web --port 8081
+```
+
+```bash
+cd frontend
+node scripts/ui-snapshots/capture.mjs --out ui-snapshots/current
+```
+
+Add `--video` to also record one walkthrough per theme (`<out>/<theme>-walkthrough.mp4`; Chromium screencast frames encoded by `ffmpeg`, which must be on PATH), holding about 1.4 s on each screen and showing taps; `--themes light` limits the run. Other flags: `--url` (default `http://localhost:8081`; only `localhost`/`127.0.0.1` are accepted). Every HTTP(S) request and WebSocket other than the dev server and the mock API is blocked for the whole browser context (popups and service workers included), so a stray `EXPO_PUBLIC_API_URL` or Sentry DSN never reaches a real service; blocked origins are listed in the output. Each run first deletes `<out>/<theme>/` and its walkthrough (so `--out` must be inside the current folder or the temp folder, and `--themes` only takes `light`/`dark`), and the run exits 1 with a list when any step or video encode fails, so a partial capture never passes for a complete one. `npm run lint` doesn't cover `.mjs`, so lint the script directly (`npx eslint --no-ignore scripts/ui-snapshots/capture.mjs`). Invalid arguments exit 2. `playwright-core` needs a Chromium: run `npx playwright install chromium`, or set `CHROMIUM_PATH` to an already-installed one (cloud sessions: `/opt/pw-browsers/chromium`). Selectors are accessibility labels and `testID`s, so keep those stable when redesigning; when a screen's labels change, update the script in the same PR. Not covered: the native camera view, the scan queue, the add-it-yourself form, offline/quota notices.
+
 ### Accessibility
 See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md). WCAG 2.2 AA required on every interactive element. React Native: `accessibilityLabel`, `accessibilityRole`, `accessibilityHint` (if non-obvious), `minWidth/minHeight: 44` on all `Pressable`.
 
