@@ -146,20 +146,39 @@ describe.each([
 });
 
 describe('tab bar height (#910)', () => {
-  it('grows with the bottom safe-area inset instead of a fixed 64/80', async () => {
+  it('sizes to its content plus the bottom safe-area inset, never a fixed 64/80', async () => {
     const none = flat((await renderIn(lightTheme, 0)).tabBarStyle);
     const notch = flat((await renderIn(lightTheme, 34)).tabBarStyle);
-    expect(notch.height - none.height).toBe(34);
+    // No fixed height: the bar grows with its icon + label (and font scale).
+    expect(none.height).toBe('auto');
+    expect(notch.height).toBe('auto');
+    // The floor and the bottom padding both carry the home-indicator inset.
+    expect(notch.minHeight - none.minHeight).toBe(34);
     expect(notch.paddingBottom - none.paddingBottom).toBe(34);
-    expect([64, 80]).not.toContain(none.height);
+    expect([64, 80]).not.toContain(none.minHeight);
   });
 
-  it('leaves room for the pill, the gap and the label at the capped font scale', async () => {
+  // Regression for the clipped labels seen in the running app: React
+  // Navigation's tab button adds its own padding around icon + label, which a
+  // computed height must include. Read that padding from the installed
+  // library so an upgrade that changes it fails here instead of clipping.
+  it('the label fits inside the bar, including the tab button inner padding', async () => {
+    const fs = require('fs');
+    const src: string = fs.readFileSync(
+      require.resolve('expo-router/build/react-navigation/bottom-tabs/views/BottomTabItem.js'),
+      'utf8'
+    );
+    const m = src.match(/tabVerticalUiKit:\s*\{[^}]*?padding:\s*(\d+)/);
+    expect(m).not.toBeNull();
+    const itemPadding = Number(m![1]);
+
     const style = flat((await renderIn(lightTheme, 0)).tabBarStyle);
-    const content = style.height - style.paddingTop - style.paddingBottom;
-    // pill 30 + gap 4 + label 13 * 1.3 rounded up (17)
-    expect(content).toBeGreaterThanOrEqual(30 + 4 + 17);
-    expect(content).toBeGreaterThanOrEqual(44);
+    const inner = style.minHeight - style.paddingTop - style.paddingBottom;
+    // button padding + pill 30 + gap 4 + label line 13 at the 1.3 cap (17) + button padding
+    const needed = itemPadding + 30 + 4 + Math.ceil(13 * 1.3) + itemPadding;
+    expect(inner).toBeGreaterThanOrEqual(needed);
+    expect(inner).toBeGreaterThanOrEqual(44);
+    expect(style.paddingBottom).toBeGreaterThanOrEqual(4); // label never touches the edge
   });
 
   it('keeps the accessibility label on every tab', async () => {

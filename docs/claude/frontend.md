@@ -82,7 +82,7 @@ Defined in `frontend/theme/tokens.ts` (`palette`).
 - Size scale (older tokens): `fontSizeDisplay` (48) · `fontSizeH1` (40) · `fontSizeH2` (32) · `fontSizeH3` (24) · `fontSizeLG` (20) · `fontSizeBase` (16) · `fontSizeSM` (14)
 
 #### Tab bar (#910)
-`app/(tabs)/_layout.tsx`: labels always visible (`tabLabel`, 600 when active, no uppercase), bar height = content (top padding + 30 pill + 4 gap + the label line at the 1.3 cap + bottom padding) + the bottom safe-area inset, never a fixed number. Active tab: `primary` icon inside a 56×30 `primarySoft` pill behind the icon only; inactive `onSurfaceVariant`. Bar `surfaceBar` with a hairline `outline` top border, same in both themes. Tests: `TabBarV2.test.tsx`.
+`app/(tabs)/_layout.tsx`: labels always visible (`tabLabel`, 600 when active, no uppercase), the bar sizes to its content (`height: 'auto'`) plus the bottom safe-area inset, with a `minHeight` floor of top padding + React Navigation's tab-button padding (5 on each side) + 30 pill + 4 gap + the label line at the 1.3 cap + bottom padding + inset; never a fixed number (a fixed 65 that ignored the button padding clipped the labels). Active tab: `primary` icon inside a 56×30 `primarySoft` pill behind the icon only; inactive `onSurfaceVariant`. Bar `surfaceBar` with a hairline `outline` top border, same in both themes. Tests: `TabBarV2.test.tsx`.
 
 #### Icons
 - Library: **MaterialIcons** from `@expo/vector-icons`

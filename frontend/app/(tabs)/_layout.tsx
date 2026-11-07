@@ -16,11 +16,21 @@ const PILL_HEIGHT = 30;
 const ICON_SIZE = 24;
 const BAR_PADDING_TOP = 8;
 const ICON_LABEL_GAP = 4;
-const LABEL_PADDING_BOTTOM = 6;
+const LABEL_PADDING_BOTTOM = 8;
+// React Navigation's tab button adds `padding: 5` on every side (BottomTabItem
+// `tabVerticalUiKit`), which the bar height must include or the label clips.
+const ITEM_INNER_PADDING = 5;
 // The label's line height at the largest font scale it can reach, so it never clips.
 const LABEL_MAX_LINE = Math.ceil(textVariants.tabLabel.lineHeight * CHROME_MAX_FONT_SCALE);
-const BAR_CONTENT_HEIGHT =
-  BAR_PADDING_TOP + PILL_HEIGHT + ICON_LABEL_GAP + LABEL_MAX_LINE + LABEL_PADDING_BOTTOM;
+/** Smallest bar height (without the safe-area inset) that fits pill + gap + label. */
+const TAB_BAR_MIN_CONTENT_HEIGHT =
+  BAR_PADDING_TOP +
+  ITEM_INNER_PADDING +
+  PILL_HEIGHT +
+  ICON_LABEL_GAP +
+  LABEL_MAX_LINE +
+  ITEM_INNER_PADDING +
+  LABEL_PADDING_BOTTOM;
 
 interface TabIconProps {
   name: MaterialIconName;
@@ -71,7 +81,10 @@ export default function TabLayout() {
       backgroundColor: theme.colors.surfaceBar,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.outline,
-      height: BAR_CONTENT_HEIGHT + bottomInset,
+      // The bar sizes to its content (icon, label, paddings) plus the inset;
+      // minHeight is the computed floor so it never shrinks below the label.
+      height: 'auto' as const,
+      minHeight: TAB_BAR_MIN_CONTENT_HEIGHT + bottomInset,
       paddingBottom: LABEL_PADDING_BOTTOM + bottomInset,
     },
   ]);
