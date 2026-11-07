@@ -17,6 +17,7 @@ import {
   storedTokensUsable,
   supersedeInstallCheck,
 } from '../lib/freshInstall';
+import { DEFAULT_TAB_ROUTE } from '../lib/defaultTab';
 import { Sentry } from '../lib/sentry';
 import * as storage from '../lib/storage';
 
@@ -237,7 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
     } else if (isAuthenticated && inAuthGroup) {
-      router.replace('/(tabs)/my-books');
+      router.replace(DEFAULT_TAB_ROUTE);
     }
   }, [isAuthenticated, isLoading, segments, router]);
 

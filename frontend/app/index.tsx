@@ -2,6 +2,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { Redirect } from 'expo-router';
 
 import { useAuth } from '../hooks/useAuth';
+import { DEFAULT_TAB_ROUTE } from '../lib/defaultTab';
 
 export default function Index() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -15,7 +16,7 @@ export default function Index() {
   }
 
   if (isAuthenticated) {
-    return <Redirect href="/(tabs)/my-books" />;
+    return <Redirect href={DEFAULT_TAB_ROUTE} />;
   }
 
   return <Redirect href="/(auth)/login" />;
