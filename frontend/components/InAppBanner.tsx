@@ -1,5 +1,14 @@
-import { useEffect, useRef } from 'react';
-import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { usePathname, useSegments } from 'expo-router';
+import {
+  AccessibilityInfo,
+  Animated,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -8,8 +17,8 @@ import { useTheme } from '../hooks/useTheme';
 
 const SLIDE_DURATION = 300;
 const DEFAULT_DISPLAY_DURATION = 5000;
-// A result banner that carries an action (e.g. "Book found" + View) stays a bit
-// longer so the action is reachable, but never indefinitely (#909).
+// A banner that carries an action (e.g. "Book found" + View) stays a bit longer
+// so the action is reachable (#909).
 const ACTION_DISPLAY_DURATION = 10000;
 const SIDE_MARGIN = 16;
 const GAP_BELOW_HEADER = 8;
@@ -26,6 +35,33 @@ export function InAppBanner() {
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(-SLIDE_DISTANCE)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pathname = usePathname();
+  const segments = useSegments();
+  // The sign-in route has no header, so the banner sits just below the inset.
+  const hasHeader = (segments[0] as string | undefined) !== '(auth)';
+  const [screenReaderOn, setScreenReaderOn] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    AccessibilityInfo.isScreenReaderEnabled()
+      .then((on) => alive && setScreenReaderOn(on))
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', setScreenReaderOn);
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, []);
+
+  // A banner never follows the user to another tab or screen (#909).
+  const lastPathRef = useRef(pathname);
+  useEffect(() => {
+    if (lastPathRef.current === pathname) return;
+    lastPathRef.current = pathname;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    hideBanner();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to route changes only
+  }, [pathname]);
 
   useEffect(() => {
     if (banner) {
@@ -34,28 +70,30 @@ export function InAppBanner() {
         duration: SLIDE_DURATION,
         useNativeDriver: true,
       }).start();
-
-      // An error that carries an action (Retry, "Add it yourself") stays until
-      // the user acts or taps it away: a timed-out button is unreachable for a
-      // screen-reader user. Every other banner, including a result banner with
-      // a "View" action, times out so it cannot linger across tabs (#909).
-      const sticky = banner.type === 'error' && !!banner.actions && banner.actions.length > 0;
-      if (!sticky) {
-        const hasActions = !!banner.actions && banner.actions.length > 0;
-        const fallback = hasActions ? ACTION_DISPLAY_DURATION : DEFAULT_DISPLAY_DURATION;
-        timerRef.current = setTimeout(() => {
-          dismiss();
-        }, banner.duration ?? fallback);
-      }
     } else {
       translateY.setValue(-SLIDE_DISTANCE);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only when the banner changes
+  }, [banner]);
 
+  useEffect(() => {
+    if (!banner) return;
+    const hasActions = !!banner.actions && banner.actions.length > 0;
+    // Stays until acted on, dismissed or the route changes: an error with an
+    // action (Retry, "Add it yourself"), and any action banner while a screen
+    // reader is on, because a timed-out button is unreachable for its user.
+    const sticky = hasActions && (banner.type === 'error' || screenReaderOn);
+    if (!sticky) {
+      const fallback = hasActions ? ACTION_DISPLAY_DURATION : DEFAULT_DISPLAY_DURATION;
+      timerRef.current = setTimeout(() => {
+        dismiss();
+      }, banner.duration ?? fallback);
+    }
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismiss is re-created every render; the effect must re-run only when the banner changes
-  }, [banner]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismiss is re-created every render
+  }, [banner, screenReaderOn]);
 
   function dismiss() {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -87,7 +125,7 @@ export function InAppBanner() {
       style={[
         styles.container,
         {
-          top: insets.top + headerContentHeight() + GAP_BELOW_HEADER,
+          top: insets.top + (hasHeader ? headerContentHeight() : 0) + GAP_BELOW_HEADER,
           backgroundColor: bgColor,
           transform: [{ translateY }],
         },

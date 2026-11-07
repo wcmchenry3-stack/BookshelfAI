@@ -54,7 +54,7 @@ jest.mock('expo-router', () => {
   MockStack.Screen = function MockScreen() {
     return null;
   };
-  return { Stack: MockStack };
+  return { Stack: MockStack, usePathname: () => '/', useSegments: () => [] };
 });
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
 jest.mock('expo-font', () => ({ useFonts: jest.fn(() => [true]) }));
