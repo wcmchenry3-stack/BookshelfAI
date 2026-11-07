@@ -1,4 +1,5 @@
-import { expect, KNOWN_VIOLATIONS, test } from './support/fixtures';
+import { expect, test } from './support/fixtures';
+import { openTab } from './support/flows';
 
 test.describe('My Books', () => {
   test.beforeEach(async ({ backend }) => {
@@ -13,23 +14,20 @@ test.describe('My Books', () => {
     expectNoA11yViolations,
   }) => {
     await signIn();
+    await openTab(page, 'Your book collection');
 
     // Library loads: every seeded book is listed.
     await expect(page.getByRole('button', { name: 'Dune — purchased' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Emma — wishlisted' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'The Great Gatsby — reading' })).toBeVisible();
-    await expectNoA11yViolations('My Books with three books', {
-      known: [KNOWN_VIOLATIONS.bookCardNestedInteractive],
-    });
+    await expectNoA11yViolations('My Books with three books');
 
     // Status filter.
     await page.getByRole('button', { name: 'Filter by Purchased' }).click();
     await expect(page.getByRole('button', { name: 'Dune — purchased' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Emma — wishlisted' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'The Great Gatsby — reading' })).toHaveCount(0);
-    await expectNoA11yViolations('My Books filtered to Purchased', {
-      known: [KNOWN_VIOLATIONS.bookCardNestedInteractive],
-    });
+    await expectNoA11yViolations('My Books filtered to Purchased');
     await page.getByRole('button', { name: 'Filter by All' }).click();
     await expect(page.getByRole('button', { name: 'Emma — wishlisted' })).toBeVisible();
 
@@ -47,9 +45,7 @@ test.describe('My Books', () => {
     await expect(detail.getByText('Frank Herbert')).toBeVisible();
     await expect(detail.getByText('A fake description of Dune.')).toBeVisible();
     await expect(detail.getByText('300 pages')).toBeVisible();
-    await expectNoA11yViolations('My Books book detail', {
-      known: [KNOWN_VIOLATIONS.bookCardNestedInteractive],
-    });
+    await expectNoA11yViolations('My Books book detail');
     await detail.getByRole('button', { name: 'Close detail' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });

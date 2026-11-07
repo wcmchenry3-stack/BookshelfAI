@@ -58,13 +58,6 @@ export const KNOWN_VIOLATIONS = {
     html: /^<[a-z]+ [^>]*role="checkbox"/,
     issue: 'picker row has role=checkbox without aria-checked (aria-required-attr, critical)',
   },
-  // Book cards (My Books, Wishlist) are a button that contains the
-  // "Mark as ..." and "Remove" buttons.
-  bookCardNestedInteractive: {
-    rule: 'nested-interactive',
-    html: /^<[a-z]+ [^>]*aria-label="[^"]+ — [^"]+"/,
-    issue: 'book card is a button containing buttons (nested-interactive, serious)',
-  },
 } satisfies Record<string, KnownViolation>;
 
 type LibraryStatus = 'wishlisted' | 'purchased' | 'reading' | 'read';

@@ -31,10 +31,10 @@ describe('Index (root redirect)', () => {
     expect(queryByTestId('redirect')).toBeNull();
   });
 
-  it('redirects to my-books when authenticated', async () => {
+  it('redirects to the Scan tab when authenticated (#904)', async () => {
     mockUseAuth.mockReturnValue({ isAuthenticated: true, isLoading: false });
     const { getByTestId } = await render(<Index />);
-    expect(getByTestId('redirect').props.children).toBe('/(tabs)/my-books');
+    expect(getByTestId('redirect').props.children).toBe('/(tabs)/scan');
   });
 
   it('redirects to login when not authenticated', async () => {
