@@ -72,15 +72,15 @@ describe('MyBooksScreen', () => {
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
     const { getByText } = await render(<MyBooksScreen />);
     await waitFor(() => {
-      expect(getByText('Dune')).toBeTruthy();
-      expect(getByText('Frank Herbert')).toBeTruthy();
+      expect(getByText('Dune', { hidden: true })).toBeTruthy();
+      expect(getByText('Frank Herbert', { hidden: true })).toBeTruthy();
     });
   });
 
   it('renders status badge on each card', async () => {
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
     const { getByText } = await render(<MyBooksScreen />);
-    await waitFor(() => expect(getByText('Wishlisted')).toBeTruthy());
+    await waitFor(() => expect(getByText('Wishlisted', { hidden: true })).toBeTruthy());
   });
 
   it('opens detail sheet when card is tapped', async () => {

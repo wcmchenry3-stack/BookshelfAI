@@ -11,7 +11,10 @@ interface BookRowProps {
   item: LibraryBook;
   /** The small uppercase label above the title (e.g. the status). */
   categoryLabel: string;
-  /** When set the whole card is a button (a sibling overlay, not a wrapper of the actions) (My Books opens its detail sheet). */
+  /**
+   * When set the whole card is tappable (My Books opens its detail sheet). The
+   * button is a sibling overlay, not a wrapper of the actions.
+   */
   onPress?: () => void;
   accessibilityLabel?: string;
   accessibilityHint?: string;
@@ -56,7 +59,16 @@ export function BookRow({
   // When the card is tappable the text/cover are inert (`pointerEvents="none"`)
   // so a tap falls through to the sibling overlay button; the action buttons
   // are siblings of that overlay, never nested inside it (#907).
-  const inert = onPress ? ('none' as const) : ('auto' as const);
+  // Its label already carries title/status, so the inert block is also hidden
+  // from assistive tech to avoid announcing the same content twice.
+  const inertProps = onPress
+    ? ({
+        pointerEvents: 'none',
+        accessibilityElementsHidden: true,
+        importantForAccessibility: 'no-hide-descendants',
+        'aria-hidden': true,
+      } as const)
+    : ({ pointerEvents: 'auto' } as const);
 
   return (
     <View style={cardStyle}>
@@ -71,9 +83,11 @@ export function BookRow({
         />
       ) : null}
       <View style={styles.cardContent} pointerEvents="box-none">
-        <View pointerEvents={inert}>{cover}</View>
+        <View testID="book-row-cover-wrap" {...inertProps}>
+          {cover}
+        </View>
         <View style={styles.content} pointerEvents="box-none">
-          <View style={styles.textBlock} pointerEvents={inert}>
+          <View style={styles.textBlock} testID="book-row-text" {...inertProps}>
             <Text
               style={[
                 styles.categoryLabel,
@@ -212,6 +226,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 6,
     minHeight: 32,
+    minWidth: 44,
     justifyContent: 'center',
   },
   actionText: { fontWeight: '600' },

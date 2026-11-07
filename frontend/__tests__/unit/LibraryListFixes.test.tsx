@@ -107,6 +107,36 @@ describe('#907 BookRow nesting', () => {
   });
 });
 
+describe('#907 BookRow accessibility tree', () => {
+  const hidden = { hidden: true };
+
+  it('hides the inert cover/text from assistive tech when the card is tappable', async () => {
+    const { getByTestId } = await render(
+      <BookRow item={makeItem('Dune', null)} categoryLabel="Wishlisted" onPress={() => {}}>
+        <></>
+      </BookRow>
+    );
+    for (const id of ['book-row-text', 'book-row-cover-wrap']) {
+      const props = getByTestId(id, hidden).props;
+      expect(props.accessibilityElementsHidden).toBe(true);
+      expect(props.importantForAccessibility).toBe('no-hide-descendants');
+    }
+  });
+
+  it('keeps the cover/text visible to assistive tech when the card is not tappable', async () => {
+    const { getByTestId } = await render(
+      <BookRow item={makeItem('Dune', null)} categoryLabel="Wishlisted">
+        <></>
+      </BookRow>
+    );
+    for (const id of ['book-row-text', 'book-row-cover-wrap']) {
+      const props = getByTestId(id, hidden).props;
+      expect(props.accessibilityElementsHidden).toBeUndefined();
+      expect(props.importantForAccessibility).toBeUndefined();
+    }
+  });
+});
+
 describe('#911 BookRow cover frame', () => {
   it.each([
     ['short', 'Up'],
