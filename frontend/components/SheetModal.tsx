@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../hooks/useTheme';
+import { fontFor } from '../theme/typography';
 
 interface SheetModalProps {
   visible: boolean;
@@ -82,7 +83,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  title: { fontWeight: '700' },
+  title: { fontFamily: fontFor('700') },
   closeButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
   footer: { padding: 16, borderTopWidth: StyleSheet.hairlineWidth },
 });

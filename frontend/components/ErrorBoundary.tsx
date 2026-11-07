@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Sentry } from '../lib/sentry';
 import { ThemeContext } from '../theme/ThemeContext';
 import { lightTheme, type Theme } from '../theme/light';
+import { fontFor } from '../theme/typography';
 
 /**
  * Theme access for a class component.
@@ -13,8 +14,8 @@ import { lightTheme, type Theme } from '../theme/light';
  * ThemeProvider, so it normally receives ThemeContext's default value
  * (lightTheme). If the context value is missing or malformed (provider failed
  * or supplied null), we fall back to lightTheme directly so the error screen
- * can never itself crash. All error-surface colours are the fixed
- * `errorBoundary*` tokens, identical in light and dark.
+ * can never itself crash. All error-surface colours are the
+ * `errorBoundary*` tokens (v2 palette, defined per mode, #898).
  */
 function resolveTheme(value: { theme?: Theme } | null | undefined): Theme {
   return value?.theme?.colors ? value.theme : lightTheme;
@@ -108,7 +109,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     marginBottom: 8,
     textAlign: 'center',
   },
@@ -134,7 +135,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
 });

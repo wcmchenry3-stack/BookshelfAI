@@ -5,6 +5,7 @@ import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { useLibraryAccent } from './useLibraryAccent';
 import { NEXT_STATUS, type LibraryBook } from './libraryShared';
+import { fontFor } from '../../theme/typography';
 
 export interface DetailBook extends LibraryBook {
   book: LibraryBook['book'] & { description: string | null };
@@ -169,7 +170,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  sheetTitle: { fontWeight: '700', flex: 1, marginRight: 8 },
+  sheetTitle: { fontFamily: fontFor('700'), flex: 1, marginRight: 8 },
   closeButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
   sheetContent: { padding: 16, gap: 12, alignItems: 'center' },
   sheetCover: { width: 120, height: 180, borderRadius: 4 },
@@ -183,6 +184,6 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
   },
-  sheetButtonText: { fontWeight: '600' },
+  sheetButtonText: { fontFamily: fontFor('600') },
   actionDisabled: { opacity: 0.5 },
 });

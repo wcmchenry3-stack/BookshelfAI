@@ -14,15 +14,16 @@ import { isScanningLimited } from '../../lib/scanErrors';
 import { isAwaitingRetry } from '../../lib/scanJob';
 import { ScanModeToggle, type InputMode } from '../../components/scan/ScanModeToggle';
 import { ScanProgressPanel } from '../../components/scan/ScanProgressPanel';
+import { fontFor } from '../../theme/typography';
 
 type CameraFacing = 'back' | 'front';
 
 export default function ScanScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation('scan');
-  // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
-  const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
-  const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
+  // The single accent (primary) in both modes — active/CTA accent (#898).
+  const activeColor = theme.colors.primary;
+  const onActiveColor = theme.colors.onPrimary;
   const {
     jobs,
     startScan,
@@ -358,7 +359,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   flipButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 12,
   },
   captureButton: {
@@ -384,7 +385,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   webCaptureButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 18,
   },
   searchContainer: {
@@ -407,7 +408,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   searchButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
   permissionText: {
@@ -423,6 +424,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   permissionButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
   },
 });

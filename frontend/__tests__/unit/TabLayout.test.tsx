@@ -17,6 +17,11 @@ jest.mock('../../hooks/useTheme', () => ({
         iconInactive: '#47645d',
         surface: '#fbf9f5',
         text: '#1b1c1a',
+        surfaceBar: '#fbfaf7',
+        onSurfaceVariant: '#5e636b',
+        outline: '#e4dfd4',
+        primarySoft: '#dce6f1',
+        onSurface: '#1a1c20',
       },
     },
   }),
@@ -103,11 +108,12 @@ describe('TabLayout', () => {
     expect(titles).toEqual(['Scan', 'Wishlist', 'My Books', 'Settings']);
   });
 
+  // #910: accent-coloured active icon, onSurfaceVariant inactive, surfaceBar bar.
   it('applies brand theme colors to tab bar via screenOptions', async () => {
     await render(<TabLayout />);
     const opts = g.__mockTabScreenOptions;
-    expect(opts.tabBarActiveTintColor).toBe('#ffffff');
-    expect(opts.tabBarInactiveTintColor).toBe('#47645d');
-    expect(opts.tabBarStyle?.backgroundColor).toBe('#f5f3ef');
+    expect(opts.tabBarActiveTintColor).toBe('#0f426f');
+    expect(opts.tabBarInactiveTintColor).toBe('#5e636b');
+    expect(opts.tabBarStyle?.backgroundColor).toBe('#fbfaf7');
   });
 });

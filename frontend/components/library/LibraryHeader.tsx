@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useLibraryAccent } from './useLibraryAccent';
+import { fontFor } from '../../theme/typography';
 
 interface LibraryHeaderProps {
   title: string;
@@ -67,7 +68,7 @@ export function LibraryHeader({
 const styles = StyleSheet.create({
   listHeader: { marginBottom: 8, gap: 6 },
   heroTitle: {
-    fontWeight: '700',
+    fontFamily: fontFor('700', 'serif'),
     lineHeight: 48,
     letterSpacing: -0.5,
   },
@@ -83,6 +84,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   summaryAccent: { width: 3, height: 32, borderRadius: 2 },
-  summaryCount: { fontSize: 28, fontWeight: '700', lineHeight: 32 },
+  summaryCount: { fontSize: 28, fontFamily: fontFor('700'), lineHeight: 32 },
   summaryLabel: { flex: 1, lineHeight: 18 },
 });

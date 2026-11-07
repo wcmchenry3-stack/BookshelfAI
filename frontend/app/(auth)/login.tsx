@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
+import { fontFor } from '../../theme/typography';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -188,7 +189,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 32,
-    fontWeight: '700',
+    fontFamily: fontFor('700', 'serif'),
     letterSpacing: -0.5,
     textAlign: 'center',
   },
@@ -223,11 +224,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   retryText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
   buttonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
 });

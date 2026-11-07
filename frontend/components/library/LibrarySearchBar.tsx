@@ -23,7 +23,7 @@ export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps)
         <MaterialIcons
           name="search"
           size={20}
-          color={theme.colors.outline}
+          color={theme.colors.onSurfaceVariant}
           style={styles.searchIcon}
         />
         <TextInput
@@ -34,7 +34,7 @@ export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps)
           value={value}
           onChangeText={onChangeText}
           placeholder={t('searchPlaceholder')}
-          placeholderTextColor={theme.colors.outline}
+          placeholderTextColor={theme.colors.onSurfaceVariant}
           returnKeyType="search"
           accessibilityLabel={t('searchA11y')}
         />

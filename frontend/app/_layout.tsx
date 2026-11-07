@@ -7,7 +7,7 @@ import '../src/i18n/i18n';
 import { Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
-import { NotoSerif_700Bold, NotoSerif_800ExtraBold } from '@expo-google-fonts/noto-serif';
+import { NotoSerif_600SemiBold, NotoSerif_700Bold } from '@expo-google-fonts/noto-serif';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -170,9 +170,11 @@ function GlobalScanModals() {
 }
 
 function RootLayout() {
+  // One font file per weight (theme/typography.ts `fontFiles`): Android ignores
+  // fontWeight on custom fonts, so every weight a variant uses is loaded here.
   const [fontsLoaded, fontsError] = useFonts({
+    NotoSerif_600SemiBold,
     NotoSerif_700Bold,
-    NotoSerif_800ExtraBold,
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,

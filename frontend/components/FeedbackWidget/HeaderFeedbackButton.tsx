@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../hooks/useTheme';
 import { useFeedback } from './FeedbackContext';
+import { fontFor } from '../../theme/typography';
 
 /** "?" button for the navigation header; opens the shared feedback sheet. */
 export function HeaderFeedbackButton() {
@@ -19,14 +20,7 @@ export function HeaderFeedbackButton() {
       hitSlop={8}
       testID="header-feedback-button"
     >
-      <Text
-        style={[
-          styles.text,
-          { color: theme.colors.onPrimary, fontFamily: theme.typography.fontFamilyBody },
-        ]}
-      >
-        ?
-      </Text>
+      <Text style={[styles.text, { color: theme.colors.onPrimary }]}>?</Text>
     </Pressable>
   );
 }
@@ -40,5 +34,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  text: { fontSize: 18, fontWeight: '700', lineHeight: 22 },
+  text: { fontSize: 18, fontFamily: fontFor('700'), lineHeight: 22 },
 });

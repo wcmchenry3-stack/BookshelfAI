@@ -17,6 +17,7 @@ import { useTheme } from '../hooks/useTheme';
 import { leaveScanQueue } from '../lib/scanQueueNav';
 import { formatLocalDateTime, formatLocalTime } from '../lib/scanErrors';
 import { failedTimeOf, isPendingUpload, type ScanJob } from '../lib/scanJob';
+import { fontFor } from '../theme/typography';
 
 // How often "Next try at" is re-checked while the screen is open.
 const CLOCK_TICK_MS = 30_000;
@@ -217,9 +218,9 @@ function Thumb({ job }: { job: ScanJob }) {
 const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 48 },
   back: { minHeight: 44, minWidth: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-  backText: { fontSize: 16, fontWeight: '600' },
+  backText: { fontSize: 16, fontFamily: fontFor('600') },
   title: { fontSize: 24, fontFamily: 'NotoSerif_700Bold', marginBottom: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', marginTop: 16, marginBottom: 8 },
+  sectionTitle: { fontSize: 18, fontFamily: fontFor('700'), marginTop: 16, marginBottom: 8 },
   note: { fontSize: 13, marginBottom: 8 },
   empty: { fontSize: 14, paddingVertical: 8 },
   row: { gap: 12, padding: 12, borderRadius: 12, marginBottom: 8 },
@@ -244,5 +245,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonText: { fontSize: 14, fontWeight: '600' },
+  buttonText: { fontSize: 14, fontFamily: fontFor('600') },
 });

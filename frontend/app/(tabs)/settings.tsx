@@ -12,6 +12,7 @@ import { noMatchRemainingToday, remainingToday } from '../../components/ScanStat
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
 import { useFeedback } from '../../components/FeedbackWidget/FeedbackContext';
 import { openTrash } from '../../lib/trash';
+import { fontFor } from '../../theme/typography';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
@@ -143,10 +144,10 @@ const styles = StyleSheet.create({
   usageLabel: { fontSize: 12 },
   trash: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
   feedback: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
-  trashText: { fontWeight: '600' },
+  trashText: { fontFamily: fontFor('600') },
   trashHint: { textAlign: 'center' },
   signOut: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, marginTop: 16 },
   signOutBusy: { opacity: 0.5 },
-  signOutText: { fontSize: 16, fontWeight: '600' },
-  usageValue: { fontSize: 14, fontWeight: '600', textAlign: 'center' },
+  signOutText: { fontSize: 16, fontFamily: fontFor('600') },
+  usageValue: { fontSize: 14, fontFamily: fontFor('600'), textAlign: 'center' },
 });
