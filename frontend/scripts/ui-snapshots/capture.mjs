@@ -29,7 +29,8 @@ import { URL } from 'node:url';
 import { coverSvg, searchResults, trash, usage, userBooks } from './fixtures.mjs';
 
 const require = createRequire(import.meta.url);
-const { chromium } = require('playwright');
+// playwright-core is a declared devDependency (the `playwright` package is not).
+const { chromium } = require('playwright-core');
 
 const args = process.argv.slice(2);
 const arg = (name, fallback) => {
@@ -62,6 +63,7 @@ const TAP_INDICATOR = `
 
 const emptyLists = { value: false };
 const consoleErrors = new Set();
+const failedSteps = [];
 
 async function mockApi(page) {
   await page.route(`${API}/**`, async (route) => {
@@ -129,12 +131,18 @@ async function step(name, fn) {
   try {
     await fn();
   } catch (err) {
-    console.warn(`  ✗ ${name}: ${err.message.split('\n')[0]}`);
+    const reason = err.message.split('\n')[0];
+    failedSteps.push(`${name}: ${reason}`);
+    console.warn(`  ✗ ${name}: ${reason}`);
   }
 }
 
 async function runTheme(browser, scheme) {
   const dir = join(OUT, scheme);
+  // Start each theme from an empty folder: a step that fails must leave no
+  // stale screenshot from an earlier run looking like a current result.
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(join(OUT, `${scheme}-walkthrough.mp4`), { force: true });
   mkdirSync(dir, { recursive: true });
   console.log(`\n${scheme}`);
   const context = await browser.newContext({
@@ -163,7 +171,7 @@ async function runTheme(browser, scheme) {
 
   await byLabel(page, 'Test Login').click();
   await settle(page, 1500);
-  await shot(page, dir, '00-landing-after-sign-in');
+  await shot(page, dir, '01b-landing-after-sign-in');
   await tab(page, 'Scan a book');
   await shot(page, dir, '02-scan-camera');
 
@@ -312,6 +320,7 @@ async function startRecording(context, page, scheme) {
 
 // CHROMIUM_PATH: use a pre-installed browser when the pinned Playwright's own
 // download is absent (e.g. cloud sessions: /opt/pw-browsers/chromium).
+mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}
 );
@@ -322,3 +331,9 @@ try {
 }
 writeFileSync(join(OUT, 'console-errors.txt'), [...consoleErrors].join('\n') + '\n');
 console.log(`\nSaved to ${OUT} (${consoleErrors.size} distinct console errors)`);
+if (failedSteps.length) {
+  // A partial capture must not pass for a complete one in a before/after.
+  console.error(`\n${failedSteps.length} step(s) failed; their screenshots are missing:`);
+  for (const f of failedSteps) console.error(`  - ${f}`);
+  process.exitCode = 1;
+}
