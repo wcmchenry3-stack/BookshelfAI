@@ -3,7 +3,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
-import { useLibraryAccent } from './useLibraryAccent';
 import { SCREEN_PADDING } from './libraryShared';
 
 interface LibrarySearchBarProps {
@@ -11,14 +10,13 @@ interface LibrarySearchBarProps {
   onChangeText: (text: string) => void;
 }
 
-/** Title/author filter box; pads below the floating header in dark mode. */
+/** Title/author filter box with a ≥3:1 `outlineField` border (WCAG 1.4.11). */
 export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps) {
   const { theme } = useTheme();
   // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
-  const { topPad } = useLibraryAccent();
   return (
-    <View style={[styles.searchRow, { paddingTop: 12 + topPad }]}>
+    <View style={[styles.searchRow, { paddingTop: 12 }]}>
       <View
         style={[
           styles.searchWrap,
