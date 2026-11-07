@@ -21,7 +21,8 @@
 
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { Buffer } from 'node:buffer';
 import { URL } from 'node:url';
@@ -33,16 +34,32 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
 
 const args = process.argv.slice(2);
+function exitWithUsage(message) {
+  console.error(`capture.mjs: ${message}`);
+  process.exit(2);
+}
 const arg = (name, fallback) => {
   const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : fallback;
+  if (i < 0) return fallback;
+  const value = args[i + 1];
+  if (value === undefined || value.startsWith('--')) exitWithUsage(`${name} needs a value`);
+  return value;
 };
 const APP_URL = arg('--url', 'http://localhost:8081');
 const OUT = resolve(arg('--out', 'ui-snapshots/current'));
+// The run deletes <out>/<theme>/ before capturing, so --out must be a
+// dedicated folder below the current one, and --themes a known theme name.
+if (!OUT.startsWith(process.cwd() + sep) && !OUT.startsWith(tmpdir() + sep)) {
+  exitWithUsage(`--out must be a folder inside ${process.cwd()} or the temp folder (got ${OUT})`);
+}
+if (!['localhost', '127.0.0.1'].includes(new URL(APP_URL).hostname)) {
+  exitWithUsage(`--url must be a local dev server (got ${APP_URL})`);
+}
 const API = 'http://mock.api';
 const VIEWPORT = { width: 390, height: 844 };
 const VIDEO = args.includes('--video');
 const THEMES = arg('--themes', 'light,dark').split(',');
+for (const t of THEMES) if (!['light', 'dark'].includes(t)) exitWithUsage(`unknown theme "${t}"`);
 // How long a recording holds on each captured screen.
 const HOLD_MS = VIDEO ? 1400 : 0;
 
@@ -64,8 +81,20 @@ const TAP_INDICATOR = `
 const emptyLists = { value: false };
 const consoleErrors = new Set();
 const failedSteps = [];
+const blockedOrigins = new Set();
 
 async function mockApi(page) {
+  // Everything that is neither the local dev server nor the mock API is
+  // blocked, so a stray EXPO_PUBLIC_API_URL or Sentry DSN can never reach a
+  // real service. Routes registered later take precedence, so the mock below
+  // still answers http://mock.api.
+  const appOrigin = new URL(APP_URL).origin;
+  await page.route('**/*', (route) => {
+    const url = route.request().url();
+    if (url.startsWith(appOrigin + '/')) return route.continue();
+    blockedOrigins.add(new URL(url).origin);
+    return route.abort('blockedbyclient');
+  });
   await page.route(`${API}/**`, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -155,101 +184,106 @@ async function runTheme(browser, scheme) {
   if (VIDEO) await context.addInitScript(TAP_INDICATOR);
   const page = await context.newPage();
   const recorder = VIDEO ? await startRecording(context, page, scheme) : null;
-  page.on('pageerror', (e) => consoleErrors.add(`[pageerror] ${e.message.split('\n')[0]}`));
-  page.on('console', (m) => {
-    if (m.type() === 'error') consoleErrors.add(m.text().split('\n')[0].slice(0, 300));
-  });
-  await mockApi(page);
-  emptyLists.value = false;
+  try {
+    page.on('pageerror', (e) => consoleErrors.add(`[pageerror] ${e.message.split('\n')[0]}`));
+    page.on('console', (m) => {
+      if (m.type() === 'error') consoleErrors.add(m.text().split('\n')[0].slice(0, 300));
+    });
+    await mockApi(page);
+    emptyLists.value = false;
 
-  await page.goto(APP_URL);
-  // The dev server's error toast would cover the tab bar; errors are written
-  // to console-errors.txt instead.
-  await page.addStyleTag({ content: '#error-toast { display: none !important; }' });
-  await settle(page, 2500);
-  await shot(page, dir, '01-login');
+    await page.goto(APP_URL);
+    // The dev server's error toast would cover the tab bar; errors are written
+    // to console-errors.txt instead.
+    await page.addStyleTag({ content: '#error-toast { display: none !important; }' });
+    await settle(page, 2500);
+    await shot(page, dir, '01-login');
 
-  await byLabel(page, 'Test Login').click();
-  await settle(page, 1500);
-  await shot(page, dir, '01b-landing-after-sign-in');
-  await tab(page, 'Scan a book');
-  await shot(page, dir, '02-scan-camera');
-
-  await step('scan search', async () => {
-    await byLabel(page, 'Text search mode').click();
-    await settle(page, 300);
-    await shot(page, dir, '03-scan-search');
-    await byLabel(page, 'Book title or author search').fill('austen');
-    await byLabel(page, 'Search for book').click();
+    await byLabel(page, 'Test Login').click();
     await settle(page, 1500);
-    // The result arrives as a "Book found" banner; View opens the review picker.
-    await shot(page, dir, '04-scan-result-banner');
-    await byLabel(page, 'View').click();
-    await settle(page, 800);
-    await shot(page, dir, '04b-scan-review-picker');
-    await byLabel(page, 'Close picker').click();
-    await settle(page, 500);
-    await byLabel(page, 'Camera scan mode').click();
-  });
+    await shot(page, dir, '01b-landing-after-sign-in');
+    await tab(page, 'Scan a book');
+    await shot(page, dir, '02-scan-camera');
 
-  await step('wishlist', async () => {
-    await tab(page, 'Your wishlist');
-    await shot(page, dir, '05-wishlist');
-  });
+    await step('scan search', async () => {
+      await byLabel(page, 'Text search mode').click();
+      await settle(page, 300);
+      await shot(page, dir, '03-scan-search');
+      await byLabel(page, 'Book title or author search').fill('austen');
+      await byLabel(page, 'Search for book').click();
+      await settle(page, 1500);
+      // The result arrives as a "Book found" banner; View opens the review picker.
+      await shot(page, dir, '04-scan-result-banner');
+      await byLabel(page, 'View').click();
+      await settle(page, 800);
+      await shot(page, dir, '04b-scan-review-picker');
+      await byLabel(page, 'Close picker').click();
+      await settle(page, 500);
+      await byLabel(page, 'Camera scan mode').click();
+    });
 
-  await step('my books', async () => {
-    await tab(page, 'Your book collection');
-    await shot(page, dir, '06-my-books');
-    await scrollList(page, 700);
-    await shot(page, dir, '07-my-books-scrolled');
-    await scrollList(page, -5000);
-    await byLabel(page, 'Filter by Reading').click();
-    await settle(page);
-    await shot(page, dir, '08-my-books-filter-reading');
-    await byLabel(page, 'Filter by All').click();
-    await settle(page);
-    await page.locator('[aria-label^="Moby-Dick"]').first().click();
-    await settle(page, 800);
-    await shot(page, dir, '09-book-detail-sheet');
-    const close = page.locator('[aria-label="Close detail"]').first();
-    if (await close.isVisible().catch(() => false)) await close.click();
-    else await page.keyboard.press('Escape');
-    await settle(page, 500);
-  });
+    await step('wishlist', async () => {
+      await tab(page, 'Your wishlist');
+      await shot(page, dir, '05-wishlist');
+    });
 
-  await step('settings', async () => {
-    await tab(page, 'App settings');
-    await shot(page, dir, '10-settings');
-  });
+    await step('my books', async () => {
+      await tab(page, 'Your book collection');
+      await shot(page, dir, '06-my-books');
+      await scrollList(page, 700);
+      await shot(page, dir, '07-my-books-scrolled');
+      await scrollList(page, -5000);
+      await byLabel(page, 'Filter by Reading').click();
+      await settle(page);
+      await shot(page, dir, '08-my-books-filter-reading');
+      await byLabel(page, 'Filter by All').click();
+      await settle(page);
+      await page.locator('[aria-label^="Moby-Dick"]').first().click();
+      await settle(page, 800);
+      await shot(page, dir, '09-book-detail-sheet');
+      const close = page.locator('[aria-label="Close detail"]').first();
+      if (await close.isVisible().catch(() => false)) await close.click();
+      else await page.keyboard.press('Escape');
+      await settle(page, 500);
+    });
 
-  await step('feedback', async () => {
-    await page.locator('[data-testid="settings-feedback"]').click();
-    await settle(page, 800);
-    await shot(page, dir, '11-feedback-sheet');
-    await page.keyboard.press('Escape');
-    await settle(page, 500);
-  });
+    await step('settings', async () => {
+      await tab(page, 'App settings');
+      await shot(page, dir, '10-settings');
+    });
 
-  await step('trash', async () => {
-    await page.locator('[data-testid="settings-trash"]').click();
-    await settle(page);
-    await shot(page, dir, '12-trash');
-    await page.goBack();
-    await settle(page);
-  });
+    await step('feedback', async () => {
+      await page.locator('[data-testid="settings-feedback"]').click();
+      await settle(page, 800);
+      await shot(page, dir, '11-feedback-sheet');
+      await page.keyboard.press('Escape');
+      await settle(page, 500);
+    });
 
-  await step('empty states', async () => {
-    emptyLists.value = true;
-    await tab(page, 'Your book collection');
-    await tab(page, 'Your wishlist');
-    await shot(page, dir, '13-wishlist-empty');
-    await tab(page, 'Your book collection');
-    await shot(page, dir, '14-my-books-empty');
-  });
+    await step('trash', async () => {
+      await page.locator('[data-testid="settings-trash"]').click();
+      await settle(page);
+      await shot(page, dir, '12-trash');
+      await page.goBack();
+      await settle(page);
+    });
 
-  if (recorder) await recorder.stop();
-  await context.close();
+    await step('empty states', async () => {
+      emptyLists.value = true;
+      await tab(page, 'Your book collection');
+      await tab(page, 'Your wishlist');
+      await shot(page, dir, '13-wishlist-empty');
+      await tab(page, 'Your book collection');
+      await shot(page, dir, '14-my-books-empty');
+    });
+  } finally {
+    if (recorder) await recorder.stop();
+    await context.close();
+  }
 }
+
+// Escapes a path for an ffmpeg concat list entry ('...' quoting).
+const quote = (path) => path.replace(/'/g, "'\\''");
 
 // Records the page with Chromium's screencast: each frame is saved with its
 // timestamp, then ffmpeg turns them into a constant-30fps MP4.
@@ -278,9 +312,9 @@ async function startRecording(context, page, scheme) {
       const end = (frames.at(-1)?.t ?? 0) + 1;
       const lines = frames.map((f, i) => {
         const next = frames[i + 1]?.t ?? end;
-        return `file '${f.file}'\nduration ${Math.max(0.001, next - f.t).toFixed(3)}`;
+        return `file '${quote(f.file)}'\nduration ${Math.max(0.001, next - f.t).toFixed(3)}`;
       });
-      if (frames.length) lines.push(`file '${frames.at(-1).file}'`);
+      if (frames.length) lines.push(`file '${quote(frames.at(-1).file)}'`);
       const list = join(frameDir, 'frames.txt');
       writeFileSync(list, lines.join('\n') + '\n');
       const mp4 = join(OUT, `${scheme}-walkthrough.mp4`);
@@ -312,7 +346,9 @@ async function startRecording(context, page, scheme) {
         rmSync(frameDir, { recursive: true, force: true });
         console.log(`  ▶ ${mp4}`);
       } else {
-        console.warn(`  ✗ video: ffmpeg unavailable or failed; frames kept in ${frameDir}`);
+        const why = r.error?.message ?? `ffmpeg exited ${r.status}`;
+        failedSteps.push(`${scheme} video: ${why} (frames kept in ${frameDir})`);
+        console.warn(`  ✗ video: ${why}; frames kept in ${frameDir}`);
       }
     },
   };
@@ -321,16 +357,26 @@ async function startRecording(context, page, scheme) {
 // CHROMIUM_PATH: use a pre-installed browser when the pinned Playwright's own
 // download is absent (e.g. cloud sessions: /opt/pw-browsers/chromium).
 mkdirSync(OUT, { recursive: true });
+rmSync(join(OUT, 'console-errors.txt'), { force: true });
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}
 );
 try {
-  for (const scheme of THEMES) await runTheme(browser, scheme);
+  for (const scheme of THEMES) {
+    // A failure outside a step (e.g. sign-in) skips the rest of that theme
+    // but is reported, and the other themes still run.
+    await runTheme(browser, scheme).catch((err) => {
+      const reason = err.message.split('\n')[0];
+      failedSteps.push(`${scheme}: ${reason}`);
+      console.warn(`  ✗ ${scheme}: ${reason}`);
+    });
+  }
 } finally {
   await browser.close();
+  writeFileSync(join(OUT, 'console-errors.txt'), [...consoleErrors].join('\n') + '\n');
 }
-writeFileSync(join(OUT, 'console-errors.txt'), [...consoleErrors].join('\n') + '\n');
 console.log(`\nSaved to ${OUT} (${consoleErrors.size} distinct console errors)`);
+if (blockedOrigins.size) console.log(`Blocked requests to: ${[...blockedOrigins].join(', ')}`);
 if (failedSteps.length) {
   // A partial capture must not pass for a complete one in a before/after.
   console.error(`\n${failedSteps.length} step(s) failed; their screenshots are missing:`);
