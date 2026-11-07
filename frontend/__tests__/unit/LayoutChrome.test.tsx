@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import React from 'react';
 import { render } from '@testing-library/react-native';
 import RootLayoutDefault from '../../app/_layout';
@@ -112,11 +114,19 @@ describe('root Stack chrome (#906, #908)', () => {
     expect(JSON.stringify(opts.headerStyle)).not.toContain('backdropFilter');
   });
 
-  it('hides the header for the (auth) group so no route name is shown', async () => {
+  it('hides the header on the real login route so no route name is shown', async () => {
     mockIsDark = false;
     await render(<RootLayoutDefault />);
-    const auth = mockStack.screens.find((s) => s.name === '(auth)');
-    expect(auth?.options?.headerShown).toBe(false);
+    // Every registered screen name must be a route file (or a group dir with its
+    // own _layout), else expo-router silently ignores the options.
+    const appDir = path.join(__dirname, '../../app');
+    const routeExists = (name: string) =>
+      fs.existsSync(path.join(appDir, `${name}.tsx`)) ||
+      fs.existsSync(path.join(appDir, name, '_layout.tsx'));
+    for (const s of mockStack.screens) expect(routeExists(s.name)).toBe(true);
+
+    const login = mockStack.screens.find((s) => s.name === '(auth)/login');
+    expect(login?.options?.headerShown).toBe(false);
     for (const s of mockStack.screens) {
       const title = s.options?.title;
       if (typeof title === 'string') expect(title).not.toMatch(/[()/]/);

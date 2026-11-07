@@ -79,8 +79,8 @@ function InnerStack() {
         headerTransparent: false,
       }}
     >
-      {/* No app chrome on sign-in; also keeps the raw route name out of the title (#908). */}
-      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+      {/* No app chrome on sign-in (the route is "(auth)/login": there is no (auth)/_layout); also keeps the raw route name out of the title (#908). */}
+      <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ title: '' }} />
       <Stack.Screen name="scan-queue" options={{ title: '', headerTransparent: false }} />
       <Stack.Screen name="trash" options={{ title: '', headerTransparent: false }} />

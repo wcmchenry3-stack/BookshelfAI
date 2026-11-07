@@ -52,7 +52,7 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 #### Icons
 - Library: **MaterialIcons** from `@expo/vector-icons`
 - Tab icons: `document-scanner` (Scan) · `auto-stories` (Wishlist) · `library-books` (My Books) · `settings` (Settings)
-- Header (`InnerStack`): opaque in both themes (`theme.colors.background`, no blur, no shadow, `headerTransparent: false`, #906) so screens need no top padding; the `(auth)` group has `headerShown: false` (#908). `headerRight`: `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
+- Header (`InnerStack`): opaque in both themes (`theme.colors.background`, no blur, no shadow, `headerTransparent: false`, #906) so screens need no top padding; the `(auth)/login` screen has `headerShown: false` (#908; with no `(auth)/_layout` the root Stack sees the route as `(auth)/login`, so a `(auth)` entry would match nothing). `headerRight`: `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
 - Do **not** use Ionicons — it has been replaced
 
 #### Shared sheets
