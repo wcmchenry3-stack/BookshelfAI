@@ -190,8 +190,8 @@ export function BookRowAction({
 const ACTION_HIT_SLOP = { top: 6, bottom: 6, left: 4, right: 4 };
 
 /** Fixed 2:3 cover frame; the card height follows it, never the reverse (#911). */
-export const COVER_WIDTH = 72;
-export const COVER_HEIGHT = 108;
+const COVER_WIDTH = 72;
+const COVER_HEIGHT = 108;
 
 const styles = StyleSheet.create({
   card: {
