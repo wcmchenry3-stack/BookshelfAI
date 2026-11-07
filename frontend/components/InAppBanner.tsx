@@ -16,7 +16,7 @@ const GAP_BELOW_HEADER = 8;
 const SLIDE_DISTANCE = 240;
 
 /** Stack header height below the safe-area inset: 44 iOS, 56 Android, 64 web. */
-export function headerContentHeight(): number {
+function headerContentHeight(): number {
   return Platform.OS === 'android' ? 56 : Platform.OS === 'web' ? 64 : 44;
 }
 
