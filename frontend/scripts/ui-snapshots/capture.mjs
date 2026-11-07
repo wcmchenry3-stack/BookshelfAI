@@ -52,7 +52,13 @@ const OUT = resolve(arg('--out', 'ui-snapshots/current'));
 if (!OUT.startsWith(process.cwd() + sep) && !OUT.startsWith(tmpdir() + sep)) {
   exitWithUsage(`--out must be a folder inside ${process.cwd()} or the temp folder (got ${OUT})`);
 }
-if (!['localhost', '127.0.0.1'].includes(new URL(APP_URL).hostname)) {
+let appHost;
+try {
+  appHost = new URL(APP_URL).hostname;
+} catch {
+  exitWithUsage(`--url is not a valid URL (got ${APP_URL})`);
+}
+if (!['localhost', '127.0.0.1'].includes(appHost)) {
   exitWithUsage(`--url must be a local dev server (got ${APP_URL})`);
 }
 const API = 'http://mock.api';
@@ -83,19 +89,33 @@ const consoleErrors = new Set();
 const failedSteps = [];
 const blockedOrigins = new Set();
 
-async function mockApi(page) {
+async function mockApi(context) {
   // Everything that is neither the local dev server nor the mock API is
   // blocked, so a stray EXPO_PUBLIC_API_URL or Sentry DSN can never reach a
   // real service. Routes registered later take precedence, so the mock below
   // still answers http://mock.api.
   const appOrigin = new URL(APP_URL).origin;
-  await page.route('**/*', (route) => {
+  // Registered on the context, not the page, so popups (target=_blank,
+  // window.open) and service workers are covered too.
+  await context.route('**/*', (route) => {
     const url = route.request().url();
     if (url.startsWith(appOrigin + '/')) return route.continue();
     blockedOrigins.add(new URL(url).origin);
     return route.abort('blockedbyclient');
   });
-  await page.route(`${API}/**`, async (route) => {
+  // WebSockets bypass HTTP routing: allow only the dev server's (Metro/HMR).
+  await context.routeWebSocket(/.*/, (ws) => {
+    if (
+      ws
+        .url()
+        .replace(/^ws/, 'http')
+        .startsWith(appOrigin + '/')
+    )
+      return ws.connectToServer();
+    blockedOrigins.add(new URL(ws.url()).origin);
+    return ws.close();
+  });
+  await context.route(`${API}/**`, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
     const path = url.pathname;
@@ -189,7 +209,7 @@ async function runTheme(browser, scheme) {
     page.on('console', (m) => {
       if (m.type() === 'error') consoleErrors.add(m.text().split('\n')[0].slice(0, 300));
     });
-    await mockApi(page);
+    await mockApi(context);
     emptyLists.value = false;
 
     await page.goto(APP_URL);
@@ -277,7 +297,9 @@ async function runTheme(browser, scheme) {
       await shot(page, dir, '14-my-books-empty');
     });
   } finally {
-    if (recorder) await recorder.stop();
+    // A failing encode must not skip closing the context or mask the error.
+    if (recorder)
+      await recorder.stop().catch((e) => failedSteps.push(`${scheme} video: ${e.message}`));
     await context.close();
   }
 }
@@ -347,6 +369,7 @@ async function startRecording(context, page, scheme) {
         console.log(`  ▶ ${mp4}`);
       } else {
         const why = r.error?.message ?? `ffmpeg exited ${r.status}`;
+        rmSync(mp4, { force: true }); // no half-written video left behind
         failedSteps.push(`${scheme} video: ${why} (frames kept in ${frameDir})`);
         console.warn(`  ✗ video: ${why}; frames kept in ${frameDir}`);
       }
