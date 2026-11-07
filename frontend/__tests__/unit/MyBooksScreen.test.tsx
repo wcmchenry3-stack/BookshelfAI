@@ -155,7 +155,7 @@ describe('MyBooksScreen', () => {
     });
     // On success the sheet closes and the card shows the server's status.
     await waitFor(() => expect(queryByLabelText('Dune — purchased')).toBeTruthy());
-    expect(queryByLabelText('Dune — wishlisted')).toBeNull();
+    expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeNull();
   });
 
   it('keeps the advanced book when the user has moved to its destination tab (#641)', async () => {
@@ -255,7 +255,7 @@ describe('MyBooksScreen', () => {
         resolveDelete = () => resolve({});
       })
     );
-    const { getByLabelText, queryByText } = await openWishlistedSheet();
+    const { getByLabelText, queryByLabelText } = await openWishlistedSheet();
     await waitFor(() => getByLabelText('Remove Dune'));
 
     // Deliberately not awaited — see the analogous PATCH test above for why.
@@ -264,18 +264,18 @@ describe('MyBooksScreen', () => {
     await waitFor(() =>
       expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true)
     );
-    expect(queryByText('Dune')).toBeTruthy();
+    expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeTruthy();
 
     await act(async () => {
       resolveDelete();
     });
-    await waitFor(() => expect(queryByText('Dune')).toBeNull());
+    await waitFor(() => expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeNull());
   });
 
   it('keeps the book and alerts when DELETE fails', async () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockDelete.mockRejectedValue(new Error('Network error'));
-    const { getByLabelText, queryByText } = await openWishlistedSheet();
+    const { getByLabelText, queryByLabelText } = await openWishlistedSheet();
     await waitFor(() => getByLabelText('Remove Dune'));
 
     await act(async () => {
@@ -283,7 +283,7 @@ describe('MyBooksScreen', () => {
     });
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(queryByText('Dune')).toBeTruthy();
+    expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeTruthy();
   });
 
   it('refetches when a filter tab is tapped', async () => {
