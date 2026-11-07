@@ -7,6 +7,7 @@ import { useTheme } from '../hooks/useTheme';
 import SheetModal from './SheetModal';
 import { isOwned, type Ownership } from '../lib/ownership';
 import { hasNoCatalogMatch } from '../lib/unverified';
+import { fontFor } from '../theme/typography';
 
 export interface EnrichedBook {
   book_id?: string;
@@ -332,7 +333,7 @@ export function BookCandidatePicker({
               style={{
                 color: outOfCredits ? theme.colors.textSecondary : theme.colors.primary,
                 fontSize: theme.typography.fontSizeBase,
-                fontWeight: '600',
+                fontFamily: fontFor('600'),
               }}
             >
               {t('bookCandidatePicker.enhance')}
@@ -380,7 +381,7 @@ const styles = StyleSheet.create({
   cover: { width: 72, height: 108 },
   coverPlaceholder: { opacity: 0.4 },
   info: { flex: 1, padding: 12, gap: 4 },
-  bookTitle: { fontWeight: '600' },
+  bookTitle: { fontFamily: fontFor('600') },
   checkbox: { justifyContent: 'center', paddingHorizontal: 12, minWidth: 44 },
   checkboxDisabled: { opacity: 0.4 },
   badge: {
@@ -390,7 +391,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginTop: 4,
   },
-  badgeText: { fontSize: 11, fontWeight: '600' },
+  badgeText: { fontSize: 11, fontFamily: fontFor('600') },
   addYourself: {
     alignSelf: 'flex-start',
     borderWidth: 1,
@@ -400,7 +401,7 @@ const styles = StyleSheet.create({
     minWidth: 44,
     justifyContent: 'center',
   },
-  addYourselfText: { fontWeight: '600' },
+  addYourselfText: { fontFamily: fontFor('600') },
   enhanceButton: {
     alignItems: 'center',
     paddingVertical: 12,
@@ -417,5 +418,5 @@ const styles = StyleSheet.create({
     minHeight: 48,
     justifyContent: 'center',
   },
-  addButtonText: { fontWeight: '600' },
+  addButtonText: { fontFamily: fontFor('600') },
 });

@@ -1,64 +1,111 @@
-import { ColorValue, Platform, StyleSheet } from 'react-native';
+import { ColorValue, StyleSheet, View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppText } from '../../components/ui/AppText';
 import { useTheme } from '../../hooks/useTheme';
+import { CHROME_MAX_FONT_SCALE, textVariants } from '../../theme/typography';
 
 type MaterialIconName = React.ComponentProps<typeof MaterialIcons>['name'];
+
+// Active indicator: a pill behind the icon only (#910).
+const PILL_WIDTH = 56;
+const PILL_HEIGHT = 30;
+const ICON_SIZE = 24;
+const BAR_PADDING_TOP = 8;
+const ICON_LABEL_GAP = 4;
+const LABEL_PADDING_BOTTOM = 8;
+// React Navigation's tab button adds `padding: 5` on every side (BottomTabItem
+// `tabVerticalUiKit`), which the bar height must include or the label clips.
+const ITEM_INNER_PADDING = 5;
+// The label's line height at the largest font scale it can reach, so it never clips.
+const LABEL_MAX_LINE = Math.ceil(textVariants.tabLabel.lineHeight * CHROME_MAX_FONT_SCALE);
+/** Smallest bar height (without the safe-area inset) that fits pill + gap + label. */
+const TAB_BAR_MIN_CONTENT_HEIGHT =
+  BAR_PADDING_TOP +
+  ITEM_INNER_PADDING +
+  PILL_HEIGHT +
+  ICON_LABEL_GAP +
+  LABEL_MAX_LINE +
+  ITEM_INNER_PADDING +
+  LABEL_PADDING_BOTTOM;
 
 interface TabIconProps {
   name: MaterialIconName;
   focused: boolean;
   color: ColorValue;
-  size: number;
 }
 
-function TabIcon({ name, focused, color, size }: TabIconProps) {
-  return <MaterialIcons name={name} size={size} color={color as string} />;
+function TabIcon({ name, focused, color }: TabIconProps) {
+  const { theme } = useTheme();
+  return (
+    <View
+      testID={focused ? `tab-pill-${name}` : undefined}
+      style={[styles.pill, { backgroundColor: focused ? theme.colors.primarySoft : 'transparent' }]}
+    >
+      <MaterialIcons name={name} size={ICON_SIZE} color={color as string} />
+    </View>
+  );
+}
+
+interface TabLabelProps {
+  focused: boolean;
+  color: ColorValue;
+  children: string;
+}
+
+function TabLabel({ focused, color, children }: TabLabelProps) {
+  return (
+    <AppText
+      variant={focused ? 'tabLabelActive' : 'tabLabel'}
+      numberOfLines={1}
+      style={[styles.label, { color }]}
+    >
+      {children}
+    </AppText>
+  );
 }
 
 export default function TabLayout() {
   const { theme } = useTheme();
   const { t } = useTranslation('tabs');
+  const insets = useSafeAreaInsets();
 
-  // In dark mode use the gold tertiary accent for active tabs; primary in light mode.
-  const activeTabBg = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
-  const activeTabTint = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
-
-  // Dark mode: frosted-glass bottom nav with rounded top and subtle border.
-  const tabBarBg = theme.isDark ? theme.colors.tabBarOverlay : theme.colors.surfaceContainerLow;
+  // Height from the content plus the bottom safe-area inset, never a fixed number.
+  const bottomInset = Math.max(insets.bottom, 0);
   const tabBarStyle = StyleSheet.flatten([
     styles.tabBar,
     {
-      backgroundColor: tabBarBg,
+      backgroundColor: theme.colors.surfaceBar,
       borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: theme.colors.outlineVariantFaint,
-      ...(theme.isDark
-        ? {
-            shadowColor: theme.colors.shadow,
-            shadowOffset: { width: 0, height: -4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 12,
-            elevation: 20,
-          }
-        : {}),
+      borderTopColor: theme.colors.outline,
+      // The bar sizes to its content (icon, label, paddings) plus the inset;
+      // minHeight is the computed floor so it never shrinks below the label.
+      height: 'auto' as const,
+      minHeight: TAB_BAR_MIN_CONTENT_HEIGHT + bottomInset,
+      paddingBottom: LABEL_PADDING_BOTTOM + bottomInset,
     },
   ]);
 
   return (
     <Tabs
-      screenOptions={({ route }) => ({
+      screenOptions={() => ({
         headerShown: false,
         tabBarStyle,
         tabBarShowLabel: true,
-        tabBarLabelStyle: styles.label,
-        tabBarActiveTintColor: activeTabTint,
-        tabBarInactiveTintColor: theme.colors.secondary,
+        tabBarLabelPosition: 'below-icon',
+        tabBarLabel: ({ focused, color, children }) => (
+          <TabLabel focused={focused} color={color}>
+            {children}
+          </TabLabel>
+        ),
+        tabBarActiveTintColor: theme.colors.primary,
+        tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
         tabBarItemStyle: styles.tabItem,
-        tabBarButton: undefined,
-        // Active tab gets a filled pill background; gold in dark mode, primary in light.
-        tabBarActiveBackgroundColor: activeTabBg,
+        tabBarIconStyle: styles.iconSlot,
+        tabBarActiveBackgroundColor: 'transparent',
         tabBarInactiveBackgroundColor: 'transparent',
       })}
     >
@@ -67,8 +114,8 @@ export default function TabLayout() {
         options={{
           title: t('scan'),
           tabBarAccessibilityLabel: t('scanA11y'),
-          tabBarIcon: ({ focused, color, size }) => (
-            <TabIcon name="document-scanner" focused={focused} color={color} size={size} />
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon name="document-scanner" focused={focused} color={color} />
           ),
         }}
       />
@@ -77,8 +124,8 @@ export default function TabLayout() {
         options={{
           title: t('wishlist'),
           tabBarAccessibilityLabel: t('wishlistA11y'),
-          tabBarIcon: ({ focused, color, size }) => (
-            <TabIcon name="auto-stories" focused={focused} color={color} size={size} />
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon name="auto-stories" focused={focused} color={color} />
           ),
         }}
       />
@@ -87,8 +134,8 @@ export default function TabLayout() {
         options={{
           title: t('myBooks'),
           tabBarAccessibilityLabel: t('myBooksA11y'),
-          tabBarIcon: ({ focused, color, size }) => (
-            <TabIcon name="library-books" focused={focused} color={color} size={size} />
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon name="library-books" focused={focused} color={color} />
           ),
         }}
       />
@@ -97,8 +144,8 @@ export default function TabLayout() {
         options={{
           title: t('settings'),
           tabBarAccessibilityLabel: t('settingsA11y'),
-          tabBarIcon: ({ focused, color, size }) => (
-            <TabIcon name="settings" focused={focused} color={color} size={size} />
+          tabBarIcon: ({ focused, color }) => (
+            <TabIcon name="settings" focused={focused} color={color} />
           ),
         }}
       />
@@ -108,25 +155,26 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    borderTopWidth: 0,
     elevation: 0,
+    paddingTop: BAR_PADDING_TOP,
     paddingHorizontal: 8,
-    paddingBottom: Platform.OS === 'ios' ? 16 : 8,
-    paddingTop: 8,
-    height: Platform.OS === 'ios' ? 80 : 64,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
   },
   tabItem: {
-    borderRadius: 12,
-    marginHorizontal: 4,
-    paddingVertical: 4,
+    minHeight: 44,
+    paddingVertical: 0,
+  },
+  iconSlot: {
+    width: PILL_WIDTH,
+    height: PILL_HEIGHT,
+  },
+  pill: {
+    width: PILL_WIDTH,
+    height: PILL_HEIGHT,
+    borderRadius: PILL_HEIGHT / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   label: {
-    fontSize: 10,
-    fontWeight: '500',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    marginBottom: 2,
+    marginTop: ICON_LABEL_GAP,
   },
 });

@@ -2,6 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
+import { fontFor } from '../theme/typography';
 
 /**
  * "Unverified" badge for a book the user added themselves because the catalog
@@ -30,5 +31,5 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginTop: 4,
   },
-  text: { fontSize: 11, fontWeight: '600' },
+  text: { fontSize: 11, fontFamily: fontFor('600') },
 });

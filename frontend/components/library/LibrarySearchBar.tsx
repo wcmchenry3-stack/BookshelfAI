@@ -10,18 +10,26 @@ interface LibrarySearchBarProps {
   onChangeText: (text: string) => void;
 }
 
-/** Title/author filter box; pads below the floating header in dark mode. */
+/** Title/author filter box with a ≥3:1 `outlineField` border (WCAG 1.4.11). */
 export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps) {
   const { theme } = useTheme();
   // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
   return (
     <View style={[styles.searchRow, { paddingTop: 12 }]}>
-      <View style={[styles.searchWrap, { backgroundColor: theme.colors.surfaceContainerHighest }]}>
+      <View
+        style={[
+          styles.searchWrap,
+          {
+            backgroundColor: theme.colors.surfaceContainerHighest,
+            borderColor: theme.colors.outlineField,
+          },
+        ]}
+      >
         <MaterialIcons
           name="search"
           size={20}
-          color={theme.colors.outline}
+          color={theme.colors.onSurfaceVariant}
           style={styles.searchIcon}
         />
         <TextInput
@@ -32,7 +40,7 @@ export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps)
           value={value}
           onChangeText={onChangeText}
           placeholder={t('searchPlaceholder')}
-          placeholderTextColor={theme.colors.outline}
+          placeholderTextColor={theme.colors.onSurfaceVariant}
           returnKeyType="search"
           accessibilityLabel={t('searchA11y')}
         />
@@ -47,6 +55,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 12,
+    borderWidth: 1,
     paddingHorizontal: 12,
     height: 48,
   },

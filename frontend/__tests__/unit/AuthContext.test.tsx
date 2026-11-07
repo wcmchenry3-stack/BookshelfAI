@@ -55,8 +55,9 @@ jest.mock('expo-secure-store', () => ({
 const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ replace: mockReplace }),
-  useSegments: () => [],
+  useSegments: () => mockSegments,
 }));
+let mockSegments: string[] = [];
 
 function AuthDisplay() {
   const { isAuthenticated, isLoading } = useContext(AuthContext);
@@ -65,6 +66,7 @@ function AuthDisplay() {
 
 beforeEach(async () => {
   jest.clearAllMocks();
+  mockSegments = [];
   mockGetItem.mockResolvedValue(null);
   mockSetItem.mockResolvedValue(undefined);
   mockDeleteItem.mockResolvedValue(undefined);
@@ -73,6 +75,24 @@ beforeEach(async () => {
   // Not a fresh install unless a test says so.
   await AsyncStorage.clear();
   await AsyncStorage.setItem(INSTALL_MARKER_KEY, '1');
+});
+
+describe('AuthProvider default tab (#904)', () => {
+  it('lands on Scan when a valid stored session leaves the auth screen', async () => {
+    mockSegments = ['(auth)'];
+    mockGetItem.mockResolvedValue('some-token');
+    const { getByTestId } = await renderProvider();
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    expect(mockReplace).toHaveBeenCalledWith('/(tabs)/scan');
+    expect(mockReplace).not.toHaveBeenCalledWith('/(tabs)/my-books');
+  });
+
+  it('sends a signed-out user to login, not a tab', async () => {
+    const { getByTestId } = await renderProvider();
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    expect(mockReplace).toHaveBeenCalledWith('/(auth)/login');
+    expect(mockReplace).not.toHaveBeenCalledWith('/(tabs)/scan');
+  });
 });
 
 describe('AuthProvider', () => {

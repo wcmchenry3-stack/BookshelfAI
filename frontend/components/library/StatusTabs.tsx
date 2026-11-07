@@ -20,6 +20,8 @@ export function StatusTabs({ activeTab, onChange }: StatusTabsProps) {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={styles.scroll}
+      testID="status-tabs"
       contentContainerStyle={styles.tabsContainer}
     >
       <View style={[styles.tabsTrack, { backgroundColor: theme.colors.surfaceContainerLow }]}>
@@ -30,6 +32,7 @@ export function StatusTabs({ activeTab, onChange }: StatusTabsProps) {
             <Pressable
               key={key}
               style={[styles.tab, active && { backgroundColor: activeColor }]}
+              hitSlop={{ top: 4, bottom: 4 }}
               onPress={() => onChange(key)}
               accessibilityRole="button"
               accessibilityLabel={t('filterBy', { label })}
@@ -54,8 +57,19 @@ export function StatusTabs({ activeTab, onChange }: StatusTabsProps) {
   );
 }
 
+/** 44px track (4 + 36 tab + 4) plus 8px above and below. */
+export const STATUS_TABS_HEIGHT = 60;
+
 const styles = StyleSheet.create({
-  tabsContainer: { paddingHorizontal: SCREEN_PADDING, paddingVertical: 8 },
+  // Never takes flexible space from the list/empty state (#905): without
+  // flexGrow/flexShrink 0 a horizontal ScrollView in a flex column collapses
+  // beside a FlatList and stretches when the list is empty.
+  scroll: { flexGrow: 0, flexShrink: 0, height: STATUS_TABS_HEIGHT },
+  tabsContainer: {
+    paddingHorizontal: SCREEN_PADDING,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
   tabsTrack: {
     flexDirection: 'row',
     borderRadius: 12,
