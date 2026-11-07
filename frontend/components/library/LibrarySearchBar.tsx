@@ -3,7 +3,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
-import { useLibraryAccent } from './useLibraryAccent';
 import { SCREEN_PADDING } from './libraryShared';
 
 interface LibrarySearchBarProps {
@@ -16,9 +15,8 @@ export function LibrarySearchBar({ value, onChangeText }: LibrarySearchBarProps)
   const { theme } = useTheme();
   // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
-  const { topPad } = useLibraryAccent();
   return (
-    <View style={[styles.searchRow, { paddingTop: 12 + topPad }]}>
+    <View style={[styles.searchRow, { paddingTop: 12 }]}>
       <View style={[styles.searchWrap, { backgroundColor: theme.colors.surfaceContainerHighest }]}>
         <MaterialIcons
           name="search"

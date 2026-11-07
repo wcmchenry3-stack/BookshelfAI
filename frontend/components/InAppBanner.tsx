@@ -1,16 +1,30 @@
 import { useEffect, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBanner } from '../hooks/useBanner';
 import { useTheme } from '../hooks/useTheme';
 
 const SLIDE_DURATION = 300;
 const DEFAULT_DISPLAY_DURATION = 5000;
+// A result banner that carries an action (e.g. "Book found" + View) stays a bit
+// longer so the action is reachable, but never indefinitely (#909).
+const ACTION_DISPLAY_DURATION = 10000;
+const SIDE_MARGIN = 16;
+const GAP_BELOW_HEADER = 8;
+const SLIDE_DISTANCE = 240;
+
+/** Stack header height below the safe-area inset: 44 iOS, 56 Android, 64 web. */
+export function headerContentHeight(): number {
+  return Platform.OS === 'android' ? 56 : Platform.OS === 'web' ? 64 : 44;
+}
 
 export function InAppBanner() {
   const { banner, hideBanner } = useBanner();
   const { theme } = useTheme();
-  const translateY = useRef(new Animated.Value(-120)).current;
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(-SLIDE_DISTANCE)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -21,16 +35,20 @@ export function InAppBanner() {
         useNativeDriver: true,
       }).start();
 
-      // A banner that carries an action stays until the user acts or taps it
-      // away: a timed-out button is unreachable for a screen-reader user, who
-      // may not find it before it disappears.
-      if (!banner.actions || banner.actions.length === 0) {
+      // An error that carries an action (Retry, "Add it yourself") stays until
+      // the user acts or taps it away: a timed-out button is unreachable for a
+      // screen-reader user. Every other banner, including a result banner with
+      // a "View" action, times out so it cannot linger across tabs (#909).
+      const sticky = banner.type === 'error' && !!banner.actions && banner.actions.length > 0;
+      if (!sticky) {
+        const hasActions = !!banner.actions && banner.actions.length > 0;
+        const fallback = hasActions ? ACTION_DISPLAY_DURATION : DEFAULT_DISPLAY_DURATION;
         timerRef.current = setTimeout(() => {
           dismiss();
-        }, banner.duration ?? DEFAULT_DISPLAY_DURATION);
+        }, banner.duration ?? fallback);
       }
     } else {
-      translateY.setValue(-120);
+      translateY.setValue(-SLIDE_DISTANCE);
     }
 
     return () => {
@@ -42,7 +60,7 @@ export function InAppBanner() {
   function dismiss() {
     if (timerRef.current) clearTimeout(timerRef.current);
     Animated.timing(translateY, {
-      toValue: -120,
+      toValue: -SLIDE_DISTANCE,
       duration: SLIDE_DURATION,
       useNativeDriver: true,
     }).start(() => hideBanner());
@@ -66,7 +84,15 @@ export function InAppBanner() {
 
   return (
     <Animated.View
-      style={[styles.container, { backgroundColor: bgColor, transform: [{ translateY }] }]}
+      style={[
+        styles.container,
+        {
+          top: insets.top + headerContentHeight() + GAP_BELOW_HEADER,
+          backgroundColor: bgColor,
+          transform: [{ translateY }],
+        },
+      ]}
+      testID="in-app-banner"
       accessibilityRole="alert"
       accessibilityLiveRegion="assertive"
     >
@@ -103,12 +129,12 @@ export function InAppBanner() {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
+    left: SIDE_MARGIN,
+    right: SIDE_MARGIN,
     zIndex: 9999,
-    paddingTop: 50,
-    paddingBottom: 12,
+    borderRadius: 16,
+    elevation: 6,
+    paddingVertical: 12,
     paddingHorizontal: 16,
   },
   content: {

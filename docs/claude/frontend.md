@@ -21,7 +21,7 @@ npx expo start
 - Color tokens follow the **Material Design 3** role naming convention (e.g. `primary`, `onPrimary`, `surfaceContainerLow`, `secondaryContainer`). See `frontend/theme/tokens.ts` for the full set.
 - Convenience aliases `background`, `text`, `textSecondary`, `border`, `iconActive`, `iconInactive`, `success` are kept for backward compatibility but prefer MD3 role names in new code.
 - **Repo-wide colour check:** `__tests__/unit/noColourLiterals.test.ts` scans `app/`, `components/`, `contexts/`, `hooks/` and `lib/` (not `theme/` or tests) and fails on any string literal containing a hex colour (`#` + 3/4/6/8 hex digits) or an `rgb()/rgba()/hsl()/hsla()` call, anywhere inside the string (e.g. `'1px solid #fff'`), printing `file:line`. Comments are ignored; named colours such as `'white'` are not detected. There is no allowlist or baseline. It complements the org-level shared `design-token-check.yml` workflow.
-- **Translucent / fixed tokens:** `headerOverlay` (dark glass header; light transparent), `tabBarOverlay`, `outlineVariantFaint`, `shadow`, and the `errorBoundary*` set (fixed palette, identical in light and dark). Define new variants in `tokens.ts` with both modes, then add them to `light.ts` and `dark.ts`.
+- **Translucent / fixed tokens:** `headerOverlay` (no longer used by the root header since #906), `tabBarOverlay`, `outlineVariantFaint`, `shadow`, and the `errorBoundary*` set (fixed palette, identical in light and dark). Define new variants in `tokens.ts` with both modes, then add them to `light.ts` and `dark.ts`.
 - **ErrorBoundary** (a class, mounted above `ThemeProvider`) reads the theme via `ThemeContext.Consumer` and falls back to `lightTheme` if the context value is missing or malformed, so the error screen can never crash on theming.
 
 ### Design System
@@ -52,14 +52,15 @@ Defined in `frontend/theme/tokens.ts`. Key roles:
 #### Icons
 - Library: **MaterialIcons** from `@expo/vector-icons`
 - Tab icons: `document-scanner` (Scan) · `auto-stories` (Wishlist) · `library-books` (My Books) · `settings` (Settings)
-- Header (`headerRight` in `InnerStack`): `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
+- Header (`InnerStack`): opaque in both themes (`theme.colors.background`, no blur, no shadow, `headerTransparent: false`, #906) so screens need no top padding; the `(auth)` group has `headerShown: false` (#908). `headerRight`: `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
 - Do **not** use Ionicons — it has been replaced
 
 #### Shared sheets
+- `components/InAppBanner.tsx` is a floating rounded card inset 16px, placed at safe-area top + header height + 8 (below the header, never over it). Banners time out (default 5 s; 10 s when they carry an action such as "View"); only an `error` banner with actions is sticky until acted on or tapped (#909).
 - `components/SheetModal.tsx` is the shared page-sheet modal scaffold (themed container, title + close header, body, bordered footer) used by `BookCandidatePicker` and `AddUnverifiedBookSheet`; pass the body as children and the primary action as `footer`.
 
 #### Library screens (My Books and Wishlist)
-- Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours and dark-mode top padding.
+- Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours.
 - `hooks/useLibraryMutations.ts` owns advance-status and remove (the per-row in-flight guard, offline check, error alerts, the "moved to trash" banner). Each screen passes `onAdvanced` / `onRemoved` to update its own list, so My Books and Wishlist keep their different list rules. Put new shared row/header behaviour there, not in the screens.
 
 #### Logo / App Icon

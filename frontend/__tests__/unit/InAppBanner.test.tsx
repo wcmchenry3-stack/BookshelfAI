@@ -208,6 +208,59 @@ describe('InAppBanner', () => {
     });
   });
 
+  describe('floating card below the header (#909)', () => {
+    it('sits below the safe-area inset plus header, inset 16px from the sides, not full-bleed', async () => {
+      const { getByTestId } = await renderWithBanner({ message: 'Book found', type: 'success' });
+      await fireEvent.press(getByTestId('trigger'));
+      const style = StyleSheet.flatten(getByTestId('in-app-banner').props.style);
+      // Platform defaults to iOS in jest: inset 0 (mocked) + 44 header + 8 gap.
+      expect(style.top).toBe(44 + 8);
+      expect(style.left).toBe(16);
+      expect(style.right).toBe(16);
+      expect(style.borderRadius).toBeGreaterThan(0);
+      expect(style.paddingTop).not.toBe(50);
+    });
+
+    it('auto-dismisses a result banner with a View action, and View still fires', async () => {
+      const onView = jest.fn();
+      function Trigger() {
+        const { showBanner } = useBanner();
+        return (
+          <Pressable
+            testID="t2"
+            onPress={() =>
+              showBanner({
+                message: 'Book found',
+                type: 'success',
+                actions: [{ label: 'View', onPress: onView }],
+              })
+            }
+          >
+            <Text>Show</Text>
+          </Pressable>
+        );
+      }
+      const { getByTestId, getByLabelText, queryByText } = await render(
+        <BannerProvider>
+          <InAppBanner />
+          <Trigger />
+        </BannerProvider>
+      );
+      // No explicit duration: the default timeout still clears it.
+      await fireEvent.press(getByTestId('t2'));
+      expect(queryByText('Book found')).toBeTruthy();
+      await act(async () => {
+        jest.advanceTimersByTime(10000 + 500);
+      });
+      expect(queryByText('Book found')).toBeNull();
+
+      // View still fires while it is up.
+      await fireEvent.press(getByTestId('t2'));
+      await fireEvent.press(getByLabelText('View'));
+      expect(onView).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('dismisses on tap', async () => {
     const { getByTestId, getByText, queryByText } = await renderWithBanner({
       message: 'Tap to dismiss',
