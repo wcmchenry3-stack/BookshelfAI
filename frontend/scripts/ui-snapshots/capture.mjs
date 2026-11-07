@@ -17,6 +17,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { URL } from 'node:url';
 
 import { coverSvg, searchResults, trash, usage, userBooks } from './fixtures.mjs';
 
@@ -86,6 +87,7 @@ async function tab(page, label) {
 // Scrolls the tallest scrollable element (the screen's list); the mouse wheel
 // does nothing under touch emulation.
 async function scrollList(page, dy) {
+  /* global document, getComputedStyle -- runs in the page via page.evaluate */
   await page.evaluate((delta) => {
     const els = [...document.querySelectorAll('div')].filter(
       (e) => e.scrollHeight > e.clientHeight + 20 && getComputedStyle(e).overflowY !== 'visible'
