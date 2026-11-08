@@ -1,6 +1,6 @@
 import React from 'react';
 import { Alert } from 'react-native';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 
 import MyBooksScreen from '../../app/(tabs)/my-books';
 import { userBookRow } from '../helpers/screenMocks';
@@ -70,9 +70,11 @@ describe('MyBooksScreen', () => {
 
   it('renders book titles when data loaded', async () => {
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
-    const { getByText } = await render(<MyBooksScreen />);
+    const { getByText, getByTestId } = await render(<MyBooksScreen />);
     await waitFor(() => {
-      expect(getByText('Dune', { hidden: true })).toBeTruthy();
+      // Scoped to the row's text block: the generated cover also typesets the title.
+      const text = within(getByTestId('book-row-text', { hidden: true }));
+      expect(text.getByText('Dune', { hidden: true })).toBeTruthy();
       expect(getByText('Frank Herbert', { hidden: true })).toBeTruthy();
     });
   });
