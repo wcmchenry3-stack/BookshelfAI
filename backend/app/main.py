@@ -27,6 +27,7 @@ from app.api.books import router as books_router
 from app.api.scan import MAX_SCAN_REQUEST_BYTES, SCAN_UPLOAD_PATH
 from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
+from app.api.users import router as users_router
 from app.core import catalog_token
 from app.core.config import check_turnstile_configured, settings
 from app.core.database import AsyncSessionLocal, log_db_role
@@ -415,6 +416,7 @@ app.include_router(auth_router)
 app.include_router(books_router)
 app.include_router(scan_router)
 app.include_router(user_books_router)
+app.include_router(users_router)
 
 
 @app.get("/health")
