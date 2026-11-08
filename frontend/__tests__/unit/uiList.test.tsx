@@ -150,3 +150,27 @@ describe('ListSection', () => {
     expect(style(d2).marginLeft).toBe(60);
   });
 });
+
+describe('ListRow selected (#933)', () => {
+  it('is a radio with a decorative check instead of the chevron', async () => {
+    const { getByTestId, queryByTestId } = await render(
+      <ListRow label="Title A–Z" onPress={jest.fn()} selected testID="r" />
+    );
+    expect(getByTestId('r-check', { includeHiddenElements: true })).toBeTruthy();
+    expect(queryByTestId('r-chevron')).toBeNull();
+    expect(getByTestId('r').props.accessibilityRole).toBe('radio');
+    expect(getByTestId('r').props.accessibilityState).toEqual({ disabled: false, checked: true });
+    expect(
+      getByTestId('r-check', { includeHiddenElements: true }).props.accessibilityElementsHidden
+    ).toBe(true);
+    expect(getByTestId('r-check', { includeHiddenElements: true }).props['aria-hidden']).toBe(true);
+  });
+
+  it('an unselected choice reports checked: false and keeps no check', async () => {
+    const { queryByTestId, getByTestId } = await render(
+      <ListRow label="Title A–Z" onPress={jest.fn()} selected={false} testID="r" />
+    );
+    expect(queryByTestId('r-check', { includeHiddenElements: true })).toBeNull();
+    expect(getByTestId('r').props.accessibilityState).toEqual({ disabled: false, checked: false });
+  });
+});

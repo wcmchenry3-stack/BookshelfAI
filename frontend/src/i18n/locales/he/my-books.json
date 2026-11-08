@@ -64,6 +64,22 @@
   "headerReading_many": "{{count}} נקראים עכשיו",
   "headerReading_other": "{{count}} נקראים עכשיו",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "קורא עכשיו",
+    "allBooks": "כל הספרים"
+  },
+  "sort": {
+    "sheetTitle": "מיון לפי",
+    "buttonA11y": "מיון, כרגע: {{label}}",
+    "added": "נוספו לאחרונה",
+    "title": "כותרת א–ת",
+    "author": "מחבר א–ת"
+  },
+  "shelfA11y_one": "קורא עכשיו, ספר אחד",
+  "shelfA11y_two": "קורא עכשיו, שני ספרים",
+  "shelfA11y_many": "קורא עכשיו, {{count}} ספרים",
+  "shelfA11y_other": "קורא עכשיו, {{count}} ספרים",
+  "shelfItemA11y": "{{title}}, מאת {{author}}",
   "movedToTrash": "הועבר לפח. אפשר לשחזר אותו תוך 30 יום.",
   "viewTrash": "הצגת הפח",
   "trash": {

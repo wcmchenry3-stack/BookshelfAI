@@ -64,6 +64,22 @@
   "headerReading_many": "Читаю сейчас: {{count}}",
   "headerReading_other": "Читаю сейчас: {{count}}",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "Читаю сейчас",
+    "allBooks": "Все книги"
+  },
+  "sort": {
+    "sheetTitle": "Сортировать по",
+    "buttonA11y": "Сортировка, сейчас: {{label}}",
+    "added": "Недавно добавленные",
+    "title": "Название А–Я",
+    "author": "Автор А–Я"
+  },
+  "shelfA11y_one": "Читаю сейчас, {{count}} книга",
+  "shelfA11y_few": "Читаю сейчас, {{count}} книги",
+  "shelfA11y_many": "Читаю сейчас, {{count}} книг",
+  "shelfA11y_other": "Читаю сейчас, {{count}} книги",
+  "shelfItemA11y": "{{title}}, автор: {{author}}",
   "movedToTrash": "Перемещено в корзину. Восстановить можно в течение 30 дней.",
   "viewTrash": "Открыть корзину",
   "trash": {

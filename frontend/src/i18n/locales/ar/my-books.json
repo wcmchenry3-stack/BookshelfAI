@@ -70,6 +70,24 @@
   "headerReading_many": "{{count}} كتابًا قيد القراءة الآن",
   "headerReading_other": "{{count}} كتاب قيد القراءة الآن",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "أقرأ الآن",
+    "allBooks": "كل الكتب"
+  },
+  "sort": {
+    "sheetTitle": "ترتيب حسب",
+    "buttonA11y": "ترتيب، الحالي: {{label}}",
+    "added": "أُضيفت مؤخرًا",
+    "title": "العنوان (أ–ي)",
+    "author": "المؤلف (أ–ي)"
+  },
+  "shelfA11y_zero": "أقرأ الآن، لا كتب",
+  "shelfA11y_one": "أقرأ الآن، كتاب واحد",
+  "shelfA11y_two": "أقرأ الآن، كتابان",
+  "shelfA11y_few": "أقرأ الآن، {{count}} كتب",
+  "shelfA11y_many": "أقرأ الآن، {{count}} كتابًا",
+  "shelfA11y_other": "أقرأ الآن، {{count}} كتاب",
+  "shelfItemA11y": "{{title}}، تأليف {{author}}",
   "movedToTrash": "تم النقل إلى سلة المحذوفات. يمكنك استعادته خلال 30 يومًا.",
   "viewTrash": "عرض سلة المحذوفات",
   "trash": {

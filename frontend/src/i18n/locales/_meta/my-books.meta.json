@@ -234,6 +234,51 @@
     "tone": "neutral",
     "placeholders": ["{{books}}", "{{reading}}"]
   },
+  "section.readingNow": {
+    "description": "Section label above the shelf of books being read now (shown uppercase)",
+    "tone": "neutral",
+    "characterLimit": 24
+  },
+  "section.allBooks": {
+    "description": "Section label above the full list of books (shown uppercase)",
+    "tone": "neutral",
+    "characterLimit": 24
+  },
+  "sort.sheetTitle": {
+    "description": "Title of the sort sheet, e.g. 'Sort by'",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "sort.buttonA11y": {
+    "description": "Accessibility label of the Sort icon button; {{label}} is the current sort option name (the sort.added/title/author text)",
+    "tone": "neutral",
+    "placeholders": ["{{label}}"]
+  },
+  "sort.added": {
+    "description": "Sort option and current-sort caption: newest additions first, e.g. 'Recently added'",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "sort.title": {
+    "description": "Sort option: alphabetical by title, e.g. 'Title A–Z'. Use the locale's own alphabet order wording.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "sort.author": {
+    "description": "Sort option: alphabetical by author, e.g. 'Author A–Z'. Use the locale's own alphabet order wording.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "shelfA11y": {
+    "description": "Accessibility label of the 'Reading now' shelf, announced as a list, e.g. 'Reading now, 2 books'. Plural: _one/_other (and locale categories). {{count}} is the number of books.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "shelfItemA11y": {
+    "description": "Accessibility label of a book on the 'Reading now' shelf, e.g. 'Dune, by Frank Herbert'",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{author}}"]
+  },
   "movedToTrash": {
     "description": "Banner after a library entry is moved to the trash; says it can be restored within 30 days",
     "tone": "neutral",

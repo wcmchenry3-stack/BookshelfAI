@@ -58,6 +58,20 @@
   "headerReading_one": "{{count}} nu aan het lezen",
   "headerReading_other": "{{count}} nu aan het lezen",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "Nu aan het lezen",
+    "allBooks": "Alle boeken"
+  },
+  "sort": {
+    "sheetTitle": "Sorteren op",
+    "buttonA11y": "Sorteren, nu {{label}}",
+    "added": "Onlangs toegevoegd",
+    "title": "Titel A–Z",
+    "author": "Auteur A–Z"
+  },
+  "shelfA11y_one": "Nu aan het lezen, {{count}} boek",
+  "shelfA11y_other": "Nu aan het lezen, {{count}} boeken",
+  "shelfItemA11y": "{{title}}, door {{author}}",
   "movedToTrash": "Naar de prullenbak verplaatst. Je kunt het 30 dagen herstellen.",
   "viewTrash": "Prullenbak bekijken",
   "trash": {

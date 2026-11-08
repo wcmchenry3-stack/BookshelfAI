@@ -58,6 +58,20 @@
   "headerReading_one": "{{count}} अभी पढ़ रहे हैं",
   "headerReading_other": "{{count}} अभी पढ़ रहे हैं",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "अभी पढ़ रहे हैं",
+    "allBooks": "सभी किताबें"
+  },
+  "sort": {
+    "sheetTitle": "क्रमबद्ध करें",
+    "buttonA11y": "क्रमबद्ध करें, अभी: {{label}}",
+    "added": "हाल ही में जोड़ी गईं",
+    "title": "शीर्षक अ–ह",
+    "author": "लेखक अ–ह"
+  },
+  "shelfA11y_one": "अभी पढ़ रहे हैं, {{count}} किताब",
+  "shelfA11y_other": "अभी पढ़ रहे हैं, {{count}} किताबें",
+  "shelfItemA11y": "{{title}}, लेखक {{author}}",
   "movedToTrash": "ट्रैश में भेज दी गई। आप 30 दिनों के भीतर इसे वापस ला सकते हैं।",
   "viewTrash": "ट्रैश देखें",
   "trash": {

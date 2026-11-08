@@ -58,6 +58,20 @@
   "headerReading_one": "{{count}} reading now",
   "headerReading_other": "{{count}} reading now",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "Reading now",
+    "allBooks": "All books"
+  },
+  "sort": {
+    "sheetTitle": "Sort by",
+    "buttonA11y": "Sort, currently {{label}}",
+    "added": "Recently added",
+    "title": "Title A–Z",
+    "author": "Author A–Z"
+  },
+  "shelfA11y_one": "Reading now, {{count}} book",
+  "shelfA11y_other": "Reading now, {{count}} books",
+  "shelfItemA11y": "{{title}}, by {{author}}",
   "movedToTrash": "Moved to Trash. You can restore it within 30 days.",
   "viewTrash": "View trash",
   "trash": {

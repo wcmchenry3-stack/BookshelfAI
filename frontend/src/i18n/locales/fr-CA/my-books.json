@@ -58,6 +58,20 @@
   "headerReading_one": "{{count}} en lecture",
   "headerReading_other": "{{count}} en lecture",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "En cours de lecture",
+    "allBooks": "Tous les livres"
+  },
+  "sort": {
+    "sheetTitle": "Trier par",
+    "buttonA11y": "Trier, actuellement {{label}}",
+    "added": "Ajoutés récemment",
+    "title": "Titre A–Z",
+    "author": "Auteur A–Z"
+  },
+  "shelfA11y_one": "En cours de lecture, {{count}} livre",
+  "shelfA11y_other": "En cours de lecture, {{count}} livres",
+  "shelfItemA11y": "{{title}}, de {{author}}",
   "movedToTrash": "Déplacé dans la corbeille. Vous pouvez le restaurer pendant 30 jours.",
   "viewTrash": "Voir la corbeille",
   "trash": {

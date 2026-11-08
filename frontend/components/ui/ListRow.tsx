@@ -6,6 +6,13 @@ import { useTheme } from '../../hooks/useTheme';
 import { AppText } from './AppText';
 import type { IconName } from './Button';
 
+/** Icons next to a label are decoration: the row's own label says it all. */
+const DECORATIVE = {
+  accessibilityElementsHidden: true,
+  importantForAccessibility: 'no-hide-descendants',
+  'aria-hidden': true,
+} as const;
+
 export interface ListRowProps {
   label: string;
   /** Optional second line under the label. */
@@ -20,6 +27,13 @@ export interface ListRowProps {
   destructive?: boolean;
   onPress?: () => void;
   disabled?: boolean;
+  /**
+   * Marks the row as a choice in a single-select list: the selected row shows a check
+   * (in place of the chevron) and is a `radio` reporting checked state through both
+   * `accessibilityState.checked` (native) and `aria-checked` (react-native-web ignores
+   * `accessibilityState`, and drops `aria-selected` on buttons). Put such rows in a `radiogroup`.
+   */
+  selected?: boolean;
   accessibilityLabel?: string;
   testID?: string;
 }
@@ -34,11 +48,12 @@ export function ListRow({
   destructive = false,
   onPress,
   disabled = false,
+  selected,
   accessibilityLabel,
   testID,
 }: ListRowProps) {
   const { theme } = useTheme();
-  const showChevron = chevron ?? onPress !== undefined;
+  const showChevron = !selected && (chevron ?? onPress !== undefined);
   const fg = destructive ? 'danger' : 'onSurface';
   const spoken = accessibilityLabel ?? [label, value, hint].filter(Boolean).join(', ');
 
@@ -74,6 +89,15 @@ export function ListRow({
           {value}
         </AppText>
       ) : null}
+      {selected ? (
+        <MaterialIcons
+          name="check"
+          testID={testID ? `${testID}-check` : 'list-row-check'}
+          size={22}
+          color={theme.colors.primary}
+          {...DECORATIVE}
+        />
+      ) : null}
       {showChevron ? (
         <MaterialIcons
           name="chevron-right"
@@ -96,9 +120,10 @@ export function ListRow({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      accessibilityRole="button"
+      accessibilityRole={selected === undefined ? 'button' : 'radio'}
       accessibilityLabel={spoken}
-      accessibilityState={{ disabled }}
+      accessibilityState={selected === undefined ? { disabled } : { disabled, checked: selected }}
+      aria-checked={selected}
       testID={testID}
       style={({ pressed }) => [styles.row, { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 }]}
     >
