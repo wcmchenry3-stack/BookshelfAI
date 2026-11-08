@@ -1,15 +1,5 @@
-import type { Page } from '@playwright/test';
-
 import { expect, test } from './support/fixtures';
 import { openTab } from './support/flows';
-
-/** Computed outline of the element that has focus (#923). */
-const focusedOutline = (page: Page, container = false) =>
-  page.evaluate((onParent) => {
-    const el = document.activeElement as Element;
-    const s = getComputedStyle(onParent ? (el.parentElement as Element) : el);
-    return { style: s.outlineStyle, width: parseFloat(s.outlineWidth) };
-  }, container);
 
 test.describe('Keyboard focus ring', () => {
   test.beforeEach(async ({ backend }) => {
@@ -26,19 +16,21 @@ test.describe('Keyboard focus ring', () => {
     const search = page.getByRole('textbox', { name: 'Search your books' });
     await search.click();
     await expect(search).toBeFocused();
-    expect((await focusedOutline(page, true)).style).toBe('solid');
+    await expect(search.locator('..')).toHaveCSS('outline-style', 'solid');
 
-    // Tab moves to the next control with a visible, at least 2px ring.
+    // With an empty query there is no clear button, so Tab moves to the "All" chip,
+    // which shows a 2px ring.
+    const all = page.getByRole('button', { name: 'Filter by All' });
     await page.keyboard.press('Tab');
-    await expect(search).not.toBeFocused();
-    const tabbed = await focusedOutline(page);
-    expect(tabbed.style).not.toBe('none');
-    expect(tabbed.width).toBeGreaterThanOrEqual(2);
+    await expect(all).toBeFocused();
+    await expect(all).toHaveCSS('outline-style', 'solid');
+    await expect(all).toHaveCSS('outline-width', '2px');
 
-    // A pointer press on a chip focuses it without a ring.
-    const chip = page.getByRole('button', { name: 'Filter by All' });
-    await chip.click();
-    await expect(chip).toBeFocused();
-    expect((await focusedOutline(page)).style).toBe('none');
+    // A pointer press on a different chip moves focus there without a ring.
+    const purchased = page.getByRole('button', { name: 'Filter by Purchased' });
+    await purchased.click();
+    await expect(purchased).toBeFocused();
+    await expect(purchased).toHaveCSS('outline-style', 'none');
+    await expect(all).toHaveCSS('outline-style', 'none');
   });
 });

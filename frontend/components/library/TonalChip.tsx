@@ -39,6 +39,8 @@ export function TonalChip({
       {...buttonA11yProps(accessibilityLabel, disabled, testID)}
       style={({ pressed }) => [
         styles.target,
+        // Round the 44px target so the focus ring follows the pill's shape.
+        { borderRadius: theme.radius.chip },
         focusStyle,
         { opacity: pressOpacity(disabled, pressed, 0.7) },
       ]}
