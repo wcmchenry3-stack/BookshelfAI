@@ -66,6 +66,10 @@
     "title": "タイトル順",
     "author": "著者順"
   },
+  "view": {
+    "showGrid": "グリッド表示にする",
+    "showList": "リスト表示にする"
+  },
   "shelfA11y_other": "読書中、{{count}}冊",
   "shelfItemA11y": "{{title}}、{{author}}著",
   "movedToTrash": "ゴミ箱に移動しました。30日以内なら元に戻せます。",

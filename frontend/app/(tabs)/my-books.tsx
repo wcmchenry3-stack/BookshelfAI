@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, StyleSheet, View } from 'react-native';
+import { FlatList, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -8,8 +8,13 @@ import { OfflineNotice } from '../../components/OfflineNotice';
 import { BookDetailSheet } from '../../components/library/BookDetailSheet';
 import { BookActionsSheet } from '../../components/library/BookActionsSheet';
 import { filterBooks } from '../../components/library/filterBooks';
+import { BookGridCell } from '../../components/library/BookGridCell';
 import { LibraryRow } from '../../components/library/LibraryRow';
-import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
+import {
+  LIBRARY_GRID_PROPS,
+  LIBRARY_LIST_PROPS,
+  libraryRefreshControl,
+} from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { MyBooksHeader } from '../../components/library/MyBooksHeader';
 import { ReadingNowShelf } from '../../components/library/ReadingNowShelf';
@@ -20,9 +25,13 @@ import {
   DEFAULT_SORT,
   NEXT_STATUS,
   SCREEN_PADDING,
+  GRID_COLUMN_GAP,
   SORT_KEYS,
+  bookA11yLabel,
   countByStatus,
   filterByStatus,
+  gridCellWidth,
+  gridColumns,
   sortBooks,
   type SortKey,
   type Status,
@@ -35,7 +44,13 @@ import { SectionLabel } from '../../components/ui/SectionLabel';
 import { useModalHandoff } from '../../hooks/useModalHandoff';
 import { useLibraryBooks } from '../../hooks/useLibraryBooks';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
-import { loadLibrarySort, saveLibrarySort } from '../../lib/libraryPrefs';
+import {
+  loadLibrarySort,
+  loadLibraryView,
+  saveLibrarySort,
+  saveLibraryView,
+  type LibraryView,
+} from '../../lib/libraryPrefs';
 
 interface UserBook {
   id: string;
@@ -71,15 +86,13 @@ interface MyBookRowProps {
 /** One My Books row. Memoised; the callbacks are stable, so only a changed item re-renders it. */
 const MyBookRow = memo(function MyBookRow({ item, onOpen, onMore }: MyBookRowProps) {
   const { t } = useTranslation('my-books');
-  const status = t(`statusTab.${item.status}`);
-  const a11yArgs = { title: item.book.title, status, author: item.book.author };
   return (
     <LibraryRow
       item={item}
       onPress={() => onOpen(item)}
       // This labels the row's tap target (the text is inert), so the Unverified
       // badge (#616) must be said here, and the status must be the translated one.
-      accessibilityLabel={t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', a11yArgs)}
+      accessibilityLabel={bookA11yLabel(t, item)}
       accessibilityHint={t('bookCardHint')}
       trailing={
         <IconButton
@@ -116,6 +129,22 @@ export default function MyBooksScreen() {
       if (saved && !sortTouched.current) setSortKey(saved);
     });
   }, []);
+  const [view, setView] = useState<LibraryView>('list');
+  const viewTouched = useRef(false);
+  useEffect(() => {
+    void loadLibraryView().then((saved) => {
+      if (saved && !viewTouched.current) setView(saved);
+    });
+  }, []);
+  const toggleView = useCallback(() => {
+    viewTouched.current = true;
+    const next: LibraryView = view === 'grid' ? 'list' : 'grid';
+    setView(next);
+    void saveLibraryView(next);
+  }, [view]);
+  const { width } = useWindowDimensions();
+  const columns = gridColumns(width);
+  const cellWidth = gridCellWidth(width, columns);
   const chooseSort = useCallback((key: SortKey) => {
     sortTouched.current = true;
     setSortKey(key);
@@ -169,6 +198,13 @@ export default function MyBooksScreen() {
       <MyBookRow item={item} onOpen={openDetail} onMore={openMenu} />
     ),
     [openDetail, openMenu]
+  );
+
+  const renderGridItem = useCallback(
+    ({ item }: { item: UserBook }) => (
+      <BookGridCell item={item} onOpen={openDetail} cellWidth={cellWidth} />
+    ),
+    [openDetail, cellWidth]
   );
 
   function viewDetailsFromMenu(item: UserBook) {
@@ -250,7 +286,9 @@ export default function MyBooksScreen() {
   }
 
   // The shelf only shows on the unfiltered, unsearched list (owner decision, #933).
-  const showShelf = activeTab === 'all' && !trimmedQuery && readingBooks.length > 0;
+  // The grid has no shelf (#934).
+  const isGrid = view === 'grid';
+  const showShelf = !isGrid && activeTab === 'all' && !trimmedQuery && readingBooks.length > 0;
 
   const listHeader = (
     <View>
@@ -259,13 +297,22 @@ export default function MyBooksScreen() {
         reading={counts.reading}
         trailing={
           hasBooks ? (
-            <IconButton
-              icon="swap-vert"
-              color="onSurface"
-              accessibilityLabel={t('sort.buttonA11y', { label: t(`sort.${sortKey}`) })}
-              onPress={() => setSortOpen(true)}
-              testID="my-books-sort"
-            />
+            <>
+              <IconButton
+                icon={isGrid ? 'view-list' : 'grid-view'}
+                color="onSurface"
+                accessibilityLabel={t(isGrid ? 'view.showList' : 'view.showGrid')}
+                onPress={toggleView}
+                testID="my-books-view-toggle"
+              />
+              <IconButton
+                icon="swap-vert"
+                color="onSurface"
+                accessibilityLabel={t('sort.buttonA11y', { label: t(`sort.${sortKey}`) })}
+                onPress={() => setSortOpen(true)}
+                testID="my-books-sort"
+              />
+            </>
           ) : null
         }
       />
@@ -301,14 +348,18 @@ export default function MyBooksScreen() {
 
       {/* One list for every state, so the header scrolls with the rows and pull to refresh always works. */}
       <FlatList
+        // FlatList throws if numColumns changes under the same key.
+        key={isGrid ? `grid-${columns}` : 'list'}
         data={sortedBooks}
-        {...LIBRARY_LIST_PROPS}
+        {...(isGrid ? LIBRARY_GRID_PROPS : LIBRARY_LIST_PROPS)}
+        numColumns={isGrid ? columns : 1}
+        columnWrapperStyle={isGrid ? styles.gridRow : undefined}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.list}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={empty}
         refreshControl={libraryRefreshControl(refreshing, setRefreshing, reload, activeColor)}
-        renderItem={renderItem}
+        renderItem={isGrid ? renderGridItem : renderItem}
       />
 
       <SortSheet
@@ -343,6 +394,7 @@ const styles = StyleSheet.create({
   list: { paddingBottom: 32 },
   search: { marginHorizontal: SCREEN_PADDING, marginTop: 12 },
   empty: { paddingTop: 48 },
+  gridRow: { gap: GRID_COLUMN_GAP, paddingHorizontal: SCREEN_PADDING },
   allBooks: {
     flexDirection: 'row',
     alignItems: 'center',

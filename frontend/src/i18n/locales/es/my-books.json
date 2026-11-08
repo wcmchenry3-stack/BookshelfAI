@@ -69,6 +69,10 @@
     "title": "Título A–Z",
     "author": "Autor A–Z"
   },
+  "view": {
+    "showGrid": "Ver como cuadrícula",
+    "showList": "Ver como lista"
+  },
   "shelfA11y_one": "Leyendo ahora, {{count}} libro",
   "shelfA11y_other": "Leyendo ahora, {{count}} libros",
   "shelfItemA11y": "{{title}}, de {{author}}",

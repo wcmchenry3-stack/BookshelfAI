@@ -69,6 +69,10 @@
     "title": "Titel A–Z",
     "author": "Auteur A–Z"
   },
+  "view": {
+    "showGrid": "Weergeven als raster",
+    "showList": "Weergeven als lijst"
+  },
   "shelfA11y_one": "Nu aan het lezen, {{count}} boek",
   "shelfA11y_other": "Nu aan het lezen, {{count}} boeken",
   "shelfItemA11y": "{{title}}, door {{author}}",

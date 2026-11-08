@@ -69,6 +69,10 @@
     "title": "शीर्षक अ–ह",
     "author": "लेखक अ–ह"
   },
+  "view": {
+    "showGrid": "ग्रिड के रूप में दिखाएँ",
+    "showList": "सूची के रूप में दिखाएँ"
+  },
   "shelfA11y_one": "अभी पढ़ रहे हैं, {{count}} किताब",
   "shelfA11y_other": "अभी पढ़ रहे हैं, {{count}} किताबें",
   "shelfItemA11y": "{{title}}, लेखक {{author}}",

@@ -66,6 +66,10 @@
     "title": "书名 A–Z",
     "author": "作者 A–Z"
   },
+  "view": {
+    "showGrid": "以网格显示",
+    "showList": "以列表显示"
+  },
   "shelfA11y_other": "正在阅读，{{count}} 本书",
   "shelfItemA11y": "{{title}}，作者 {{author}}",
   "movedToTrash": "已移到回收站。30 天内可以恢复。",
