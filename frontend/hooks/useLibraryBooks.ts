@@ -24,9 +24,11 @@ export function useLibraryBooks<T extends { book: object | null }>() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const latest = useRef(0);
+  const inFlight = useRef(0);
 
   const load = useCallback(async () => {
     const request = ++latest.current;
+    inFlight.current += 1;
     try {
       const { data } = await api.get<T[]>('/user-books');
       if (request === latest.current) {
@@ -44,6 +46,7 @@ export function useLibraryBooks<T extends { book: object | null }>() {
         );
       }
     } finally {
+      inFlight.current -= 1;
       if (request === latest.current) {
         setLoading(false);
         setRefreshing(false);
@@ -51,22 +54,27 @@ export function useLibraryBooks<T extends { book: object | null }>() {
     }
   }, [t]);
 
-  /**
-   * Drops every request still in flight. Call it when a mutation the server has
-   * confirmed is applied locally: a GET that started before it could otherwise
-   * overwrite the change or bring a removed row back.
-   */
-  const invalidate = useCallback(() => {
-    latest.current += 1;
-    setRefreshing(false);
-  }, []);
-
   // The latest load, so the effects below stay stable instead of re-running
   // (and re-fetching) whenever `t` changes.
   const loadRef = useRef(load);
   useEffect(() => {
     loadRef.current = load;
   });
+
+  /**
+   * Drops every response still in flight. Call it when a mutation the server has
+   * confirmed is applied locally: a GET that started before it could otherwise
+   * overwrite the change or bring a removed row back. If one was in flight (a
+   * pull to refresh, a Trash restore), a fresh load replaces it so that refresh
+   * still lands. It also clears a stale `loadError`.
+   */
+  const invalidate = useCallback(() => {
+    const hadRequest = inFlight.current > 0;
+    latest.current += 1;
+    setLoadError(false);
+    if (hadRequest) void loadRef.current();
+    else setRefreshing(false);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {

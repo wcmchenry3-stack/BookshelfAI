@@ -547,6 +547,8 @@ describe('MyBooksScreen header, search and empty states (#930)', () => {
     it('does not undo an advance', async () => {
       mockPatch.mockResolvedValue({ data: { ...WISHLISTED_BOOK, status: 'purchased' } });
       const { screen, resolveStale } = await withSlowReload();
+      // The reload that replaces the dropped GET sees the server after the advance.
+      mockGet.mockResolvedValueOnce({ data: [{ ...WISHLISTED_BOOK, status: 'purchased' }] });
       await act(async () => {
         await fireEvent.press(await screen.findByLabelText('Mark as Purchased'));
       });
@@ -554,6 +556,23 @@ describe('MyBooksScreen header, search and empty states (#930)', () => {
       await act(async () => resolveStale());
       expect(screen.getByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy();
       expect(screen.queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+    });
+
+    it('still lands a refresh that was in flight: the newest data wins, the advance stays', async () => {
+      mockPatch.mockResolvedValue({ data: { ...WISHLISTED_BOOK, status: 'purchased' } });
+      const { screen, resolveStale } = await withSlowReload();
+      // The reload that replaces the dropped one sees the server after the advance.
+      mockGet.mockResolvedValueOnce({
+        data: [{ ...WISHLISTED_BOOK, status: 'purchased' }, EMMA],
+      });
+      await act(async () => {
+        await fireEvent.press(await screen.findByLabelText('Mark as Purchased'));
+      });
+      expect(await screen.findByLabelText('Emma — Reading, by Jane Austen')).toBeTruthy();
+      await act(async () => resolveStale());
+      expect(screen.getByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy();
+      expect(screen.queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+      expect(screen.getByLabelText('Emma — Reading, by Jane Austen')).toBeTruthy();
     });
 
     it('does not bring a removed book back', async () => {
@@ -577,6 +596,24 @@ describe('MyBooksScreen header, search and empty states (#930)', () => {
     expect(queryByText('Your library is empty')).toBeNull();
     await fireEvent.press(getByText('Try again'));
     expect(await findByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy();
+  });
+
+  it('a failed background reload does not hide the empty library after the last book is removed', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGet.mockResolvedValueOnce({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, findByLabelText, findByText, queryByText } = await render(
+      <MyBooksScreen />
+    );
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    mockGet.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    await act(async () => notifyLibraryChanged());
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Remove Dune'));
+    });
+    expect(await findByText('Your library is empty')).toBeTruthy();
+    expect(queryByText('Could not load books.')).toBeNull();
   });
 
   it('empty library: offers Scan books and hides the search and chips', async () => {
