@@ -5,6 +5,15 @@ on:
     types: [opened, edited, synchronize, reopened]
     branches: [main, dev]
 
+# The called workflow's job asks for `pull-requests: read` (to read the PR
+# title). A called workflow can never have more than its caller grants, and the
+# repo default token is read-only, so without this block every run ended in
+# `startup_failure` before any job started (#856; same cause as
+# release-please.yml).
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   commitlint:
     uses: wcmchenry3-stack/.github/.github/workflows/called-commitlint.yml@main
