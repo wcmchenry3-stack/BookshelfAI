@@ -37,11 +37,14 @@ export function OpenOnSetting() {
     <>
       <Pressable
         onPress={() => setOpen(true)}
+        // A save in flight would silently drop a second pick, so the row is
+        // inert until it settles.
+        disabled={saving}
         style={styles.row}
         accessibilityRole="button"
         accessibilityLabel={t('openOnA11y', { value })}
         accessibilityHint={t('openOnHint')}
-        accessibilityState={{ busy: saving }}
+        accessibilityState={{ busy: saving, disabled: saving }}
         testID="settings-open-on"
       >
         <Text

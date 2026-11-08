@@ -270,3 +270,42 @@ async def test_patch_changes_only_the_callers_row(env):
     assert cleared.status_code == 200, cleared.text
     async with factory() as db:
         assert (await db.get(User, alice)).default_tab is None
+
+
+def test_migration_0029_resumes_after_an_interrupted_validation():
+    """If validation fails after the column and the NOT VALID CHECK were
+    committed, the revision is not stamped; a retry must skip them and
+    validate, not fail on a duplicate column."""
+    head = _in_sync_connection(
+        lambda c: MigrationContext.configure(c).get_current_revision()
+    )
+    if head is None:
+        pytest.skip("database not migrated with alembic (create_all only)")
+
+    try:
+        _alembic("downgrade", "0028")
+
+        # The state an interrupted upgrade leaves: step 1 committed, unstamped.
+        def _half_applied(connection):
+            connection.execute(
+                sa.text("ALTER TABLE users ADD COLUMN default_tab VARCHAR")
+            )
+            connection.execute(
+                sa.text(
+                    "ALTER TABLE users ADD CONSTRAINT ck_users_default_tab CHECK "
+                    "(default_tab IS NULL OR default_tab IN "
+                    "('scan', 'wishlist', 'my-books')) NOT VALID"
+                )
+            )
+            connection.commit()
+
+        _in_sync_connection(_half_applied)
+        assert _in_sync_connection(_state)["revision"] == "0028"
+
+        _alembic("upgrade", head)
+        state = _in_sync_connection(_state)
+        assert state["revision"] == head
+        assert state["validated"] == [True]
+        assert state["diffs"] == []
+    finally:
+        _alembic("upgrade", head)

@@ -15,9 +15,11 @@ brief ACCESS EXCLUSIVE lock on ``users`` and scans nothing, under a 5 s
 long transaction. That is committed, then the CHECK is validated in its own
 transaction (``VALIDATE CONSTRAINT``, a SHARE UPDATE EXCLUSIVE lock that does
 not block reads or writes), so no ACCESS EXCLUSIVE lock is held while the
-rows are scanned. If the validation fails, the CHECK stays ``NOT VALID``
-(still enforced on new rows) and the revision is not stamped; running the
-upgrade again redoes both steps.
+rows are scanned. If the validation fails (lock timeout, interruption), the
+column and the ``NOT VALID`` CHECK are already committed (still enforced on new
+rows) but the revision is not stamped. Running the upgrade again is safe: it
+skips the column and the constraint when they already exist and retries only
+the validation.
 
 Downgrade drops the constraint and the column; users' "Open on" choices are
 lost, and the app falls back to Scan.
@@ -45,14 +47,23 @@ _LOCK_TIMEOUT = "5s"
 
 
 def upgrade() -> None:
-    op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
-    op.add_column("users", sa.Column("default_tab", sa.String(), nullable=True))
-    op.create_check_constraint(
-        "ck_users_default_tab",
-        "users",
-        f"default_tab IS NULL OR default_tab IN {_DEFAULT_TABS}",
-        postgresql_not_valid=True,
+    inspector = sa.inspect(op.get_bind())
+    has_column = any(c["name"] == "default_tab" for c in inspector.get_columns("users"))
+    has_check = any(
+        c["name"] == "ck_users_default_tab"
+        for c in inspector.get_check_constraints("users")
     )
+    op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+    # Both guards make a retry after a failed validation resume cleanly.
+    if not has_column:
+        op.add_column("users", sa.Column("default_tab", sa.String(), nullable=True))
+    if not has_check:
+        op.create_check_constraint(
+            "ck_users_default_tab",
+            "users",
+            f"default_tab IS NULL OR default_tab IN {_DEFAULT_TABS}",
+            postgresql_not_valid=True,
+        )
     # Commits the step above; each statement below is its own transaction.
     with op.get_context().autocommit_block():
         op.execute(f"SET lock_timeout = '{_LOCK_TIMEOUT}'")

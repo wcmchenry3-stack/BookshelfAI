@@ -130,6 +130,26 @@ describe('Settings "Open on" row (#913)', () => {
     expect(mockShowBanner).not.toHaveBeenCalled();
   });
 
+  it('the row is disabled while a save is pending, so a second pick cannot be dropped', async () => {
+    let answer!: (v: unknown) => void;
+    mockPatch.mockReturnValue(new Promise((r) => (answer = r)));
+    const utils = await renderRow('scan');
+
+    await fireEvent.press(utils.getByTestId('settings-open-on'));
+    await fireEvent.press(utils.getByTestId('open-on-option-wishlist'));
+
+    const row = utils.getByTestId('settings-open-on');
+    expect(row.props.accessibilityState).toEqual({ busy: true, disabled: true });
+    await fireEvent.press(row);
+    expect(utils.queryByTestId('open-on-option-my-books')).toBeNull();
+
+    await act(async () => answer({ data: { default_tab: 'wishlist' } }));
+    expect(utils.getByTestId('settings-open-on').props.accessibilityState).toEqual({
+      busy: false,
+      disabled: false,
+    });
+  });
+
   it('a failed save restores the old value and shows a translated error banner', async () => {
     mockPatch.mockRejectedValue({ response: { status: 503, data: { detail: 'db_timeout' } } });
     const utils = await renderRow('wishlist');
