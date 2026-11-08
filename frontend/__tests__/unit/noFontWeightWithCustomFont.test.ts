@@ -21,13 +21,9 @@ import { fontFiles } from '../../theme/typography';
 const ROOT = path.join(__dirname, '../..');
 const DIRS = ['app', 'components'];
 
-// Files owned by other in-flight PRs of epic #897 at the time of #912; each one
-// moves to variants in its own PR. The list may only shrink.
-const MIGRATION_PENDING = new Set([
-  'components/InAppBanner.tsx',
-  'components/library/BookRow.tsx',
-  'components/library/StatusTabs.tsx',
-]);
+// Files still waiting to be migrated off fontWeight. Empty since #912: every
+// file uses font files. The list may only shrink, so keep it empty.
+const MIGRATION_PENDING = new Set<string>([]);
 
 /** A style key in an object body: `key: value`, or the shorthand `{ key }` / `{ key, ... }`. */
 const hasKey = (body: string, key: string) =>

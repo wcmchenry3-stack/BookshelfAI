@@ -2,6 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
+import { fontFor } from '../../theme/typography';
 import { useLibraryAccent } from './useLibraryAccent';
 import { SCREEN_PADDING, STATUS_TAB_KEYS, type Status } from './libraryShared';
 
@@ -83,5 +84,5 @@ const styles = StyleSheet.create({
     minHeight: 36,
     justifyContent: 'center',
   },
-  tabText: { fontWeight: '600' },
+  tabText: { fontFamily: fontFor('600') },
 });
