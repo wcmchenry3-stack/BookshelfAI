@@ -12,8 +12,6 @@ import ScanScreen from '../../app/(tabs)/scan';
 import { BannerProvider } from '../../contexts/BannerContext';
 import { InAppBanner } from '../../components/InAppBanner';
 
-jest.mock('expo-router', () => ({ usePathname: () => '/', useSegments: () => [] }));
-
 // ── expo-camera mock ────────────────────────────────────────────────────────
 const mockTakePictureAsync = jest.fn();
 jest.mock('expo-camera', () => {

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -63,7 +64,16 @@ export default function ScanScreen() {
   }
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
-  const [inputMode, setInputMode] = useState<InputMode>('camera');
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const router = useRouter();
+  const [inputMode, setInputMode] = useState<InputMode>(mode === 'text' ? 'search' : 'camera');
+  // `?mode=text` (Wishlist's "Search by title"). The tab stays mounted, so this
+  // also runs on each later arrival: switch during render, then clear the param
+  // so a later visit starts on the camera.
+  if (mode === 'text' && inputMode !== 'search') setInputMode('search');
+  useEffect(() => {
+    if (mode === 'text') router.setParams({ mode: undefined });
+  }, [mode, router]);
   const [query, setQuery] = useState('');
   const [facing, setFacing] = useState<CameraFacing>('back');
   const { cameraRef, webInputRef, capturing, handleCapture, handleWebFileChange } = useScanCapture({

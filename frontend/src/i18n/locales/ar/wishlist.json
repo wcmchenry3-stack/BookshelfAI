@@ -1,9 +1,26 @@
 {
   "title": "قائمتي",
-  "heroSubtitle": "كتب تخطط لشرائها",
-  "archiveSummary": "كتب في قائمتك",
+  "subtitle_zero": "لا توجد كتب تريد شراءها",
+  "subtitle_one": "كتاب واحد تريد شراءه",
+  "subtitle_two": "كتابان تريد شراءهما",
+  "subtitle_few": "{{count}} كتب تريد شراءها",
+  "subtitle_many": "{{count}} كتابًا تريد شراءها",
+  "subtitle_other": "{{count}} كتاب تريد شراءها",
+  "subtitleEmpty": "كتب تريد شراءها",
+  "searchPlaceholder": "العنوان أو المؤلف",
+  "searchA11y": "ابحث في قائمتك",
+  "searchClearA11y": "مسح البحث",
+  "emptySearch": {
+    "title": "لا توجد كتب تطابق «{{query}}»",
+    "clear": "مسح البحث"
+  },
+  "emptyState": {
+    "title": "لا شيء في قائمتك بعد",
+    "body": "امسح رفًا في المكتبة ضوئيًا أو ابحث بالعنوان. تظهر الكتب التي تختارها هنا حتى تشتريها.",
+    "scan": "مسح الكتب",
+    "search": "البحث بالعنوان"
+  },
   "loading": "جارٍ تحميل القائمة…",
-  "empty": "قائمتك فارغة.\nامسح غلاف كتاب لإضافة واحد.",
   "bought": "تم الشراء",
   "boughtA11y": "تحديد {{title}} على أنه تم الشراء",
   "rowA11y": "{{title}} — {{status}}، تأليف {{author}}",

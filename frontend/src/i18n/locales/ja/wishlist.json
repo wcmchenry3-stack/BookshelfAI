@@ -1,9 +1,21 @@
 {
   "title": "ウィッシュリスト",
-  "heroSubtitle": "購入予定の本",
-  "archiveSummary": "冊がリストに",
+  "subtitle_other": "購入したい本 {{count}} 冊",
+  "subtitleEmpty": "購入したい本",
+  "searchPlaceholder": "タイトルまたは著者",
+  "searchA11y": "ウィッシュリストを検索",
+  "searchClearA11y": "検索をクリア",
+  "emptySearch": {
+    "title": "「{{query}}」に一致する本はありません",
+    "clear": "検索をクリア"
+  },
+  "emptyState": {
+    "title": "ウィッシュリストはまだ空です",
+    "body": "書店の棚をスキャンするか、タイトルで検索します。選んだ本は購入するまでここに入ります。",
+    "scan": "本をスキャン",
+    "search": "タイトルで検索"
+  },
   "loading": "ウィッシュリストを読み込み中…",
-  "empty": "ウィッシュリストは空です。\n本のカバーをスキャンして追加。",
   "bought": "購入済み",
   "boughtA11y": "{{title}}を購入済みにする",
   "rowA11y": "{{title}} — {{status}}、著者 {{author}}",

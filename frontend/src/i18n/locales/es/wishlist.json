@@ -1,9 +1,22 @@
 {
   "title": "Lista",
-  "heroSubtitle": "Libros que planeas comprar",
-  "archiveSummary": "libros en tu lista",
+  "subtitle_one": "{{count}} libro que quieres comprar",
+  "subtitle_other": "{{count}} libros que quieres comprar",
+  "subtitleEmpty": "Libros que quieres comprar",
+  "searchPlaceholder": "Título o autor",
+  "searchA11y": "Buscar en tu lista",
+  "searchClearA11y": "Borrar búsqueda",
+  "emptySearch": {
+    "title": "Ningún libro coincide con «{{query}}»",
+    "clear": "Borrar búsqueda"
+  },
+  "emptyState": {
+    "title": "Aún no hay nada en tu lista",
+    "body": "Escanea una estantería de la librería o busca por título. Los libros que elijas quedarán aquí hasta que los compres.",
+    "scan": "Escanear libros",
+    "search": "Buscar por título"
+  },
   "loading": "Cargando lista…",
-  "empty": "Tu lista está vacía.\nEscanea una portada para añadir.",
   "bought": "Comprado",
   "boughtA11y": "Marcar {{title}} como comprado",
   "rowA11y": "{{title}} — {{status}}, de {{author}}",

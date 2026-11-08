@@ -64,3 +64,8 @@ jest.mock('react-native-webview', () => {
     __mock: { injectJavaScript, reload, mount },
   };
 });
+
+// expo-router cannot load under Jest. Screens get a controllable stand-in with
+// useRouter, useLocalSearchParams and useFocusEffect (see __tests__/helpers/routerMock.ts).
+// A test file that mocks 'expo-router' itself replaces this one.
+jest.mock('expo-router', () => require('./__tests__/helpers/routerMock').routerModule());

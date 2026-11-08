@@ -1,9 +1,21 @@
 {
   "title": "愿望清单",
-  "heroSubtitle": "您计划购买的书籍",
-  "archiveSummary": "本书在愿望清单中",
+  "subtitle_other": "{{count}} 本想买的书",
+  "subtitleEmpty": "想买的书",
+  "searchPlaceholder": "书名或作者",
+  "searchA11y": "搜索愿望清单",
+  "searchClearA11y": "清除搜索",
+  "emptySearch": {
+    "title": "没有与“{{query}}”匹配的书",
+    "clear": "清除搜索"
+  },
+  "emptyState": {
+    "title": "愿望清单还是空的",
+    "body": "扫描书店的书架或按书名搜索。你选的书会放在这里，直到你买下它们。",
+    "scan": "扫描书籍",
+    "search": "按书名搜索"
+  },
   "loading": "加载愿望清单…",
-  "empty": "您的愿望清单为空。\n扫描书籍封面以添加。",
   "bought": "已购买",
   "boughtA11y": "标记{{title}}为已购买",
   "rowA11y": "{{title}} — {{status}}，作者 {{author}}",

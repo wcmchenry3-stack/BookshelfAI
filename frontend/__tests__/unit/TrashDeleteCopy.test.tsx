@@ -23,9 +23,7 @@ jest.mock('../../lib/api', () => ({
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
-  useFocusEffect: (cb: () => void) => {
-    require('react').useEffect(cb, []);
-  },
+  ...require('../helpers/routerMock').routerModule(),
   router: { push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), canGoBack: () => true },
 }));
 

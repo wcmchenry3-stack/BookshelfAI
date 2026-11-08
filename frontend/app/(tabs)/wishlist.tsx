@@ -1,23 +1,24 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, StyleSheet, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BookDetailSheet, type DetailBook } from '../../components/library/BookDetailSheet';
 import { BoughtChip } from '../../components/library/BoughtChip';
-import { EmptyState } from '../../components/library/EmptyState';
-import { LibraryHeader } from '../../components/library/LibraryHeader';
+import { filterBooks } from '../../components/library/filterBooks';
 import { LibraryRow } from '../../components/library/LibraryRow';
 import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import { SCREEN_PADDING } from '../../components/library/libraryShared';
+import { WishlistEmptyIllustration } from '../../components/library/WishlistEmptyIllustration';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
+import { AppText } from '../../components/ui/AppText';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { SearchField } from '../../components/ui/SearchField';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
 import { onLibraryChanged } from '../../lib/libraryChanged';
-import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
 import { isServiceUnavailable } from '../../lib/apiErrorReporting';
 
@@ -63,14 +64,14 @@ const WishlistRow = memo(function WishlistRow({
 });
 
 export default function WishlistScreen() {
-  const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { t } = useTranslation('wishlist');
   const { activeColor } = useLibraryAccent();
   const [books, setBooks] = useState<DetailBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<DetailBook | null>(null);
+  const [query, setQuery] = useState('');
 
   const { isConnected, mutatingIds, advanceStatus, removeBook } = useLibraryMutations<DetailBook>({
     namespace: 'wishlist',
@@ -138,51 +139,85 @@ export default function WishlistScreen() {
     );
   }
 
-  if (books.length === 0) {
-    return (
-      <EmptyState
-        message={t('empty')}
-        lineHeight={24}
-        style={[
-          styles.container,
-          { backgroundColor: theme.colors.background, paddingTop: insets.top },
-        ]}
-      />
-    );
-  }
-
-  const listHeader = (
-    <LibraryHeader
-      leading={!isConnected && <OfflineNotice />}
-      title={t('title')}
-      subtitle={t('heroSubtitle')}
-      count={books.length}
-      summaryLabel={t('archiveSummary')}
-    />
-  );
+  const visible = filterBooks(books, query);
+  const isEmpty = books.length === 0;
 
   return (
     <LibraryScreen testID="wishlist-screen">
-      <FlatList
-        data={books}
-        {...LIBRARY_LIST_PROPS}
-        contentContainerStyle={styles.list}
-        ListHeaderComponent={<View style={styles.header}>{listHeader}</View>}
-        refreshControl={libraryRefreshControl(
-          refreshing,
-          setRefreshing,
-          () => fetchWishlist(),
-          activeColor
-        )}
-        renderItem={({ item }) => (
-          <WishlistRow
-            item={item}
-            disabled={!isConnected || mutatingIds.has(item.id)}
-            onOpen={openDetail}
-            onBought={markBought}
-          />
-        )}
-      />
+      <View style={styles.header}>
+        <AppText variant="screenTitle" accessibilityRole="header">
+          {t('title')}
+        </AppText>
+        <AppText variant="secondary" color="onSurfaceVariant" testID="wishlist-subtitle">
+          {isEmpty ? t('subtitleEmpty') : t('subtitle', { count: books.length })}
+        </AppText>
+      </View>
+
+      {!isEmpty && (
+        <SearchField
+          value={query}
+          onChangeText={setQuery}
+          placeholder={t('searchPlaceholder')}
+          accessibilityLabel={t('searchA11y')}
+          clearAccessibilityLabel={t('searchClearA11y')}
+          testID="wishlist-search"
+          style={styles.search}
+        />
+      )}
+
+      {!isConnected && <OfflineNotice />}
+
+      {isEmpty ? (
+        <EmptyState
+          style={styles.empty}
+          testID="wishlist-empty"
+          illustration={<WishlistEmptyIllustration />}
+          title={t('emptyState.title')}
+          body={t('emptyState.body')}
+          primaryAction={{
+            label: t('emptyState.scan'),
+            onPress: () => router.push('/scan'),
+            testID: 'wishlist-empty-scan',
+          }}
+          secondaryAction={{
+            label: t('emptyState.search'),
+            onPress: () => router.push('/scan?mode=text'),
+            testID: 'wishlist-empty-search',
+          }}
+        />
+      ) : (
+        <FlatList
+          data={visible}
+          {...LIBRARY_LIST_PROPS}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.list}
+          refreshControl={libraryRefreshControl(
+            refreshing,
+            setRefreshing,
+            () => fetchWishlist(),
+            activeColor
+          )}
+          ListEmptyComponent={
+            <EmptyState
+              testID="wishlist-no-match"
+              title={t('emptySearch.title', { query: query.trim() })}
+              secondaryAction={{
+                label: t('emptySearch.clear'),
+                onPress: () => setQuery(''),
+                testID: 'wishlist-clear-search',
+              }}
+            />
+          }
+          renderItem={({ item }) => (
+            <WishlistRow
+              item={item}
+              disabled={!isConnected || mutatingIds.has(item.id)}
+              onOpen={openDetail}
+              onBought={markBought}
+            />
+          )}
+        />
+      )}
 
       <BookDetailSheet
         selected={selected}
@@ -196,7 +231,8 @@ export default function WishlistScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  list: { paddingVertical: 16 },
-  header: { paddingHorizontal: SCREEN_PADDING },
+  header: { paddingHorizontal: SCREEN_PADDING, paddingTop: 8, gap: 2 },
+  search: { marginHorizontal: SCREEN_PADDING, marginTop: 12, marginBottom: 4 },
+  list: { paddingBottom: 16 },
+  empty: { flex: 1, paddingHorizontal: SCREEN_PADDING + 16, paddingBottom: 40 },
 });

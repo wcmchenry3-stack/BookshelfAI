@@ -4,6 +4,7 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 
 import ScanScreen from '../../app/(tabs)/scan';
 import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
+import { routerState } from '../helpers/routerMock';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -132,12 +133,38 @@ function setPlatform(os: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  routerState.params = {};
   mockQueueState = { pendingCount: 0, isQueueFull: false };
   useCameraPermissions.mockReturnValue([{ granted: true }, mockRequestPermission]);
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// ?mode=text (Wishlist's "Search by title")
+// ---------------------------------------------------------------------------
+describe('ScanScreen — mode param', () => {
+  it('starts in text search and clears the param', async () => {
+    routerState.params = { mode: 'text' };
+    const { getByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText('Book title or author search')).toBeTruthy();
+    expect(routerState.setParams).toHaveBeenCalledWith({ mode: undefined });
+  });
+
+  it('opens the camera as usual without the param', async () => {
+    const { queryByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText('Book title or author search')).toBeNull();
+    expect(routerState.setParams).not.toHaveBeenCalled();
+  });
+
+  it('ignores any other mode value', async () => {
+    routerState.params = { mode: 'camera' };
+    const { queryByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText('Book title or author search')).toBeNull();
+    expect(routerState.setParams).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
