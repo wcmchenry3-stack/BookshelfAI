@@ -1,20 +1,29 @@
-import { useCallback, useRef, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BookCover } from '../components/ui/BookCover';
+import { AppText } from '../components/ui/AppText';
+import { EmptyState } from '../components/ui/EmptyState';
+import { LibraryRow, LibraryRowSeparator } from '../components/library/LibraryRow';
+import { TonalChip } from '../components/library/TonalChip';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { UnverifiedBadge } from '../components/UnverifiedBadge';
 import { useBanner } from '../hooks/useBanner';
 import { useOnlineOnly } from '../hooks/useOnlineOnly';
 import { useTheme } from '../hooks/useTheme';
 import { listTrash, restoreUserBook, type TrashedUserBook } from '../lib/api';
 import { isServiceUnavailable } from '../lib/apiErrorReporting';
 import { notifyLibraryChanged } from '../lib/libraryChanged';
-import { formatLocalDate, leaveTrash, restoreFailure } from '../lib/trash';
+import {
+  daysUntilPurge,
+  leaveTrash,
+  PURGE_SOON_DAYS,
+  restoreFailure,
+  tidyLabel,
+} from '../lib/trash';
 import { fontFor } from '../theme/typography';
 
 // The trash (#683): entries removed from the library, kept 30 days, newest
@@ -24,12 +33,14 @@ import { fontFor } from '../theme/typography';
 export default function TrashScreen() {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const { t, i18n } = useTranslation('my-books');
+  const { t } = useTranslation('my-books');
   const { showBanner } = useBanner();
   const { isConnected } = useOnlineOnly();
   const [items, setItems] = useState<TrashedUserBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // "Today" for the days-left lines: read once per load, so every row in a render agrees.
+  const [now, setNow] = useState(() => new Date());
   const [loadError, setLoadError] = useState<'failed' | 'unavailable' | null>(null);
   // Same double-tap guard as My Books: `restoringRef` is checked and set
   // synchronously; `restoringIds` only drives the disabled styling.
@@ -50,6 +61,7 @@ export default function TrashScreen() {
       if (loadId !== loadIdRef.current) return;
       const next = data.filter((i) => i.book != null && !restoredRef.current.has(i.id));
       itemsRef.current = next;
+      setNow(new Date());
       setItems(next);
       setLoadError(null);
     } catch (err) {
@@ -121,138 +133,97 @@ export default function TrashScreen() {
     }
   }
 
-  const header = (
-    <View style={styles.header}>
-      <Pressable
-        onPress={leaveTrash}
-        style={styles.back}
-        accessibilityRole="button"
-        accessibilityLabel={t('trash.back')}
-      >
-        <Text
-          style={[
-            styles.backText,
-            { color: theme.colors.primary, fontSize: theme.typography.fontSizeBase },
-          ]}
+  // The compact top row (#932): Back on the left, the title centred, the same
+  // width of nothing on the right so the title stays in the middle.
+  const topBar = (
+    <View style={[styles.topBar, { borderBottomColor: theme.colors.outline }]}>
+      <View style={styles.topSide}>
+        <Pressable
+          onPress={leaveTrash}
+          style={styles.back}
+          accessibilityRole="button"
+          accessibilityLabel={t('trash.back')}
+          hitSlop={4}
         >
-          {t('trash.back')}
-        </Text>
-      </Pressable>
-      <Text
-        style={[
-          styles.title,
-          {
-            color: theme.colors.text,
-            fontFamily: theme.typography.fontFamilyHeadline,
-            fontSize: theme.typography.fontSizeH1,
-          },
-        ]}
-        accessibilityRole="header"
-      >
+          <MaterialIcons name="chevron-left" size={24} color={theme.colors.primary} />
+          <AppText variant="body" color="primary" style={styles.backText}>
+            {t('trash.back')}
+          </AppText>
+        </Pressable>
+      </View>
+      <AppText variant="body" accessibilityRole="header" numberOfLines={1} style={styles.topTitle}>
         {t('trash.title')}
-      </Text>
-      <Text
-        style={[
-          styles.intro,
-          { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-        ]}
-      >
-        {t('trash.intro')}
-      </Text>
+      </AppText>
+      <View style={styles.topSide} />
     </View>
   );
 
-  if (loading) {
-    return (
-      <View
-        style={[
-          styles.container,
-          { backgroundColor: theme.colors.background, paddingTop: insets.top },
-        ]}
-      >
-        <LoadingSpinner message={t('trash.loading')} />
-      </View>
-    );
-  }
+  const infoCard = (
+    <View style={[styles.infoCard, { backgroundColor: theme.colors.field }]}>
+      <MaterialIcons
+        name="info-outline"
+        size={18}
+        color={theme.colors.onSurfaceVariant}
+        style={styles.infoIcon}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+      />
+      <AppText variant="secondary" color="onSurfaceVariant" style={styles.infoText}>
+        {t('trash.intro')}
+      </AppText>
+    </View>
+  );
 
-  if (loadError && items.length === 0) {
-    return (
-      <View
-        style={[
-          styles.container,
-          { backgroundColor: theme.colors.background, paddingTop: insets.top },
-        ]}
-      >
-        {header}
-        <View style={styles.centered} testID="trash-error">
-          <Text
-            style={[
-              styles.centeredText,
-              { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeBase },
-            ]}
-          >
-            {loadError === 'unavailable'
-              ? t('serviceUnavailable', { ns: 'common' })
-              : t('trash.errorLoad')}
-          </Text>
-          <Pressable
-            onPress={() => {
-              setLoading(true);
-              void load();
-            }}
-            style={[styles.retry, { backgroundColor: theme.colors.primary }]}
-            accessibilityRole="button"
-            accessibilityLabel={t('trash.retry')}
-          >
-            <Text
-              style={[
-                styles.retryText,
-                { color: theme.colors.onPrimary, fontSize: theme.typography.fontSizeBase },
-              ]}
-            >
-              {t('trash.retry')}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  return (
+  const frame = (children: ReactNode) => (
     <View
       style={[
         styles.container,
         { backgroundColor: theme.colors.background, paddingTop: insets.top },
       ]}
     >
+      {topBar}
+      {children}
+    </View>
+  );
+
+  if (loading) {
+    return frame(<LoadingSpinner message={t('trash.loading')} />);
+  }
+
+  if (loadError && items.length === 0) {
+    return frame(
+      <EmptyState
+        testID="trash-error"
+        title={t('trash.errorLoad')}
+        body={loadError === 'unavailable' ? t('serviceUnavailable', { ns: 'common' }) : undefined}
+        primaryAction={{
+          label: t('trash.retry'),
+          onPress: () => {
+            setLoading(true);
+            void load();
+          },
+        }}
+      />
+    );
+  }
+
+  return frame(
+    <>
       {!isConnected && <OfflineNotice />}
       <FlatList
         testID="trash-list"
         data={items}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
-        ListHeaderComponent={header}
+        ListHeaderComponent={infoCard}
         ListEmptyComponent={
-          <View style={styles.centered} testID="trash-empty">
-            <Text
-              style={[
-                styles.emptyTitle,
-                { color: theme.colors.text, fontSize: theme.typography.fontSizeLG },
-              ]}
-              accessibilityRole="header"
-            >
-              {t('trash.emptyTitle')}
-            </Text>
-            <Text
-              style={[
-                styles.centeredText,
-                { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeBase },
-              ]}
-            >
-              {t('trash.emptyBody')}
-            </Text>
-          </View>
+          <EmptyState
+            testID="trash-empty"
+            title={t('trash.emptyTitle')}
+            body={t('trash.emptyBody')}
+          />
         }
+        ItemSeparatorComponent={LibraryRowSeparator}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -265,113 +236,74 @@ export default function TrashScreen() {
         }
         renderItem={({ item }) => {
           const disabled = !isConnected || restoringIds.has(item.id);
-          const dates = t('trash.dates', {
-            deleted: formatLocalDate(item.deleted_at, i18n.language),
-            purge: formatLocalDate(item.purge_after, i18n.language),
-          });
+          const days = daysUntilPurge(item.purge_after, now);
+          const when =
+            days === null
+              ? undefined
+              : days === 0
+                ? t('trash.purgeToday')
+                : t('trash.purgeIn', { count: days });
           return (
-            <View
-              style={[styles.card, { backgroundColor: theme.colors.surfaceContainerLow }]}
+            <LibraryRow
+              item={{ ...item, edition: null }}
               testID={`trash-item-${item.id}`}
-            >
-              <BookCover
-                title={item.book.title}
-                coverUrl={item.book.cover_url}
-                size="sm"
-                decorative
-                style={styles.cover}
-              />
-              <View style={styles.content}>
-                <Text
-                  style={[
-                    styles.bookTitle,
-                    { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
-                  ]}
-                  numberOfLines={2}
-                >
-                  {item.book.title}
-                </Text>
-                <Text
-                  style={[
-                    styles.bookAuthor,
-                    { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {item.book.author}
-                </Text>
-                {item.unverified ? <UnverifiedBadge /> : null}
-                <Text
-                  style={[
-                    styles.dates,
-                    { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeXS },
-                  ]}
-                >
-                  {dates}
-                </Text>
-                <Pressable
-                  style={[
-                    styles.restore,
-                    { backgroundColor: theme.colors.primary },
-                    disabled && styles.disabled,
-                  ]}
+              metaText={when ?? ''}
+              metaTone={days !== null && days <= PURGE_SOON_DAYS ? 'danger' : 'default'}
+              accessibilityLabel={tidyLabel(
+                t(item.unverified ? 'trash.rowUnverifiedA11y' : 'trash.rowA11y', {
+                  title: item.book.title,
+                  author: item.book.author,
+                  when: when ?? '',
+                })
+              )}
+              trailing={
+                <TonalChip
+                  icon="restore"
+                  label={t('trash.restore')}
+                  accessibilityLabel={t('trash.restoreA11y', { title: item.book.title })}
                   onPress={() => handleRestore(item)}
                   disabled={disabled}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('trash.restoreA11y', { title: item.book.title })}
-                  accessibilityState={{ disabled }}
-                >
-                  <Text
-                    style={[
-                      styles.restoreText,
-                      { color: theme.colors.onPrimary, fontSize: theme.typography.fontSizeSM },
-                    ]}
-                  >
-                    {t('trash.restore')}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
+                />
+              }
+            />
           );
         }}
       />
-    </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  list: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
-  header: { gap: 6, marginBottom: 8 },
-  back: { minHeight: 44, minWidth: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-  backText: { fontFamily: fontFor('600') },
-  title: { fontFamily: fontFor('700', 'serif'), lineHeight: 48, letterSpacing: -0.5 },
-  intro: { lineHeight: 20 },
-  centered: { alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
-  centeredText: { textAlign: 'center' },
-  emptyTitle: { fontFamily: fontFor('700'), textAlign: 'center' },
-  retry: {
-    minHeight: 44,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    justifyContent: 'center',
+  topBar: {
+    flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 52,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  retryText: { fontFamily: fontFor('600') },
-  card: { flexDirection: 'row', borderRadius: 12, overflow: 'hidden', minHeight: 120 },
-  cover: { margin: 12 },
-  content: { flex: 1, padding: 12, gap: 4 },
-  bookTitle: { fontFamily: fontFor('600'), lineHeight: 22 },
-  bookAuthor: { lineHeight: 18 },
-  dates: { lineHeight: 16 },
-  restore: {
-    alignSelf: 'flex-start',
+  topSide: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  back: {
     minHeight: 44,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    justifyContent: 'center',
-    marginTop: 8,
+    minWidth: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 8,
   },
-  restoreText: { fontFamily: fontFor('600') },
-  disabled: { opacity: 0.5 },
+  backText: { fontFamily: fontFor('500') },
+  topTitle: { fontFamily: fontFor('600'), fontSize: 17, lineHeight: 22, textAlign: 'center' },
+  list: { paddingBottom: 32 },
+  infoCard: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  infoIcon: { marginTop: 1 },
+  infoText: { flex: 1, lineHeight: 20 },
 });
