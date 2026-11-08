@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
 import SheetModal from './SheetModal';
+import { Button } from './ui/Button';
 import { api } from '../lib/api';
 import {
   UNVERIFIED_LIMITS,
@@ -139,28 +133,12 @@ export function AddUnverifiedBookSheet({
       closeLabel={t('addUnverified.cancel')}
       closeA11yLabel={t('addUnverified.closeA11y')}
       footer={
-        <Pressable
-          style={[styles.saveButton, { backgroundColor: colors.primary }, saving && styles.busy]}
+        <Button
+          label={t('addUnverified.save')}
           onPress={save}
-          disabled={saving}
-          accessibilityRole="button"
-          accessibilityLabel={t('addUnverified.save')}
+          loading={saving}
           accessibilityHint={t('addUnverified.saveHint')}
-          accessibilityState={{ disabled: saving, busy: saving }}
-        >
-          {saving ? (
-            <ActivityIndicator color={colors.onPrimary} />
-          ) : (
-            <Text
-              style={[
-                styles.saveText,
-                { color: colors.onPrimary, fontSize: theme.typography.fontSizeBase },
-              ]}
-            >
-              {t('addUnverified.save')}
-            </Text>
-          )}
-        </Pressable>
+        />
       }
     >
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
@@ -254,13 +232,4 @@ const styles = StyleSheet.create({
   },
   fieldError: { fontSize: 13 },
   formError: { fontSize: 14, fontFamily: fontFor('600'), marginTop: 8 },
-  saveButton: {
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 48,
-  },
-  busy: { opacity: 0.6 },
-  saveText: { fontFamily: fontFor('600') },
 });

@@ -56,6 +56,7 @@ jest.mock('../../hooks/useTheme', () => ({
         errorContainer: '#ffdad6',
         onErrorContainer: '#93000a',
       },
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeSM: 14, fontSizeXS: 12 },
     },
   }),

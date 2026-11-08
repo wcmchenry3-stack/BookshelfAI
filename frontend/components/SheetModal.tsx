@@ -1,39 +1,65 @@
-import type { ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { AccessibilityInfo, findNodeHandle, Modal, Platform, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../hooks/useTheme';
-import { fontFor } from '../theme/typography';
+import { AppText } from './ui/AppText';
+import { Button } from './ui/Button';
 
 interface SheetModalProps {
   visible: boolean;
   onDismiss: () => void;
   onHidden?: () => void;
   title: string;
+  /** Optional line under the title. */
+  subtitle?: string;
+  /** Visible text of the close/cancel action (translated by the caller). */
   closeLabel: string;
+  /** Spoken label of the close/cancel action (translated by the caller). */
   closeA11yLabel: string;
   /** Body between the header and the footer (usually a ScrollView). */
   children: ReactNode;
-  /** Content of the bordered footer bar (usually the primary action button). */
+  /** Content of the pinned footer bar (usually the primary action button). */
   footer: ReactNode;
+  /** Lines the title may take before it is cut. Defaults to 2. */
+  titleLines?: number;
 }
 
 /**
- * Full-screen page-sheet modal scaffold shared by the scan candidate picker and
- * the unverified-book form: themed container, title + close header, body and
- * a bordered footer.
+ * Shared sheet anatomy (#903): scrim backdrop, grabber, header (serif
+ * `sheetTitle` + optional subtitle + close action), a body that takes the
+ * remaining height, and a footer pinned below it with safe-area bottom
+ * padding. The body wrapper is `flexShrink: 1` (never `flex: 1` in a
+ * content-sized parent) so it cannot collapse. Focus moves to the title when
+ * the sheet opens.
  */
 export default function SheetModal({
   visible,
   onDismiss,
   onHidden,
   title,
+  subtitle,
   closeLabel,
   closeA11yLabel,
   children,
   footer,
+  titleLines = 2,
 }: SheetModalProps) {
   const { theme } = useTheme();
   const { colors } = theme;
+  const insets = useSafeAreaInsets();
+  const titleRef = useRef<View>(null);
+  const isIOS = Platform.OS === 'ios';
+
+  useEffect(() => {
+    if (!visible) return;
+    // Wait a beat so the node is mounted inside the Modal before focusing.
+    const timer = setTimeout(() => {
+      const node = titleRef.current ? findNodeHandle(titleRef.current) : null;
+      if (node) AccessibilityInfo.setAccessibilityFocus(node);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [visible]);
 
   return (
     <Modal
@@ -44,46 +70,87 @@ export default function SheetModal({
       onDismiss={onHidden}
       accessibilityViewIsModal
     >
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Text
-            style={[styles.title, { color: colors.text, fontSize: theme.typography.fontSizeLG }]}
-            accessibilityRole="header"
+      <View style={[styles.scrim, { backgroundColor: colors.scrim }]} testID="sheet-scrim">
+        <View
+          style={[
+            styles.sheet,
+            { backgroundColor: colors.background },
+            !isIOS && styles.sheetRounded,
+          ]}
+        >
+          <View
+            style={[styles.grabber, { backgroundColor: colors.outline }]}
+            testID="sheet-grabber"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          />
+          <View style={styles.header}>
+            <View style={styles.titleBlock}>
+              <View ref={titleRef} accessible accessibilityRole="header">
+                <AppText variant="sheetTitle" accessibilityRole="header" numberOfLines={titleLines}>
+                  {title}
+                </AppText>
+              </View>
+              {subtitle ? (
+                <AppText variant="secondary" color="onSurfaceVariant" numberOfLines={2}>
+                  {subtitle}
+                </AppText>
+              ) : null}
+            </View>
+            <Button
+              variant="text"
+              label={closeLabel}
+              accessibilityLabel={closeA11yLabel}
+              onPress={onDismiss}
+              style={styles.close}
+            />
+          </View>
+
+          <View style={styles.body} testID="sheet-body">
+            {children}
+          </View>
+
+          <View
+            style={[
+              styles.footer,
+              {
+                borderTopColor: colors.outline,
+                backgroundColor: colors.surfaceBar,
+                paddingBottom: 16 + insets.bottom,
+              },
+            ]}
+            testID="sheet-footer"
           >
-            {title}
-          </Text>
-          <Pressable
-            onPress={onDismiss}
-            accessibilityRole="button"
-            accessibilityLabel={closeA11yLabel}
-            style={styles.closeButton}
-            hitSlop={8}
-          >
-            <Text style={{ color: colors.primary, fontSize: theme.typography.fontSizeBase }}>
-              {closeLabel}
-            </Text>
-          </Pressable>
+            {footer}
+          </View>
         </View>
-
-        {children}
-
-        <View style={[styles.footer, { borderTopColor: colors.border }]}>{footer}</View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  scrim: { flex: 1 },
+  // Fills the Modal (a page sheet on iOS); shrinks, never `flex: 1` alone.
+  sheet: { flexGrow: 1, flexShrink: 1 },
+  sheetRounded: { marginTop: 24, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  grabber: { alignSelf: 'center', width: 36, height: 5, borderRadius: 3, marginTop: 8 },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 12,
+    gap: 8,
   },
-  title: { fontFamily: fontFor('700') },
-  closeButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
-  footer: { padding: 16, borderTopWidth: StyleSheet.hairlineWidth },
+  titleBlock: { flex: 1, flexShrink: 1, gap: 2, paddingTop: 6 },
+  close: { paddingHorizontal: 8 },
+  body: { flexGrow: 1, flexShrink: 1 },
+  footer: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
 });

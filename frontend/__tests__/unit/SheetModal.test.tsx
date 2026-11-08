@@ -1,13 +1,23 @@
 import React from 'react';
-import { Text } from 'react-native';
-import { fireEvent, render } from '@testing-library/react-native';
+import { ScrollView, Text } from 'react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 
 import SheetModal from '../../components/SheetModal';
+import { textVariants } from '../../theme/typography';
 
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
     theme: {
-      colors: { background: '#fff', border: '#ccc', text: '#000', primary: '#007AFF' },
+      colors: {
+        background: '#fff',
+        border: '#ccc',
+        text: '#000',
+        primary: '#007AFF',
+        outline: '#E4DFD4',
+        surfaceBar: '#FBFAF7',
+        scrim: '#0000008c',
+      },
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeLG: 20 },
     },
   }),
@@ -47,7 +57,7 @@ async function setup(overrides: Partial<React.ComponentProps<typeof SheetModal>>
       footer={<Text>footer content</Text>}
       {...overrides}
     >
-      <Text>body content</Text>
+      {overrides.children ?? <Text>body content</Text>}
     </SheetModal>
   );
   return { onDismiss, ...utils };
@@ -85,6 +95,60 @@ describe('SheetModal', () => {
     expect(onHidden).toHaveBeenCalledTimes(1);
 
     expect(getByText('Sheet title').props.accessibilityRole).toBe('header');
+  });
+
+  it('renders the grabber and a subtitle when given', async () => {
+    const { getByTestId, getByText } = await setup({ subtitle: 'Sheet subtitle' });
+    expect(getByTestId('sheet-grabber', { includeHiddenElements: true })).toBeTruthy();
+    expect(getByText('Sheet subtitle')).toBeTruthy();
+  });
+
+  it('omits the subtitle line when none is given', async () => {
+    const { queryByText } = await setup();
+    expect(queryByText('Sheet subtitle')).toBeNull();
+  });
+
+  it('sets the title in the serif sheetTitle font file, never fontWeight', async () => {
+    const { getByText } = await setup();
+    const flat = Object.assign({}, ...[getByText('Sheet title').props.style].flat(3));
+    expect(flat.fontFamily).toBe(textVariants.sheetTitle.fontFamily);
+    expect(flat.fontSize).toBe(24);
+    expect(flat.fontWeight).toBeUndefined();
+  });
+
+  it('close action is at least 44pt and announces its a11y label', async () => {
+    const { getByLabelText } = await setup();
+    const close = getByLabelText('Close sheet');
+    expect(close.props.accessibilityRole).toBe('button');
+    const flat = Object.assign({}, ...[close.props.style].flat(3));
+    expect(flat.minHeight).toBeGreaterThanOrEqual(44);
+  });
+
+  it('pins the footer outside the body so it stays visible while the body scrolls', async () => {
+    const { getByTestId, getByText } = await setup({
+      children: (
+        <ScrollView testID="scroller">
+          <Text>long body</Text>
+        </ScrollView>
+      ),
+    });
+    const body = getByTestId('sheet-body');
+    const footer = getByTestId('sheet-footer');
+    expect(within(footer).getByText('footer content')).toBeTruthy();
+    expect(within(body).queryByText('footer content')).toBeNull();
+    expect(within(body).getByTestId('scroller')).toBeTruthy();
+    expect(getByText('long body')).toBeTruthy();
+    const flat = (n: { props: { style: unknown } }) =>
+      Object.assign({}, ...[n.props.style].flat(3).filter(Boolean));
+    expect(flat(body).flexShrink).toBe(1);
+    expect(flat(footer).borderTopWidth).toBeGreaterThan(0);
+    expect(flat(footer).backgroundColor).toBe('#FBFAF7');
+  });
+
+  it('uses the scrim token behind the sheet', async () => {
+    const { getByTestId } = await setup();
+    const flat = Object.assign({}, ...[getByTestId('sheet-scrim').props.style].flat(3));
+    expect(flat.backgroundColor).toBe('#0000008c');
   });
 
   it('renders nothing when not visible', async () => {

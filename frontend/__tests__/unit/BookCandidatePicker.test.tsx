@@ -15,6 +15,7 @@ jest.mock('../../hooks/useTheme', () => ({
         primary: '#007AFF',
         success: '#34C759',
       },
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeLG: 20, fontSizeSM: 14 },
     },
   }),
