@@ -4,7 +4,6 @@ import { fireEvent, render } from '@testing-library/react-native';
 import {
   BookCover,
   COVER_SIZES,
-  FALLBACK_CHAR_EM,
   FALLBACK_MIN_FONT,
   fallbackTitleStyle,
   type BookCoverSize,
@@ -235,22 +234,51 @@ describe('#902 BookCover', () => {
 });
 
 describe('#924 fallback title never splits a word', () => {
-  const longest = (t: string) => Math.max(...t.split(/\s+/).map((w) => w.length));
+  // Advance widths in em measured with fontTools from NotoSerif_600SemiBold.ttf,
+  // independent of the table in theme/coverTextWidths.ts.
+  const MEASURED_EM: Record<string, number> = {
+    MIDDLEMARCH: 7.953,
+    MWW: 3.065,
+    Middlemarch: 6.682,
+    Wuthering: 5.366,
+    Heights: 3.768,
+  };
+  const INNER_WIDTH = { xs: 42, sm: 44, md: 90, lg: 116 };
 
-  it.each(SIZES)('keeps every word of long titles inside the text box at %s', (size) => {
-    for (const title of ['Middlemarch', 'Wuthering Heights', 'The Count of Monte Cristo']) {
-      const s = fallbackTitleStyle(title, size);
-      expect(s.initials).toBe(false);
+  const fits = (word: string, size: BookCoverSize, fontSize: number) =>
+    MEASURED_EM[word] * fontSize <= INNER_WIDTH[size];
+
+  it.each(SIZES)('Middlemarch and MIDDLEMARCH fit by measured width at %s', (size) => {
+    for (const word of ['Middlemarch', 'MIDDLEMARCH']) {
+      const s = fallbackTitleStyle(word, size);
+      if (s.initials) {
+        expect(s.text).toBe(word.slice(0, 3).toUpperCase());
+        continue;
+      }
       expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
-      expect(longest(title) * s.fontSize * FALLBACK_CHAR_EM).toBeLessThanOrEqual(s.width);
+      expect(fits(word, size, s.fontSize)).toBe(true);
     }
   });
 
-  it('sizes Middlemarch at sm to fit its width', () => {
+  it('shrinks MIDDLEMARCH at md below the default, using the capital widths', () => {
+    const s = fallbackTitleStyle('MIDDLEMARCH', 'md');
+    expect(s.fontSize).toBeLessThan(14);
+    expect(fits('MIDDLEMARCH', 'md', s.fontSize)).toBe(true);
+  });
+
+  it('sizes Middlemarch at sm at the floor without initials', () => {
     const s = fallbackTitleStyle('Middlemarch', 'sm');
-    expect(s.fontSize).toBeLessThan(9);
+    expect(s.initials).toBe(false);
     expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
-    expect(11 * s.fontSize * FALLBACK_CHAR_EM).toBeLessThanOrEqual(s.width);
+    expect(fits('Middlemarch', 'sm', s.fontSize)).toBe(true);
+  });
+
+  it('keeps Wuthering Heights fitting at every size', () => {
+    for (const size of SIZES) {
+      const s = fallbackTitleStyle('Wuthering Heights', size);
+      expect(s.initials).toBe(false);
+      expect(fits('Wuthering', size, s.fontSize)).toBe(true);
+    }
   });
 
   it('falls back to initials for a pathological single word at xs', () => {
@@ -258,14 +286,23 @@ describe('#924 fallback title never splits a word', () => {
     expect(s.initials).toBe(true);
     expect(s.text).toBe('AAA');
     expect(s.lines).toBe(1);
-    expect(3 * s.fontSize * FALLBACK_CHAR_EM).toBeLessThanOrEqual(s.width);
+  });
+
+  it.each(['xs', 'sm'] as const)('fits MWW initials by measured width at %s', (size) => {
+    const s = fallbackTitleStyle(
+      'Mmmmmmmmmmmmmmmmmmmmmmmmm Wwwwwwwwwwwwwwwwwwwww Wwwwwwwwwwwwwwww',
+      size
+    );
+    expect(s.initials).toBe(true);
+    expect(s.text).toBe('MWW');
+    expect(MEASURED_EM.MWW * s.fontSize).toBeLessThanOrEqual(INNER_WIDTH[size]);
   });
 
   it('uses the first letters of each word for a long multi-word title', () => {
     expect(fallbackTitleStyle('Pneumonoultramicroscopicsilicovolcano Dust', 'xs').text).toBe('PD');
   });
 
-  it('keeps the default font for a short title and for md/lg ordinary titles', () => {
+  it('keeps the default font for short titles and ordinary md/lg titles', () => {
     expect(fallbackTitleStyle('Dune', 'xs')).toMatchObject({ fontSize: 8, lineHeight: 10 });
     expect(fallbackTitleStyle('Dune', 'sm')).toMatchObject({ fontSize: 9, lineHeight: 11 });
     expect(fallbackTitleStyle('Wuthering Heights', 'md')).toMatchObject({
@@ -273,11 +310,53 @@ describe('#924 fallback title never splits a word', () => {
       lineHeight: 18,
       lines: 6,
     });
-    expect(fallbackTitleStyle('Middlemarch', 'lg')).toMatchObject({
+    expect(fallbackTitleStyle('Wuthering Heights', 'lg')).toMatchObject({
       fontSize: 17,
       lineHeight: 22,
       initials: false,
     });
+  });
+
+  it('handles an empty and a whitespace-only title', () => {
+    for (const title of ['', '   ']) {
+      const s = fallbackTitleStyle(title, 'xs');
+      expect(s.initials).toBe(false);
+      expect(s.fontSize).toBe(8);
+    }
+  });
+
+  it('never leaves a lone surrogate in initials of an emoji title', () => {
+    const title = '\u{1F600}'.repeat(30);
+    const s = fallbackTitleStyle(title, 'xs');
+    expect(s.initials).toBe(true);
+    expect(Array.from(s.text)).toHaveLength(3);
+    for (let i = 0; i < s.text.length; i++) {
+      const c = s.text.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const d = s.text.charCodeAt(i + 1);
+        expect(d >= 0xdc00 && d <= 0xdfff).toBe(true);
+        i++;
+      } else {
+        expect(c >= 0xdc00 && c <= 0xdfff).toBe(false);
+      }
+    }
+  });
+
+  it('keeps a long CJK title at the default size, not initials', () => {
+    const s = fallbackTitleStyle('\u4e09\u4f53'.repeat(7), 'xs');
+    expect(s.initials).toBe(false);
+    expect(s.fontSize).toBe(8);
+    expect(s.text).toBe('\u4e09\u4f53'.repeat(7));
+  });
+
+  it('breaks AC/DC, hyphenated and em-dash titles at their separators', () => {
+    expect(fallbackTitleStyle('AC/DC', 'xs')).toMatchObject({ initials: false, fontSize: 8 });
+    const hy = fallbackTitleStyle('Jean-Baptiste', 'xs');
+    expect(hy.initials).toBe(false);
+    const em = fallbackTitleStyle('Middle\u2014march', 'xs');
+    expect(em.initials).toBe(false);
+    expect(em.fontSize).toBe(8);
+    expect(fallbackTitleStyle('Middlemarch', 'xs').fontSize).toBeLessThanOrEqual(8);
   });
 
   it('renders the computed size and initials in the cover', async () => {

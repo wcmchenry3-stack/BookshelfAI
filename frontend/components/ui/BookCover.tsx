@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
 import { tokens } from '../../theme/tokens';
+import { chars, longestUnitEm, MEASURE_MARGIN, textEm } from '../../theme/coverTextWidths';
 import { fontFor } from '../../theme/typography';
 
 export type BookCoverSize = 'xs' | 'sm' | 'md' | 'lg';
@@ -29,13 +30,6 @@ const FALLBACK_TEXT: Record<
 
 /** Smallest title font the generated cover will use before it switches to initials. */
 export const FALLBACK_MIN_FONT = 6;
-/**
- * Conservative average glyph advance in em for Noto Serif SemiBold. Real text
- * averages about 0.55em; 0.6 leaves headroom for wide letters (m, w) so a word
- * is never wider than its estimate. Used because `adjustsFontSizeToFit` is
- * native-only, so web could not share it.
- */
-export const FALLBACK_CHAR_EM = 0.6;
 
 export interface FallbackTitleStyle {
   /** What to draw: the title, or its initials when no word fits at the floor. */
@@ -48,39 +42,36 @@ export interface FallbackTitleStyle {
   initials: boolean;
 }
 
-/** Inner text width: the frame minus the inner-frame inset and 1px of air on each side. */
+/** Inset of the thin inner frame. */
 function fallbackInset(frameWidth: number): number {
   return Math.max(3, Math.round(frameWidth * 0.07));
 }
 
+/** The title's initials (up to 3 whole characters, upper case). */
 function initialsOf(title: string): string {
-  const words = title.split(/[\s\-\u2013\u2014]+/).filter(Boolean);
-  const letters =
-    words.length > 1
-      ? words.map((w) => Array.from(w)[0]).join('')
-      : Array.from(words[0] ?? '').join('');
-  return letters.slice(0, 3).toUpperCase();
+  const words = title.split(/[\s\-\u2013\u2014/]+/).filter(Boolean);
+  const letters = words.length > 1 ? words.map((w) => chars(w)[0]) : chars(words[0] ?? '');
+  return letters.slice(0, 3).join('').toUpperCase();
 }
 
+const halfDown = (n: number) => Math.floor(n * 2) / 2;
+
 /**
- * Deterministic title sizing for the generated cover (#924). A word must never
- * break mid-word, so the font is chosen from the longest word:
- * `chars * fontSize * FALLBACK_CHAR_EM <= innerWidth`, capped at the size's
- * normal font and floored at `FALLBACK_MIN_FONT`. If the longest word still
- * does not fit at the floor, the cover shows the title's initials (up to 3
- * letters), centred and larger, instead of an unreadable or split word.
- * Line height stays proportional; `lines` still truncates by whole lines.
+ * Deterministic title sizing for the generated cover (#924). A word should not
+ * break mid-word, so the font is chosen from the widest unbreakable unit,
+ * measured with the real Noto Serif SemiBold advances (`theme/coverTextWidths`)
+ * plus a 4% margin. The size is the largest that fits, capped at the size's
+ * normal font and floored at `FALLBACK_MIN_FONT`. If the widest unit still does
+ * not fit at the floor, the cover shows the title's initials (up to 3, one line,
+ * larger) instead. CJK text wraps per character, so it keeps the normal size.
+ * Widths are estimates: a different font fallback can still differ slightly.
  */
 export function fallbackTitleStyle(title: string, size: BookCoverSize): FallbackTitleStyle {
   const base = FALLBACK_TEXT[size];
   const frameWidth = COVER_SIZES[size].width;
-  const width = frameWidth - 2 * (fallbackInset(frameWidth) + 1);
-  const longest = Math.max(
-    1,
-    ...title.split(/[\s\-\u2013\u2014]+/).map((w) => Array.from(w).length)
-  );
-  const fitted = Math.floor((width / (longest * FALLBACK_CHAR_EM)) * 2) / 2;
+  const width = frameWidth - 2 * fallbackInset(frameWidth);
   const ratio = base.lineHeight / base.fontSize;
+  const fitted = halfDown(width / Math.max(longestUnitEm(title), 0.01));
   if (fitted >= FALLBACK_MIN_FONT) {
     const fontSize = Math.min(base.fontSize, fitted);
     return {
@@ -93,7 +84,7 @@ export function fallbackTitleStyle(title: string, size: BookCoverSize): Fallback
     };
   }
   const text = initialsOf(title) || title;
-  const fit = Math.floor((width / (Array.from(text).length * FALLBACK_CHAR_EM)) * 2) / 2;
+  const fit = halfDown(width / (textEm(text) * MEASURE_MARGIN));
   const fontSize = Math.min(Math.round(base.fontSize * 1.75), fit);
   return {
     text,
