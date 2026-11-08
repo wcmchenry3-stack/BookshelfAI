@@ -60,7 +60,9 @@ export default function SheetModal({
   const isIOS = Platform.OS === 'ios';
 
   useEffect(() => {
-    if (!visible) return;
+    // react-native-web's findNodeHandle always throws; the web Modal already
+    // moves focus into the dialog, so native focusing is skipped there.
+    if (!visible || Platform.OS === 'web') return;
     // Wait a beat so the node is mounted inside the Modal before focusing.
     const timer = setTimeout(() => {
       const node = titleRef.current ? findNodeHandle(titleRef.current) : null;

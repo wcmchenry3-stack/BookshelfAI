@@ -1,9 +1,15 @@
 import React from 'react';
-import { ScrollView, Text } from 'react-native';
-import { fireEvent, render, within } from '@testing-library/react-native';
+import { Platform, ScrollView, Text } from 'react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 
 import SheetModal from '../../components/SheetModal';
 import { textVariants } from '../../theme/typography';
+
+const mockFindNodeHandle = jest.fn(() => null);
+jest.mock('react-native/Libraries/ReactNative/RendererProxy', () => ({
+  ...jest.requireActual('react-native/Libraries/ReactNative/RendererProxy'),
+  findNodeHandle: (...args: unknown[]) => mockFindNodeHandle(...(args as [])),
+}));
 
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
@@ -143,6 +149,24 @@ describe('SheetModal', () => {
     expect(flat(body).flexShrink).toBe(1);
     expect(flat(footer).borderTopWidth).toBeGreaterThan(0);
     expect(flat(footer).backgroundColor).toBe('#FBFAF7');
+  });
+
+  it('does not call findNodeHandle on web, where it throws', async () => {
+    const os = jest.replaceProperty(Platform, 'OS', 'web');
+    mockFindNodeHandle.mockClear();
+    try {
+      await setup();
+      await act(() => new Promise((resolve) => setTimeout(resolve, 150)));
+      expect(mockFindNodeHandle).not.toHaveBeenCalled();
+    } finally {
+      os.restore();
+    }
+  });
+
+  it('looks up the title node for focus on native', async () => {
+    mockFindNodeHandle.mockClear();
+    await setup();
+    await waitFor(() => expect(mockFindNodeHandle).toHaveBeenCalled());
   });
 
   it('omits the footer bar when there is no footer content', async () => {
