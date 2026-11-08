@@ -1,5 +1,11 @@
 import React from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  StyleSheet,
+  View,
+  type AccessibilityRole,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { useTheme } from '../../hooks/useTheme';
 import { SectionLabel } from './SectionLabel';
@@ -10,15 +16,23 @@ export interface ListSectionProps {
   /** `ListRow` children. Inset dividers go between them. */
   children: React.ReactNode;
   testID?: string;
+  /** Role of the group, e.g. `radiogroup` for single-select rows. */
+  accessibilityRole?: AccessibilityRole;
   style?: StyleProp<ViewStyle>;
 }
 
 /** Grouped inset list: a rounded surface card holding rows with inset dividers. */
-export function ListSection({ title, children, testID, style }: ListSectionProps) {
+export function ListSection({
+  title,
+  children,
+  testID,
+  accessibilityRole,
+  style,
+}: ListSectionProps) {
   const { theme } = useTheme();
   const rows = React.Children.toArray(children).filter(Boolean);
   return (
-    <View style={style} testID={testID}>
+    <View style={style} testID={testID} accessibilityRole={accessibilityRole}>
       {title ? <SectionLabel style={styles.title}>{title}</SectionLabel> : null}
       <View
         style={[

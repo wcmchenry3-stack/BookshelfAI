@@ -6,6 +6,13 @@ import { useTheme } from '../../hooks/useTheme';
 import { AppText } from './AppText';
 import type { IconName } from './Button';
 
+/** Icons next to a label are decoration: the row's own label says it all. */
+const DECORATIVE = {
+  accessibilityElementsHidden: true,
+  importantForAccessibility: 'no-hide-descendants',
+  'aria-hidden': true,
+} as const;
+
 export interface ListRowProps {
   label: string;
   /** Optional second line under the label. */
@@ -22,7 +29,9 @@ export interface ListRowProps {
   disabled?: boolean;
   /**
    * Marks the row as a choice in a single-select list: the selected row shows a check
-   * (in place of the chevron) and reports `accessibilityState.selected`.
+   * (in place of the chevron) and is a `radio` reporting `accessibilityState.checked` (react-native-web drops
+   * `aria-selected` on buttons, but maps `checked` to `aria-checked`). Put such rows in a
+   * `radiogroup`.
    */
   selected?: boolean;
   accessibilityLabel?: string;
@@ -86,6 +95,7 @@ export function ListRow({
           testID={testID ? `${testID}-check` : 'list-row-check'}
           size={22}
           color={theme.colors.primary}
+          {...DECORATIVE}
         />
       ) : null}
       {showChevron ? (
@@ -110,9 +120,9 @@ export function ListRow({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      accessibilityRole="button"
+      accessibilityRole={selected === undefined ? 'button' : 'radio'}
       accessibilityLabel={spoken}
-      accessibilityState={selected === undefined ? { disabled } : { disabled, selected }}
+      accessibilityState={selected === undefined ? { disabled } : { disabled, checked: selected }}
       testID={testID}
       style={({ pressed }) => [styles.row, { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 }]}
     >

@@ -17,6 +17,20 @@ jest.mock('../../components/LoadingSpinner', () =>
   require('../helpers/screenMocks').loadingSpinnerModule()
 );
 
+// Counts renders of the row covers (xs), which re-render only when a row does.
+const mockRowRenders: Record<string, number> = {};
+jest.mock('../../components/ui/BookCover', () => {
+  const actual = jest.requireActual('../../components/ui/BookCover');
+  const ReactLib = require('react');
+  return {
+    ...actual,
+    BookCover: (props: { title: string; size: string }) => {
+      if (props.size === 'xs') mockRowRenders[props.title] = (mockRowRenders[props.title] ?? 0) + 1;
+      return ReactLib.createElement(actual.BookCover, props);
+    },
+  };
+});
+
 function row(id: string, title: string, author: string, status: string) {
   return userBookRow({ id, status, book: { id: `b-${id}`, title, author, cover_url: null } });
 }
@@ -44,6 +58,7 @@ const rowTitles = (screen: Awaited<ReturnType<typeof renderLibrary>>) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  for (const k of Object.keys(mockRowRenders)) delete mockRowRenders[k];
   (getItem as jest.Mock).mockResolvedValue(null);
   (setItem as jest.Mock).mockResolvedValue(undefined);
 });
@@ -104,7 +119,7 @@ describe('My Books sort (#933)', () => {
     const screen = await renderLibrary();
     await fireEvent.press(screen.getByTestId('my-books-sort'));
     expect(screen.getByText('Sort by')).toBeTruthy();
-    expect(screen.getByTestId('sort-option-added').props.accessibilityState.selected).toBe(true);
+    expect(screen.getByTestId('sort-option-added').props.accessibilityState.checked).toBe(true);
 
     await fireEvent.press(screen.getByTestId('sort-option-title'));
     expect(setItem).toHaveBeenCalledWith('library.sort', 'title');
@@ -115,7 +130,7 @@ describe('My Books sort (#933)', () => {
     expect(screen.getByLabelText('Reading now, 1 book')).toBeTruthy();
 
     await fireEvent.press(screen.getByTestId('my-books-sort'));
-    expect(screen.getByTestId('sort-option-title').props.accessibilityState.selected).toBe(true);
+    expect(screen.getByTestId('sort-option-title').props.accessibilityState.checked).toBe(true);
     await fireEvent.press(screen.getByTestId('sort-option-author'));
     expect(setItem).toHaveBeenLastCalledWith('library.sort', 'author');
     expect(rowTitles(screen)).toEqual(['Dune', 'Moby-Dick', 'Emma']);
@@ -154,6 +169,19 @@ describe('My Books sort (#933)', () => {
     expect(rowTitles(screen)).toEqual(['Dune', 'Emma', 'Moby-Dick']);
     await fireEvent.changeText(screen.getByTestId('my-books-search'), 'austen');
     expect(rowTitles(screen)).toEqual(['Emma']);
+  });
+
+  it('memoises: opening and closing the sort sheet re-renders no row and keeps the order', async () => {
+    const screen = await renderLibrary();
+    await fireEvent.press(screen.getByTestId('my-books-sort'));
+    await fireEvent.press(screen.getByTestId('sort-option-title'));
+    const before = { ...mockRowRenders };
+    const order = rowTitles(screen);
+    // Open and close the sheet without choosing (an unrelated state change).
+    await fireEvent.press(screen.getByTestId('my-books-sort'));
+    await fireEvent.press(screen.getByText('Close'));
+    expect(mockRowRenders).toEqual(before);
+    expect(rowTitles(screen)).toEqual(order);
   });
 
   it('memoises the sort: typing nothing new does not rebuild the collator', async () => {

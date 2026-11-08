@@ -26,7 +26,7 @@ export function SortSheet({ visible, value, onSelect, onClose }: SortSheetProps)
       footer={null}
     >
       <View style={styles.body}>
-        <ListSection testID="sort-options">
+        <ListSection testID="sort-options" accessibilityRole="radiogroup">
           {SORT_KEYS.map((key) => (
             <ListRow
               key={key}

@@ -40,9 +40,11 @@ const ShelfItem = memo(function ShelfItem<T extends LibraryBook>({
           <AppText variant="bodyStrong" numberOfLines={1}>
             {title}
           </AppText>
-          <AppText variant="meta" color="onSurfaceVariant" numberOfLines={1}>
-            {author}
-          </AppText>
+          {author ? (
+            <AppText variant="meta" color="onSurfaceVariant" numberOfLines={1}>
+              {author}
+            </AppText>
+          ) : null}
         </View>
       </Pressable>
     </View>

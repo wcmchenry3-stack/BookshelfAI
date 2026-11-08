@@ -140,6 +140,15 @@ test.describe('My Books', () => {
     await expect(
       page.getByRole('button', { name: 'Sort, currently Title A–Z', exact: true })
     ).toBeVisible();
+    await page.getByRole('button', { name: 'Sort, currently Title A–Z', exact: true }).click();
+    await expect(
+      page.getByRole('dialog').getByRole('radio', { name: 'Title A–Z', exact: true })
+    ).toHaveAttribute('aria-checked', 'true');
+    await expect(
+      page.getByRole('dialog').getByRole('radio', { name: 'Recently added', exact: true })
+    ).toHaveAttribute('aria-checked', 'false');
+    await page.getByRole('dialog').getByRole('radio', { name: 'Title A–Z', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(rows.first()).toHaveAccessibleName(/^Dune — Purchased/);
     await expect(rows.nth(1)).toHaveAccessibleName(/^Emma — Wishlist/);
 

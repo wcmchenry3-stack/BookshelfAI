@@ -70,16 +70,18 @@ describe('SortSheet (#933)', () => {
     );
     expect(getByText('Sort by')).toBeTruthy();
     expect(getByTestId('sort-option-title').props.accessibilityState).toMatchObject({
-      selected: true,
+      checked: true,
     });
     expect(getByTestId('sort-option-added').props.accessibilityState).toMatchObject({
-      selected: false,
+      checked: false,
     });
     expect(getByTestId('sort-option-author').props.accessibilityState).toMatchObject({
-      selected: false,
+      checked: false,
     });
-    expect(getByTestId('sort-option-title-check')).toBeTruthy();
-    expect(queryByTestId('sort-option-added-check')).toBeNull();
+    expect(getByTestId('sort-options').props.accessibilityRole).toBe('radiogroup');
+    expect(getByTestId('sort-option-title').props.accessibilityRole).toBe('radio');
+    expect(getByTestId('sort-option-title-check', { includeHiddenElements: true })).toBeTruthy();
+    expect(queryByTestId('sort-option-added-check', { includeHiddenElements: true })).toBeNull();
     expect(getByText('Recently added')).toBeTruthy();
     expect(getByText('Title A–Z')).toBeTruthy();
     expect(getByText('Author A–Z')).toBeTruthy();
