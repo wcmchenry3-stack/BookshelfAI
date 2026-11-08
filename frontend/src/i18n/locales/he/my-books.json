@@ -15,9 +15,16 @@
     "read": "נקרא"
   },
   "filterBy": "סנן לפי {{label}}",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — לא מאומת",
+  "bookCardA11y": "{{title}} — {{status}}, מאת {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, מאת {{author}} — לא מאומת",
   "bookCardHint": "הקש לפרטים ואפשרויות",
+  "moreOptionsA11y": "אפשרויות נוספות עבור {{title}}",
+  "actions": {
+    "viewDetails": "הצג פרטים",
+    "remove": "הסר מהספרייה",
+    "close": "סגור"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "סמן כ{{status}}",
   "markAsA11y": "סמן כ{{status}}",
   "removeFromList": "הסר מהרשימה",

@@ -1,14 +1,15 @@
 {
   "title": "Lista",
   "heroSubtitle": "Libros que planeas comprar",
-  "categoryLabel": "LISTA",
   "archiveSummary": "libros en tu lista",
   "loading": "Cargando lista…",
   "empty": "Tu lista está vacía.\nEscanea una portada para añadir.",
-  "markPurchased": "Marcar comprado",
-  "markPurchasedA11y": "Marcar {{title}} como comprado",
   "remove": "Eliminar",
   "removeA11y": "Eliminar {{title}} de la lista",
+  "bought": "Comprado",
+  "boughtA11y": "Marcar {{title}} como comprado",
+  "rowA11y": "{{title}} — {{status}}, de {{author}}",
+  "rowHint": "Toca para ver detalles o quitarlo",
   "errorLoadWishlist": "No se pudo cargar la lista.",
   "errorUpdateStatus": "No se pudo actualizar el estado.",
   "errorRemoveBook": "No se pudo eliminar el libro."

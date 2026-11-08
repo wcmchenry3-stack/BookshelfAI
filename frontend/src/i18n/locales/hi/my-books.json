@@ -15,9 +15,16 @@
     "read": "पढ़ी गई"
   },
   "filterBy": "{{label}} द्वारा फ़िल्टर करें",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — असत्यापित",
+  "bookCardA11y": "{{title}} — {{status}}, लेखक {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, लेखक {{author}} — असत्यापित",
   "bookCardHint": "विवरण और विकल्प देखने के लिए टैप करें",
+  "moreOptionsA11y": "{{title}} के लिए और विकल्प",
+  "actions": {
+    "viewDetails": "विवरण देखें",
+    "remove": "लाइब्रेरी से हटाएं",
+    "close": "बंद करें"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "{{status}} चिह्नित करें",
   "markAsA11y": "{{status}} के रूप में चिह्नित करें",
   "removeFromList": "सूची से हटाएं",

@@ -1,14 +1,15 @@
 {
   "title": "विशलिस्ट",
   "heroSubtitle": "वे किताबें जो आप खरीदना चाहते हैं",
-  "categoryLabel": "विशलिस्ट",
   "archiveSummary": "किताबें आपकी सूची में",
   "loading": "विशलिस्ट लोड हो रही है…",
   "empty": "आपकी विशलिस्ट खाली है।\nएक किताब स्कैन करें।",
-  "markPurchased": "खरीदा गया चिह्नित करें",
-  "markPurchasedA11y": "{{title}} को खरीदा गया चिह्नित करें",
   "remove": "हटाएं",
   "removeA11y": "{{title}} को विशलिस्ट से हटाएं",
+  "bought": "खरीदा",
+  "boughtA11y": "{{title}} को खरीदा गया चिह्नित करें",
+  "rowA11y": "{{title}} — {{status}}, लेखक {{author}}",
+  "rowHint": "विवरण देखने या हटाने के लिए टैप करें",
   "errorLoadWishlist": "विशलिस्ट लोड नहीं हो सकी।",
   "errorUpdateStatus": "स्थिति अपडेट नहीं हो सकी।",
   "errorRemoveBook": "किताब हटाई नहीं जा सकी।"

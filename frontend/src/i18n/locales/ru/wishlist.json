@@ -1,14 +1,15 @@
 {
   "title": "Список",
   "heroSubtitle": "Книги, которые вы планируете купить",
-  "categoryLabel": "СПИСОК",
   "archiveSummary": "книг в списке",
   "loading": "Загрузка списка…",
   "empty": "Ваш список пуст.\nОтсканируйте обложку книги.",
-  "markPurchased": "Отметить купленным",
-  "markPurchasedA11y": "Отметить {{title}} как купленную",
   "remove": "Удалить",
   "removeA11y": "Удалить {{title}} из списка",
+  "bought": "Куплено",
+  "boughtA11y": "Отметить {{title}} как купленную",
+  "rowA11y": "{{title}} — {{status}}, автор {{author}}",
+  "rowHint": "Нажмите, чтобы открыть детали или удалить",
   "errorLoadWishlist": "Не удалось загрузить список.",
   "errorUpdateStatus": "Не удалось обновить статус.",
   "errorRemoveBook": "Не удалось удалить книгу."

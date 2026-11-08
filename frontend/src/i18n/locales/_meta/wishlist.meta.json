@@ -10,16 +10,6 @@
     "characterLimit": 80,
     "notes": "Preserve the \\n newline in translated strings"
   },
-  "markPurchased": {
-    "description": "Button label to move a book from wishlist to purchased",
-    "tone": "action",
-    "characterLimit": 25
-  },
-  "markPurchasedA11y": {
-    "description": "Accessibility label for the mark-purchased button, includes book title",
-    "tone": "neutral",
-    "placeholders": ["{{title}}"]
-  },
   "remove": {
     "description": "Button label to remove a book from the wishlist",
     "tone": "neutral",
@@ -43,6 +33,26 @@
   "errorRemoveBook": {
     "description": "Error message when removing a book fails",
     "tone": "neutral",
+    "characterLimit": 50
+  },
+  "bought": {
+    "description": "Label of the tonal chip on a wishlist row that moves the book to purchased",
+    "tone": "action",
+    "characterLimit": 15
+  },
+  "boughtA11y": {
+    "description": "Accessibility label of the Bought chip, includes the book title",
+    "tone": "neutral",
+    "placeholders": ["{{title}}"]
+  },
+  "rowA11y": {
+    "description": "Accessibility label of a wishlist row: title, translated status, then the author",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
+  },
+  "rowHint": {
+    "description": "Accessibility hint of a wishlist row: tapping opens details, where the book can be removed",
+    "tone": "informative",
     "characterLimit": 50
   }
 }

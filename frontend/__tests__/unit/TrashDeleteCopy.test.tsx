@@ -41,15 +41,7 @@ jest.mock('../../hooks/useBanner', () => ({
 jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ logout: jest.fn() }) }));
 jest.mock('../../components/ThemeToggleButton', () => ({ ThemeToggleButton: () => null }));
 
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      colors: new Proxy({}, { get: () => '#123456' }),
-      spacing: { md: 16 },
-      typography: new Proxy({}, { get: () => 14 }),
-    },
-  }),
-}));
+jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 
 const BOOK = {
   id: 'ub-1',
@@ -73,8 +65,9 @@ describe('delete copy (#683)', () => {
 
   it('My Books tells the user the entry is in the Trash and offers View trash', async () => {
     const { findByLabelText } = await render(<MyBooksScreen />);
+    await fireEvent.press(await findByLabelText('More options for Dune'));
     await act(async () => {
-      await fireEvent.press(await findByLabelText('Remove Dune'));
+      await fireEvent.press(await findByLabelText('Remove from library'));
     });
     await waitFor(() => expect(mockShowBanner).toHaveBeenCalled());
     const config = mockShowBanner.mock.calls[0][0];
@@ -87,8 +80,9 @@ describe('delete copy (#683)', () => {
   it('shows no Trash message when the delete fails', async () => {
     mockDelete.mockRejectedValue({ response: { status: 500 } });
     const { findByLabelText } = await render(<MyBooksScreen />);
+    await fireEvent.press(await findByLabelText('More options for Dune'));
     await act(async () => {
-      await fireEvent.press(await findByLabelText('Remove Dune'));
+      await fireEvent.press(await findByLabelText('Remove from library'));
     });
     expect(mockShowBanner).not.toHaveBeenCalled();
   });
@@ -97,8 +91,9 @@ describe('delete copy (#683)', () => {
 describe('Wishlist delete (#683)', () => {
   it('tells the user the entry is in the Trash and offers View trash', async () => {
     const { findByLabelText } = await render(<WishlistScreen />);
+    await fireEvent.press(await findByLabelText('Dune — Wishlist, by Frank Herbert'));
     await act(async () => {
-      await fireEvent.press(await findByLabelText('Remove Dune from wishlist'));
+      await fireEvent.press(await findByLabelText('Remove Dune'));
     });
     await waitFor(() => expect(mockShowBanner).toHaveBeenCalled());
     const config = mockShowBanner.mock.calls[0][0];

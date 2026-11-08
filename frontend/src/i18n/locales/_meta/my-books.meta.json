@@ -61,19 +61,45 @@
     "characterLimit": 30
   },
   "bookCardA11y": {
-    "description": "Accessibility label for a book card row, combining title and status",
+    "description": "Accessibility label for a library row: title, translated status, then the author",
     "tone": "neutral",
-    "placeholders": ["{{title}}", "{{status}}"]
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
   },
   "bookCardUnverifiedA11y": {
-    "description": "Accessibility label for the card of an unverified book (one the user added themselves, #616): title, status, then that it is unverified",
+    "description": "Accessibility label for the row of an unverified book (one the user added themselves, #616): title, translated status, author, then that it is unverified",
     "tone": "neutral",
-    "placeholders": ["{{title}}", "{{status}}"]
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
   },
   "bookCardHint": {
     "description": "Accessibility hint for a book card — tells the user what tapping does",
     "tone": "informative",
     "characterLimit": 50
+  },
+  "moreOptionsA11y": {
+    "description": "Accessibility label of the ⋯ button at the end of a My Books row; opens that book's actions",
+    "tone": "neutral",
+    "placeholders": ["{{title}}"]
+  },
+  "actions.viewDetails": {
+    "description": "Row in the book actions sheet that opens the book detail sheet",
+    "tone": "action",
+    "characterLimit": 30
+  },
+  "actions.remove": {
+    "description": "Destructive row in the book actions sheet that moves the book to Trash",
+    "tone": "action",
+    "characterLimit": 35
+  },
+  "actions.close": {
+    "description": "Close button of the book actions sheet (visible and spoken)",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "rowMeta": {
+    "description": "Meta line of a library row: the status and the publication year, joined with a middle dot",
+    "tone": "neutral",
+    "placeholders": ["{{status}}", "{{year}}"],
+    "notes": "Keep the middle dot separator"
   },
   "markAs": {
     "description": "Button label to advance a book to the next reading status, e.g. 'Mark as Reading'",

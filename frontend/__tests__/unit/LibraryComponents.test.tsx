@@ -1,49 +1,13 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { BookDetailSheet, type DetailBook } from '../../components/library/BookDetailSheet';
-import { BookRow, BookRowAction } from '../../components/library/BookRow';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
 import { LibrarySearchBar } from '../../components/library/LibrarySearchBar';
 import { StatusTabs } from '../../components/library/StatusTabs';
 import { NEXT_STATUS, STATUS_TAB_KEYS } from '../../components/library/libraryShared';
 
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      isDark: false,
-      colors: {
-        background: '#fff',
-        surface: '#f5f5f5',
-        border: '#ccc',
-        text: '#000',
-        textSecondary: '#888',
-        primary: '#0f426f',
-        onPrimary: '#ffffff',
-        tertiary: '#c9a227',
-        onTertiary: '#000000',
-        secondary: '#47645d',
-        onSurface: '#1b1c1a',
-        onSurfaceVariant: '#42474f',
-        outline: '#737780',
-        secondaryContainer: '#c6e7dd',
-        onSecondaryContainer: '#4b6861',
-        surfaceContainerLow: '#f5f3ef',
-        surfaceContainerHigh: '#eae8e4',
-        surfaceContainerHighest: '#e4e2de',
-      },
-      radius: { button: 12 },
-      typography: {
-        fontSizeBase: 16,
-        fontSizeSM: 14,
-        fontSizeLG: 20,
-        fontSizeXS: 12,
-        fontSizeH1: 32,
-        fontFamilyHeadline: 'serif',
-      },
-    },
-  }),
-}));
+jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 
 const ITEM: DetailBook = {
   id: 'ub-1',
@@ -66,92 +30,6 @@ describe('libraryShared', () => {
       purchased: 'reading',
       reading: 'read',
     });
-  });
-});
-
-describe('BookRow', () => {
-  it('renders title, author, year, category label and its actions', async () => {
-    const { getByText } = await render(
-      <BookRow item={ITEM} categoryLabel="Wishlisted">
-        <BookRowAction
-          variant="primary"
-          label="Do it"
-          accessibilityLabel="do it a11y"
-          onPress={() => {}}
-          disabled={false}
-        />
-      </BookRow>
-    );
-    expect(getByText('Dune')).toBeTruthy();
-    expect(getByText('Frank Herbert')).toBeTruthy();
-    expect(getByText('1965')).toBeTruthy();
-    expect(getByText('Wishlisted')).toBeTruthy();
-    expect(getByText('Do it')).toBeTruthy();
-  });
-
-  it('shows the cover placeholder and the unverified badge', async () => {
-    const { queryByLabelText, getByTestId, getByText } = await render(
-      <BookRow item={{ ...ITEM, unverified: true }} categoryLabel="x">
-        {null}
-      </BookRow>
-    );
-    // The cover is decorative (the row text names the book): drawn, but unlabelled.
-    expect(getByTestId('book-row-cover', { hidden: true })).toBeTruthy();
-    expect(queryByLabelText('No cover available')).toBeNull();
-    expect(getByText('Unverified')).toBeTruthy();
-  });
-
-  it('is a pressable card with the given label when onPress is set', async () => {
-    const onPress = jest.fn();
-    const { getByLabelText } = await render(
-      <BookRow item={ITEM} categoryLabel="x" onPress={onPress} accessibilityLabel="card a11y">
-        {null}
-      </BookRow>
-    );
-    await fireEvent.press(getByLabelText('card a11y'));
-    expect(onPress).toHaveBeenCalledTimes(1);
-  });
-
-  it('is a plain card without onPress', async () => {
-    const { queryByLabelText } = await render(
-      <BookRow item={ITEM} categoryLabel="x" accessibilityLabel="card a11y">
-        {null}
-      </BookRow>
-    );
-    expect(queryByLabelText('card a11y')).toBeNull();
-  });
-});
-
-describe('BookRowAction', () => {
-  it('fires onPress when enabled and exposes its a11y label', async () => {
-    const onPress = jest.fn();
-    const { getByLabelText } = await render(
-      <BookRowAction
-        variant="secondary"
-        label="Remove"
-        accessibilityLabel="remove a11y"
-        onPress={onPress}
-        disabled={false}
-      />
-    );
-    await fireEvent.press(getByLabelText('remove a11y'));
-    expect(onPress).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not fire when disabled', async () => {
-    const onPress = jest.fn();
-    const { getByLabelText } = await render(
-      <BookRowAction
-        variant="primary"
-        label="Go"
-        accessibilityLabel="go a11y"
-        onPress={onPress}
-        disabled
-      />
-    );
-    await fireEvent.press(getByLabelText('go a11y'));
-    expect(onPress).not.toHaveBeenCalled();
-    expect(getByLabelText('go a11y').props.accessibilityState).toEqual({ disabled: true });
   });
 });
 

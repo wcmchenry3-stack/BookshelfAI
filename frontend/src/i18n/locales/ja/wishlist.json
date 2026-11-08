@@ -1,14 +1,15 @@
 {
   "title": "ウィッシュリスト",
   "heroSubtitle": "購入予定の本",
-  "categoryLabel": "ウィッシュリスト",
   "archiveSummary": "冊がリストに",
   "loading": "ウィッシュリストを読み込み中…",
   "empty": "ウィッシュリストは空です。\n本のカバーをスキャンして追加。",
-  "markPurchased": "購入済みにする",
-  "markPurchasedA11y": "{{title}}を購入済みにする",
   "remove": "削除",
   "removeA11y": "{{title}}をウィッシュリストから削除",
+  "bought": "購入済み",
+  "boughtA11y": "{{title}}を購入済みにする",
+  "rowA11y": "{{title}} — {{status}}、著者 {{author}}",
+  "rowHint": "タップして詳細の確認や削除",
   "errorLoadWishlist": "ウィッシュリストを読み込めませんでした。",
   "errorUpdateStatus": "ステータスを更新できませんでした。",
   "errorRemoveBook": "本を削除できませんでした。"

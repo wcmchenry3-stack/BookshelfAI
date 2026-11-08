@@ -7,38 +7,9 @@
  *   jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
  */
 
-/** `useTheme()` with the colour and type tokens the library screens read. */
+/** `useTheme()` returning the real light theme (the library rows read many colour roles). */
 export const themeModule = () => ({
-  useTheme: () => ({
-    theme: {
-      colors: {
-        background: '#fff',
-        surface: '#f5f5f5',
-        border: '#ccc',
-        text: '#000',
-        textSecondary: '#888',
-        primary: '#0f426f',
-        onPrimary: '#ffffff',
-        secondary: '#47645d',
-        onSurface: '#1b1c1a',
-        onSurfaceVariant: '#42474f',
-        outline: '#737780',
-        secondaryContainer: '#c6e7dd',
-        onSecondaryContainer: '#4b6861',
-        surfaceContainerLow: '#f5f3ef',
-        surfaceContainerHigh: '#eae8e4',
-        surfaceContainerHighest: '#e4e2de',
-      },
-      radius: { button: 12 },
-      typography: {
-        fontSizeBase: 16,
-        fontSizeSM: 14,
-        fontSizeLG: 20,
-        fontSizeXS: 12,
-        fontFamilyHeadline: 'serif',
-      },
-    },
-  }),
+  useTheme: () => ({ theme: require('../../theme/light').lightTheme }),
 });
 
 /** A `LoadingSpinner` stand-in that renders its message under testID `loading-spinner`. */

@@ -15,9 +15,16 @@
     "read": "Read"
   },
   "filterBy": "Filter by {{label}}",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Unverified",
+  "bookCardA11y": "{{title}} — {{status}}, by {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, by {{author}} — Unverified",
   "bookCardHint": "Tap to see details and options",
+  "moreOptionsA11y": "More options for {{title}}",
+  "actions": {
+    "viewDetails": "View details",
+    "remove": "Remove from library",
+    "close": "Close"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "Mark as {{status}}",
   "markAsA11y": "Mark as {{status}}",
   "removeFromList": "Remove from list",

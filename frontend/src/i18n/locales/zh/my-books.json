@@ -15,9 +15,16 @@
     "read": "已读"
   },
   "filterBy": "按{{label}}筛选",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 未验证",
+  "bookCardA11y": "{{title}} — {{status}}，作者 {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}，作者 {{author}} — 未验证",
   "bookCardHint": "点击查看详情和选项",
+  "moreOptionsA11y": "{{title}}的更多选项",
+  "actions": {
+    "viewDetails": "查看详情",
+    "remove": "从书库中移除",
+    "close": "关闭"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "标记为{{status}}",
   "markAsA11y": "标记为{{status}}",
   "removeFromList": "从列表中移除",

@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, RefreshControl, StyleSheet } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, Platform, RefreshControl, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { BookDetailSheet } from '../../components/library/BookDetailSheet';
-import { BookRow, BookRowAction } from '../../components/library/BookRow';
+import { BookActionsSheet } from '../../components/library/BookActionsSheet';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
+import { LibraryRow, LibraryRowSeparator } from '../../components/library/LibraryRow';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { LibrarySearchBar } from '../../components/library/LibrarySearchBar';
 import { StatusTabs } from '../../components/library/StatusTabs';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import { NEXT_STATUS, SCREEN_PADDING, type Status } from '../../components/library/libraryShared';
+import { IconButton } from '../../components/ui/IconButton';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
 import { onLibraryChanged } from '../../lib/libraryChanged';
 import { api } from '../../lib/api';
@@ -44,6 +46,37 @@ interface UserBook {
   } | null;
 }
 
+interface MyBookRowProps {
+  item: UserBook;
+  onOpen: (item: UserBook) => void;
+  onMore: (item: UserBook) => void;
+}
+
+/** One My Books row. Memoised; the callbacks are stable, so only a changed item re-renders it. */
+const MyBookRow = memo(function MyBookRow({ item, onOpen, onMore }: MyBookRowProps) {
+  const { t } = useTranslation('my-books');
+  const status = t(`statusTab.${item.status}`);
+  const a11yArgs = { title: item.book.title, status, author: item.book.author };
+  return (
+    <LibraryRow
+      item={item}
+      onPress={() => onOpen(item)}
+      // This labels the row's tap target (the text is inert), so the Unverified
+      // badge (#616) must be said here, and the status must be the translated one.
+      accessibilityLabel={t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', a11yArgs)}
+      accessibilityHint={t('bookCardHint')}
+      trailing={
+        <IconButton
+          icon="more-vert"
+          accessibilityLabel={t('moreOptionsA11y', { title: item.book.title })}
+          onPress={() => onMore(item)}
+          testID={`book-more-${item.id}`}
+        />
+      }
+    />
+  );
+});
+
 export default function MyBooksScreen() {
   const { t } = useTranslation('my-books');
   const { activeColor } = useLibraryAccent();
@@ -52,6 +85,11 @@ export default function MyBooksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<Status>('all');
   const [selected, setSelected] = useState<UserBook | null>(null);
+  // The book whose ⋯ menu is open.
+  const [actionsFor, setActionsFor] = useState<UserBook | null>(null);
+  // iOS cannot present a sheet while another is still dismissing, so the detail
+  // sheet opens from the menu's `onHidden` there.
+  const pendingDetail = useRef<UserBook | null>(null);
   const [query, setQuery] = useState('');
 
   // Read inside the async mutation handlers below, so a tab switch while a
@@ -81,10 +119,12 @@ export default function MyBooksScreen() {
           : prev.filter((b) => b.id !== item.id);
       });
       setSelected(null);
+      setActionsFor(null);
     },
     onRemoved: (item) => {
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
       setSelected(null);
+      setActionsFor(null);
     },
   });
 
@@ -137,6 +177,29 @@ export default function MyBooksScreen() {
   }, [books, query]);
 
   const sheetActionsDisabled = !isConnected || (selected != null && mutatingIds.has(selected.id));
+  const menuActionsDisabled =
+    !isConnected || (actionsFor != null && mutatingIds.has(actionsFor.id));
+
+  const openDetail = useCallback((item: UserBook) => setSelected(item), []);
+  const openMenu = useCallback((item: UserBook) => setActionsFor(item), []);
+  const renderItem = useCallback(
+    ({ item }: { item: UserBook }) => (
+      <MyBookRow item={item} onOpen={openDetail} onMore={openMenu} />
+    ),
+    [openDetail, openMenu]
+  );
+
+  function viewDetailsFromMenu(item: UserBook) {
+    setActionsFor(null);
+    if (Platform.OS === 'ios') pendingDetail.current = item;
+    else setSelected(item);
+  }
+
+  function menuHidden() {
+    if (!pendingDetail.current) return;
+    setSelected(pendingDetail.current);
+    pendingDetail.current = null;
+  }
 
   if (loading) {
     return (
@@ -162,7 +225,7 @@ export default function MyBooksScreen() {
 
       {!isConnected && <OfflineNotice />}
 
-      {/* Bento list */}
+      {/* Library list */}
       {filteredBooks.length === 0 ? (
         <EmptyState message={t('noBooksYet')} />
       ) : (
@@ -170,7 +233,7 @@ export default function MyBooksScreen() {
           data={filteredBooks}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
-          ListHeaderComponent={listHeader}
+          ListHeaderComponent={<View style={styles.header}>{listHeader}</View>}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -181,43 +244,22 @@ export default function MyBooksScreen() {
               tintColor={activeColor}
             />
           }
-          renderItem={({ item }) => {
-            const nextStatus = NEXT_STATUS[item.status];
-            const actionsDisabled = !isConnected || mutatingIds.has(item.id);
-            return (
-              <BookRow
-                item={item}
-                categoryLabel={t(`status.${item.status}`)}
-                onPress={() => setSelected(item)}
-                // This labels the card's tap target (the text is inert), so the
-                // Unverified badge (#616) must be said here.
-                accessibilityLabel={t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', {
-                  title: item.book.title,
-                  status: item.status,
-                })}
-                accessibilityHint={t('bookCardHint')}
-              >
-                {nextStatus && (
-                  <BookRowAction
-                    variant="primary"
-                    label={t('markAs', { status: t(`status.${nextStatus}`) })}
-                    accessibilityLabel={t('markAsA11y', { status: t(`status.${nextStatus}`) })}
-                    onPress={() => advanceStatus(item)}
-                    disabled={actionsDisabled}
-                  />
-                )}
-                <BookRowAction
-                  variant="secondary"
-                  label={t('removeFromList')}
-                  accessibilityLabel={t('removeBookA11y', { title: item.book.title })}
-                  onPress={() => removeBook(item)}
-                  disabled={actionsDisabled}
-                />
-              </BookRow>
-            );
-          }}
+          renderItem={renderItem}
+          ItemSeparatorComponent={LibraryRowSeparator}
+          initialNumToRender={12}
+          removeClippedSubviews={Platform.OS === 'android'}
         />
       )}
+
+      <BookActionsSheet
+        selected={actionsFor}
+        actionsDisabled={menuActionsDisabled}
+        onClose={() => setActionsFor(null)}
+        onHidden={menuHidden}
+        onAdvance={advanceStatus}
+        onViewDetails={viewDetailsFromMenu}
+        onRemove={removeBook}
+      />
 
       <BookDetailSheet
         selected={selected}
@@ -231,5 +273,6 @@ export default function MyBooksScreen() {
 }
 
 const styles = StyleSheet.create({
-  list: { paddingHorizontal: SCREEN_PADDING, paddingBottom: 32, gap: 12 },
+  list: { paddingBottom: 32 },
+  header: { paddingHorizontal: SCREEN_PADDING },
 });

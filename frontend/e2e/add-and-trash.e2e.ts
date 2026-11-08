@@ -26,14 +26,15 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
     );
 
     await page.getByRole('tab', { name: 'Your book collection' }).click();
-    await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Frankenstein — Wishlist' })).toBeVisible();
 
     // Delete.
-    await page.getByRole('button', { name: 'Remove Frankenstein' }).click();
+    await page.getByRole('button', { name: 'More options for Frankenstein' }).click();
+    await page.getByRole('button', { name: 'Remove from library' }).click();
     await expect(page.getByRole('alert')).toContainText(
       'Moved to Trash. You can restore it within 30 days.'
     );
-    await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Frankenstein — Wishlist' })).toHaveCount(0);
     await expect(page.getByText('No books here yet.')).toBeVisible();
 
     // Undo from Trash.
@@ -48,7 +49,7 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
 
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await page.getByRole('tab', { name: 'Your book collection' }).click();
-    await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Frankenstein — Wishlist' })).toBeVisible();
     // No allowances: #907 removed the nested buttons and #898's success colour passes contrast.
     await expectNoA11yViolations('My Books after restoring');
   });

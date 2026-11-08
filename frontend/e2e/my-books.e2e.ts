@@ -18,22 +18,22 @@ test.describe('My Books', () => {
 
     // Library loads: every seeded book is listed.
     await expect(page.getByRole('button', { name: 'Dune — purchased' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Emma — wishlisted' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'The Great Gatsby — reading' })).toBeVisible();
     await expectNoA11yViolations('My Books with three books');
 
     // Status filter.
     await page.getByRole('button', { name: 'Filter by Purchased' }).click();
     await expect(page.getByRole('button', { name: 'Dune — purchased' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Emma — wishlisted' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'The Great Gatsby — reading' })).toHaveCount(0);
     await expectNoA11yViolations('My Books filtered to Purchased');
     await page.getByRole('button', { name: 'Filter by All' }).click();
-    await expect(page.getByRole('button', { name: 'Emma — wishlisted' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toBeVisible();
 
     // Text filter.
     await page.getByRole('textbox', { name: 'Search your library' }).fill('austen');
-    await expect(page.getByRole('button', { name: 'Emma — wishlisted' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Dune — purchased' })).toHaveCount(0);
     await page.getByRole('textbox', { name: 'Search your library' }).fill('');
     await expect(page.getByRole('button', { name: 'Dune — purchased' })).toBeVisible();
@@ -48,5 +48,31 @@ test.describe('My Books', () => {
     await expectNoA11yViolations('My Books book detail');
     await detail.getByRole('button', { name: 'Close detail' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('moves a book to the next status from the row menu', async ({
+    page,
+    signIn,
+    expectNoA11yViolations,
+  }) => {
+    await signIn();
+    await openTab(page, 'Your book collection');
+    await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'More options for Dune' }).click();
+    const menu = page.getByRole('dialog');
+    await expect(menu.getByRole('button', { name: 'View details' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Remove from library' })).toBeVisible();
+    await expectNoA11yViolations('My Books row menu');
+
+    await menu.getByRole('button', { name: 'Mark as Reading' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Dune — Reading' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toHaveCount(0);
+
+    // It now belongs under the Reading filter, not Purchased.
+    await page.getByRole('button', { name: 'Filter by Purchased' }).click();
+    await expect(page.getByRole('button', { name: 'Dune — Reading' })).toHaveCount(0);
+    await expectNoA11yViolations('My Books after moving a book');
   });
 });

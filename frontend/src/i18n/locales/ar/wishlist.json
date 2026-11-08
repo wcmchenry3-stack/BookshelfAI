@@ -1,14 +1,15 @@
 {
   "title": "قائمتي",
   "heroSubtitle": "كتب تخطط لشرائها",
-  "categoryLabel": "القائمة",
   "archiveSummary": "كتب في قائمتك",
   "loading": "جارٍ تحميل القائمة…",
   "empty": "قائمتك فارغة.\nامسح غلاف كتاب لإضافة واحد.",
-  "markPurchased": "وضع كمُشترى",
-  "markPurchasedA11y": "وضع {{title}} كمُشترى",
   "remove": "إزالة",
   "removeA11y": "إزالة {{title}} من القائمة",
+  "bought": "تم الشراء",
+  "boughtA11y": "وضع {{title}} كمُشترى",
+  "rowA11y": "{{title}} — {{status}}، تأليف {{author}}",
+  "rowHint": "اضغط لعرض التفاصيل أو إزالته",
   "errorLoadWishlist": "تعذر تحميل القائمة.",
   "errorUpdateStatus": "تعذر تحديث الحالة.",
   "errorRemoveBook": "تعذر إزالة الكتاب."

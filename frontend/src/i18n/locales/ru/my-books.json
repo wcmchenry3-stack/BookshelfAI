@@ -15,9 +15,16 @@
     "read": "Прочитано"
   },
   "filterBy": "Фильтр по {{label}}",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Не проверено",
+  "bookCardA11y": "{{title}} — {{status}}, автор {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, автор {{author}} — Не проверено",
   "bookCardHint": "Нажмите для деталей и опций",
+  "moreOptionsA11y": "Дополнительные действия для {{title}}",
+  "actions": {
+    "viewDetails": "Показать детали",
+    "remove": "Удалить из библиотеки",
+    "close": "Закрыть"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "Отметить как {{status}}",
   "markAsA11y": "Отметить как {{status}}",
   "removeFromList": "Удалить из списка",
