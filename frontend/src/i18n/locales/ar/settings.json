@@ -8,5 +8,14 @@
   "signOutCancel": "إلغاء",
   "trash": "سلة المحذوفات",
   "trashA11y": "فتح سلة المحذوفات",
-  "trashHint": "استعد الكتب التي حذفتها خلال آخر 30 يومًا"
+  "trashHint": "استعد الكتب التي حذفتها خلال آخر 30 يومًا",
+  "openOn": "الفتح على",
+  "openOnA11y": "الفتح على: {{value}}",
+  "openOnHint": "اختر الشاشة التي يفتح عليها التطبيق",
+  "openOnPickerTitle": "افتح التطبيق على",
+  "openOnScan": "مسح",
+  "openOnWishlist": "قائمة الرغبات",
+  "openOnMyBooks": "كتبي",
+  "openOnCancel": "إلغاء",
+  "openOnSaveFailed": "تعذّر حفظ اختيارك. حاول مرة أخرى."
 }
