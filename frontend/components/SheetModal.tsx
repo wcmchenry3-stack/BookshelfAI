@@ -1,5 +1,13 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { AccessibilityInfo, findNodeHandle, Modal, Platform, StyleSheet, View } from 'react-native';
+import {
+  AccessibilityInfo,
+  findNodeHandle,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../hooks/useTheme';
@@ -48,7 +56,7 @@ export default function SheetModal({
   const { theme } = useTheme();
   const { colors } = theme;
   const insets = useSafeAreaInsets();
-  const titleRef = useRef<View>(null);
+  const titleRef = useRef<Text>(null);
   const isIOS = Platform.OS === 'ios';
 
   useEffect(() => {
@@ -86,11 +94,14 @@ export default function SheetModal({
           />
           <View style={styles.header}>
             <View style={styles.titleBlock}>
-              <View ref={titleRef} accessible accessibilityRole="header">
-                <AppText variant="sheetTitle" accessibilityRole="header" numberOfLines={titleLines}>
-                  {title}
-                </AppText>
-              </View>
+              <AppText
+                ref={titleRef}
+                variant="sheetTitle"
+                accessibilityRole="header"
+                numberOfLines={titleLines}
+              >
+                {title}
+              </AppText>
               {subtitle ? (
                 <AppText variant="secondary" color="onSurfaceVariant" numberOfLines={2}>
                   {subtitle}

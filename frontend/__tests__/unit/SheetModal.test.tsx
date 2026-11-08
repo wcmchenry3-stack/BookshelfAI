@@ -138,7 +138,7 @@ describe('SheetModal', () => {
     expect(within(body).queryByText('footer content')).toBeNull();
     expect(within(body).getByTestId('scroller')).toBeTruthy();
     expect(getByText('long body')).toBeTruthy();
-    const flat = (n: { props: { style: unknown } }) =>
+    const flat = (n: { props: Record<string, any> }) =>
       Object.assign({}, ...[n.props.style].flat(3).filter(Boolean));
     expect(flat(body).flexShrink).toBe(1);
     expect(flat(footer).borderTopWidth).toBeGreaterThan(0);

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
+import { BookCover } from './ui/BookCover';
 import SheetModal from './SheetModal';
 import { Button } from './ui/Button';
 import { isOwned, type Ownership } from '../lib/ownership';
@@ -211,22 +212,14 @@ export function BookCandidatePicker({
                   author: book.author,
                 })}
               >
-                {book.cover_url ? (
-                  <Image
-                    source={{ uri: book.cover_url }}
-                    style={styles.cover}
-                    accessibilityLabel={t('coverAlt', { ns: 'common', title: book.title })}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.cover,
-                      styles.coverPlaceholder,
-                      { backgroundColor: theme.colors.border },
-                    ]}
-                    accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
-                  />
-                )}
+                <BookCover
+                  title={book.title}
+                  coverUrl={book.cover_url}
+                  size="sm"
+                  decorative
+                  testID="candidate-cover"
+                  style={styles.cover}
+                />
 
                 <View style={styles.info}>
                   <Text
@@ -367,8 +360,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingBottom: 12,
   },
-  cover: { width: 72, height: 108 },
-  coverPlaceholder: { opacity: 0.4 },
+  cover: { margin: 4 },
   info: { flex: 1, padding: 12, gap: 4 },
   bookTitle: { fontFamily: fontFor('600') },
   checkbox: { justifyContent: 'center', paddingHorizontal: 12, minWidth: 44 },

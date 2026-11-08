@@ -90,12 +90,14 @@ describe('BookRow', () => {
   });
 
   it('shows the cover placeholder and the unverified badge', async () => {
-    const { getByLabelText, getByText } = await render(
+    const { queryByLabelText, getByTestId, getByText } = await render(
       <BookRow item={{ ...ITEM, unverified: true }} categoryLabel="x">
         {null}
       </BookRow>
     );
-    expect(getByLabelText('No cover available')).toBeTruthy();
+    // The cover is decorative (the row text names the book): drawn, but unlabelled.
+    expect(getByTestId('book-row-cover', { hidden: true })).toBeTruthy();
+    expect(queryByLabelText('No cover available')).toBeNull();
     expect(getByText('Unverified')).toBeTruthy();
   });
 
