@@ -15,8 +15,11 @@ import { Sentry } from '../lib/sentry';
 /**
  * The Settings "Open on" value (#913). Starts from the tab AuthContext read at
  * sign-in or launch; when that is unknown (null: launch was offline, the read
- * failed), it re-reads it from the server once on mount. `choose` is optimistic: the new value shows at once,
- * and if the save fails the old value comes back and an error banner shows.
+ * failed), it shows Scan (the default) as an unconfirmed guess and re-reads
+ * the value from the server once on mount. `choose` is optimistic: the new
+ * value shows at once, and if the save fails the old value comes back and an
+ * error banner shows. Picking the value already shown is a no-op only when
+ * the server confirmed it; an unconfirmed pick is saved.
  *
  * The value lives here, not in AuthContext: the app only routes on it at
  * sign-in and launch, and both read it fresh from `GET /auth/me`.
@@ -26,6 +29,8 @@ export function useDefaultTabSetting() {
   const { showBanner } = useBanner();
   const { t } = useTranslation('settings');
   const [defaultTab, setDefaultTab] = useState<DefaultTab>(() => parseDefaultTab(signedInTab));
+  // False while the shown value is only the Scan fallback for an unknown one.
+  const [confirmed, setConfirmed] = useState(signedInTab !== null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   // Once the user has chosen, a late answer from the mount re-read must not
@@ -39,7 +44,10 @@ export function useDefaultTabSetting() {
     if (!needsReread) return;
     let cancelled = false;
     void loadDefaultTab().then((tab) => {
-      if (tab && !cancelled && !choseRef.current) setDefaultTab(tab);
+      if (tab && !cancelled && !choseRef.current) {
+        setDefaultTab(tab);
+        setConfirmed(true);
+      }
     });
     return () => {
       cancelled = true;
@@ -48,7 +56,7 @@ export function useDefaultTabSetting() {
 
   const choose = useCallback(
     async (tab: DefaultTab) => {
-      if (savingRef.current || tab === defaultTab) return;
+      if (savingRef.current || (confirmed && tab === defaultTab)) return;
       choseRef.current = true;
       savingRef.current = true;
       setSaving(true);
@@ -56,8 +64,11 @@ export function useDefaultTabSetting() {
       setDefaultTab(tab);
       try {
         setDefaultTab(await saveDefaultTab(tab));
+        setConfirmed(true);
       } catch (err) {
         setDefaultTab(previous);
+        // The choice did not take; let a pending re-read show the server's value.
+        choseRef.current = false;
         const { status, code } = toApiError(err);
         Sentry.addBreadcrumb({
           category: 'settings',
@@ -71,7 +82,7 @@ export function useDefaultTabSetting() {
         setSaving(false);
       }
     },
-    [defaultTab, showBanner, t]
+    [confirmed, defaultTab, showBanner, t]
   );
 
   return { defaultTab, choose, saving };

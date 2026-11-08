@@ -95,7 +95,18 @@ def test_changes_only_the_callers_row(env):
     assert me.json()["default_tab"] == "my-books"
 
 
-@pytest.mark.parametrize("field", ["user_id", "id", "email"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "user_id",
+        "id",
+        "email",
+        "token_version",
+        "google_id",
+        "display_name",
+        "avatar_url",
+    ],
+)
 def test_a_body_naming_another_user_is_refused(env, field):
     client, alice, bob, tokens, fake = env
     target = str(bob.id) if field != "email" else bob.email

@@ -156,6 +156,61 @@ describe('Settings "Open on" row (#913)', () => {
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
+  it('an unconfirmed Scan pick (value unknown) is saved', async () => {
+    mockPatch.mockResolvedValue({ data: { default_tab: 'scan' } });
+    const utils = await renderRow(null);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+
+    await fireEvent.press(utils.getByTestId('settings-open-on'));
+    await act(async () => {
+      await fireEvent.press(utils.getByTestId('open-on-option-scan'));
+    });
+
+    expect(mockPatch).toHaveBeenCalledWith('/users/me/preferences', { default_tab: 'scan' });
+    expect(value(utils)).toBe('Scan');
+  });
+
+  it('a pending re-read does not overwrite an unconfirmed Scan pick', async () => {
+    let answerGet!: (v: unknown) => void;
+    mockGet.mockReturnValue(new Promise((r) => (answerGet = r)));
+    mockPatch.mockResolvedValue({ data: { default_tab: 'scan' } });
+    const utils = await renderRow(null);
+
+    await fireEvent.press(utils.getByTestId('settings-open-on'));
+    await act(async () => {
+      await fireEvent.press(utils.getByTestId('open-on-option-scan'));
+    });
+    await act(async () => answerGet({ data: { default_tab: 'wishlist' } }));
+
+    expect(mockPatch).toHaveBeenCalledWith('/users/me/preferences', { default_tab: 'scan' });
+    expect(value(utils)).toBe('Scan');
+  });
+
+  it('after a confirmed save, picking the same value again is a no-op', async () => {
+    mockPatch.mockResolvedValue({ data: { default_tab: 'scan' } });
+    const utils = await renderRow(null);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    await fireEvent.press(utils.getByTestId('settings-open-on'));
+    await act(async () => {
+      await fireEvent.press(utils.getByTestId('open-on-option-scan'));
+    });
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+
+    await fireEvent.press(utils.getByTestId('settings-open-on'));
+    await act(async () => {
+      await fireEvent.press(utils.getByTestId('open-on-option-scan'));
+    });
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('the backdrop is hidden from assistive tech (Cancel is announced once)', async () => {
+    const utils = await renderRow('scan');
+    await fireEvent.press(utils.getByTestId('settings-open-on'));
+    const backdrop = utils.getByTestId('open-on-backdrop', { includeHiddenElements: true });
+    expect(backdrop.props.accessible).toBe(false);
+    expect(backdrop.props.importantForAccessibility).toBe('no');
+  });
+
   it("a late mount re-read does not overwrite the user's choice", async () => {
     let answerGet!: (v: unknown) => void;
     mockGet.mockReturnValue(new Promise((r) => (answerGet = r)));
@@ -176,7 +231,7 @@ describe('Settings "Open on" row (#913)', () => {
     await fireEvent.press(utils.getByTestId('settings-open-on'));
     await fireEvent.press(utils.getByTestId('open-on-cancel'));
     await fireEvent.press(utils.getByTestId('settings-open-on'));
-    await fireEvent.press(utils.getByTestId('open-on-backdrop'));
+    await fireEvent.press(utils.getByTestId('open-on-backdrop', { includeHiddenElements: true }));
     expect(mockPatch).not.toHaveBeenCalled();
     expect(value(utils)).toBe('Scan');
   });

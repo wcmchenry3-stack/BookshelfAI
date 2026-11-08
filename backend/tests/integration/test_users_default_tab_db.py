@@ -1,8 +1,8 @@
 """users.default_tab against real Postgres (#913).
 
-- Migration 0029 adds the nullable column and ``ck_users_default_tab``,
-  existing users get NULL (Scan), and downgrade removes both, leaving no
-  difference to the models. Runs in a rolled-back transaction.
+- Migration 0029 adds the nullable column and ``ck_users_default_tab``
+  (validated), existing users get NULL (Scan), and downgrade removes both,
+  leaving no difference to the models. Runs real ``alembic`` commands.
 - The check constraint refuses any value outside scan / wishlist / my-books.
 - PATCH /users/me/preferences with a real token changes the caller's row
   only, and GET /auth/me returns it.
@@ -10,6 +10,7 @@
 Needs DATABASE_URL pointing at a Postgres database.
 """
 
+import asyncio
 import importlib.util
 import uuid
 from pathlib import Path
@@ -17,13 +18,14 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from alembic.autogenerate import compare_metadata
+from alembic.config import Config
 from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from alembic import command
 from app.auth.jwt import create_access_token
 from app.core.config import settings
 from app.core.database import Base, get_db
@@ -39,6 +41,7 @@ MIGRATION = (
     / "versions"
     / "0029_users_default_tab.py"
 )
+ALEMBIC_DIR = MIGRATION.parents[1]
 
 
 def _load_migration():
@@ -62,64 +65,110 @@ def _insert_user(connection, default_tab=None) -> uuid.UUID:
     return uid
 
 
-def _migration_cycle(connection) -> None:
-    migration = _load_migration()
-    assert (migration.revision, migration.down_revision) == ("0029", "0028")
+def _alembic(action: str, revision: str) -> None:
+    """Run ``alembic <action> <revision>`` against the test database, as CI
+    and the pre-deploy step do. Migration 0029 validates its CHECK in an
+    autocommit block, so it cannot run inside a rolled-back transaction."""
+    # No ini file: env.py would otherwise run logging.config.fileConfig, which
+    # disables every existing logger for the rest of the test session.
+    config = Config()
+    config.set_main_option("script_location", str(ALEMBIC_DIR))
+    getattr(command, action)(config, revision)
+
+
+def _in_sync_connection(fn):
+    async def _go():
+        engine = create_async_engine(settings.async_database_url)
+        try:
+            async with engine.connect() as conn:
+                return await conn.run_sync(fn)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_go())
+
+
+def _state(connection) -> dict:
     context = MigrationContext.configure(connection)
-
-    def columns() -> dict:
-        return {c["name"]: c for c in inspect(connection).get_columns("users")}
-
-    def checks() -> set[str]:
-        return {c["name"] for c in inspect(connection).get_check_constraints("users")}
-
-    def diffs() -> list:
-        return [
+    checks = connection.execute(
+        sa.text(
+            "SELECT convalidated FROM pg_constraint WHERE conname = 'ck_users_default_tab'"
+        )
+    ).all()
+    return {
+        "revision": context.get_current_revision(),
+        "columns": {c["name"]: c for c in inspect(connection).get_columns("users")},
+        "checks": {
+            c["name"] for c in inspect(connection).get_check_constraints("users")
+        },
+        "validated": [row[0] for row in checks],
+        "diffs": [
             d
             for d in compare_metadata(context, Base.metadata)
             if "default_tab" in repr(d)
-        ]
+        ],
+    }
 
-    with Operations.context(context):
-        assert "default_tab" in columns()
-        assert "ck_users_default_tab" in checks()
-        assert diffs() == []
 
-        migration.downgrade()
-        assert "default_tab" not in columns()
-        assert "ck_users_default_tab" not in checks()
+def test_migration_0029_upgrade_downgrade_cycle():
+    """Real ``alembic`` commands, so the database must be at head (CI runs
+    ``alembic upgrade head`` first)."""
+    head = _in_sync_connection(
+        lambda c: MigrationContext.configure(c).get_current_revision()
+    )
+    if head is None:
+        pytest.skip("database not migrated with alembic (create_all only)")
+    migration = _load_migration()
+    assert (migration.revision, migration.down_revision) == ("0029", "0028")
+
+    uid = None
+    try:
+        state = _in_sync_connection(_state)
+        assert "default_tab" in state["columns"]
+        assert "ck_users_default_tab" in state["checks"]
+        assert state["diffs"] == []
+
+        _alembic("downgrade", "0028")
+        state = _in_sync_connection(_state)
+        assert "default_tab" not in state["columns"]
+        assert "ck_users_default_tab" not in state["checks"]
 
         # A user created before the column exists keeps NULL (Scan).
-        uid = _insert_user(connection)
+        def _make(connection):
+            new = _insert_user(connection)
+            connection.commit()
+            return new
 
-        migration.upgrade()
-        col = columns()["default_tab"]
+        uid = _in_sync_connection(_make)
+
+        _alembic("upgrade", head)
+        state = _in_sync_connection(_state)
+        col = state["columns"]["default_tab"]
         assert col["nullable"] is True
         assert col["default"] is None
         assert isinstance(col["type"], sa.String)
-        assert "ck_users_default_tab" in checks()
-        assert diffs() == []
-        assert (
-            connection.execute(
+        assert "ck_users_default_tab" in state["checks"]
+        # The CHECK is validated, not left NOT VALID.
+        assert state["validated"] == [True]
+        assert state["diffs"] == []
+
+        def _read(connection):
+            return connection.execute(
                 sa.text("SELECT default_tab FROM users WHERE id = :id"), {"id": uid}
             ).scalar_one()
-            is None
-        )
 
-
-async def test_migration_0029_upgrade_downgrade_cycle():
-    engine = create_async_engine(settings.async_database_url)
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        async with engine.connect() as conn:
-            trans = await conn.begin()
-            try:
-                await conn.run_sync(_migration_cycle)
-            finally:
-                await trans.rollback()
+        assert _in_sync_connection(_read) is None
     finally:
-        await engine.dispose()
+        _alembic("upgrade", head)
+        if uid is not None:
+
+            def _drop(connection):
+                connection.execute(
+                    sa.text("DELETE FROM users WHERE id = :id"), {"id": uid}
+                )
+                connection.commit()
+
+            _in_sync_connection(_drop)
 
 
 def _constraint_checks(connection) -> None:

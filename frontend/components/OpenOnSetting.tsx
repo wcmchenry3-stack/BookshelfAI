@@ -56,19 +56,14 @@ export function OpenOnSetting() {
           {value}
         </Text>
       </Pressable>
-      <Modal
-        visible={open}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setOpen(false)}
-        accessibilityViewIsModal
-      >
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <View style={[styles.overlay, { backgroundColor: colors.scrim }]}>
           <Pressable
             style={StyleSheet.absoluteFill}
             onPress={() => setOpen(false)}
-            accessibilityRole="button"
-            accessibilityLabel={t('openOnCancel')}
+            accessible={false}
+            importantForAccessibility="no"
+            aria-hidden
             testID="open-on-backdrop"
           />
           <View
