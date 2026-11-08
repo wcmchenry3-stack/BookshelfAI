@@ -184,8 +184,10 @@ export default function ScanScreen() {
   if (Platform.OS === 'web') {
     return (
       <>
+        {/* Raw DOM element: react-native-web only maps testID on its own
+            components, so a DOM <input> needs the data-testid attribute. */}
         {React.createElement('input', {
-          testID: 'web-file-input',
+          'data-testid': 'web-file-input',
           ref: webInputRef,
           type: 'file',
           accept: 'image/*',
