@@ -4,6 +4,7 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 
 import ScanScreen from '../../app/(tabs)/scan';
 import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
+import { routerState } from '../helpers/routerMock';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -132,12 +133,85 @@ function setPlatform(os: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  routerState.params = {};
   mockQueueState = { pendingCount: 0, isQueueFull: false };
   useCameraPermissions.mockReturnValue([{ granted: true }, mockRequestPermission]);
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// ?mode=text (Wishlist's "Search by title")
+// ---------------------------------------------------------------------------
+describe('ScanScreen — mode param', () => {
+  const FIELD = 'Book title or author search';
+
+  it('starts in text search and clears the param through its own navigation', async () => {
+    routerState.params = { mode: 'text' };
+    const { getByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    expect(routerState.navSetParams).toHaveBeenCalledWith({ mode: undefined });
+    expect(routerState.setParams).not.toHaveBeenCalled();
+  });
+
+  it('opens the camera as usual without the param', async () => {
+    const { queryByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).not.toHaveBeenCalled();
+  });
+
+  it('ignores any other mode value', async () => {
+    routerState.params = { mode: 'grid' };
+    const { queryByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).not.toHaveBeenCalled();
+  });
+
+  it('switches to text search when the param arrives after mount', async () => {
+    const { rerender, queryByLabelText, getByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    routerState.params = { mode: 'text' };
+    await rerender(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    expect(routerState.navSetParams).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays on the camera for later renders once the param is cleared', async () => {
+    routerState.params = { mode: 'text' };
+    const { rerender, getByLabelText } = await render(<ScanScreen />);
+    await fireEvent.press(getByLabelText('Camera scan mode'));
+    routerState.params = {}; // the clear took effect
+    await rerender(<ScanScreen />);
+    expect(getByLabelText('Text search mode')).toBeTruthy();
+    expect(() => getByLabelText(FIELD)).toThrow();
+  });
+
+  it('switches back to the camera on mode=camera after a cleared text visit', async () => {
+    routerState.params = { mode: 'text' };
+    const { rerender, getByLabelText, queryByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    routerState.params = {}; // the text request was cleared
+    await rerender(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy(); // the tab keeps its last mode
+    routerState.params = { mode: 'camera' };
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).toHaveBeenLastCalledWith({ mode: undefined });
+    routerState.params = {};
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull(); // the clear did not undo it
+  });
+
+  it('lets the user go back to the camera even if the clear never lands', async () => {
+    routerState.params = { mode: 'text' }; // the mocked clear leaves the param in place
+    const { rerender, getByLabelText, queryByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    await fireEvent.press(getByLabelText('Camera scan mode'));
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

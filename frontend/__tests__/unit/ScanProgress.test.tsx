@@ -40,6 +40,7 @@ jest.mock('../../lib/sentry', () => ({
 let mockUuid = 0;
 jest.mock('expo-crypto', () => ({ randomUUID: () => `uuid-${++mockUuid}` }));
 jest.mock('expo-router', () => ({
+  ...require('../helpers/routerMock').routerModule(),
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: () => true },
 }));
 jest.mock('../../hooks/useScanUsage', () => ({ useScanUsage: () => null }));

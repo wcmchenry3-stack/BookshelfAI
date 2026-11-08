@@ -4,6 +4,7 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 
 import WishlistScreen from '../../app/(tabs)/wishlist';
 import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
+import { routerState } from '../helpers/routerMock';
 
 const mockGet = jest.fn();
 const mockPatch = jest.fn();
@@ -15,12 +16,6 @@ jest.mock('../../lib/api', () => ({
     get: (...args: unknown[]) => mockGet(...args),
     patch: (...args: unknown[]) => mockPatch(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
-  },
-}));
-
-jest.mock('expo-router', () => ({
-  useFocusEffect: (cb: () => void) => {
-    require('react').useEffect(cb, []);
   },
 }));
 
@@ -68,17 +63,73 @@ describe('WishlistScreen', () => {
     expect(getByTestId('loading-spinner')).toBeTruthy();
   });
 
-  it('shows empty state when wishlist is empty', async () => {
+  it('shows the designed empty state when the wishlist is empty', async () => {
     mockGet.mockResolvedValue({ data: [] });
-    const { getByText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByText(/Your wishlist is empty/)).toBeTruthy());
+    const { getByText, getByRole, queryByTestId } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByText('Nothing on your wishlist yet')).toBeTruthy());
+    expect(getByRole('header', { name: 'Wishlist' })).toBeTruthy();
+    expect(getByText('Books you want to buy')).toBeTruthy();
+    expect(getByText(/Scan a bookshop shelf or search by title/)).toBeTruthy();
+    // No search field when there is nothing to search.
+    expect(queryByTestId('wishlist-search')).toBeNull();
   });
 
-  it('pads the empty state by the top safe-area inset (#936)', async () => {
+  it('hides the empty-state illustration from screen readers', async () => {
+    const { getByTestId } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByTestId('wishlist-empty-illustration', HIDDEN)).toBeTruthy());
+    const props = getByTestId('wishlist-empty-illustration', HIDDEN).props;
+    expect(props.accessibilityElementsHidden).toBe(true);
+    expect(props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(props['aria-hidden']).toBe(true);
+  });
+
+  it('"Scan books" goes to Scan and "Search by title" to Scan in text mode', async () => {
+    const { getByText } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByText('Scan books')).toBeTruthy());
+    await fireEvent.press(getByText('Scan books'));
+    expect(routerState.push).toHaveBeenLastCalledWith('/scan?mode=camera');
+    await fireEvent.press(getByText('Search by title'));
+    expect(routerState.push).toHaveBeenLastCalledWith('/scan?mode=text');
+  });
+
+  it('pads the header by the top safe-area inset (#936), also when empty', async () => {
     mockGet.mockResolvedValue({ data: [] });
     const { getByText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByText(/Your wishlist is empty/)).toBeTruthy());
-    expect(hasTopPadding(getByText(/Your wishlist is empty/), TEST_INSET_TOP)).toBe(true);
+    await waitFor(() => expect(getByText('Nothing on your wishlist yet')).toBeTruthy());
+    expect(hasTopPadding(getByText('Wishlist'), TEST_INSET_TOP)).toBe(true);
+  });
+
+  it.each([
+    [1, '1 book you want to buy'],
+    [2, '2 books you want to buy'],
+  ])('subtitle with %i book(s) reads "%s"', async (count, text) => {
+    mockGet.mockResolvedValue({ data: [BOOK_1, BOOK_2].slice(0, count) });
+    const { getByTestId } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByTestId('wishlist-subtitle').props.children).toBe(text));
+  });
+
+  it('filters by title or author, shows a no-match state and clears it', async () => {
+    mockGet.mockResolvedValue({ data: [BOOK_1, BOOK_2] });
+    const screen = await render(<WishlistScreen />);
+    const { getByTestId, getByText, getByRole, getByLabelText } = screen;
+    await waitFor(() => expect(getByTestId('wishlist-search')).toBeTruthy());
+    const input = getByLabelText('Search your wishlist');
+    const titles = () => rowTexts(screen).map((r) => r.queryByText(/Dune|Foundation/, HIDDEN));
+
+    await fireEvent.changeText(input, 'asimov'); // the author, in any case
+    await waitFor(() => expect(titles()).toHaveLength(1));
+    expect(rowTexts(screen)[0].getByText('Foundation', HIDDEN)).toBeTruthy();
+    // The subtitle counts the whole wishlist, not the matches.
+    expect(getByTestId('wishlist-subtitle').props.children).toBe('2 books you want to buy');
+
+    await fireEvent.changeText(input, 'zzz');
+    await waitFor(() => expect(getByText('No books match “zzz”')).toBeTruthy());
+    // The header and the search field stay.
+    expect(getByRole('header', { name: 'Wishlist' })).toBeTruthy();
+    expect(getByTestId('wishlist-search')).toBeTruthy();
+
+    await fireEvent.press(getByText('Clear search'));
+    await waitFor(() => expect(titles()).toHaveLength(2));
   });
 
   it('renders book titles and authors when data loaded', async () => {

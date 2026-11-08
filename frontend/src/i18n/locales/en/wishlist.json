@@ -1,9 +1,22 @@
 {
   "title": "Wishlist",
-  "heroSubtitle": "Books you plan to buy",
-  "archiveSummary": "books on your wishlist",
+  "subtitle_one": "{{count}} book you want to buy",
+  "subtitle_other": "{{count}} books you want to buy",
+  "subtitleEmpty": "Books you want to buy",
+  "searchPlaceholder": "Title or author",
+  "searchA11y": "Search your wishlist",
+  "searchClearA11y": "Clear search",
+  "emptySearch": {
+    "title": "No books match “{{query}}”",
+    "clear": "Clear search"
+  },
+  "emptyState": {
+    "title": "Nothing on your wishlist yet",
+    "body": "Scan a bookshop shelf or search by title. The books you pick land here until you buy them.",
+    "scan": "Scan books",
+    "search": "Search by title"
+  },
   "loading": "Loading wishlist…",
-  "empty": "Your wishlist is empty.\nScan a book cover to add one.",
   "bought": "Bought",
   "boughtA11y": "Mark {{title}} as bought",
   "rowA11y": "{{title}} — {{status}}, by {{author}}",

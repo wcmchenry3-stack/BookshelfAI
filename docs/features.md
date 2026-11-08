@@ -7,12 +7,14 @@ What the app does from a user's perspective, with flow diagrams. For the REST su
 Navigation is file-based via `expo-router`. Two route groups:
 
 ### `(auth)` — unauthenticated stack
+
 - **`login.tsx`** — Google Sign-In. The only screen reachable before auth. Tapping the Google button opens the system OAuth flow; on success the app exchanges the Google ID token for a Bookshelf access + refresh pair. If the OAuth prompt fails to start (network error, blocked popup) or Google returns an error, an inline localized error with a "Try again" button is shown instead of an unhandled promise rejection.
 
 ### `(tabs)` — authenticated tab bar
+
 - **Scan** (`scan.tsx`) — camera viewfinder (native) or file picker (web). Primary path into the app.
 - **My Books** (`my-books.tsx`) — the user's full library with a status filter (All / Wishlisted / Purchased / Reading / Read). Tapping a book opens its detail modal for notes, rating, status transitions, or delete. Since #683 a delete moves the entry to the server's trash (restorable for 30 days; deleting a book again replaces older trashed copies that hold no data of yours, such as notes, a rating, an edition, overrides or a status beyond wishlisted, while copies with your data stay restorable for 30 days; newest 1,000 kept); the app's Trash screen (below) lists and restores them. The app says so after a delete: a banner reads "Moved to Trash. You can restore it within 30 days." with a **View trash** action (My Books and Wishlist).
-- **Wishlist** (`wishlist.tsx`) — filtered view showing only `wishlisted` entries. One-tap "I bought this" transitions to `purchased`.
+- **Wishlist** (`wishlist.tsx`) — filtered view showing only `wishlisted` entries (#931). A serif "Wishlist" header with a count ("3 books you want to buy"), a search field that matches title and author (ignoring case and accents; a search with no match keeps the header and field and offers **Clear search**), and the offline notice above the list. One-tap "Bought" transitions to `purchased`. An empty wishlist shows an illustration, "Nothing on your wishlist yet", **Scan books** (opens Scan) and **Search by title** (opens Scan already in text search, through the `?mode=text` route param, which Scan clears after use).
 - **Trash (#683, `frontend/app/trash.tsx`, route `/trash`):** a screen outside the tabs, opened from the **Trash** row in Settings and from the **View trash** action on the banner shown after a delete. Lists the entries in the trash (`GET /user-books/trash`, newest deletion first) as library rows (#932) with cover, title, author, an Unverified badge where it applies and "Deleted for good in N days" (or "today"), counted in local calendar days from `purge_after` and shown in the danger colour at 3 days or fewer. A compact top row has **Back** and the "Trash" title; an info card says removed books stay 30 days, then are deleted for good (the backend still replaces older copies without notes or rating and keeps only the newest 1,000). **Restore** (`POST /user-books/{id}/restore`) removes the row and shows a "Restored <title> to your library." banner; A successful restore also fires the "library changed" signal (`frontend/lib/libraryChanged.ts`), so My Books and Wishlist reload even if the restore finished after they regained focus (they also reload on focus). A refresh that was in flight during a restore never brings the restored row back. Errors show as error banners (they work on web, where `Alert` does not): `409 restore_conflict` "This book is already in your library."; `409 unverified_limit_reached` shows the same limit message as the add-it-yourself form; `404` reloads the list ("This book is no longer in the trash."); anything else "Couldn't restore this book. Try again." (a `403 forbidden` shows the service-unavailable message). Restore is disabled offline. A failed refresh while rows are shown keeps them and shows "Couldn't refresh the trash." Has loading, error (with **Try again**), empty ("Trash is empty" plus the 30-day rule) and pull-to-refresh states. Restore is a small tonal chip on each row. The strings live in the `my-books` namespace (`trash.*`, `movedToTrash`, `viewTrash`) and `settings` (`trash`, `trashA11y`, `trashHint`).
 - **Settings** (`settings.tsx`) — account info, language picker, theme toggle, scan usage,
   sign-out (confirm prompt; best-effort `POST /auth/logout` with the refresh token, then local
@@ -71,6 +73,7 @@ sequenceDiagram
 ```
 
 **Key implementation notes:**
+
 - The scan queue (jobs, results and photos) is cleared on sign-out, so another account never sees or uploads it; in-flight scans, searches and wishlist adds are aborted and their results dropped (#723; remaining bounding work in #669).
 - Images are persisted to `scan-queue/` (expo-file-system) on native so the job survives app backgrounding. Web doesn't persist — blob URLs die on navigation.
 - `ScanJobContext.startScan()` is wrapped in try/catch with Sentry capture; any sync throw (like a crypto/uuid failure) becomes a handled banner, not a crash.
@@ -85,6 +88,7 @@ sequenceDiagram
 ### Scan limits — what users see
 
 Every user has two daily allowances (#577). The numbers come from `GET /scan/usage`; no copy hardcodes them. The day is the UTC day.
+
 - **Scans** (the found counter): scans where the AI found books, plus anything below that used a scan. Standard and enhanced scans share it. Free 5 a day, Premium 5 (operator settings `quota.<tier>.found_daily`).
 - **Unrecognised photos** (the no-match counter): photos the AI read properly but found no book in. While this allowance lasts, such a photo does not use a scan, so an unlucky photo doesn't cost one. Free 5 a day, Premium 5 (`quota.<tier>.no_match_daily`). Once it is used up, a photo with no book found uses a scan.
 - A scan is refused only when the scans allowance is used up, even if unrecognised photos are left (the next photo might find books). Only real AI calls count: a re-uploaded photo answered from its saved record, an AI reply that could not be read, and an AI outage never use either allowance. Enhanced scans that find nothing still use a scan (the enhanced rule below).
@@ -158,6 +162,7 @@ sequenceDiagram
 ```
 
 **Key properties:**
+
 - `verify_google_id_token()` accepts tokens whose `aud` is any of the three configured client IDs (web, iOS, Android) — one API serves all platforms.
 - Refresh tokens are **single-use**: the old `jti` is revoked the instant a refresh happens. A stolen refresh token is invalidated by the legitimate client's next refresh.
 - `ALLOWED_EMAILS` lockdown rejects any authenticated email not in the allowlist (single-user app by default).
@@ -189,16 +194,19 @@ Non-canonical transitions (e.g. skipping states, re-reads) are allowed — the f
 Scan jobs persist locally so the user can keep scanning even without connectivity. `ScanJobContext` is the single source of truth.
 
 **Persistence:**
+
 - Every change to the jobs list is saved to `expo-file-system` via `saveJobs()` (`lib/scanJobStorage.ts`).
 - On app launch, `loadJobs()` restores the queue. Any job stuck in `searching` status (because the app was killed mid-scan) is reset to `pending`. A job on the retry schedule (#604) keeps its `attempts` and `nextAttemptAt`.
 
 **Queue draining:**
+
 - `NetInfo.addEventListener` watches for connectivity changes.
 - When the app comes online, `drainQueue()` picks up any `queued` jobs and retries them, with a `QUEUE_DRAIN_DELAY` (2s) between each to avoid thundering the backend.
 - `MAX_RETRIES` (3) caps how many times a single job auto-retries before it's parked in `queued` status for manual retry.
 - Retry schedule (#604): a photo that got 503 `scan_unavailable` waits in `queued` until its `nextAttemptAt`. The drain sends due photos first and sends no other photo while one is still waiting; a timer drains when the earliest one is due (cleared on unmount, never sending a job that is in flight, never waiting longer than 4 h, and checking again every minute while offline). A successful scan makes every waiting photo due now. After a final failure the rest of the queue is sent. After attempt 5 the photo is `failed`.
 
 **Job state machine:**
+
 ```
 pending ─▶ searching ─▶ complete
              │             │
@@ -216,30 +224,32 @@ pending ─▶ searching ─▶ complete
 
 **11 active locales** + 2 reserved for future RTL work.
 
-| Code | Language | Status |
-|---|---|---|
-| `en` | English | Bundled statically (always in initial bundle) |
-| `fr-CA` | French (Canadian) | Lazy |
-| `es` | Spanish | Lazy |
-| `hi` | Hindi | Lazy |
-| `zh` | Chinese (Simplified) | Lazy |
-| `ja` | Japanese | Lazy |
-| `ko` | Korean | Lazy |
-| `pt` | Portuguese | Lazy |
-| `de` | German | Lazy |
-| `nl` | Dutch | Lazy |
-| `ru` | Russian | Lazy |
-| `ar` | Arabic | Translations present, **disabled until RTL layout mirroring lands** |
-| `he` | Hebrew | Translations present, **disabled until RTL layout mirroring lands** |
+| Code    | Language             | Status                                                              |
+| ------- | -------------------- | ------------------------------------------------------------------- |
+| `en`    | English              | Bundled statically (always in initial bundle)                       |
+| `fr-CA` | French (Canadian)    | Lazy                                                                |
+| `es`    | Spanish              | Lazy                                                                |
+| `hi`    | Hindi                | Lazy                                                                |
+| `zh`    | Chinese (Simplified) | Lazy                                                                |
+| `ja`    | Japanese             | Lazy                                                                |
+| `ko`    | Korean               | Lazy                                                                |
+| `pt`    | Portuguese           | Lazy                                                                |
+| `de`    | German               | Lazy                                                                |
+| `nl`    | Dutch                | Lazy                                                                |
+| `ru`    | Russian              | Lazy                                                                |
+| `ar`    | Arabic               | Translations present, **disabled until RTL layout mirroring lands** |
+| `he`    | Hebrew               | Translations present, **disabled until RTL layout mirroring lands** |
 
 **Namespaces** (9): `common`, `auth`, `tabs`, `my-books`, `scan`, `settings`, `wishlist`, `components`, `feedback`. Each screen/context pulls only what it needs.
 
 **Loading strategy:**
+
 - `en` is a static import — always in the initial bundle, no flash-of-keys on first render, tests work without async setup.
 - All other locales are lazy via `i18next-resources-to-backend` with static `import()` paths (Metro requires them static; see the explicit `importMap` in `src/i18n/i18n.ts`).
 - Only the active locale's 8 namespaces are fetched at runtime — 80 of 88 JSON files stay deferred.
 
 **Adding a string** (rule #9: every user-facing string must be translated):
+
 1. Add the key to `src/i18n/locales/en/<namespace>.json`
 2. Add the same key to the `_meta/<namespace>.meta.json` file with description + context
 3. Translate into all 10 active non-en locales (or mark for translation and ship English fallback)
