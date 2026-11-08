@@ -176,7 +176,7 @@ export default function WishlistScreen() {
           body={t('emptyState.body')}
           primaryAction={{
             label: t('emptyState.scan'),
-            onPress: () => router.push('/scan'),
+            onPress: () => router.push('/scan?mode=camera'),
             testID: 'wishlist-empty-scan',
           }}
           secondaryAction={{

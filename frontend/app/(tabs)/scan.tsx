@@ -69,13 +69,15 @@ export default function ScanScreen() {
   // not on whichever route happens to be focused.
   const navigation = useNavigation() as unknown as { setParams: (p: { mode?: string }) => void };
   const [inputMode, setInputMode] = useState<InputMode>(mode === 'text' ? 'search' : 'camera');
-  // `?mode=text` (Wishlist's "Search by title"). The tab stays mounted, so this runs
-  // on every arrival: switch to text search once, then clear the param so a later
-  // visit starts on the camera and the toggle is never held on text.
+  // `?mode=text|camera` is a one-shot request (Wishlist's "Search by title" and
+  // "Scan books"). The tab stays mounted, so its last mode would otherwise stick:
+  // set the requested mode once, then clear the param. The clear only sets `mode`
+  // to undefined, which this effect ignores, so it can never undo the mode just set.
+  // Any other value is ignored.
   useEffect(() => {
-    if (mode !== 'text') return;
+    if (mode !== 'text' && mode !== 'camera') return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs the route param (an external navigation event) into the screen's mode once
-    setInputMode('search');
+    setInputMode(mode === 'text' ? 'search' : 'camera');
     navigation.setParams({ mode: undefined });
   }, [mode, navigation]);
   const [query, setQuery] = useState('');

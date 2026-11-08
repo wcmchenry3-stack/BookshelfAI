@@ -87,7 +87,7 @@ describe('WishlistScreen', () => {
     const { getByText } = await render(<WishlistScreen />);
     await waitFor(() => expect(getByText('Scan books')).toBeTruthy());
     await fireEvent.press(getByText('Scan books'));
-    expect(routerState.push).toHaveBeenLastCalledWith('/scan');
+    expect(routerState.push).toHaveBeenLastCalledWith('/scan?mode=camera');
     await fireEvent.press(getByText('Search by title'));
     expect(routerState.push).toHaveBeenLastCalledWith('/scan?mode=text');
   });

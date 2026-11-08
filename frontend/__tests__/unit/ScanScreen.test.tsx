@@ -163,7 +163,7 @@ describe('ScanScreen — mode param', () => {
   });
 
   it('ignores any other mode value', async () => {
-    routerState.params = { mode: 'camera' };
+    routerState.params = { mode: 'grid' };
     const { queryByLabelText } = await render(<ScanScreen />);
     expect(queryByLabelText(FIELD)).toBeNull();
     expect(routerState.navSetParams).not.toHaveBeenCalled();
@@ -186,6 +186,22 @@ describe('ScanScreen — mode param', () => {
     await rerender(<ScanScreen />);
     expect(getByLabelText('Text search mode')).toBeTruthy();
     expect(() => getByLabelText(FIELD)).toThrow();
+  });
+
+  it('switches back to the camera on mode=camera after a cleared text visit', async () => {
+    routerState.params = { mode: 'text' };
+    const { rerender, getByLabelText, queryByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    routerState.params = {}; // the text request was cleared
+    await rerender(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy(); // the tab keeps its last mode
+    routerState.params = { mode: 'camera' };
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).toHaveBeenLastCalledWith({ mode: undefined });
+    routerState.params = {};
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull(); // the clear did not undo it
   });
 
   it('lets the user go back to the camera even if the clear never lands', async () => {

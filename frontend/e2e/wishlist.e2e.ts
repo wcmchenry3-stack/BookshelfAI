@@ -71,5 +71,14 @@ test.describe('Wishlist', () => {
 
     await page.getByRole('button', { name: 'Search by title' }).click();
     await expect(page.getByLabel('Book title or author search')).toBeVisible();
+
+    // The Scan tab stays mounted: "Scan books" must still open the camera, not text search.
+    await page.getByRole('tab', { name: 'Your wishlist' }).click();
+    await page.getByRole('button', { name: 'Scan books' }).click();
+    await expect(page.getByRole('button', { name: 'Camera scan mode' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    await expect(page.getByLabel('Book title or author search')).toHaveCount(0);
   });
 });
