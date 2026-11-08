@@ -5,6 +5,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import { AppText } from './AppText';
 import type { IconName } from './Button';
+import { useFocusRing } from './useFocusRing';
 
 /** Icons next to a label are decoration: the row's own label says it all. */
 const DECORATIVE = {
@@ -53,6 +54,7 @@ export function ListRow({
   testID,
 }: ListRowProps) {
   const { theme } = useTheme();
+  const { focusProps, focusStyle } = useFocusRing({ inset: true });
   const showChevron = !selected && (chevron ?? onPress !== undefined);
   const fg = destructive ? 'danger' : 'onSurface';
   const spoken = accessibilityLabel ?? [label, value, hint].filter(Boolean).join(', ');
@@ -125,7 +127,12 @@ export function ListRow({
       accessibilityState={selected === undefined ? { disabled } : { disabled, checked: selected }}
       aria-checked={selected}
       testID={testID}
-      style={({ pressed }) => [styles.row, { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 }]}
+      {...focusProps}
+      style={({ pressed }) => [
+        styles.row,
+        { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 },
+        focusStyle,
+      ]}
     >
       {content}
     </Pressable>

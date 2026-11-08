@@ -6,6 +6,7 @@ import { buttonA11yProps, pressOpacity } from './buttonBehaviour';
 import { useTheme } from '../../hooks/useTheme';
 import type { ColorKey } from '../../theme/light';
 import type { IconName } from './Button';
+import { useFocusRing } from './useFocusRing';
 
 export interface IconButtonProps {
   icon: IconName;
@@ -32,13 +33,16 @@ export function IconButton({
   style,
 }: IconButtonProps) {
   const { theme } = useTheme();
+  const { focusProps, focusStyle } = useFocusRing();
   return (
     <Pressable
       onPress={onPress}
       {...buttonA11yProps(accessibilityLabel, disabled, testID)}
+      {...focusProps}
       style={({ pressed }) => [
         styles.base,
         { opacity: pressOpacity(disabled, pressed, 0.6) },
+        focusStyle,
         style,
       ]}
     >
