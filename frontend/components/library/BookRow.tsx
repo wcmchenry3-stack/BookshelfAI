@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useTranslation } from 'react-i18next';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { BookCover } from '../BookCover';
 import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { useLibraryAccent } from './useLibraryAccent';
@@ -32,7 +32,6 @@ export function BookRow({
   children,
 }: BookRowProps) {
   const { theme } = useTheme();
-  const { t } = useTranslation('common');
   const { activeColor } = useLibraryAccent();
 
   const cardStyle = [
@@ -40,18 +39,14 @@ export function BookRow({
     { backgroundColor: theme.colors.surfaceContainerLow, borderLeftColor: activeColor },
   ];
 
-  const cover = item.book.cover_url ? (
-    <Image
-      source={{ uri: item.book.cover_url }}
-      style={styles.cover}
-      resizeMode="cover"
-      accessibilityLabel={t('coverAlt', { title: item.book.title })}
-      testID="book-row-cover"
-    />
-  ) : (
-    <View
-      style={[styles.cover, styles.coverPlaceholder, { backgroundColor: theme.colors.border }]}
-      accessibilityLabel={t('noCoverAvailable')}
+  // `sm` (52x78) is the closest BookCover size to the old 72x108 frame. When the
+  // card is tappable its overlay label already announces the title.
+  const cover = (
+    <BookCover
+      title={item.book.title}
+      coverUrl={item.book.cover_url}
+      size="sm"
+      decorative={!!onPress}
       testID="book-row-cover"
     />
   );
@@ -83,7 +78,7 @@ export function BookRow({
         />
       ) : null}
       <View style={styles.cardContent} pointerEvents="box-none">
-        <View testID="book-row-cover-wrap" {...inertProps}>
+        <View testID="book-row-cover-wrap" style={styles.coverWrap} {...inertProps}>
           {cover}
         </View>
         <View style={styles.content} pointerEvents="box-none">
@@ -189,10 +184,6 @@ export function BookRowAction({
 /** 32px visual button + 6px slop top/bottom = 44px touch target. */
 const ACTION_HIT_SLOP = { top: 6, bottom: 6, left: 4, right: 4 };
 
-/** Fixed 2:3 cover frame; the card height follows it, never the reverse (#911). */
-const COVER_WIDTH = 72;
-const COVER_HEIGHT = 108;
-
 const styles = StyleSheet.create({
   card: {
     borderRadius: 12,
@@ -201,15 +192,8 @@ const styles = StyleSheet.create({
   },
   cardPressable: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   cardContent: { flexDirection: 'row', alignItems: 'flex-start' },
-  cover: {
-    width: COVER_WIDTH,
-    height: COVER_HEIGHT,
-    marginLeft: 12,
-    marginVertical: 12,
-    borderRadius: 6,
-  },
+  coverWrap: { marginLeft: 12, marginVertical: 12 },
   textBlock: { gap: 4 },
-  coverPlaceholder: { opacity: 0.4 },
   content: { flex: 1, padding: 12, gap: 4 },
   categoryLabel: {
     textTransform: 'uppercase',

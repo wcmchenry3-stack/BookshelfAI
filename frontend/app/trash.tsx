@@ -1,8 +1,9 @@
 import { useCallback, useRef, useState } from 'react';
-import { FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
+import { BookCover } from '../components/BookCover';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { UnverifiedBadge } from '../components/UnverifiedBadge';
@@ -256,25 +257,13 @@ export default function TrashScreen() {
               style={[styles.card, { backgroundColor: theme.colors.surfaceContainerLow }]}
               testID={`trash-item-${item.id}`}
             >
-              {item.book.cover_url ? (
-                <Image
-                  source={{ uri: item.book.cover_url }}
-                  style={styles.cover}
-                  resizeMode="cover"
-                  accessible={false}
-                  importantForAccessibility="no"
-                />
-              ) : (
-                <View
-                  style={[
-                    styles.cover,
-                    styles.coverPlaceholder,
-                    { backgroundColor: theme.colors.border },
-                  ]}
-                  accessible={false}
-                  importantForAccessibility="no"
-                />
-              )}
+              <BookCover
+                title={item.book.title}
+                coverUrl={item.book.cover_url}
+                size="sm"
+                decorative
+                style={styles.cover}
+              />
               <View style={styles.content}>
                 <Text
                   style={[
@@ -353,8 +342,7 @@ const styles = StyleSheet.create({
   },
   retryText: { fontFamily: fontFor('600') },
   card: { flexDirection: 'row', borderRadius: 12, overflow: 'hidden', minHeight: 120 },
-  cover: { width: 90, alignSelf: 'stretch' },
-  coverPlaceholder: { opacity: 0.4 },
+  cover: { margin: 12 },
   content: { flex: 1, padding: 12, gap: 4 },
   bookTitle: { fontFamily: fontFor('600'), lineHeight: 22 },
   bookAuthor: { lineHeight: 18 },

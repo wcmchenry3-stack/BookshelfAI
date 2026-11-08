@@ -1,4 +1,4 @@
-import { expect, KNOWN_VIOLATIONS, test } from './support/fixtures';
+import { expect, test } from './support/fixtures';
 import { addFromPicker, searchBook } from './support/flows';
 
 test.describe('Wishlist', () => {
@@ -25,9 +25,7 @@ test.describe('Wishlist', () => {
       page.getByRole('button', { name: `Remove ${title} from wishlist` });
     await expect(removeButton('Emma')).toBeVisible();
     await expect(removeButton('Dune')).toHaveCount(0); // purchased, not wishlisted
-    await expectNoA11yViolations('Wishlist with one book', {
-      known: [KNOWN_VIOLATIONS.wishlistCoverPlaceholderLabel],
-    });
+    await expectNoA11yViolations('Wishlist with one book');
 
     // Remove.
     await removeButton('Emma').click();

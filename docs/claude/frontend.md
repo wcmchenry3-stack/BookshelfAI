@@ -94,9 +94,16 @@ Defined in `frontend/theme/tokens.ts` (`palette`).
 #### Shared sheets
 - `components/SheetModal.tsx` is the shared page-sheet modal scaffold (themed container, title + close header, body, bordered footer) used by `BookCandidatePicker` and `AddUnverifiedBookSheet`; pass the body as children and the primary action as `footer`.
 
+#### BookCover (#902)
+- `components/BookCover.tsx` draws every book cover in a fixed 2:3 frame; never hand-roll a cover `Image`. Props: `title`, `coverUrl`, `size`, optional `accessibilityLabel`, `decorative`, `testID`, `style`.
+- Sizes: `xs` 48x72 (dense lists) · `sm` 52x78 (list rows: BookRow, candidate picker, Trash) · `md` 104x156 (grids, large rows) · `lg` 136x204 (detail sheet). `md`/`lg` use `radius.coverLarge`, the rest `radius.cover`.
+- With no `coverUrl`, or after the image's `onError`, it draws a typographic cover: `coverBlank` background, the title in Noto Serif (`fontFor('600','serif')`) in `onCoverBlank`, a thin inner frame, and a line clamp scaled to the size. A shadow and a spine shade (both from the `shadow` token) decorate the frame.
+- Accessibility: by default the frame is an `image` with `common:coverAlt` (or `common:noCoverAvailable` for the generated cover). Pass `decorative` when the surrounding row already announces the title. The typeset title is hidden from assistive tech, so it is not read twice.
+- The bitmap is isolated in `CoverImage` (React Native `Image` for now) so it can be swapped for `expo-image` once #901 lands.
+
 #### Library screens (My Books and Wishlist)
 - Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours (`primary` / `onPrimary` in both modes) and dark-mode top padding.
-- `BookRow` (tappable on My Books): the card is a `View`; the open-detail `Pressable` is an absolute-fill overlay *sibling* of the content, the text/cover are `pointerEvents="none"` and the `BookRowAction`s are siblings of the overlay (never nested interactive elements). Covers are a fixed 72x108 (2:3) frame, top-aligned; the card height follows the cover. `StatusTabs` is a fixed-height (`STATUS_TABS_HEIGHT`) `flexGrow: 0` ScrollView so it never collapses or stretches.
+- `BookRow` (tappable on My Books): the card is a `View`; the open-detail `Pressable` is an absolute-fill overlay *sibling* of the content, the text/cover are `pointerEvents="none"` and the `BookRowAction`s are siblings of the overlay (never nested interactive elements). The cover is a `BookCover` `sm` (52x78, 2:3), top-aligned (decorative when the card is tappable); the card height follows the cover. `StatusTabs` is a fixed-height (`STATUS_TABS_HEIGHT`) `flexGrow: 0` ScrollView so it never collapses or stretches.
 - `hooks/useLibraryMutations.ts` owns advance-status and remove (the per-row in-flight guard, offline check, error alerts, the "moved to trash" banner). Each screen passes `onAdvanced` / `onRemoved` to update its own list, so My Books and Wishlist keep their different list rules. Put new shared row/header behaviour there, not in the screens.
 
 #### Logo / App Icon

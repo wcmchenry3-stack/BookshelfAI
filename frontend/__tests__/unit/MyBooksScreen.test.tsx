@@ -70,9 +70,10 @@ describe('MyBooksScreen', () => {
 
   it('renders book titles when data loaded', async () => {
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
-    const { getByText } = await render(<MyBooksScreen />);
+    const { getByText, getAllByText } = await render(<MyBooksScreen />);
     await waitFor(() => {
-      expect(getByText('Dune', { hidden: true })).toBeTruthy();
+      // The title is also typeset on the generated cover (#902).
+      expect(getAllByText('Dune', { hidden: true }).length).toBeGreaterThan(0);
       expect(getByText('Frank Herbert', { hidden: true })).toBeTruthy();
     });
   });

@@ -197,11 +197,12 @@ describe('Unverified badge in the library (#616)', () => {
     ['my books', MyBooksScreen],
   ])('%s shows it on unverified entries only', async (_name, Screen) => {
     mockGet.mockResolvedValue({ data: [UNVERIFIED_ENTRY, CATALOG_ENTRY] });
-    const { findByText, getAllByTestId } = await render(<Screen />);
+    const { findAllByText, getAllByTestId } = await render(<Screen />);
     // My Books hides the card's text from assistive tech (the card label says it).
     const hidden = { hidden: true };
-    expect(await findByText('Pond Notes', hidden)).toBeTruthy();
-    expect(await findByText('Dune', hidden)).toBeTruthy();
+    // The title is also typeset on the generated cover (#902), so match every copy.
+    expect((await findAllByText('Pond Notes', hidden)).length).toBeGreaterThan(0);
+    expect((await findAllByText('Dune', hidden)).length).toBeGreaterThan(0);
     const badges = getAllByTestId('unverified-badge', hidden);
     expect(badges).toHaveLength(1);
     expect(badges[0].props.accessibilityLabel).toBe(
