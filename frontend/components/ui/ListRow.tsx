@@ -29,9 +29,9 @@ export interface ListRowProps {
   disabled?: boolean;
   /**
    * Marks the row as a choice in a single-select list: the selected row shows a check
-   * (in place of the chevron) and is a `radio` reporting `accessibilityState.checked` (react-native-web drops
-   * `aria-selected` on buttons, but maps `checked` to `aria-checked`). Put such rows in a
-   * `radiogroup`.
+   * (in place of the chevron) and is a `radio` reporting checked state through both
+   * `accessibilityState.checked` (native) and `aria-checked` (react-native-web ignores
+   * `accessibilityState`, and drops `aria-selected` on buttons). Put such rows in a `radiogroup`.
    */
   selected?: boolean;
   accessibilityLabel?: string;
@@ -123,6 +123,7 @@ export function ListRow({
       accessibilityRole={selected === undefined ? 'button' : 'radio'}
       accessibilityLabel={spoken}
       accessibilityState={selected === undefined ? { disabled } : { disabled, checked: selected }}
+      aria-checked={selected}
       testID={testID}
       style={({ pressed }) => [styles.row, { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 }]}
     >
