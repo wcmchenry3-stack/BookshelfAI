@@ -28,6 +28,8 @@ export interface ButtonProps {
   icon?: IconName;
   /** Overrides the spoken label (defaults to `label`). */
   accessibilityLabel?: string;
+  /** Spoken hint describing what the button does. */
+  accessibilityHint?: string;
   testID?: string;
   style?: StyleProp<ViewStyle>;
 }
@@ -48,6 +50,7 @@ export function Button({
   loading = false,
   icon,
   accessibilityLabel,
+  accessibilityHint,
   testID,
   style,
 }: ButtonProps) {
@@ -61,6 +64,7 @@ export function Button({
       disabled={inactive}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled: inactive, busy: loading }}
       testID={testID}
       style={({ pressed }) => [

@@ -1,12 +1,12 @@
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import SheetModal from '../SheetModal';
 import { BookCover } from '../ui/BookCover';
+import { Button } from '../ui/Button';
 import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
-import { useLibraryAccent } from './useLibraryAccent';
 import { NEXT_STATUS, type LibraryBook } from './libraryShared';
-import { fontFor } from '../../theme/typography';
 
 export interface DetailBook extends LibraryBook {
   book: LibraryBook['book'] & { description: string | null };
@@ -32,152 +32,66 @@ export function BookDetailSheet<T extends DetailBook>({
   const { theme } = useTheme();
   // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
-  const { activeColor, onActiveColor } = useLibraryAccent();
   const nextStatus = selected ? NEXT_STATUS[selected.status] : undefined;
 
   return (
-    <Modal
+    <SheetModal
       visible={!!selected}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onClose}
-      accessibilityViewIsModal
-    >
-      {selected && (
-        <View style={[styles.sheet, { backgroundColor: theme.colors.surface }]}>
-          <View style={[styles.sheetHeader, { borderBottomColor: theme.colors.border }]}>
-            <Text
-              style={[
-                styles.sheetTitle,
-                { color: theme.colors.text, fontSize: theme.typography.fontSizeLG },
-              ]}
-              accessibilityRole="header"
-              numberOfLines={2}
-            >
-              {selected.book.title}
-            </Text>
-            <Pressable
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel={t('closeDetail')}
-              style={styles.closeButton}
-              hitSlop={8}
-            >
-              <Text style={{ color: activeColor, fontSize: theme.typography.fontSizeBase }}>
-                {t('close', { ns: 'common' })}
-              </Text>
-            </Pressable>
-          </View>
-
-          <ScrollView contentContainerStyle={styles.sheetContent}>
-            <BookCover title={selected.book.title} coverUrl={selected.book.cover_url} size="lg" />
-            <Text
-              style={[
-                styles.sheetAuthor,
-                { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeBase },
-              ]}
-            >
-              {selected.book.author}
-            </Text>
-            {selected.unverified ? <UnverifiedBadge /> : null}
-            {selected.book.description && (
-              <Text
-                style={[
-                  styles.sheetDescription,
-                  { color: theme.colors.text, fontSize: theme.typography.fontSizeSM },
-                ]}
-              >
-                {selected.book.description}
-              </Text>
-            )}
-            {selected.edition?.page_count && (
-              <Text
-                style={[
-                  { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                ]}
-              >
-                {t('pages', { count: selected.edition.page_count })}
-              </Text>
-            )}
-
+      onDismiss={onClose}
+      title={selected?.book.title ?? ''}
+      subtitle={selected?.book.author}
+      closeLabel={t('close', { ns: 'common' })}
+      closeA11yLabel={t('closeDetail')}
+      footer={
+        selected ? (
+          <>
             {nextStatus && (
-              <Pressable
-                style={[
-                  styles.sheetButton,
-                  { backgroundColor: activeColor },
-                  actionsDisabled && styles.actionDisabled,
-                ]}
+              <Button
+                label={t('markAs', { status: t(`status.${nextStatus}`) })}
+                accessibilityLabel={t('markAsA11y', { status: t(`status.${nextStatus}`) })}
                 onPress={() => onAdvance(selected)}
                 disabled={actionsDisabled}
-                accessibilityRole="button"
-                accessibilityLabel={t('markAsA11y', { status: t(`status.${nextStatus}`) })}
-                accessibilityState={{ disabled: actionsDisabled }}
-              >
-                <Text
-                  style={[
-                    styles.sheetButtonText,
-                    { fontSize: theme.typography.fontSizeBase, color: onActiveColor },
-                  ]}
-                >
-                  {t('markAs', { status: t(`status.${nextStatus}`) })}
-                </Text>
-              </Pressable>
+              />
             )}
-
-            <Pressable
-              style={[
-                styles.sheetButton,
-                { backgroundColor: theme.colors.surfaceContainerHigh },
-                actionsDisabled && styles.actionDisabled,
-              ]}
+            <Button
+              variant="secondary"
+              label={t('removeFromList')}
+              accessibilityLabel={t('removeBookA11y', { title: selected.book.title })}
               onPress={() => onRemove(selected)}
               disabled={actionsDisabled}
-              accessibilityRole="button"
-              accessibilityLabel={t('removeBookA11y', { title: selected.book.title })}
-              accessibilityState={{ disabled: actionsDisabled }}
+            />
+          </>
+        ) : null
+      }
+    >
+      {selected && (
+        <ScrollView contentContainerStyle={styles.sheetContent}>
+          <BookCover title={selected.book.title} coverUrl={selected.book.cover_url} size="lg" />
+          {selected.unverified ? <UnverifiedBadge /> : null}
+          {selected.book.description && (
+            <Text
+              style={[
+                styles.sheetDescription,
+                { color: theme.colors.text, fontSize: theme.typography.fontSizeSM },
+              ]}
             >
-              <Text
-                style={[
-                  styles.sheetButtonText,
-                  {
-                    color: theme.colors.onSurfaceVariant,
-                    fontSize: theme.typography.fontSizeBase,
-                  },
-                ]}
-              >
-                {t('removeFromList')}
-              </Text>
-            </Pressable>
-          </ScrollView>
-        </View>
+              {selected.book.description}
+            </Text>
+          )}
+          {selected.edition?.page_count && (
+            <Text
+              style={[{ color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM }]}
+            >
+              {t('pages', { count: selected.edition.page_count })}
+            </Text>
+          )}
+        </ScrollView>
       )}
-    </Modal>
+    </SheetModal>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: { flex: 1 },
-  sheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  sheetTitle: { fontFamily: fontFor('700'), flex: 1, marginRight: 8 },
-  closeButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
   sheetContent: { padding: 16, gap: 12, alignItems: 'center' },
-  sheetAuthor: { alignSelf: 'flex-start' },
   sheetDescription: { lineHeight: 20 },
-  sheetButton: {
-    width: '100%',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  sheetButtonText: { fontFamily: fontFor('600') },
-  actionDisabled: { opacity: 0.5 },
 });

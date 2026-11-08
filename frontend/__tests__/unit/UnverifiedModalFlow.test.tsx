@@ -73,6 +73,7 @@ jest.mock('../../hooks/useTheme', () => ({
     theme: {
       isDark: false,
       colors: new Proxy({}, { get: () => '#123456' }),
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeSM: 14, fontSizeLG: 20, fontSizeXS: 12 },
     },
   }),

@@ -37,6 +37,7 @@ jest.mock('../../hooks/useTheme', () => ({
         onSecondaryContainer: '#4b6861',
         surfaceContainerLow: '#f5f3ef',
       },
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeLG: 20, fontSizeSM: 14, fontSizeXS: 12 },
     },
   }),
