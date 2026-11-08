@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { usePathname, useSegments } from 'expo-router';
+import { usePathname } from 'expo-router';
 import {
   AccessibilityInfo,
   Animated,
@@ -22,13 +22,8 @@ const DEFAULT_DISPLAY_DURATION = 5000;
 // so the action is reachable (#909).
 const ACTION_DISPLAY_DURATION = 10000;
 const SIDE_MARGIN = 16;
-const GAP_BELOW_HEADER = 8;
+const GAP_BELOW_STATUS_BAR = 8;
 const SLIDE_DISTANCE = 240;
-
-/** Stack header height below the safe-area inset: 44 iOS, 56 Android, 64 web. */
-function headerContentHeight(): number {
-  return Platform.OS === 'android' ? 56 : Platform.OS === 'web' ? 64 : 44;
-}
 
 export function InAppBanner() {
   const { banner, hideBanner } = useBanner();
@@ -37,9 +32,6 @@ export function InAppBanner() {
   const translateY = useRef(new Animated.Value(-SLIDE_DISTANCE)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathname = usePathname();
-  const segments = useSegments();
-  // The sign-in route has no header, so the banner sits just below the inset.
-  const hasHeader = (segments[0] as string | undefined) !== '(auth)';
   const [screenReaderOn, setScreenReaderOn] = useState(false);
 
   useEffect(() => {
@@ -134,7 +126,7 @@ export function InAppBanner() {
       style={[
         styles.container,
         {
-          top: insets.top + (hasHeader ? headerContentHeight() : 0) + GAP_BELOW_HEADER,
+          top: insets.top + GAP_BELOW_STATUS_BAR,
           backgroundColor: bgColor,
           transform: [{ translateY }],
         },

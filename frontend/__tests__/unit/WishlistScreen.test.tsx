@@ -3,11 +3,13 @@ import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 
 import WishlistScreen from '../../app/(tabs)/wishlist';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
 const mockGet = jest.fn();
 const mockPatch = jest.fn();
 const mockDelete = jest.fn();
 
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../lib/api', () => ({
   api: {
     get: (...args: unknown[]) => mockGet(...args),
@@ -70,6 +72,13 @@ describe('WishlistScreen', () => {
     mockGet.mockResolvedValue({ data: [] });
     const { getByText } = await render(<WishlistScreen />);
     await waitFor(() => expect(getByText(/Your wishlist is empty/)).toBeTruthy());
+  });
+
+  it('pads the empty state by the top safe-area inset (#936)', async () => {
+    mockGet.mockResolvedValue({ data: [] });
+    const { getByText } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByText(/Your wishlist is empty/)).toBeTruthy());
+    expect(hasTopPadding(getByText(/Your wishlist is empty/), TEST_INSET_TOP)).toBe(true);
   });
 
   it('renders book titles and authors when data loaded', async () => {

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
@@ -18,8 +19,13 @@ import { fontFor } from '../../theme/typography';
 
 type CameraFacing = 'back' | 'front';
 
+// Space between the status bar / notch and the mode toggle over the camera (the
+// root header is gone, so the screen owns the top safe area, #936).
+const CAMERA_TOP_GAP = 16;
+
 export default function ScanScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t } = useTranslation('scan');
   // The single accent (primary) in both modes — active/CTA accent (#898).
   const activeColor = theme.colors.primary;
@@ -116,7 +122,12 @@ export default function ScanScreen() {
   // ── Search mode ──────────────────────────────────────────────────────────
   if (inputMode === 'search') {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
         {progressPanel}
         <View style={styles.searchContainer}>
@@ -166,7 +177,12 @@ export default function ScanScreen() {
           style: { display: 'none' },
           onChange: handleWebFileChange,
         })}
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <View
+          style={[
+            styles.container,
+            { backgroundColor: theme.colors.background, paddingTop: insets.top },
+          ]}
+        >
           {modeToggle}
           {progressPanel}
           <Pressable
@@ -188,7 +204,12 @@ export default function ScanScreen() {
   // ── Native camera mode — permission checks ────────────────────────────────
   if (!permission) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
       </View>
     );
@@ -196,7 +217,12 @@ export default function ScanScreen() {
 
   if (!permission.granted) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
         <Text
           style={[
@@ -232,7 +258,10 @@ export default function ScanScreen() {
       {/* box-none: overlay itself doesn't intercept touches, but its Pressable
           children still receive them. Without this, iOS was swallowing the
           shutter press on top of the CameraView. */}
-      <View style={styles.overlay} pointerEvents="box-none">
+      <View
+        style={[styles.overlay, { paddingTop: insets.top + CAMERA_TOP_GAP }]}
+        pointerEvents="box-none"
+      >
         {/* Grouped so the badge appearing doesn't shift the space-between layout. */}
         <View style={styles.topGroup}>
           {modeToggle}
@@ -299,7 +328,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 60,
+    paddingBottom: 60,
   },
   topGroup: { alignItems: 'center' },
   // Viewfinder frame area — contains corner brackets and scan line.

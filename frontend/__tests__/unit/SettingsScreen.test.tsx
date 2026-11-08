@@ -3,7 +3,9 @@ import { View } from 'react-native';
 import { render } from '@testing-library/react-native';
 
 import SettingsScreen from '../../app/(tabs)/settings';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
     theme: {
@@ -21,6 +23,11 @@ jest.mock('../../components/ThemeToggleButton', () => ({
 }));
 
 describe('SettingsScreen', () => {
+  it('pads the top by the safe-area inset (#936)', async () => {
+    const { getByText } = await render(<SettingsScreen />);
+    expect(hasTopPadding(getByText('Settings'), TEST_INSET_TOP)).toBe(true);
+  });
+
   it('renders the settings heading', async () => {
     const { getByText } = await render(<SettingsScreen />);
     expect(getByText('Settings')).toBeTruthy();

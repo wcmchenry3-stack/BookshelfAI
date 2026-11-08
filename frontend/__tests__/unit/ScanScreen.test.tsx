@@ -3,12 +3,14 @@ import { Platform } from 'react-native';
 import { act, fireEvent, render } from '@testing-library/react-native';
 
 import ScanScreen from '../../app/(tabs)/scan';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockStartScan = jest.fn();
 let mockQueueState = { pendingCount: 0, isQueueFull: false };
 
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../hooks/useScanJobs', () => ({
   useScanJobs: () => ({
     jobs: [],
@@ -203,6 +205,17 @@ describe('ScanScreen — native camera permissions', () => {
     const { getByLabelText } = await render(<ScanScreen />);
     await fireEvent.press(getByLabelText('Grant camera permission'));
     expect(mockRequestPermission).toHaveBeenCalled();
+  });
+
+  it('pads the permission prompt by the top safe-area inset (#936)', async () => {
+    useCameraPermissions.mockReturnValue([{ granted: false }, mockRequestPermission]);
+    const { getByLabelText } = await render(<ScanScreen />);
+    expect(hasTopPadding(getByLabelText('Grant camera permission'), TEST_INSET_TOP)).toBe(true);
+  });
+
+  it('pads the camera overlay by the inset plus 16 (#936)', async () => {
+    const { getByLabelText } = await render(<ScanScreen />);
+    expect(hasTopPadding(getByLabelText('Capture books'), TEST_INSET_TOP + 16)).toBe(true);
   });
 
   it('renders mode toggle when permission is loading (null)', async () => {

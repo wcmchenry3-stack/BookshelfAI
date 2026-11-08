@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
@@ -31,10 +32,10 @@ interface QueueSection {
 // (retry or delete; removed automatically after FAILED_SCAN_RETENTION_MS, which
 // counts from `createdAt` for failed jobs saved before `failedAt` existed).
 // Text searches are listed too, with their query in place of a thumbnail.
-// The root Stack's header is made opaque for this screen in app/_layout.tsx,
-// so the list starts below it in dark mode too.
+// The screen has no Stack header: it owns its top inset (#936).
 export default function ScanQueueScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t, i18n } = useTranslation('scan');
   // A passed "Next try at" shows "Waiting for connection": re-check every 30 s.
   const [now, setNow] = useState(() => Date.now());
@@ -131,54 +132,62 @@ export default function ScanQueueScreen() {
   }
 
   return (
-    <SectionList<ScanJob, QueueSection>
-      style={{ backgroundColor: theme.colors.background }}
-      contentContainerStyle={styles.content}
-      sections={sections}
-      keyExtractor={(job) => job.id}
-      stickySectionHeadersEnabled={false}
-      renderItem={renderItem}
-      ListHeaderComponent={
-        <>
-          <Pressable
-            onPress={leaveScanQueue}
-            style={styles.back}
-            accessibilityRole="button"
-            accessibilityLabel={t('queueBack')}
-          >
-            <Text style={[styles.backText, { color: theme.colors.primary }]}>{t('queueBack')}</Text>
-          </Pressable>
-          <Text
-            accessibilityRole="header"
-            style={[styles.title, { color: theme.colors.onSurface }]}
-          >
-            {t('queueTitle')}
-          </Text>
-        </>
-      }
-      renderSectionHeader={({ section }) => (
-        <View>
-          <Text
-            accessibilityRole="header"
-            style={[styles.sectionTitle, { color: theme.colors.onSurface }]}
-          >
-            {section.key === 'waiting' ? t('queueWaitingTitle') : t('queueFailedTitle')}
-          </Text>
-          {section.key === 'failed' ? (
-            <Text style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
-              {t('queueFailedNote')}
+    // A fixed wrapper pads the inset, so rows scroll inside it and never under the status bar.
+    <View
+      style={{ flex: 1, backgroundColor: theme.colors.background, paddingTop: insets.top }}
+      testID="scan-queue-screen"
+    >
+      <SectionList<ScanJob, QueueSection>
+        style={{ backgroundColor: theme.colors.background }}
+        contentContainerStyle={styles.content}
+        sections={sections}
+        keyExtractor={(job) => job.id}
+        stickySectionHeadersEnabled={false}
+        renderItem={renderItem}
+        ListHeaderComponent={
+          <>
+            <Pressable
+              onPress={leaveScanQueue}
+              style={styles.back}
+              accessibilityRole="button"
+              accessibilityLabel={t('queueBack')}
+            >
+              <Text style={[styles.backText, { color: theme.colors.primary }]}>
+                {t('queueBack')}
+              </Text>
+            </Pressable>
+            <Text
+              accessibilityRole="header"
+              style={[styles.title, { color: theme.colors.onSurface }]}
+            >
+              {t('queueTitle')}
             </Text>
-          ) : null}
-        </View>
-      )}
-      renderSectionFooter={({ section }) =>
-        section.data.length === 0 ? (
-          <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
-            {section.key === 'waiting' ? t('queueWaitingEmpty') : t('queueFailedEmpty')}
-          </Text>
-        ) : null
-      }
-    />
+          </>
+        }
+        renderSectionHeader={({ section }) => (
+          <View>
+            <Text
+              accessibilityRole="header"
+              style={[styles.sectionTitle, { color: theme.colors.onSurface }]}
+            >
+              {section.key === 'waiting' ? t('queueWaitingTitle') : t('queueFailedTitle')}
+            </Text>
+            {section.key === 'failed' ? (
+              <Text style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
+                {t('queueFailedNote')}
+              </Text>
+            ) : null}
+          </View>
+        )}
+        renderSectionFooter={({ section }) =>
+          section.data.length === 0 ? (
+            <Text style={[styles.empty, { color: theme.colors.onSurfaceVariant }]}>
+              {section.key === 'waiting' ? t('queueWaitingEmpty') : t('queueFailedEmpty')}
+            </Text>
+          ) : null
+        }
+      />
+    </View>
   );
 }
 

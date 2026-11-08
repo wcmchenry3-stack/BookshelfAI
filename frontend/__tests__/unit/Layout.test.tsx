@@ -153,11 +153,11 @@ describe('RootLayout (_layout.tsx)', () => {
   });
 
   describe('rendering', () => {
-    it('keeps the scan queue header opaque so the list is not under the dark-mode header (#605)', async () => {
+    it('has no scan queue header, so the list cannot sit under one (#605, #936)', async () => {
       mockScreens.length = 0;
       await render(<RootLayoutDefault />);
       const queue = mockScreens.find((s) => s.name === 'scan-queue');
-      expect(queue?.options?.headerTransparent).toBe(false);
+      expect(queue?.options?.headerShown).toBe(false);
     });
 
     it('renders without crashing', async () => {

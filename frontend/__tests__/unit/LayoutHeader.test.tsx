@@ -13,23 +13,29 @@ jest.mock('../../lib/sentry', () => ({
   initSentry: jest.fn(),
 }));
 
-// The mock Stack renders the real screenOptions.headerRight so the test
-// exercises exactly what _layout.tsx wires into the navigation header.
+// The mock Stack records the real screenOptions and Stack.Screen options that
+// _layout.tsx wires into the navigation header.
+const mockStack: {
+  screenOptions: Record<string, unknown> | undefined;
+  screens: { name: string; options?: Record<string, unknown> }[];
+} = { screenOptions: undefined, screens: [] };
 jest.mock('expo-router', () => {
   const { View } = require('react-native');
   const MockStack = ({
     screenOptions,
     children,
   }: {
-    screenOptions?: { headerRight?: () => React.ReactNode };
+    screenOptions?: Record<string, unknown>;
     children?: React.ReactNode;
-  }) => (
-    <View testID="stack">
-      <View testID="header-right">{screenOptions?.headerRight?.()}</View>
-      {children}
-    </View>
-  );
-  MockStack.Screen = function MockScreen() {
+  }) => {
+    mockStack.screenOptions = screenOptions;
+    return <View testID="stack">{children}</View>;
+  };
+  MockStack.Screen = function MockScreen(props: {
+    name: string;
+    options?: Record<string, unknown>;
+  }) {
+    mockStack.screens.push(props);
     return null;
   };
   return { Stack: MockStack };
@@ -94,24 +100,31 @@ jest.mock('@expo-google-fonts/inter', () => ({
   Inter_700Bold: 'Inter_700Bold',
 }));
 
-describe('RootLayout header wiring (#756)', () => {
-  it('puts both the theme toggle and the feedback "?" button in the Stack headerRight', async () => {
-    const { getByTestId } = await render(<RootLayoutDefault />);
-    const right = getByTestId('header-right');
-    expect(right).toContainElement(getByTestId('theme-toggle'));
-    expect(right).toContainElement(getByTestId('header-feedback-button'));
+describe('RootLayout header wiring (#756, #936)', () => {
+  beforeEach(() => {
+    mockStack.screens = [];
+    mockStack.screenOptions = undefined;
   });
 
-  it('spaces the headerRight buttons 16 apart so their hitSlop targets do not overlap', async () => {
-    const { getByTestId } = await render(<RootLayoutDefault />);
-    const wrapper = getByTestId('theme-toggle').parent;
-    const { StyleSheet } = require('react-native');
-    expect(StyleSheet.flatten(wrapper?.props.style).gap).toBe(16);
+  it('hides the root header on the tab screens', async () => {
+    await render(<RootLayoutDefault />);
+    const tabs = mockStack.screens.find((x) => x.name === '(tabs)');
+    expect(tabs?.options?.headerShown).toBe(false);
   });
 
-  it('renders the feedback button exactly once (no floating duplicate outside the header)', async () => {
-    const { getAllByTestId } = await render(<RootLayoutDefault />);
-    expect(getAllByTestId('header-feedback-button')).toHaveLength(1);
+  it('hides the Stack header on trash and scan-queue, which have their own Back link', async () => {
+    await render(<RootLayoutDefault />);
+    for (const name of ['trash', 'scan-queue']) {
+      expect(mockStack.screens.find((x) => x.name === name)?.options?.headerShown).toBe(false);
+    }
+  });
+
+  it('no longer puts the logo, theme toggle or feedback "?" in the Stack header', async () => {
+    const { queryByTestId } = await render(<RootLayoutDefault />);
+    expect(mockStack.screenOptions?.headerLeft).toBeUndefined();
+    expect(mockStack.screenOptions?.headerRight).toBeUndefined();
+    expect(queryByTestId('theme-toggle')).toBeNull();
+    expect(queryByTestId('header-feedback-button')).toBeNull();
   });
 
   it('no longer ships the floating FeedbackButton FAB module', () => {
@@ -120,5 +133,10 @@ describe('RootLayout header wiring (#756)', () => {
       ? fs.readdirSync(dir).filter((f) => f.startsWith('FeedbackButton'))
       : [];
     expect(present).toEqual([]);
+  });
+
+  it('removed the header "?" button module (help lives in Settings)', () => {
+    const file = path.join(__dirname, '../../components/FeedbackWidget/HeaderFeedbackButton.tsx');
+    expect(fs.existsSync(file)).toBe(false);
   });
 });
