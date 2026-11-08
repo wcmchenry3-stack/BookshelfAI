@@ -58,6 +58,20 @@
   "headerReading_one": "{{count}} wird aktuell gelesen",
   "headerReading_other": "{{count}} werden aktuell gelesen",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "Aktuell am Lesen",
+    "allBooks": "Alle Bücher"
+  },
+  "sort": {
+    "sheetTitle": "Sortieren nach",
+    "buttonA11y": "Sortieren, aktuell {{label}}",
+    "added": "Zuletzt hinzugefügt",
+    "title": "Titel A–Z",
+    "author": "Autor A–Z"
+  },
+  "shelfA11y_one": "Aktuell am Lesen, {{count}} Buch",
+  "shelfA11y_other": "Aktuell am Lesen, {{count}} Bücher",
+  "shelfItemA11y": "{{title}}, von {{author}}",
   "movedToTrash": "In den Papierkorb verschoben. 30 Tage lang wiederherstellbar.",
   "viewTrash": "Papierkorb ansehen",
   "trash": {

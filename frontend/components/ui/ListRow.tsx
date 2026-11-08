@@ -20,6 +20,11 @@ export interface ListRowProps {
   destructive?: boolean;
   onPress?: () => void;
   disabled?: boolean;
+  /**
+   * Marks the row as a choice in a single-select list: the selected row shows a check
+   * (in place of the chevron) and reports `accessibilityState.selected`.
+   */
+  selected?: boolean;
   accessibilityLabel?: string;
   testID?: string;
 }
@@ -34,11 +39,12 @@ export function ListRow({
   destructive = false,
   onPress,
   disabled = false,
+  selected,
   accessibilityLabel,
   testID,
 }: ListRowProps) {
   const { theme } = useTheme();
-  const showChevron = chevron ?? onPress !== undefined;
+  const showChevron = !selected && (chevron ?? onPress !== undefined);
   const fg = destructive ? 'danger' : 'onSurface';
   const spoken = accessibilityLabel ?? [label, value, hint].filter(Boolean).join(', ');
 
@@ -74,6 +80,14 @@ export function ListRow({
           {value}
         </AppText>
       ) : null}
+      {selected ? (
+        <MaterialIcons
+          name="check"
+          testID={testID ? `${testID}-check` : 'list-row-check'}
+          size={22}
+          color={theme.colors.primary}
+        />
+      ) : null}
       {showChevron ? (
         <MaterialIcons
           name="chevron-right"
@@ -98,7 +112,7 @@ export function ListRow({
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={spoken}
-      accessibilityState={{ disabled }}
+      accessibilityState={selected === undefined ? { disabled } : { disabled, selected }}
       testID={testID}
       style={({ pressed }) => [styles.row, { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 }]}
     >

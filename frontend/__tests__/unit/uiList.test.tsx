@@ -150,3 +150,22 @@ describe('ListSection', () => {
     expect(style(d2).marginLeft).toBe(60);
   });
 });
+
+describe('ListRow selected (#933)', () => {
+  it('shows a check instead of the chevron and reports selected', async () => {
+    const { getByTestId, queryByTestId } = await render(
+      <ListRow label="Title A–Z" onPress={jest.fn()} selected testID="r" />
+    );
+    expect(getByTestId('r-check')).toBeTruthy();
+    expect(queryByTestId('r-chevron')).toBeNull();
+    expect(getByTestId('r').props.accessibilityState).toEqual({ disabled: false, selected: true });
+  });
+
+  it('an unselected choice reports selected: false and keeps no check', async () => {
+    const { queryByTestId, getByTestId } = await render(
+      <ListRow label="Title A–Z" onPress={jest.fn()} selected={false} testID="r" />
+    );
+    expect(queryByTestId('r-check')).toBeNull();
+    expect(getByTestId('r').props.accessibilityState).toEqual({ disabled: false, selected: false });
+  });
+});

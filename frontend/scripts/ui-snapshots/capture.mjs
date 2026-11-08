@@ -260,7 +260,7 @@ async function runTheme(browser, scheme) {
       await shot(page, dir, '08-my-books-filter-reading');
       await byLabelStart(page, 'Filter by All').click();
       await settle(page);
-      await page.locator('[aria-label^="Moby-Dick"]').first().click();
+      await page.locator('[aria-label^="Moby-Dick —"]').first().click();
       await settle(page, 800);
       await shot(page, dir, '09-book-detail-sheet');
       const close = page.locator('[aria-label="Close detail"]').first();

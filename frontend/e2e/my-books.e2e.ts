@@ -108,4 +108,47 @@ test.describe('My Books', () => {
     await page.getByRole('button', { name: 'Clear search' }).first().click();
     await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
   });
+
+  test('shows the Reading now shelf and sorts the list by title', async ({
+    page,
+    signIn,
+    expectNoA11yViolations,
+  }) => {
+    await signIn();
+    await openTab(page, 'Your book collection');
+
+    // The shelf lists the book being read; it stays in "All books" too.
+    const shelf = page.getByRole('list', { name: 'Reading now, 1 book', exact: true });
+    await expect(shelf).toBeVisible();
+    await expect(
+      shelf.getByRole('button', { name: 'The Great Gatsby, by F. Scott Fitzgerald', exact: true })
+    ).toBeVisible();
+    await expectNoA11yViolations('My Books with the Reading now shelf');
+
+    // Rows (their names have " — status,"; the shelf item and the chips do not).
+    const rows = page.getByRole('button', { name: / — [A-Za-z]+, by / });
+    await expect(rows).toHaveCount(3);
+    await expect(rows.first()).toHaveAccessibleName(/^The Great Gatsby — Reading/); // newest first
+
+    // Sort by Title: the first row is now alphabetical.
+    await page.getByRole('button', { name: 'Sort, currently Recently added', exact: true }).click();
+    const sheet = page.getByRole('dialog');
+    await expect(sheet.getByText('Sort by', { exact: true })).toBeVisible();
+    await expectNoA11yViolations('My Books sort sheet');
+    await sheet.getByRole('button', { name: 'Title A–Z', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'Sort, currently Title A–Z', exact: true })
+    ).toBeVisible();
+    await expect(rows.first()).toHaveAccessibleName(/^Dune — Purchased/);
+    await expect(rows.nth(1)).toHaveAccessibleName(/^Emma — Wishlist/);
+
+    // The shelf only shows on All with no search.
+    await page.getByRole('button', { name: 'Filter by Purchased' }).click();
+    await expect(shelf).toHaveCount(0);
+    await page.getByRole('button', { name: 'Filter by All' }).click();
+    await expect(shelf).toBeVisible();
+    await page.getByRole('textbox', { name: 'Search your books' }).fill('dune');
+    await expect(shelf).toHaveCount(0);
+  });
 });

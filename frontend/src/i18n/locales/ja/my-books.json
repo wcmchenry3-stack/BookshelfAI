@@ -55,6 +55,19 @@
   "headerBooks_other": "{{count}}冊",
   "headerReading_other": "{{count}}冊を読書中",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "読書中",
+    "allBooks": "すべての本"
+  },
+  "sort": {
+    "sheetTitle": "並べ替え",
+    "buttonA11y": "並べ替え、現在: {{label}}",
+    "added": "追加日(新しい順)",
+    "title": "タイトル順",
+    "author": "著者順"
+  },
+  "shelfA11y_other": "読書中、{{count}}冊",
+  "shelfItemA11y": "{{title}}、{{author}}著",
   "movedToTrash": "ゴミ箱に移動しました。30日以内なら元に戻せます。",
   "viewTrash": "ゴミ箱を見る",
   "trash": {

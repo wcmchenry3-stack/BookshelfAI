@@ -55,6 +55,19 @@
   "headerBooks_other": "{{count}} 本书",
   "headerReading_other": "{{count}} 本在读",
   "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "正在阅读",
+    "allBooks": "所有书籍"
+  },
+  "sort": {
+    "sheetTitle": "排序方式",
+    "buttonA11y": "排序，当前：{{label}}",
+    "added": "最近添加",
+    "title": "书名 A–Z",
+    "author": "作者 A–Z"
+  },
+  "shelfA11y_other": "正在阅读，{{count}} 本书",
+  "shelfItemA11y": "{{title}}，作者 {{author}}",
   "movedToTrash": "已移到回收站。30 天内可以恢复。",
   "viewTrash": "查看回收站",
   "trash": {

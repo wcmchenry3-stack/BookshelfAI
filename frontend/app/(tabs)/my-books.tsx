@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -12,21 +12,30 @@ import { LibraryRow } from '../../components/library/LibraryRow';
 import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { MyBooksHeader } from '../../components/library/MyBooksHeader';
+import { ReadingNowShelf } from '../../components/library/ReadingNowShelf';
+import { SortSheet } from '../../components/library/SortSheet';
 import { StatusChips } from '../../components/library/StatusChips';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import {
+  DEFAULT_SORT,
   NEXT_STATUS,
   SCREEN_PADDING,
+  SORT_KEYS,
   countByStatus,
   filterByStatus,
+  sortBooks,
+  type SortKey,
   type Status,
 } from '../../components/library/libraryShared';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { IconButton } from '../../components/ui/IconButton';
+import { AppText } from '../../components/ui/AppText';
 import { SearchField } from '../../components/ui/SearchField';
+import { SectionLabel } from '../../components/ui/SectionLabel';
 import { useModalHandoff } from '../../hooks/useModalHandoff';
 import { useLibraryBooks } from '../../hooks/useLibraryBooks';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
+import { loadLibrarySort, saveLibrarySort } from '../../lib/libraryPrefs';
 
 interface UserBook {
   id: string;
@@ -85,7 +94,7 @@ const MyBookRow = memo(function MyBookRow({ item, onOpen, onMore }: MyBookRowPro
 });
 
 export default function MyBooksScreen() {
-  const { t } = useTranslation('my-books');
+  const { t, i18n } = useTranslation('my-books');
   const router = useRouter();
   const { activeColor } = useLibraryAccent();
   const { books, setBooks, loading, loadError, refreshing, setRefreshing, reload, invalidate } =
@@ -98,6 +107,21 @@ export default function MyBooksScreen() {
   // waits for the menu to finish dismissing (see useModalHandoff).
   const menuGate = useModalHandoff(actionsFor !== null);
   const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>(DEFAULT_SORT);
+  const [sortOpen, setSortOpen] = useState(false);
+  // A choice made before the saved one has loaded must win over it.
+  const sortTouched = useRef(false);
+  useEffect(() => {
+    void loadLibrarySort(SORT_KEYS).then((saved) => {
+      if (saved && !sortTouched.current) setSortKey(saved);
+    });
+  }, []);
+  const chooseSort = useCallback((key: SortKey) => {
+    sortTouched.current = true;
+    setSortKey(key);
+    setSortOpen(false);
+    void saveLibrarySort(key);
+  }, []);
 
   const { isConnected, mutatingIds, advanceStatus, removeBook } = useLibraryMutations<UserBook>({
     namespace: 'my-books',
@@ -123,6 +147,12 @@ export default function MyBooksScreen() {
     () => filterBooks(filterByStatus(books, activeTab), query),
     [books, activeTab, query]
   );
+  const collator = useMemo(() => new Intl.Collator(i18n.language), [i18n.language]);
+  const sortedBooks = useMemo(
+    () => sortBooks(filteredBooks, sortKey, collator),
+    [filteredBooks, sortKey, collator]
+  );
+  const readingBooks = useMemo(() => filterByStatus(books, 'reading'), [books]);
 
   const sheetActionsDisabled = !isConnected || (selected != null && mutatingIds.has(selected.id));
   const menuActionsDisabled =
@@ -219,9 +249,26 @@ export default function MyBooksScreen() {
     );
   }
 
+  // The shelf only shows on the unfiltered, unsearched list (owner decision, #933).
+  const showShelf = activeTab === 'all' && !trimmedQuery && readingBooks.length > 0;
+
   const listHeader = (
     <View>
-      <MyBooksHeader total={books.length} reading={counts.reading} />
+      <MyBooksHeader
+        total={books.length}
+        reading={counts.reading}
+        trailing={
+          hasBooks ? (
+            <IconButton
+              icon="swap-vert"
+              color="onSurface"
+              accessibilityLabel={t('sort.buttonA11y', { label: t(`sort.${sortKey}`) })}
+              onPress={() => setSortOpen(true)}
+              testID="my-books-sort"
+            />
+          ) : null
+        }
+      />
       {hasBooks ? (
         <>
           <SearchField
@@ -234,6 +281,15 @@ export default function MyBooksScreen() {
             style={styles.search}
           />
           <StatusChips activeTab={activeTab} counts={counts} onChange={setActiveTab} />
+          {showShelf ? <ReadingNowShelf books={readingBooks} onOpen={openDetail} /> : null}
+          {sortedBooks.length > 0 ? (
+            <View style={styles.allBooks}>
+              <SectionLabel>{t('section.allBooks')}</SectionLabel>
+              <AppText variant="meta" color="onSurfaceVariant" testID="my-books-sort-label">
+                {t(`sort.${sortKey}`)}
+              </AppText>
+            </View>
+          ) : null}
         </>
       ) : null}
     </View>
@@ -245,7 +301,7 @@ export default function MyBooksScreen() {
 
       {/* One list for every state, so the header scrolls with the rows and pull to refresh always works. */}
       <FlatList
-        data={filteredBooks}
+        data={sortedBooks}
         {...LIBRARY_LIST_PROPS}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.list}
@@ -253,6 +309,13 @@ export default function MyBooksScreen() {
         ListEmptyComponent={empty}
         refreshControl={libraryRefreshControl(refreshing, setRefreshing, reload, activeColor)}
         renderItem={renderItem}
+      />
+
+      <SortSheet
+        visible={sortOpen}
+        value={sortKey}
+        onSelect={chooseSort}
+        onClose={() => setSortOpen(false)}
       />
 
       <BookActionsSheet
@@ -280,4 +343,12 @@ const styles = StyleSheet.create({
   list: { paddingBottom: 32 },
   search: { marginHorizontal: SCREEN_PADDING, marginTop: 12 },
   empty: { paddingTop: 48 },
+  allBooks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SCREEN_PADDING,
+    paddingTop: 28,
+    paddingBottom: 4,
+  },
 });
