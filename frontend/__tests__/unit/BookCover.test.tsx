@@ -1,7 +1,13 @@
 import { Image, StyleSheet } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
-import { BookCover, COVER_SIZES, type BookCoverSize } from '../../components/ui/BookCover';
+import {
+  BookCover,
+  COVER_SIZES,
+  FALLBACK_MIN_FONT,
+  fallbackTitleStyle,
+  type BookCoverSize,
+} from '../../components/ui/BookCover';
 import { tokens } from '../../theme/tokens';
 import { fontFor } from '../../theme/typography';
 
@@ -224,5 +230,193 @@ describe('#902 BookCover', () => {
       );
       for (const [props] of imageCalls()) expect(props.onError).toBe(first);
     });
+  });
+});
+
+describe('#924 fallback title never splits a word', () => {
+  // Advance widths in em measured with fontTools from NotoSerif_600SemiBold.ttf,
+  // independent of the table in theme/coverTextWidths.ts.
+  const MEASURED_EM: Record<string, number> = {
+    MIDDLEMARCH: 7.953,
+    MWW: 3.065,
+    MID: 2.087,
+    'Wuthering-': 5.676, // fontTools
+    'Wuthering/': 5.654,
+    Middlemarch: 6.682,
+    Wuthering: 5.366,
+    Heights: 3.768,
+  };
+  const INNER_WIDTH = { xs: 40, sm: 42, md: 88, lg: 114 };
+  const MARGIN = 1.04;
+
+  const fits = (word: string, size: BookCoverSize, fontSize: number) =>
+    MEASURED_EM[word] * fontSize <= INNER_WIDTH[size];
+
+  it.each(['sm', 'md', 'lg'] as const)('Middlemarch fits by measured width at %s', (size) => {
+    const s = fallbackTitleStyle('Middlemarch', size);
+    expect(s.initials).toBe(false);
+    expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
+    expect(MEASURED_EM.Middlemarch * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH[size]);
+  });
+
+  it.each(['md', 'lg'] as const)('MIDDLEMARCH fits by measured width at %s', (size) => {
+    const s = fallbackTitleStyle('MIDDLEMARCH', size);
+    expect(s.initials).toBe(false);
+    expect(MEASURED_EM.MIDDLEMARCH * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH[size]);
+  });
+
+  it.each(['xs', 'sm'] as const)(
+    'MIDDLEMARCH and Middlemarch(xs) become initials at %s',
+    (size) => {
+      const s = fallbackTitleStyle('MIDDLEMARCH', size);
+      expect(s).toMatchObject({ initials: true, text: 'MID', lines: 1 });
+      expect(MEASURED_EM.MID * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH[size]);
+    }
+  );
+
+  it('turns Middlemarch into initials at xs, where it cannot reach the floor', () => {
+    expect(fallbackTitleStyle('Middlemarch', 'xs')).toMatchObject({ initials: true, text: 'MID' });
+  });
+
+  it('shrinks MIDDLEMARCH at md below the default, using the capital widths', () => {
+    const s = fallbackTitleStyle('MIDDLEMARCH', 'md');
+    expect(s.fontSize).toBeLessThan(14);
+    expect(fits('MIDDLEMARCH', 'md', s.fontSize)).toBe(true);
+  });
+
+  it('sizes Middlemarch at sm at the floor without initials', () => {
+    const s = fallbackTitleStyle('Middlemarch', 'sm');
+    expect(s.initials).toBe(false);
+    expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
+    expect(fits('Middlemarch', 'sm', s.fontSize)).toBe(true);
+  });
+
+  it('keeps Wuthering Heights fitting at every size', () => {
+    for (const size of SIZES) {
+      const s = fallbackTitleStyle('Wuthering Heights', size);
+      expect(s.initials).toBe(false);
+      expect(fits('Wuthering', size, s.fontSize)).toBe(true);
+    }
+  });
+
+  it('falls back to initials for a pathological single word at xs', () => {
+    const s = fallbackTitleStyle('A'.repeat(30), 'xs');
+    expect(s.initials).toBe(true);
+    expect(s.text).toBe('AAA');
+    expect(s.lines).toBe(1);
+  });
+
+  it.each(['xs', 'sm'] as const)('fits MWW initials by measured width at %s', (size) => {
+    const s = fallbackTitleStyle(
+      'Mmmmmmmmmmmmmmmmmmmmmmmmm Wwwwwwwwwwwwwwwwwwwww Wwwwwwwwwwwwwwww',
+      size
+    );
+    expect(s.initials).toBe(true);
+    expect(s.text).toBe('MWW');
+    expect(MEASURED_EM.MWW * s.fontSize).toBeLessThanOrEqual(INNER_WIDTH[size]);
+  });
+
+  it('uses the first letters of each word for a long multi-word title', () => {
+    expect(fallbackTitleStyle('Pneumonoultramicroscopicsilicovolcano Dust', 'xs').text).toBe('PD');
+  });
+
+  it('keeps the default font for short titles and ordinary md/lg titles', () => {
+    expect(fallbackTitleStyle('Dune', 'xs')).toMatchObject({ fontSize: 8, lineHeight: 10 });
+    expect(fallbackTitleStyle('Dune', 'sm')).toMatchObject({ fontSize: 9, lineHeight: 11 });
+    expect(fallbackTitleStyle('Wuthering Heights', 'md')).toMatchObject({
+      fontSize: 14,
+      lineHeight: 18,
+      lines: 6,
+    });
+    expect(fallbackTitleStyle('Wuthering Heights', 'lg')).toMatchObject({
+      fontSize: 17,
+      lineHeight: 22,
+      initials: false,
+    });
+  });
+
+  it('handles an empty and a whitespace-only title', () => {
+    for (const title of ['', '   ']) {
+      const s = fallbackTitleStyle(title, 'xs');
+      expect(s.initials).toBe(false);
+      expect(s.fontSize).toBe(8);
+    }
+  });
+
+  it('never leaves a lone surrogate in initials of an emoji title', () => {
+    const title = '\u{1F600}'.repeat(30);
+    const s = fallbackTitleStyle(title, 'xs');
+    expect(s.initials).toBe(true);
+    expect(Array.from(s.text)).toHaveLength(3);
+    for (let i = 0; i < s.text.length; i++) {
+      const c = s.text.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const d = s.text.charCodeAt(i + 1);
+        expect(d >= 0xdc00 && d <= 0xdfff).toBe(true);
+        i++;
+      } else {
+        expect(c >= 0xdc00 && c <= 0xdfff).toBe(false);
+      }
+    }
+  });
+
+  it('keeps a long CJK title at the default size, not initials', () => {
+    const s = fallbackTitleStyle('\u4e09\u4f53'.repeat(7), 'xs');
+    expect(s.initials).toBe(false);
+    expect(s.fontSize).toBe(8);
+    expect(s.text).toBe('\u4e09\u4f53'.repeat(7));
+  });
+
+  it('breaks hyphenated, slashed and em-dash titles at the separator', () => {
+    const size = 'md';
+    const fs = (t: string) => fallbackTitleStyle(t, size).fontSize;
+    expect(fs('Rhinoceros-Crocodiles')).toBeGreaterThan(fs('RhinocerosCrocodiles'));
+    expect(fs('Rhinoceros/Crocodiles Story')).toBeGreaterThan(fs('RhinocerosCrocodiles Story'));
+    expect(fs('Rhinoceros\u2014Crocodiles')).toBeGreaterThan(fs('RhinocerosCrocodiles'));
+    expect(fallbackTitleStyle('AC/DC Story', 'xs').fontSize).toBeGreaterThanOrEqual(
+      fallbackTitleStyle('ACDC Story', 'xs').fontSize
+    );
+  });
+
+  it.each(['Wuthering-Heights', 'Wuthering/Heights'])(
+    'keeps the trailing separator in the break unit of %s at xs',
+    (title) => {
+      const s = fallbackTitleStyle(title, 'xs');
+      const unit = MEASURED_EM[title.includes('-') ? 'Wuthering-' : 'Wuthering/'];
+      expect(s.initials).toBe(false);
+      expect(unit * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH.xs);
+    }
+  );
+
+  it('does not let CJK text hide an unbroken Latin word', () => {
+    const s = fallbackTitleStyle('\u4e09\u4f53'.repeat(6) + 'Middlemarch', 'xs');
+    // Middlemarch alone cannot reach the floor at xs, so initials apply (not the 8px default).
+    expect(s.initials).toBe(true);
+    expect(s.fontSize).not.toBe(8);
+    const md = fallbackTitleStyle('\u4e09\u4f53'.repeat(6) + 'Middlemarch', 'md');
+    expect(MEASURED_EM.Middlemarch * md.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH.md);
+  });
+
+  it('measures a Korean title as spaced words, not per character', () => {
+    const word = '\uac00'.repeat(5);
+    const s = fallbackTitleStyle(`${word} ${word}`, 'xs');
+    expect(s.initials).toBe(false);
+    expect(s.fontSize).toBeLessThan(8);
+    expect(5 * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH.xs);
+    expect(fallbackTitleStyle('\uac00 \uac00', 'xs').fontSize).toBe(8);
+  });
+
+  it('keeps initials at 3 characters when upper-casing expands them', () => {
+    const s = fallbackTitleStyle('\u00dfzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz', 'xs');
+    expect(s.initials).toBe(true);
+    expect(Array.from(s.text)).toHaveLength(3);
+  });
+
+  it('renders the computed size and initials in the cover', async () => {
+    const { getByText } = await render(<BookCover title="Middlemarch" size="sm" testID="c" />);
+    const style = StyleSheet.flatten(getByText('Middlemarch', H).props.style);
+    expect(style.fontSize).toBe(fallbackTitleStyle('Middlemarch', 'sm').fontSize);
+    const r2 = await render(<BookCover title={'B'.repeat(30)} size="xs" />);
+    expect(r2.getByText('BBB', H)).toBeTruthy();
   });
 });

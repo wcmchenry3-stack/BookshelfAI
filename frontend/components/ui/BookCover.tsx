@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
 import { tokens } from '../../theme/tokens';
+import { chars, longestUnitEm, MEASURE_MARGIN, textEm } from '../../theme/coverTextWidths';
 import { fontFor } from '../../theme/typography';
 
 export type BookCoverSize = 'xs' | 'sm' | 'md' | 'lg';
@@ -26,6 +27,75 @@ const FALLBACK_TEXT: Record<
   md: { fontSize: 14, lineHeight: 18, lines: 6 },
   lg: { fontSize: 17, lineHeight: 22, lines: 6 },
 };
+
+/** Smallest title font the generated cover will use before it switches to initials. */
+export const FALLBACK_MIN_FONT = 6;
+
+export interface FallbackTitleStyle {
+  /** What to draw: the title, or its initials when no word fits at the floor. */
+  text: string;
+  fontSize: number;
+  lineHeight: number;
+  lines: number;
+  /** Width of the text box; the text is centred inside the frame. */
+  width: number;
+  initials: boolean;
+}
+
+/** Inset of the thin inner frame; the text box keeps 1px more air on each side. */
+function fallbackInset(frameWidth: number): number {
+  return Math.max(3, Math.round(frameWidth * 0.07));
+}
+
+/** The title's initials (up to 3 whole characters, upper case). */
+function initialsOf(title: string): string {
+  const words = title.split(/[\s\-\u2013\u2014/]+/).filter(Boolean);
+  const letters = words.length > 1 ? words.map((w) => chars(w)[0]) : chars(words[0] ?? '');
+  // Upper-case first: 'ß' becomes 'SS', so slicing afterwards keeps the label at 3 characters.
+  return chars(letters.join('').toUpperCase()).slice(0, 3).join('');
+}
+
+const halfDown = (n: number) => Math.floor(n * 2) / 2;
+
+/**
+ * Deterministic title sizing for the generated cover (#924). A word should not
+ * break mid-word, so the font is chosen from the widest unbreakable unit,
+ * measured with the real Noto Serif SemiBold advances (`theme/coverTextWidths`)
+ * plus a 4% margin. The size is the largest that fits, capped at the size's
+ * normal font and floored at `FALLBACK_MIN_FONT`. If the widest unit still does
+ * not fit at the floor, the cover shows the title's initials (up to 3, one line,
+ * larger) instead. CJK text wraps per character, so it keeps the normal size.
+ * Widths are estimates: a different font fallback can still differ slightly.
+ */
+export function fallbackTitleStyle(title: string, size: BookCoverSize): FallbackTitleStyle {
+  const base = FALLBACK_TEXT[size];
+  const frameWidth = COVER_SIZES[size].width;
+  const width = frameWidth - 2 * (fallbackInset(frameWidth) + 1);
+  const ratio = base.lineHeight / base.fontSize;
+  const fitted = halfDown(width / Math.max(longestUnitEm(title), 0.01));
+  if (fitted >= FALLBACK_MIN_FONT) {
+    const fontSize = Math.min(base.fontSize, fitted);
+    return {
+      text: title,
+      fontSize,
+      lineHeight: Math.round(fontSize * ratio),
+      lines: base.lines,
+      width,
+      initials: false,
+    };
+  }
+  const text = initialsOf(title) || title;
+  const fit = halfDown(width / (textEm(text) * MEASURE_MARGIN));
+  const fontSize = Math.min(Math.round(base.fontSize * 1.75), fit);
+  return {
+    text,
+    fontSize,
+    lineHeight: Math.round(fontSize * ratio),
+    lines: 1,
+    width,
+    initials: true,
+  };
+}
 
 export interface BookCoverProps {
   /** The book's title, drawn on the generated cover. */
@@ -169,8 +239,8 @@ const FallbackCover = memo(function FallbackCover({
   testID?: string;
 }) {
   const { theme } = useTheme();
-  const text = FALLBACK_TEXT[size];
-  const inset = Math.max(3, Math.round(width * 0.07));
+  const text = fallbackTitleStyle(title, size);
+  const inset = fallbackInset(width);
   return (
     <View
       style={[
@@ -195,6 +265,7 @@ const FallbackCover = memo(function FallbackCover({
       <Text
         style={{
           fontFamily: fontFor('600', 'serif'),
+          width: text.width,
           fontSize: text.fontSize,
           lineHeight: text.lineHeight,
           color: theme.colors.onCoverBlank,
@@ -208,7 +279,7 @@ const FallbackCover = memo(function FallbackCover({
         ellipsizeMode="tail"
         allowFontScaling={false}
       >
-        {title}
+        {text.text}
       </Text>
     </View>
   );
@@ -225,6 +296,6 @@ const styles = StyleSheet.create({
   },
   clip: { flex: 1, overflow: 'hidden' },
   spine: { position: 'absolute', top: 0, bottom: 0, left: 0, opacity: 0.12 },
-  fallback: { alignItems: 'center', justifyContent: 'center', padding: 8, overflow: 'hidden' },
+  fallback: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   innerFrame: { position: 'absolute', borderWidth: StyleSheet.hairlineWidth, opacity: 0.45 },
 });
