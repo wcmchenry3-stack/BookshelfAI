@@ -94,6 +94,8 @@ describe('BookCover call sites (#902)', () => {
       />
     );
     expect(mockCovers[0]).toMatchObject({ title: 'Dune', coverUrl: null, size: 'lg' });
+    // The detail sheet is the one place that keeps the image label.
+    expect(mockCovers[0].decorative).toBeFalsy();
   });
 
   it('BookCandidatePicker renders BookCover (sm) per candidate', async () => {
@@ -119,6 +121,8 @@ describe('BookCover call sites (#902)', () => {
       title: 'Dune',
       coverUrl: 'https://example.com/c.jpg',
       size: 'sm',
+      decorative: true,
+      testID: 'candidate-cover',
     });
   });
 });

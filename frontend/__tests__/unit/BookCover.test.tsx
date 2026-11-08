@@ -1,4 +1,4 @@
-import { StyleSheet } from 'react-native';
+import { Image, StyleSheet } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
 import { BookCover, COVER_SIZES, type BookCoverSize } from '../../components/ui/BookCover';
@@ -12,15 +12,29 @@ jest.mock('../../theme/typography', () => {
   return { ...actual, fontFor: jest.fn(actual.fontFor) };
 });
 
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: { colors: { coverBlank: '#E7E1D3', onCoverBlank: '#4A4740', shadow: '#000' } },
-  }),
+// useTheme() runs in the render body of BookCover and of the fallback, so its
+// call count shows how often they render.
+const mockUseTheme = jest.fn(() => ({
+  theme: { colors: { coverBlank: '#E7E1D3', onCoverBlank: '#4A4740', shadow: '#000' } },
 }));
+jest.mock('../../hooks/useTheme', () => ({ useTheme: () => mockUseTheme() }));
+
+// Image renders as a View with the same props, and every render is recorded
+// (calls[i][0] is the props), so CoverImage's renders and onError are visible.
+jest.mock('react-native', () => {
+  const rn = jest.requireActual('react-native');
+  const ReactLib = require('react');
+  const Image = jest.fn((props: Record<string, unknown>) => ReactLib.createElement(rn.View, props));
+  return Object.create(rn, { Image: { value: Image } });
+});
 
 const SIZES: BookCoverSize[] = ['xs', 'sm', 'md', 'lg'];
 const H = { includeHiddenElements: true };
 const URL = 'https://example.com/c.jpg';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 describe('#902 BookCover', () => {
   it.each(SIZES)('is a fixed 2:3 frame at %s', async (size) => {
@@ -169,19 +183,46 @@ describe('#902 BookCover', () => {
       </>
     );
 
+    const calls = (fn: unknown) => (fn as jest.Mock).mock.calls;
+    const imageCalls = () => calls(Image);
+
     it('does not re-render 50 covers when re-rendered with unchanged props', async () => {
       const { rerender } = await render(list());
-      const before = (fontFor as jest.Mock).mock.calls.length;
-      expect(before).toBeGreaterThanOrEqual(25);
+      const themeBefore = calls(mockUseTheme).length;
+      const fontBefore = calls(fontFor).length;
+      const imageBefore = imageCalls().length;
+      expect(fontBefore).toBeGreaterThanOrEqual(25);
+      expect(imageBefore).toBeGreaterThanOrEqual(25);
       await rerender(list());
-      expect((fontFor as jest.Mock).mock.calls.length).toBe(before);
+      // BookCover itself (memo), its fallback and its image all skip the render.
+      expect(calls(mockUseTheme).length).toBe(themeBefore);
+      expect(calls(fontFor).length).toBe(fontBefore);
+      expect(imageCalls().length).toBe(imageBefore);
     });
 
-    it('does not re-render the fallback when only the label changes', async () => {
+    it('re-renders only the frame, not the fallback or the image, when the label changes', async () => {
       const { rerender } = await render(list());
-      const before = (fontFor as jest.Mock).mock.calls.length;
+      const themeBefore = calls(mockUseTheme).length;
+      const fontBefore = calls(fontFor).length;
+      const imageBefore = imageCalls().length;
       await rerender(list('Changed'));
-      expect((fontFor as jest.Mock).mock.calls.length).toBe(before);
+      // Non-vacuous: every BookCover frame did render again (one useTheme call each)...
+      expect(calls(mockUseTheme).length - themeBefore).toBe(50);
+      // ...but the memoised fallback and image did not (this needs a stable onError).
+      expect(calls(fontFor).length).toBe(fontBefore);
+      expect(imageCalls().length).toBe(imageBefore);
+    });
+
+    it('passes the same onError to the image across renders', async () => {
+      const { rerender } = await render(
+        <BookCover title="Dune" coverUrl={URL} size="sm" testID="c" />
+      );
+      const first = imageCalls()[0][0].onError;
+      expect(typeof first).toBe('function');
+      await rerender(
+        <BookCover title="Dune" coverUrl={URL} size="sm" testID="c" accessibilityLabel="Other" />
+      );
+      for (const [props] of imageCalls()) expect(props.onError).toBe(first);
     });
   });
 });

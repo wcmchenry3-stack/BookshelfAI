@@ -259,7 +259,9 @@ describe('BookCandidatePicker', () => {
     // Both books have no cover_url — each draws the generated cover, which is
     // decorative (the row label names the book): no label, title typeset on it.
     expect(queryAllByLabelText('No cover available').length).toBe(0);
-    expect(getAllByText('Dune', { hidden: true }).length).toBe(2); // info + cover
+    // Both books: the title appears in the info block and typeset on the cover.
+    expect(getAllByText('Dune', { hidden: true }).length).toBe(2);
+    expect(getAllByText('Foundation', { hidden: true }).length).toBe(2);
   });
 
   it('renders cover image when cover_url is present', async () => {
