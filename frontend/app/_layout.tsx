@@ -4,7 +4,7 @@ import { Sentry } from '../lib/sentry';
 
 import '../src/i18n/i18n';
 
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
 import { NotoSerif_600SemiBold, NotoSerif_700Bold } from '@expo-google-fonts/noto-serif';
@@ -19,7 +19,6 @@ import { AddUnverifiedBookSheet } from '../components/AddUnverifiedBookSheet';
 import { BookCandidatePicker } from '../components/BookCandidatePicker';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { InAppBanner } from '../components/InAppBanner';
-import { ThemeToggleButton } from '../components/ThemeToggleButton';
 import { AuthProvider } from '../contexts/AuthContext';
 import { BannerProvider } from '../contexts/BannerContext';
 import { ScanJobProvider } from '../contexts/ScanJobContext';
@@ -28,9 +27,7 @@ import { useModalHandoff } from '../hooks/useModalHandoff';
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
 import { ThemeProvider } from '../theme';
-import { fontFor } from '../theme/typography';
 import { FeedbackProvider } from '../components/FeedbackWidget/FeedbackContext';
-import { HeaderFeedbackButton } from '../components/FeedbackWidget/HeaderFeedbackButton';
 import { SessionLogger } from '../components/FeedbackWidget/SessionLogger';
 
 // ES imports are hoisted, so every import above (Sentry first) has evaluated before
@@ -44,62 +41,31 @@ Sentry.addBreadcrumb({
   level: 'info',
 });
 
-function HeaderLogo() {
-  const { theme } = useTheme();
-  return (
-    <View style={headerStyles.row}>
-      <Image
-        source={require('../assets/icon.png')}
-        style={headerStyles.logo}
-        resizeMode="contain"
-        accessibilityLabel="BookshelfAI"
-        accessibilityRole="image"
-      />
-      <Text style={[headerStyles.wordmark, { color: theme.colors.primary }]}>BookshelfAI</Text>
-    </View>
-  );
-}
-
 // Separate component so useTheme() can be called inside ThemeProvider.
 function InnerStack() {
   const { theme } = useTheme();
-  // Opaque header in both themes (#906): content always starts below it, so no
-  // screen needs to guess the header height. No blur, no shadow.
+  // The tab screens have no header (#936): each owns its top safe area and its
+  // own title. Theme and help live in Settings. The header that remains is the
+  // default one on stack screens pushed over the tabs (trash, scan queue), opaque
+  // in both themes (#906) with no blur and no shadow; #932 restyles it.
   return (
     <Stack
       screenOptions={{
-        headerLeft: () => <HeaderLogo />,
-        headerRight: () => (
-          <View style={headerStyles.right}>
-            <ThemeToggleButton />
-            <HeaderFeedbackButton />
-          </View>
-        ),
         headerStyle: { backgroundColor: theme.colors.background },
+        // The back arrow follows the theme (the default tint is near-black in dark mode).
+        headerTintColor: theme.colors.primary,
         headerShadowVisible: false,
         headerTransparent: false,
       }}
     >
       {/* No app chrome on sign-in (the route is "(auth)/login": there is no (auth)/_layout); also keeps the raw route name out of the title (#908). */}
       <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
-      <Stack.Screen name="(tabs)" options={{ title: '' }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="scan-queue" options={{ title: '', headerTransparent: false }} />
       <Stack.Screen name="trash" options={{ title: '', headerTransparent: false }} />
     </Stack>
   );
 }
-
-const headerStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  // gap 16: each button has hitSlop 8, so a smaller gap makes the targets overlap.
-  right: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  logo: { width: 40, height: 40, borderRadius: 8 },
-  wordmark: {
-    fontSize: 20,
-    fontFamily: fontFor('700', 'serif'),
-    letterSpacing: -0.3,
-  },
-});
 
 /**
  * The review picker and the "Add it yourself" form (#616), never on screen at

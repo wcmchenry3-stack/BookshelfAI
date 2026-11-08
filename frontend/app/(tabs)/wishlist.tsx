@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BookDetailSheet, type DetailBook } from '../../components/library/BookDetailSheet';
 import { BoughtChip } from '../../components/library/BoughtChip';
@@ -63,6 +64,7 @@ const WishlistRow = memo(function WishlistRow({
 
 export default function WishlistScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t } = useTranslation('wishlist');
   const { activeColor } = useLibraryAccent();
   const [books, setBooks] = useState<DetailBook[]>([]);
@@ -141,7 +143,10 @@ export default function WishlistScreen() {
       <EmptyState
         message={t('empty')}
         lineHeight={24}
-        style={[styles.container, { backgroundColor: theme.colors.background }]}
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
       />
     );
   }

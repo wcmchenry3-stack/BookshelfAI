@@ -38,8 +38,11 @@ export function InAppBanner() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathname = usePathname();
   const segments = useSegments();
-  // The sign-in route has no header, so the banner sits just below the inset.
-  const hasHeader = (segments[0] as string | undefined) !== '(auth)';
+  // Only Stack screens pushed over the tabs (trash, scan queue) show the root
+  // header. The tabs (#936) and the sign-in route have none, so the banner sits
+  // just below the inset there.
+  const root = segments[0] as string | undefined;
+  const hasHeader = root !== '(auth)' && root !== '(tabs)';
   const [screenReaderOn, setScreenReaderOn] = useState(false);
 
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Alert, Platform, Pressable, View, Text, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
@@ -17,6 +18,7 @@ import { fontFor } from '../../theme/typography';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   // The usage figure reuses the scan screen's "scans left today" string.
   const { t } = useTranslation(['settings', 'scan']);
   const { usageRefreshKey } = useScanJobs();
@@ -62,7 +64,12 @@ export default function SettingsScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: theme.colors.background, paddingTop: insets.top },
+      ]}
+    >
       <Text style={{ color: theme.colors.text, marginBottom: theme.spacing.md }}>
         {t('heading')}
       </Text>

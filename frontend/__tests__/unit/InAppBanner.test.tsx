@@ -233,8 +233,10 @@ describe('InAppBanner', () => {
     });
   });
 
-  describe('floating card below the header (#909)', () => {
-    it('sits below the safe-area inset plus header, inset 16px from the sides, not full-bleed', async () => {
+  describe('floating card position (#909, #936)', () => {
+    it('sits below the safe-area inset plus header on a stack screen, inset 16px from the sides, not full-bleed', async () => {
+      mockPathname = '/trash';
+      mockSegments = ['trash'];
       const { getByTestId } = await renderWithBanner({ message: 'Book found', type: 'success' });
       await fireEvent.press(getByTestId('trigger'));
       const style = StyleSheet.flatten(getByTestId('in-app-banner').props.style);
@@ -244,6 +246,14 @@ describe('InAppBanner', () => {
       expect(style.right).toBe(16);
       expect(style.borderRadius).toBeGreaterThan(0);
       expect(style.paddingTop).not.toBe(50);
+    });
+
+    it('sits just below the safe-area inset on a tab screen, which has no header (#936)', async () => {
+      const { getByTestId } = await renderWithBanner({ message: 'Book found', type: 'success' });
+      await fireEvent.press(getByTestId('trigger'));
+      const style = StyleSheet.flatten(getByTestId('in-app-banner').props.style);
+      // Inset 0 (mocked) + 8 gap, no header height.
+      expect(style.top).toBe(0 + 8);
     });
 
     it('auto-dismisses a result banner with a View action, and View still fires', async () => {
