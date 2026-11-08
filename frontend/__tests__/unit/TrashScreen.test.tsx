@@ -3,9 +3,11 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import TrashScreen from '../../app/trash';
 import { onLibraryChanged } from '../../lib/libraryChanged';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
 // #683: the Trash screen (list, restore, errors, empty / loading / error).
 
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../lib/sentry', () => ({
   Sentry: { addBreadcrumb: jest.fn(), captureException: jest.fn() },
 }));
@@ -137,6 +139,23 @@ describe('TrashScreen', () => {
     await findByText('Dune');
     expect(mockCovers.map((c) => c.title)).toEqual(expect.arrayContaining(['Dune', 'Foundation']));
     expect(mockCovers[0]).toMatchObject({ size: 'sm', decorative: true });
+  });
+
+  it('pads the loading state by the top safe-area inset (#936)', async () => {
+    mockListTrash.mockReturnValue(new Promise(() => {}));
+    const { getByTestId } = await render(<TrashScreen />);
+    expect(hasTopPadding(getByTestId('loading-spinner'), TEST_INSET_TOP)).toBe(true);
+  });
+
+  it('pads the error state by the top safe-area inset (#936)', async () => {
+    mockListTrash.mockRejectedValueOnce(apiError(500));
+    const { findByTestId } = await render(<TrashScreen />);
+    expect(hasTopPadding(await findByTestId('trash-error'), TEST_INSET_TOP)).toBe(true);
+  });
+
+  it('pads the list by the top safe-area inset (#936)', async () => {
+    const { findByText } = await render(<TrashScreen />);
+    expect(hasTopPadding(await findByText('Dune'), TEST_INSET_TOP)).toBe(true);
   });
 
   it('shows the empty state', async () => {

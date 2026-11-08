@@ -3,11 +3,13 @@ import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import LoginScreen from '../../app/(auth)/login';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockLogin = jest.fn();
 const mockTestLogin = jest.fn();
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../hooks/useAuth', () => ({
   useAuth: () => ({ login: mockLogin, testLogin: mockTestLogin }),
 }));
@@ -68,6 +70,11 @@ beforeEach(() => {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('LoginScreen', () => {
+  it('pads the top by the safe-area inset (#936)', async () => {
+    const { getByText } = await render(<LoginScreen />);
+    expect(hasTopPadding(getByText('BookshelfAI'), TEST_INSET_TOP)).toBe(true);
+  });
+
   it('renders the app title', async () => {
     const { getByText } = await render(<LoginScreen />);
     expect(getByText('BookshelfAI')).toBeTruthy();

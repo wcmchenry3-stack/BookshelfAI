@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View } fr
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
@@ -23,6 +24,7 @@ const showTestLogin = __DEV__ && process.env.EXPO_PUBLIC_ENVIRONMENT !== 'produc
 
 export default function LoginScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { login, testLogin } = useAuth();
   const { t } = useTranslation('auth');
 
@@ -85,7 +87,9 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
+    <View
+      style={[styles.container, { backgroundColor: theme.colors.surface, paddingTop: insets.top }]}
+    >
       {/* Brand mark */}
       <Image
         source={require('../../assets/logo.png')}

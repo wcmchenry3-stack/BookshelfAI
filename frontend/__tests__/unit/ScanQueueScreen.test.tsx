@@ -12,10 +12,12 @@ import { useScanJobs } from '../../hooks/useScanJobs';
 import { SCAN_RETRY_DELAYS_MS } from '../../lib/scanErrors';
 import { leaveScanQueue } from '../../lib/scanQueueNav';
 import { FAILED_SCAN_RETENTION_MS, isFailedScanExpired, type ScanJob } from '../../lib/scanJob';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
 // #605: the scan queue screen (waiting + failed photos, retry / delete) and
 // the 7-day expiry of failed scans.
 
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
 
 const mockPost = jest.fn();
@@ -113,6 +115,13 @@ describe('scan queue screen (#605)', () => {
     const { getByText } = await renderScreen([]);
     expect(getByText('No photos are waiting.')).toBeTruthy();
     expect(getByText('No failed scans.')).toBeTruthy();
+  });
+
+  it('pads a fixed wrapper by the top safe-area inset, not the scrolled content (#936)', async () => {
+    const { getByTestId, getByText } = await renderScreen([]);
+    const wrapper = getByTestId('scan-queue-screen');
+    expect(StyleSheet.flatten(wrapper.props.style).paddingTop).toBe(TEST_INSET_TOP);
+    expect(hasTopPadding(getByText('No photos are waiting.'), TEST_INSET_TOP)).toBe(true);
   });
 
   it('lists waiting photos with their state and failed photos with Retry and Delete', async () => {

@@ -137,7 +137,7 @@ Defined in `frontend/theme/tokens.ts` (`palette`).
 ### Feedback flow
 
 - Entry points: the "Send feedback" row in Settings (the header "?" button was removed with the top bar, #936). It calls `useFeedback().openFeedback()` from `FeedbackProvider` (`components/FeedbackWidget/FeedbackContext.tsx`, mounted in `app/_layout.tsx`), which owns the single bottom-sheet `FeedbackWidget` and the `FeedbackThanksBanner`.
-- Sheet: Bug / Feature request chips + description only (max 2000). On success it closes itself and the banner (4 s, non-interactive, below the header) confirms.
+- Sheet: Bug / Feature request chips + description only (max 2000). On success it closes itself and the banner (4 s, non-interactive, at the top of the screen below the status bar) confirms.
 - Submission goes to Sentry User Feedback (`captureFeedback`, `source: 'in_app_feedback'`, tag `feedback.type`); session logs are attached for bug reports only (`SessionLogger`: 200 lines, each cut at 1,000 chars, 100 KB total, redacted before the cut: Authorization/Bearer/JWT/email/token params; never throws). Throttled per install to 5 submissions / 10 min.
 - Sheet colours come from `useTheme()`; the backdrop uses the `scrim` token (visible on Android and web through the 24px top gap; iOS `pageSheet` draws its own). The footer bar is omitted when `footer` is empty, so a closing sheet shows no empty bar. Keep the sheet/body `flexShrink: 1` (not `flex: 1`) or the body collapses to zero height and the sheet renders blank.
 - There is no floating button; do not add one over the tab bar.

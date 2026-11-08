@@ -20,7 +20,7 @@ import { fontFor } from '../theme/typography';
 // The trash (#683): entries removed from the library, kept 30 days, newest
 // deletion first. Restore returns an entry to the library; the library tabs
 // reload whenever they regain focus, so they show it as soon as the user goes
-// back. The root Stack's header is opaque for this screen (app/_layout.tsx).
+// back. The screen has no Stack header: it owns its top inset (#936).
 export default function TrashScreen() {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
