@@ -68,6 +68,19 @@ jest.mock('../../components/LoadingSpinner', () => ({
   },
 }));
 
+// #902: the Trash cards draw their cover with BookCover (decorative: the card names the book).
+const mockCovers: Record<string, unknown>[] = [];
+jest.mock('../../components/ui/BookCover', () => {
+  const actual = jest.requireActual('../../components/ui/BookCover');
+  return {
+    ...actual,
+    BookCover: (props: Record<string, unknown>) => {
+      mockCovers.push(props);
+      return require('react').createElement(actual.BookCover, props);
+    },
+  };
+});
+
 function entry(id: string, title: string, extra: Record<string, unknown> = {}) {
   return {
     id,
@@ -116,6 +129,14 @@ describe('TrashScreen', () => {
     // Only the user's own (unverified) entry carries the badge.
     expect(getByTestId('trash-item-ub-2')).toBeTruthy();
     expect(getAllByText('Unverified')).toHaveLength(1);
+  });
+
+  it('draws each cover with a decorative BookCover (#902)', async () => {
+    mockCovers.length = 0;
+    const { findByText } = await render(<TrashScreen />);
+    await findByText('Dune');
+    expect(mockCovers.map((c) => c.title)).toEqual(expect.arrayContaining(['Dune', 'Foundation']));
+    expect(mockCovers[0]).toMatchObject({ size: 'sm', decorative: true });
   });
 
   it('shows the empty state', async () => {

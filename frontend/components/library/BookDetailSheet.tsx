@@ -1,6 +1,7 @@
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { BookCover } from '../ui/BookCover';
 import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { useLibraryAccent } from './useLibraryAccent';
@@ -69,13 +70,7 @@ export function BookDetailSheet<T extends DetailBook>({
           </View>
 
           <ScrollView contentContainerStyle={styles.sheetContent}>
-            {selected.book.cover_url && (
-              <Image
-                source={{ uri: selected.book.cover_url }}
-                style={styles.sheetCover}
-                accessibilityLabel={t('coverAlt', { ns: 'common', title: selected.book.title })}
-              />
-            )}
+            <BookCover title={selected.book.title} coverUrl={selected.book.cover_url} size="lg" />
             <Text
               style={[
                 styles.sheetAuthor,
@@ -173,7 +168,6 @@ const styles = StyleSheet.create({
   sheetTitle: { fontFamily: fontFor('700'), flex: 1, marginRight: 8 },
   closeButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
   sheetContent: { padding: 16, gap: 12, alignItems: 'center' },
-  sheetCover: { width: 120, height: 180, borderRadius: 4 },
   sheetAuthor: { alignSelf: 'flex-start' },
   sheetDescription: { lineHeight: 20 },
   sheetButton: {

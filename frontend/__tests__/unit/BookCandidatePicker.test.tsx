@@ -248,7 +248,7 @@ describe('BookCandidatePicker', () => {
   });
 
   it('renders cover placeholder when cover_url is absent', async () => {
-    const { getAllByLabelText } = await render(
+    const { queryAllByLabelText, getAllByText } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={BOOKS}
@@ -256,13 +256,17 @@ describe('BookCandidatePicker', () => {
         onDismiss={onDismiss}
       />
     );
-    // Both books have no cover_url — expect placeholder views
-    expect(getAllByLabelText('No cover available').length).toBe(2);
+    // Both books have no cover_url — each draws the generated cover, which is
+    // decorative (the row label names the book): no label, title typeset on it.
+    expect(queryAllByLabelText('No cover available').length).toBe(0);
+    // Both books: the title appears in the info block and typeset on the cover.
+    expect(getAllByText('Dune', { hidden: true }).length).toBe(2);
+    expect(getAllByText('Foundation', { hidden: true }).length).toBe(2);
   });
 
   it('renders cover image when cover_url is present', async () => {
     const withCover: EnrichedBook[] = [{ ...BOOKS[0], cover_url: 'https://example.com/cover.jpg' }];
-    const { getByLabelText } = await render(
+    const { queryByLabelText, getByTestId } = await render(
       <BookCandidatePicker
         visible={true}
         candidates={withCover}
@@ -270,7 +274,11 @@ describe('BookCandidatePicker', () => {
         onDismiss={onDismiss}
       />
     );
-    expect(getByLabelText('Cover of Dune')).toBeTruthy();
+    // The cover is decorative (the row label names the book), so no image label.
+    expect(queryByLabelText('Cover of Dune')).toBeNull();
+    expect(getByTestId('candidate-cover', { hidden: true }).props.source).toEqual({
+      uri: 'https://example.com/cover.jpg',
+    });
   });
   describe('edition-level ownership (#587)', () => {
     const owned = (ownership: EnrichedBook['ownership']): EnrichedBook => ({

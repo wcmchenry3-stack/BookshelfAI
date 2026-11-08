@@ -45,13 +45,6 @@ export const KNOWN_VIOLATIONS = {
     transient: true,
     issue: 'scan ActivityIndicator is a progressbar with no name (aria-progressbar-name, serious)',
   },
-  // Wishlist cover placeholder: a <div aria-label="No cover available">
-  // with no role.
-  wishlistCoverPlaceholderLabel: {
-    rule: 'aria-prohibited-attr',
-    html: /aria-label="No cover available"/,
-    issue: 'cover placeholder has aria-label on a role-less div (aria-prohibited-attr, serious)',
-  },
   // BookCandidatePicker rows have role="checkbox" without aria-checked.
   pickerCheckboxMissingAriaChecked: {
     rule: 'aria-required-attr',
