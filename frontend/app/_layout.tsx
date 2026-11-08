@@ -44,16 +44,13 @@ Sentry.addBreadcrumb({
 // Separate component so useTheme() can be called inside ThemeProvider.
 function InnerStack() {
   const { theme } = useTheme();
-  // The tab screens have no header (#936): each owns its top safe area and its
-  // own title. Theme and help live in Settings. The header that remains is the
-  // default one on stack screens pushed over the tabs (trash, scan queue), opaque
-  // in both themes (#906) with no blur and no shadow; #932 restyles it.
+  // No screen shows a Stack header (#936): each owns its top safe area and its
+  // own title and Back link. The options are kept opaque in both themes (#906)
+  // as a fallback for any screen added without its own header.
   return (
     <Stack
       screenOptions={{
         headerStyle: { backgroundColor: theme.colors.background },
-        // The back arrow follows the theme (the default tint is near-black in dark mode).
-        headerTintColor: theme.colors.primary,
         headerShadowVisible: false,
         headerTransparent: false,
       }}
@@ -61,8 +58,9 @@ function InnerStack() {
       {/* No app chrome on sign-in (the route is "(auth)/login": there is no (auth)/_layout); also keeps the raw route name out of the title (#908). */}
       <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="scan-queue" options={{ title: '', headerTransparent: false }} />
-      <Stack.Screen name="trash" options={{ title: '', headerTransparent: false }} />
+      {/* Both have their own Back link and own the top inset (#936); #932 restyles Trash. */}
+      <Stack.Screen name="scan-queue" options={{ headerShown: false }} />
+      <Stack.Screen name="trash" options={{ headerShown: false }} />
     </Stack>
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BookCover } from '../components/ui/BookCover';
 import { LoadingSpinner } from '../components/LoadingSpinner';
@@ -22,6 +23,7 @@ import { fontFor } from '../theme/typography';
 // back. The root Stack's header is opaque for this screen (app/_layout.tsx).
 export default function TrashScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t, i18n } = useTranslation('my-books');
   const { showBanner } = useBanner();
   const { isConnected } = useOnlineOnly();
@@ -162,7 +164,12 @@ export default function TrashScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         <LoadingSpinner message={t('trash.loading')} />
       </View>
     );
@@ -170,7 +177,12 @@ export default function TrashScreen() {
 
   if (loadError && items.length === 0) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {header}
         <View style={styles.centered} testID="trash-error">
           <Text
@@ -207,7 +219,12 @@ export default function TrashScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: theme.colors.background, paddingTop: insets.top },
+      ]}
+    >
       {!isConnected && <OfflineNotice />}
       <FlatList
         testID="trash-list"

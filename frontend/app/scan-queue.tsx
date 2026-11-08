@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
@@ -35,6 +36,7 @@ interface QueueSection {
 // so the list starts below it in dark mode too.
 export default function ScanQueueScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t, i18n } = useTranslation('scan');
   // A passed "Next try at" shows "Waiting for connection": re-check every 30 s.
   const [now, setNow] = useState(() => Date.now());
@@ -133,7 +135,7 @@ export default function ScanQueueScreen() {
   return (
     <SectionList<ScanJob, QueueSection>
       style={{ backgroundColor: theme.colors.background }}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top }]}
       sections={sections}
       keyExtractor={(job) => job.id}
       stickySectionHeadersEnabled={false}

@@ -234,14 +234,14 @@ describe('InAppBanner', () => {
   });
 
   describe('floating card position (#909, #936)', () => {
-    it('sits below the safe-area inset plus header on a stack screen, inset 16px from the sides, not full-bleed', async () => {
+    it('sits just below the safe-area inset on a stack screen, inset 16px from the sides, not full-bleed', async () => {
       mockPathname = '/trash';
       mockSegments = ['trash'];
       const { getByTestId } = await renderWithBanner({ message: 'Book found', type: 'success' });
       await fireEvent.press(getByTestId('trigger'));
       const style = StyleSheet.flatten(getByTestId('in-app-banner').props.style);
-      // Platform defaults to iOS in jest: inset 0 (mocked) + 44 header + 8 gap.
-      expect(style.top).toBe(44 + 8);
+      // Inset 0 (mocked) + 8 gap: no screen has a Stack header (#936).
+      expect(style.top).toBe(0 + 8);
       expect(style.left).toBe(16);
       expect(style.right).toBe(16);
       expect(style.borderRadius).toBeGreaterThan(0);

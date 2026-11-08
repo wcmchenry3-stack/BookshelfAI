@@ -112,6 +112,13 @@ describe('RootLayout header wiring (#756, #936)', () => {
     expect(tabs?.options?.headerShown).toBe(false);
   });
 
+  it('hides the Stack header on trash and scan-queue, which have their own Back link', async () => {
+    await render(<RootLayoutDefault />);
+    for (const name of ['trash', 'scan-queue']) {
+      expect(mockStack.screens.find((x) => x.name === name)?.options?.headerShown).toBe(false);
+    }
+  });
+
   it('no longer puts the logo, theme toggle or feedback "?" in the Stack header', async () => {
     const { queryByTestId } = await render(<RootLayoutDefault />);
     expect(mockStack.screenOptions?.headerLeft).toBeUndefined();
