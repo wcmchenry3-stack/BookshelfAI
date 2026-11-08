@@ -1,6 +1,6 @@
 import React from 'react';
 import { Platform } from 'react-native';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import ScanScreen from '../../app/(tabs)/scan';
 import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
@@ -359,6 +359,19 @@ describe('ScanScreen — native capture flow', () => {
 // ---------------------------------------------------------------------------
 // Web camera mode
 // ---------------------------------------------------------------------------
+// The web file input is a raw DOM <input>, so it carries `data-testid` (a DOM
+// attribute) rather than `testID`, which RNTL's *ByTestId queries match. Find it
+// by that attribute instead. It is display:none, so query the container directly.
+async function getWebInput(utils: Awaited<ReturnType<typeof render>>) {
+  return waitFor(() => {
+    const [input] = utils.container.queryAll(
+      (node) => node.type === 'input' && node.props['data-testid'] === 'web-file-input'
+    );
+    if (!input) throw new Error('Unable to find the web file input');
+    return input;
+  });
+}
+
 describe('ScanScreen — web camera mode', () => {
   setPlatform('web');
 
@@ -367,12 +380,6 @@ describe('ScanScreen — web camera mode', () => {
     expect(getByLabelText('Capture books')).toBeTruthy();
     expect(queryByLabelText('Flip camera')).toBeNull();
   });
-
-  async function getWebInput(utils: Awaited<ReturnType<typeof render>>) {
-    // The input is style={{ display: 'none' }}, and v14 excludes hidden
-    // elements from queries by default.
-    return utils.findByTestId('web-file-input', { includeHiddenElements: true });
-  }
 
   it('renders hidden file input with correct attributes', async () => {
     const utils = await render(<ScanScreen />);
@@ -755,7 +762,7 @@ describe('ScanScreen — offline queue cap (web)', () => {
     mockQueueState = { pendingCount: 50, isQueueFull: true };
     const mockFile = new File(['img'], 'scan.jpg', { type: 'image/jpeg' });
     const utils = await render(<ScanScreen />);
-    const input = await utils.findByTestId('web-file-input', { includeHiddenElements: true });
+    const input = await getWebInput(utils);
     await act(async () => await fireEvent(input, 'change', { target: { files: [mockFile] } }));
 
     expect(mockStartScan).not.toHaveBeenCalled();
