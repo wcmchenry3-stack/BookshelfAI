@@ -230,3 +230,24 @@ describe('LibraryRow performance (#929)', () => {
     expect(touched.map(([title]) => title)).toEqual(['Book 7']);
   });
 });
+
+describe('LibraryRow metaText (#932)', () => {
+  it('replaces the status line, with no status dot, in the danger colour when asked', async () => {
+    const { getByText, queryByTestId } = await render(
+      <LibraryRow item={makeItem()} metaText="Deleted for good in 2 days" metaTone="danger" />
+    );
+    const style = StyleSheet.flatten(getByText('Deleted for good in 2 days').props.style);
+    expect(style.color).toBe(lightTheme.colors.danger);
+    expect(queryByTestId('book-row-dot')).toBeNull();
+    expect(() => getByText(/Wishlisted/)).toThrow();
+  });
+
+  it('reads a row without onPress as one label for the text block', async () => {
+    const { getByTestId } = await render(
+      <LibraryRow item={makeItem()} accessibilityLabel="Dune, Frank Herbert. Soon" />
+    );
+    const text = getByTestId('book-row-text');
+    expect(text.props.accessible).toBe(true);
+    expect(text.props.accessibilityLabel).toBe('Dune, Frank Herbert. Soon');
+  });
+});
