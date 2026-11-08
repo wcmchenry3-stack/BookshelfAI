@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Platform,
   Pressable,
   StyleSheet,
   TextInput,
@@ -11,6 +12,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 
 import { useTheme } from '../../hooks/useTheme';
 import { fontFor } from '../../theme/typography';
+import { useFocusRing } from './useFocusRing';
 
 export interface SearchFieldProps {
   value: string;
@@ -39,11 +41,15 @@ export function SearchField({
   const { theme } = useTheme();
   const inputRef = React.useRef<TextInput>(null);
   const showClear = value.length > 0;
+  // Text inputs show focus on click too, so the field ring appears on any focus.
+  const field = useFocusRing({ always: true });
+  const clearRing = useFocusRing();
   return (
     // The 44px wrapper owns the clear target (Android clips hitSlop outside the parent);
     // the visible field is a 40px box inside it.
     <View style={[styles.outer, style]}>
       <View
+        testID={testID ? `${testID}-field` : undefined}
         style={[
           styles.wrap,
           {
@@ -51,6 +57,7 @@ export function SearchField({
             borderColor: theme.colors.outlineField,
             borderRadius: theme.radius.field,
           },
+          field.focusStyle,
         ]}
       >
         <MaterialIcons name="search" size={20} color={theme.colors.onSurfaceVariant} />
@@ -60,6 +67,8 @@ export function SearchField({
             styles.input,
             { color: theme.colors.onSurface, fontFamily: fontFor('400') },
             showClear && styles.inputWithClear,
+            // The field container shows the ring; drop the browser's second outline.
+            Platform.OS === 'web' && styles.inputNoOutline,
           ]}
           value={value}
           onChangeText={onChangeText}
@@ -71,6 +80,7 @@ export function SearchField({
           onSubmitEditing={onSubmitEditing}
           accessibilityLabel={accessibilityLabel}
           testID={testID}
+          {...field.focusProps}
         />
       </View>
       {showClear ? (
@@ -82,7 +92,8 @@ export function SearchField({
           accessibilityRole="button"
           accessibilityLabel={clearAccessibilityLabel}
           testID={testID ? `${testID}-clear` : 'search-clear'}
-          style={styles.clear}
+          {...clearRing.focusProps}
+          style={[styles.clear, clearRing.focusStyle]}
         >
           <MaterialIcons name="close" size={18} color={theme.colors.onSurfaceVariant} />
         </Pressable>
@@ -103,6 +114,7 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, minHeight: 38, fontSize: 16, paddingVertical: 0 },
   inputWithClear: { paddingRight: 44 },
+  inputNoOutline: { outlineWidth: 0 },
   clear: {
     position: 'absolute',
     right: 0,

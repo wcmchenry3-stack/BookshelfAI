@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from 'react-nat
 
 import { useTheme } from '../../hooks/useTheme';
 import { AppText } from './AppText';
+import { useFocusRing } from './useFocusRing';
 
 export interface ChipProps {
   label: string;
@@ -29,6 +30,7 @@ export function Chip({
   style,
 }: ChipProps) {
   const { theme } = useTheme();
+  const { focusProps, focusStyle } = useFocusRing();
   const text = count === undefined ? label : `${label} ${count}`;
   return (
     <Pressable
@@ -38,6 +40,7 @@ export function Chip({
       accessibilityLabel={accessibilityLabel ?? text}
       accessibilityState={{ selected, disabled }}
       testID={testID}
+      {...focusProps}
       style={({ pressed }) => [
         styles.base,
         {
@@ -46,6 +49,7 @@ export function Chip({
           borderRadius: theme.radius.chip,
           opacity: disabled ? 0.4 : pressed ? 0.85 : 1,
         },
+        focusStyle,
         style,
       ]}
     >

@@ -12,6 +12,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../hooks/useTheme';
 import type { ColorKey } from '../../theme/light';
 import { AppText } from './AppText';
+import { useFocusRing } from './useFocusRing';
 
 type ButtonVariant = 'primary' | 'secondary' | 'text' | 'destructive';
 export type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
@@ -58,6 +59,7 @@ export function Button({
   const { bg, fg } = COLOURS[variant];
   const inactive = disabled || loading;
   const fgColour = theme.colors[fg];
+  const { focusProps, focusStyle } = useFocusRing();
   return (
     <Pressable
       onPress={onPress}
@@ -67,6 +69,7 @@ export function Button({
       accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled: inactive, busy: loading }}
       testID={testID}
+      {...focusProps}
       style={({ pressed }) => [
         styles.base,
         variant === 'text' ? styles.textHeight : styles.solidHeight,
@@ -75,6 +78,7 @@ export function Button({
           borderRadius: theme.radius.button,
           opacity: disabled ? 0.4 : pressed ? 0.85 : 1,
         },
+        focusStyle,
         style,
       ]}
     >
