@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
 
-import { BookRow } from '../../components/library/BookRow';
+import { LibraryRow } from '../../components/library/LibraryRow';
 import { BookDetailSheet, type DetailBook } from '../../components/library/BookDetailSheet';
 import { BookCandidatePicker } from '../../components/BookCandidatePicker';
 import type { LibraryBook } from '../../components/library/libraryShared';
@@ -21,27 +21,7 @@ jest.mock('../../components/ui/BookCover', () => {
   };
 });
 
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      isDark: false,
-      colors: {
-        background: '#fff',
-        surface: '#f5f5f5',
-        border: '#ccc',
-        text: '#000',
-        textSecondary: '#888',
-        primary: '#0f426f',
-        onPrimary: '#fff',
-        secondaryContainer: '#c6e7dd',
-        onSecondaryContainer: '#4b6861',
-        surfaceContainerLow: '#f5f3ef',
-      },
-      radius: { button: 12 },
-      typography: { fontSizeBase: 16, fontSizeLG: 20, fontSizeSM: 14, fontSizeXS: 12 },
-    },
-  }),
-}));
+jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 
 const ITEM = {
   id: 'ub-1',
@@ -61,25 +41,17 @@ beforeEach(() => {
 });
 
 describe('BookCover call sites (#902)', () => {
-  it('BookRow renders a decorative BookCover (sm), tappable or not', async () => {
-    await render(
-      <BookRow item={ITEM} categoryLabel="x">
-        <></>
-      </BookRow>
-    );
+  it('LibraryRow renders a decorative BookCover (xs), tappable or not', async () => {
+    await render(<LibraryRow item={ITEM} />);
     expect(mockCovers[0]).toMatchObject({
       title: 'Dune',
       coverUrl: 'https://example.com/c.jpg',
-      size: 'sm',
+      size: 'xs',
       decorative: true,
       testID: 'book-row-cover',
     });
     mockCovers.length = 0;
-    await render(
-      <BookRow item={ITEM} categoryLabel="x" onPress={() => {}}>
-        <></>
-      </BookRow>
-    );
+    await render(<LibraryRow item={ITEM} onPress={() => {}} />);
     expect(mockCovers[0]).toMatchObject({ decorative: true });
   });
 

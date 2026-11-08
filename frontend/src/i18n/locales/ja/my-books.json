@@ -15,9 +15,16 @@
     "read": "読了"
   },
   "filterBy": "{{label}}で絞り込む",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 未確認",
+  "bookCardA11y": "{{title}} — {{status}}、著者 {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}、著者 {{author}} — 未確認",
   "bookCardHint": "タップして詳細とオプションを見る",
+  "moreOptionsA11y": "{{title}}のその他のオプション",
+  "actions": {
+    "viewDetails": "詳細を見る",
+    "remove": "ライブラリから削除",
+    "close": "閉じる"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "{{status}}にする",
   "markAsA11y": "{{status}}にする",
   "removeFromList": "リストから削除",

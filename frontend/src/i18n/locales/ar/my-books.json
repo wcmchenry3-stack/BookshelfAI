@@ -15,9 +15,16 @@
     "read": "مقروء"
   },
   "filterBy": "تصفية حسب {{label}}",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — غير موثّق",
+  "bookCardA11y": "{{title}} — {{status}}، تأليف {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}، تأليف {{author}} — غير موثّق",
   "bookCardHint": "اضغط لرؤية التفاصيل والخيارات",
+  "moreOptionsA11y": "خيارات إضافية لـ {{title}}",
+  "actions": {
+    "viewDetails": "عرض التفاصيل",
+    "remove": "إزالة من المكتبة",
+    "close": "إغلاق"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "وضع كـ {{status}}",
   "markAsA11y": "وضع كـ {{status}}",
   "removeFromList": "إزالة من القائمة",

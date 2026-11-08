@@ -3,21 +3,28 @@
   "noBooksYet": "Nog geen boeken hier.",
   "statusTab": {
     "all": "Alle",
-    "wishlisted": "Wishlist",
+    "wishlisted": "Verlanglijst",
     "purchased": "Gekocht",
     "reading": "Lezen",
     "read": "Gelezen"
   },
   "status": {
-    "wishlisted": "Wishlist",
+    "wishlisted": "Verlanglijst",
     "purchased": "Gekocht",
     "reading": "Lezen",
     "read": "Gelezen"
   },
   "filterBy": "Filter op {{label}}",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Niet geverifieerd",
+  "bookCardA11y": "{{title}} — {{status}}, door {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, door {{author}} — Niet geverifieerd",
   "bookCardHint": "Tik voor details en opties",
+  "moreOptionsA11y": "Meer opties voor {{title}}",
+  "actions": {
+    "viewDetails": "Details bekijken",
+    "remove": "Verwijder uit bibliotheek",
+    "close": "Sluiten"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "Markeer als {{status}}",
   "markAsA11y": "Markeer als {{status}}",
   "removeFromList": "Verwijder uit lijst",

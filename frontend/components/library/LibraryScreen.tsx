@@ -4,10 +4,12 @@ import { StyleSheet, View } from 'react-native';
 import { useTheme } from '../../hooks/useTheme';
 
 /** Full-height, theme-background container shared by the My Books and Wishlist screens. */
-export function LibraryScreen({ children }: { children: ReactNode }) {
+export function LibraryScreen({ children, testID }: { children: ReactNode; testID?: string }) {
   const { theme } = useTheme();
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>{children}</View>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]} testID={testID}>
+      {children}
+    </View>
   );
 }
 

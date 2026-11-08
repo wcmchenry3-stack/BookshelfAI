@@ -28,3 +28,14 @@ export interface LibraryBook {
     publish_year: number | null;
   } | null;
 }
+
+/** The theme colour role of each status; used for the dot in a row's meta line. */
+export const STATUS_COLOR_KEY = {
+  wishlisted: 'statusWishlist',
+  purchased: 'statusPurchased',
+  reading: 'statusReading',
+  read: 'statusRead',
+} as const;
+
+/** Left inset of a row's divider: row padding (16) + xs cover (48) + gap (14). */
+export const ROW_DIVIDER_INSET = 16 + 48 + 14;

@@ -3,21 +3,28 @@
   "noBooksYet": "Nenhum livro aqui ainda.",
   "statusTab": {
     "all": "Todos",
-    "wishlisted": "Wishlist",
+    "wishlisted": "Desejos",
     "purchased": "Comprados",
     "reading": "Lendo",
     "read": "Lidos"
   },
   "status": {
-    "wishlisted": "Wishlist",
+    "wishlisted": "Desejos",
     "purchased": "Comprado",
     "reading": "Lendo",
     "read": "Lido"
   },
   "filterBy": "Filtrar por {{label}}",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Não verificado",
+  "bookCardA11y": "{{title}} — {{status}}, de {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, de {{author}} — Não verificado",
   "bookCardHint": "Toque para ver detalhes e opções",
+  "moreOptionsA11y": "Mais opções para {{title}}",
+  "actions": {
+    "viewDetails": "Ver detalhes",
+    "remove": "Remover da biblioteca",
+    "close": "Fechar"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "Marcar como {{status}}",
   "markAsA11y": "Marcar como {{status}}",
   "removeFromList": "Remover da lista",

@@ -3,21 +3,28 @@
   "noBooksYet": "아직 책이 없습니다.",
   "statusTab": {
     "all": "전체",
-    "wishlisted": "Wishlist",
+    "wishlisted": "위시리스트",
     "purchased": "구매함",
     "reading": "읽는 중",
     "read": "읽음"
   },
   "status": {
-    "wishlisted": "Wishlist",
+    "wishlisted": "위시리스트",
     "purchased": "구매함",
     "reading": "읽는 중",
     "read": "읽음"
   },
   "filterBy": "{{label}}별 필터",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 미확인",
+  "bookCardA11y": "{{title}} — {{status}}, 저자 {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, 저자 {{author}} — 미확인",
   "bookCardHint": "탭하여 세부정보 보기",
+  "moreOptionsA11y": "{{title}} 추가 옵션",
+  "actions": {
+    "viewDetails": "세부정보 보기",
+    "remove": "라이브러리에서 제거",
+    "close": "닫기"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "{{status}}로 표시",
   "markAsA11y": "{{status}}로 표시",
   "removeFromList": "목록에서 제거",

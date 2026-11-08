@@ -212,7 +212,7 @@ frontend/__tests__/
 | `scanJobMocks.ts` | `scanMocks` (spies: `post`, `get`, `loadJobs`, `saveJobs`, `netFetch`, `captureMessage`, `captureException`, plus the registered `netListener` and the uuid counter), `resetScanMocks()`, the `jest.mock` factories `authedModule`, `scanApiModule`, `scanStorageModule`, `netInfoModule`, `sentryModule`, `cryptoModule`, and the fixtures `refusal`, `scanOk`, `queuedImageJob`, `queuedJob` | Every test that renders `ScanJobProvider`. It imports no app code, so the factories can be `require`d while app modules load |
 | `providers.tsx` | `ScanJobsWrapper`, `renderScanJobs`, `renderScanJobsWithBanner`, `reconnectAndDrain` | The Banner + ScanJob provider wrapper for `renderHook`, and firing the NetInfo listener then running the drain |
 | `wishlistFlow.tsx` | `book`, `httpError`, `scanAndAdd` | The "scan a photo, review, add to the wishlist" flow behind `POST /wishlist` refusal tests |
-| `screenMocks.tsx` | `themeModule`, `loadingSpinnerModule`, `focusEffectRouterModule`, `userBookRow` | Library screen tests: the `useTheme` token set, a spinner stand-in, `useFocusEffect` on mount, and a `/user-books` row |
+| `screenMocks.tsx` | `themeModule`, `loadingSpinnerModule`, `focusEffectRouterModule`, `userBookRow` | Library screen tests: `useTheme` returning the real light theme, a spinner stand-in, `useFocusEffect` on mount, and a `/user-books` row |
 
 `jest.mock` calls stay in the test file, because babel-jest hoists them above imports. Pass the helper in through a factory that `require`s it:
 

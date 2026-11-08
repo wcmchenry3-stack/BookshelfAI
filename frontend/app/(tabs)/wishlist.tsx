@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, RefreshControl, StyleSheet } from 'react-native';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, FlatList, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import { BookRow, BookRowAction } from '../../components/library/BookRow';
+import { BookDetailSheet, type DetailBook } from '../../components/library/BookDetailSheet';
+import { BoughtChip } from '../../components/library/BoughtChip';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
+import { LibraryRow } from '../../components/library/LibraryRow';
+import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
-import type { LibraryBook } from '../../components/library/libraryShared';
+import { SCREEN_PADDING } from '../../components/library/libraryShared';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
@@ -17,25 +20,73 @@ import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
 import { isServiceUnavailable } from '../../lib/apiErrorReporting';
 
+interface WishlistRowProps {
+  item: DetailBook;
+  disabled: boolean;
+  onOpen: (item: DetailBook) => void;
+  onBought: (item: DetailBook) => void;
+}
+
+/** One Wishlist row: opens the detail sheet; the "Bought" chip moves it to purchased. */
+const WishlistRow = memo(function WishlistRow({
+  item,
+  disabled,
+  onOpen,
+  onBought,
+}: WishlistRowProps) {
+  const { t } = useTranslation('wishlist');
+  return (
+    <LibraryRow
+      item={item}
+      showStatus={false}
+      onPress={() => onOpen(item)}
+      // This labels the row's tap target (the text is inert), so the Unverified
+      // badge (#616) must be said here too.
+      accessibilityLabel={t(item.unverified ? 'rowUnverifiedA11y' : 'rowA11y', {
+        title: item.book.title,
+        status: t('statusTab.wishlisted', { ns: 'my-books' }),
+        author: item.book.author,
+      })}
+      accessibilityHint={t('rowHint')}
+      trailing={
+        <BoughtChip
+          label={t('bought')}
+          accessibilityLabel={t('boughtA11y', { title: item.book.title })}
+          onPress={() => onBought(item)}
+          disabled={disabled}
+          testID={`wishlist-bought-${item.id}`}
+        />
+      }
+    />
+  );
+});
+
 export default function WishlistScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation('wishlist');
   const { activeColor } = useLibraryAccent();
-  const [books, setBooks] = useState<LibraryBook[]>([]);
+  const [books, setBooks] = useState<DetailBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [selected, setSelected] = useState<DetailBook | null>(null);
 
-  const { isConnected, mutatingIds, advanceStatus, removeBook } = useLibraryMutations<LibraryBook>({
+  const { isConnected, mutatingIds, advanceStatus, removeBook } = useLibraryMutations<DetailBook>({
     namespace: 'wishlist',
     nextStatus: () => 'purchased',
     // Only after the server confirms: the book is no longer wishlisted.
-    onAdvanced: (item) => setBooks((prev) => prev.filter((b) => b.id !== item.id)),
-    onRemoved: (item) => setBooks((prev) => prev.filter((b) => b.id !== item.id)),
+    onAdvanced: (item) => {
+      setBooks((prev) => prev.filter((b) => b.id !== item.id));
+      setSelected(null);
+    },
+    onRemoved: (item) => {
+      setBooks((prev) => prev.filter((b) => b.id !== item.id));
+      setSelected(null);
+    },
   });
 
   async function fetchWishlist() {
     try {
-      const { data } = await api.get<LibraryBook[]>('/user-books', {
+      const { data } = await api.get<DetailBook[]>('/user-books', {
         params: { status: 'wishlisted' },
       });
       setBooks(data);
@@ -69,6 +120,14 @@ export default function WishlistScreen() {
   // A restore from the Trash (#683) can finish after this screen's focus reload.
   useEffect(() => onLibraryChanged(() => void fetchWishlistRef.current()), []);
 
+  // The latest advanceStatus, so the row callbacks below stay stable.
+  const advanceRef = useRef(advanceStatus);
+  useEffect(() => {
+    advanceRef.current = advanceStatus;
+  });
+  const openDetail = useCallback((item: DetailBook) => setSelected(item), []);
+  const markBought = useCallback((item: DetailBook) => void advanceRef.current(item), []);
+
   if (loading) {
     return (
       <LibraryScreen>
@@ -98,43 +157,34 @@ export default function WishlistScreen() {
   );
 
   return (
-    <LibraryScreen>
+    <LibraryScreen testID="wishlist-screen">
       <FlatList
         data={books}
-        keyExtractor={(item) => item.id}
+        {...LIBRARY_LIST_PROPS}
         contentContainerStyle={styles.list}
-        ListHeaderComponent={listHeader}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              void fetchWishlist();
-            }}
-            tintColor={activeColor}
+        ListHeaderComponent={<View style={styles.header}>{listHeader}</View>}
+        refreshControl={libraryRefreshControl(
+          refreshing,
+          setRefreshing,
+          () => fetchWishlist(),
+          activeColor
+        )}
+        renderItem={({ item }) => (
+          <WishlistRow
+            item={item}
+            disabled={!isConnected || mutatingIds.has(item.id)}
+            onOpen={openDetail}
+            onBought={markBought}
           />
-        }
-        renderItem={({ item }) => {
-          const actionsDisabled = !isConnected || mutatingIds.has(item.id);
-          return (
-            <BookRow item={item} categoryLabel={t('categoryLabel')}>
-              <BookRowAction
-                variant="primary"
-                label={t('markPurchased')}
-                accessibilityLabel={t('markPurchasedA11y', { title: item.book.title })}
-                onPress={() => advanceStatus(item)}
-                disabled={actionsDisabled}
-              />
-              <BookRowAction
-                variant="secondary"
-                label={t('remove')}
-                accessibilityLabel={t('removeA11y', { title: item.book.title })}
-                onPress={() => removeBook(item)}
-                disabled={actionsDisabled}
-              />
-            </BookRow>
-          );
-        }}
+        )}
+      />
+
+      <BookDetailSheet
+        selected={selected}
+        actionsDisabled={!isConnected || (selected != null && mutatingIds.has(selected.id))}
+        onClose={() => setSelected(null)}
+        onAdvance={advanceStatus}
+        onRemove={removeBook}
       />
     </LibraryScreen>
   );
@@ -142,5 +192,6 @@ export default function WishlistScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  list: { padding: 16, gap: 12 },
+  list: { paddingVertical: 16 },
+  header: { paddingHorizontal: SCREEN_PADDING },
 });

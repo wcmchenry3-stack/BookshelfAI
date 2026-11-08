@@ -42,25 +42,7 @@ jest.mock('@react-native-community/netinfo', () => ({
   },
 }));
 
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      isDark: false,
-      colors: {
-        background: '#fff',
-        surface: '#f5f5f5',
-        border: '#ccc',
-        text: '#000',
-        textSecondary: '#888',
-        primary: '#007AFF',
-        errorContainer: '#ffdad6',
-        onErrorContainer: '#93000a',
-      },
-      radius: { button: 12 },
-      typography: { fontSizeBase: 16, fontSizeSM: 14, fontSizeXS: 12 },
-    },
-  }),
-}));
+jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 
 jest.mock('../../components/LoadingSpinner', () => ({
   LoadingSpinner: () => null,
@@ -91,44 +73,47 @@ beforeEach(() => {
 });
 
 describe('Wishlist — offline', () => {
-  it('shows the offline notice and locks the mutation buttons', async () => {
+  it('shows the offline notice and locks the Bought chip and the sheet Remove', async () => {
     const { findByLabelText, getByTestId } = await render(<WishlistScreen />);
-    const markPurchased = await findByLabelText('Mark Dune as purchased');
-    const remove = await findByLabelText('Remove Dune from wishlist');
+    const markPurchased = await findByLabelText('Mark Dune as bought');
 
     expect(getByTestId('offline-notice')).toBeTruthy();
     expect(isDisabled(markPurchased)).toBe(true);
-    expect(isDisabled(remove)).toBe(true);
+
+    await fireEvent.press(await findByLabelText('Dune — Wishlist, by Frank Herbert'));
+    expect(isDisabled(await findByLabelText('Remove Dune'))).toBe(true);
   });
 
   it('sends no request when a locked button is pressed', async () => {
-    const { findByLabelText, queryByText } = await render(<WishlistScreen />);
-    const markPurchased = await findByLabelText('Mark Dune as purchased');
-    const remove = await findByLabelText('Remove Dune from wishlist');
+    const { findByLabelText, getByTestId } = await render(<WishlistScreen />);
+    const markPurchased = await findByLabelText('Mark Dune as bought');
 
     await act(async () => {
       await fireEvent.press(markPurchased);
-      await fireEvent.press(remove);
+    });
+    await fireEvent.press(await findByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Remove Dune'));
     });
 
     expect(mockPatch).not.toHaveBeenCalled();
     expect(mockDelete).not.toHaveBeenCalled();
-    expect(queryByText('Dune')).toBeTruthy();
+    expect(getByTestId('book-row-text', { hidden: true })).toBeTruthy();
   });
 
   it('re-enables actions and hides the notice when the connection returns', async () => {
     const { findByLabelText, queryByTestId } = await render(<WishlistScreen />);
-    await findByLabelText('Mark Dune as purchased');
+    await findByLabelText('Mark Dune as bought');
 
     await act(async () => {
       mockEmit(true);
     });
 
     await waitFor(() => expect(queryByTestId('offline-notice')).toBeNull());
-    expect(isDisabled(await findByLabelText('Mark Dune as purchased'))).toBe(false);
+    expect(isDisabled(await findByLabelText('Mark Dune as bought'))).toBe(false);
 
     await act(async () => {
-      await fireEvent.press(await findByLabelText('Mark Dune as purchased'));
+      await fireEvent.press(await findByLabelText('Mark Dune as bought'));
     });
     expect(mockPatch).toHaveBeenCalledWith('/user-books/ub-1', { status: 'purchased' });
   });
@@ -136,7 +121,7 @@ describe('Wishlist — offline', () => {
   it('locks the buttons again if the connection drops', async () => {
     mockInitiallyConnected = true;
     const { findByLabelText, queryByTestId } = await render(<WishlistScreen />);
-    expect(isDisabled(await findByLabelText('Mark Dune as purchased'))).toBe(false);
+    expect(isDisabled(await findByLabelText('Mark Dune as bought'))).toBe(false);
     expect(queryByTestId('offline-notice')).toBeNull();
 
     await act(async () => {
@@ -144,38 +129,39 @@ describe('Wishlist — offline', () => {
     });
 
     await waitFor(async () =>
-      expect(isDisabled(await findByLabelText('Mark Dune as purchased'))).toBe(true)
+      expect(isDisabled(await findByLabelText('Mark Dune as bought'))).toBe(true)
     );
     expect(queryByTestId('offline-notice')).toBeTruthy();
   });
 });
 
 describe('My Books — offline', () => {
-  it('shows the offline notice and locks card and sheet mutation buttons', async () => {
+  it('shows the offline notice and locks the menu and detail sheet mutation buttons', async () => {
     const { findByLabelText, getByLabelText, getByTestId } = await render(<MyBooksScreen />);
-    const markAs = await findByLabelText('Mark as Purchased');
-    const remove = await findByLabelText('Remove Dune');
+    await fireEvent.press(await findByLabelText('More options for Dune'));
 
-    expect(getByTestId('offline-notice')).toBeTruthy();
-    expect(isDisabled(markAs)).toBe(true);
-    expect(isDisabled(remove)).toBe(true);
+    expect(getByTestId('offline-notice', { hidden: true })).toBeTruthy();
+    expect(isDisabled(await findByLabelText('Mark as Purchased'))).toBe(true);
+    expect(isDisabled(await findByLabelText('Remove from library'))).toBe(true);
+    // Viewing details needs no connection.
+    expect(isDisabled(await findByLabelText('View details'))).toBe(false);
 
     // The detail sheet's buttons are locked too.
-    await fireEvent.press(getByLabelText('Dune — wishlisted'));
+    await fireEvent.press(await findByLabelText('Close'));
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
     await waitFor(() => {
       const sheetButtons = getByLabelText('Mark as Purchased', { includeHiddenElements: false });
       expect(isDisabled(sheetButtons)).toBe(true);
     });
   });
 
-  it('sends no request when a locked button is pressed', async () => {
+  it('sends no request when a locked menu row is pressed', async () => {
     const { findByLabelText } = await render(<MyBooksScreen />);
-    const markAs = await findByLabelText('Mark as Purchased');
-    const remove = await findByLabelText('Remove Dune');
+    await fireEvent.press(await findByLabelText('More options for Dune'));
 
     await act(async () => {
-      await fireEvent.press(markAs);
-      await fireEvent.press(remove);
+      await fireEvent.press(await findByLabelText('Mark as Purchased'));
+      await fireEvent.press(await findByLabelText('Remove from library'));
     });
 
     expect(mockPatch).not.toHaveBeenCalled();
@@ -184,7 +170,7 @@ describe('My Books — offline', () => {
 
   it('allows the mutation once the connection returns', async () => {
     const { findByLabelText, queryByTestId } = await render(<MyBooksScreen />);
-    await findByLabelText('Mark as Purchased');
+    await fireEvent.press(await findByLabelText('More options for Dune'));
 
     await act(async () => {
       mockEmit(true);

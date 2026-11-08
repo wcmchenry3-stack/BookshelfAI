@@ -1,6 +1,6 @@
 import React from 'react';
 import { Alert } from 'react-native';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 
 import WishlistScreen from '../../app/(tabs)/wishlist';
 
@@ -22,21 +22,7 @@ jest.mock('expo-router', () => ({
   },
 }));
 
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      colors: {
-        background: '#fff',
-        surface: '#f5f5f5',
-        border: '#ccc',
-        text: '#000',
-        textSecondary: '#888',
-        primary: '#007AFF',
-      },
-      typography: { fontSizeBase: 16, fontSizeSM: 14 },
-    },
-  }),
-}));
+jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 
 jest.mock('../../components/LoadingSpinner', () => ({
   LoadingSpinner: ({ message }: { message?: string }) => {
@@ -65,6 +51,14 @@ beforeEach(() => {
   mockDelete.mockResolvedValue({});
 });
 
+const HIDDEN = { hidden: true };
+/** Text inside the rows' text blocks (the generated cover also typesets the title). */
+function rowTexts(screen: { queryAllByTestId: (id: string, o: object) => unknown[] }) {
+  return (screen.queryAllByTestId('book-row-text', HIDDEN) as Parameters<typeof within>[0][]).map(
+    (el) => within(el)
+  );
+}
+
 describe('WishlistScreen', () => {
   it('shows loading spinner on mount', async () => {
     mockGet.mockReturnValue(new Promise(() => {})); // never resolves
@@ -80,30 +74,35 @@ describe('WishlistScreen', () => {
 
   it('renders book titles and authors when data loaded', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1, BOOK_2] });
-    const { getByText } = await render(<WishlistScreen />);
+    const screen = await render(<WishlistScreen />);
     await waitFor(
       () => {
-        expect(getByText('Dune')).toBeTruthy();
-        expect(getByText('Frank Herbert')).toBeTruthy();
-        expect(getByText('Foundation')).toBeTruthy();
+        const rows = rowTexts(screen);
+        expect(rows).toHaveLength(2);
+        expect(rows[0].getByText('Dune', HIDDEN)).toBeTruthy();
+        expect(rows[0].getByText('Frank Herbert', HIDDEN)).toBeTruthy();
+        expect(rows[1].getByText('Foundation', HIDDEN)).toBeTruthy();
       },
       { timeout: 10_000 }
     );
   }, 15_000);
 
-  it('renders publish year when edition has one', async () => {
+  it('renders only the publish year in the meta line (no status on the wishlist)', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
-    const { getByText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByText('1965')).toBeTruthy());
+    const { getByText, queryByTestId } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByText('1965', HIDDEN)).toBeTruthy());
+    expect(queryByTestId('book-row-dot', HIDDEN)).toBeNull();
   });
 
-  it('calls PATCH and removes book when Mark Purchased pressed', async () => {
+  it('calls PATCH and removes book when Bought pressed', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
-    const { getByLabelText, queryByText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByLabelText('Mark Dune as purchased')).toBeTruthy());
+    const screen = await render(<WishlistScreen />);
+    const { getByLabelText } = screen;
+    const queryByText = (text: string) => rowTexts(screen)[0]?.queryByText(text, HIDDEN) ?? null;
+    await waitFor(() => expect(getByLabelText('Mark Dune as bought')).toBeTruthy());
 
     await act(async () => {
-      await fireEvent.press(getByLabelText('Mark Dune as purchased'));
+      await fireEvent.press(getByLabelText('Mark Dune as bought'));
     });
 
     expect(mockPatch).toHaveBeenCalledWith('/user-books/ub-1', { status: 'purchased' });
@@ -112,7 +111,9 @@ describe('WishlistScreen', () => {
 
   it('keeps the book and locks its buttons until PATCH resolves, then removes it', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
-    const { getByLabelText, queryByText } = await render(<WishlistScreen />);
+    const screen = await render(<WishlistScreen />);
+    const { getByLabelText } = screen;
+    const queryByText = (text: string) => rowTexts(screen)[0]?.queryByText(text, HIDDEN) ?? null;
 
     let resolvePatch!: () => void;
     mockPatch.mockReturnValue(
@@ -121,21 +122,18 @@ describe('WishlistScreen', () => {
       })
     );
 
-    await waitFor(() => expect(getByLabelText('Mark Dune as purchased')).toBeTruthy());
+    await waitFor(() => expect(getByLabelText('Mark Dune as bought')).toBeTruthy());
 
     // Deliberately not awaited: under v14, awaiting fireEvent.press blocks
     // until all work the event triggers has settled, which would hang here
     // on the still-pending PATCH call.
-    fireEvent.press(getByLabelText('Mark Dune as purchased'));
+    fireEvent.press(getByLabelText('Mark Dune as bought'));
 
     // Server-authoritative: no optimistic removal while the request is in flight.
     await waitFor(() =>
-      expect(getByLabelText('Mark Dune as purchased').props.accessibilityState.disabled).toBe(true)
+      expect(getByLabelText('Mark Dune as bought').props.accessibilityState.disabled).toBe(true)
     );
     expect(queryByText('Dune')).toBeTruthy();
-    expect(getByLabelText('Remove Dune from wishlist').props.accessibilityState.disabled).toBe(
-      true
-    );
 
     await act(async () => {
       resolvePatch();
@@ -147,14 +145,13 @@ describe('WishlistScreen', () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
     mockPatch.mockReturnValue(new Promise(() => {}));
     const { getByLabelText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByLabelText('Mark Dune as purchased')).toBeTruthy());
+    await waitFor(() => expect(getByLabelText('Mark Dune as bought')).toBeTruthy());
 
-    fireEvent.press(getByLabelText('Mark Dune as purchased'));
+    fireEvent.press(getByLabelText('Mark Dune as bought'));
     await waitFor(() =>
-      expect(getByLabelText('Mark Dune as purchased').props.accessibilityState.disabled).toBe(true)
+      expect(getByLabelText('Mark Dune as bought').props.accessibilityState.disabled).toBe(true)
     );
-    fireEvent.press(getByLabelText('Mark Dune as purchased'));
-    fireEvent.press(getByLabelText('Remove Dune from wishlist'));
+    fireEvent.press(getByLabelText('Mark Dune as bought'));
 
     expect(mockPatch).toHaveBeenCalledTimes(1);
     expect(mockDelete).not.toHaveBeenCalled();
@@ -164,25 +161,30 @@ describe('WishlistScreen', () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockPatch.mockRejectedValue(new Error('Network error'));
     mockGet.mockResolvedValue({ data: [BOOK_1] });
-    const { getByLabelText, queryByText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByLabelText('Mark Dune as purchased')).toBeTruthy());
+    const screen = await render(<WishlistScreen />);
+    const { getByLabelText } = screen;
+    const queryByText = (text: string) => rowTexts(screen)[0]?.queryByText(text, HIDDEN) ?? null;
+    await waitFor(() => expect(getByLabelText('Mark Dune as bought')).toBeTruthy());
 
     await act(async () => {
-      await fireEvent.press(getByLabelText('Mark Dune as purchased'));
+      await fireEvent.press(getByLabelText('Mark Dune as bought'));
     });
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
     expect(queryByText('Dune')).toBeTruthy();
-    expect(getByLabelText('Mark Dune as purchased').props.accessibilityState.disabled).toBe(false);
+    expect(getByLabelText('Mark Dune as bought').props.accessibilityState.disabled).toBe(false);
   });
 
   it('calls DELETE and removes book when Remove pressed', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
-    const { getByLabelText, queryByText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByLabelText('Remove Dune from wishlist')).toBeTruthy());
+    const screen = await render(<WishlistScreen />);
+    const { getByLabelText } = screen;
+    const queryByText = (text: string) => rowTexts(screen)[0]?.queryByText(text, HIDDEN) ?? null;
+    await waitFor(() => expect(getByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy());
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
 
     await act(async () => {
-      await fireEvent.press(getByLabelText('Remove Dune from wishlist'));
+      await fireEvent.press(getByLabelText('Remove Dune'));
     });
 
     expect(mockDelete).toHaveBeenCalledWith('/user-books/ub-1');
@@ -191,7 +193,9 @@ describe('WishlistScreen', () => {
 
   it('keeps the book until DELETE resolves, then removes it', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
-    const { getByLabelText, queryByText } = await render(<WishlistScreen />);
+    const screen = await render(<WishlistScreen />);
+    const { getByLabelText } = screen;
+    const queryByText = (text: string) => rowTexts(screen)[0]?.queryByText(text, HIDDEN) ?? null;
 
     let resolveDelete!: () => void;
     mockDelete.mockReturnValue(
@@ -200,15 +204,14 @@ describe('WishlistScreen', () => {
       })
     );
 
-    await waitFor(() => expect(getByLabelText('Remove Dune from wishlist')).toBeTruthy());
+    await waitFor(() => expect(getByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy());
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
 
     // Deliberately not awaited — see the analogous PATCH test above for why.
-    fireEvent.press(getByLabelText('Remove Dune from wishlist'));
+    fireEvent.press(getByLabelText('Remove Dune'));
 
     await waitFor(() =>
-      expect(getByLabelText('Remove Dune from wishlist').props.accessibilityState.disabled).toBe(
-        true
-      )
+      expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true)
     );
     expect(queryByText('Dune')).toBeTruthy();
 
@@ -222,11 +225,14 @@ describe('WishlistScreen', () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockDelete.mockRejectedValue(new Error('Network error'));
     mockGet.mockResolvedValue({ data: [BOOK_1] });
-    const { getByLabelText, queryByText } = await render(<WishlistScreen />);
-    await waitFor(() => expect(getByLabelText('Remove Dune from wishlist')).toBeTruthy());
+    const screen = await render(<WishlistScreen />);
+    const { getByLabelText } = screen;
+    const queryByText = (text: string) => rowTexts(screen)[0]?.queryByText(text, HIDDEN) ?? null;
+    await waitFor(() => expect(getByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy());
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
 
     await act(async () => {
-      await fireEvent.press(getByLabelText('Remove Dune from wishlist'));
+      await fireEvent.press(getByLabelText('Remove Dune'));
     });
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
@@ -257,5 +263,39 @@ describe('WishlistScreen', () => {
     await render(<WishlistScreen />);
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
     expect(alertSpy.mock.calls[0][1]).not.toMatch(/Can't reach BookshelfAI/);
+  });
+
+  it('locks Remove in the sheet while a Bought request for that book is in flight', async () => {
+    mockGet.mockResolvedValue({ data: [BOOK_1] });
+    mockPatch.mockReturnValue(new Promise(() => {}));
+    const { getByLabelText } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByLabelText('Mark Dune as bought')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Mark Dune as bought'));
+    await waitFor(() =>
+      expect(getByLabelText('Mark Dune as bought').props.accessibilityState.disabled).toBe(true)
+    );
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await waitFor(() => expect(getByLabelText('Remove Dune')).toBeTruthy());
+    expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(getByLabelText('Remove Dune'));
+
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('says "Unverified" in the row label of an unverified entry (#616)', async () => {
+    const unverified = {
+      ...BOOK_1,
+      id: 'ub-u',
+      unverified: true,
+      book: { ...BOOK_1.book, id: 'b-u', title: 'Pond Notes', author: 'A. Local' },
+    };
+    mockGet.mockResolvedValue({ data: [unverified, BOOK_1] });
+    const { findByLabelText } = await render(<WishlistScreen />);
+    const row = await findByLabelText('Pond Notes — Wishlist, by A. Local — Unverified');
+    expect(row.props.accessibilityRole).toBe('button');
+    // A catalog book's label is unchanged.
+    expect(await findByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy();
   });
 });

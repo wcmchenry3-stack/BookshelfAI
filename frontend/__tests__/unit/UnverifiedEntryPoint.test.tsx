@@ -48,14 +48,7 @@ jest.mock('expo-router', () => ({
   },
 }));
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      colors: { background: '#fff', text: '#000', textSecondary: '#888', primary: '#007AFF' },
-      typography: { fontSizeBase: 16, fontSizeSM: 14, fontSizeLG: 20, fontSizeXS: 12 },
-    },
-  }),
-}));
+jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 jest.mock('../../components/LoadingSpinner', () => ({
   LoadingSpinner: () => null,
 }));
@@ -216,9 +209,9 @@ describe('Card accessibility label (#616)', () => {
   it('my books says "Unverified" in the card label, which replaces the badge for a screen reader', async () => {
     mockGet.mockResolvedValue({ data: [UNVERIFIED_ENTRY, CATALOG_ENTRY] });
     const { findByLabelText } = await render(<MyBooksScreen />);
-    const card = await findByLabelText('Pond Notes — wishlisted — Unverified');
+    const card = await findByLabelText('Pond Notes — Wishlist, by A. Local — Unverified');
     expect(card.props.accessibilityRole).toBe('button');
     // A catalog book's label is unchanged.
-    expect(await findByLabelText('Dune — wishlisted')).toBeTruthy();
+    expect(await findByLabelText('Dune — Wishlist, by A. Local')).toBeTruthy();
   });
 });

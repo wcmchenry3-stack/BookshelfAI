@@ -1,7 +1,8 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 
+import { IOS_DISMISS_FALLBACK_MS } from '../../hooks/useModalHandoff';
 import MyBooksScreen from '../../app/(tabs)/my-books';
 import { userBookRow } from '../helpers/screenMocks';
 
@@ -29,8 +30,8 @@ const WISHLISTED_BOOK = userBookRow();
 async function openWishlistedSheet() {
   mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
   const screen = await render(<MyBooksScreen />);
-  await waitFor(() => screen.getByLabelText('Dune — wishlisted'));
-  await fireEvent.press(screen.getByLabelText('Dune — wishlisted'));
+  await waitFor(() => screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+  await fireEvent.press(screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
   return screen;
 }
 
@@ -79,18 +80,18 @@ describe('MyBooksScreen', () => {
     });
   });
 
-  it('renders status badge on each card', async () => {
+  it('shows the status (the same string as the tab chip) and year on each row', async () => {
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
     const { getByText } = await render(<MyBooksScreen />);
-    await waitFor(() => expect(getByText('Wishlisted', { hidden: true })).toBeTruthy());
+    await waitFor(() => expect(getByText('Wishlist · 1965', { hidden: true })).toBeTruthy());
   });
 
   it('opens detail sheet when card is tapped', async () => {
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
     const { getByLabelText, getByText } = await render(<MyBooksScreen />);
-    await waitFor(() => getByLabelText('Dune — wishlisted'));
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
 
-    await fireEvent.press(getByLabelText('Dune — wishlisted'));
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
 
     await waitFor(() => expect(getByText('A desert planet epic.')).toBeTruthy());
   });
@@ -145,8 +146,8 @@ describe('MyBooksScreen', () => {
       expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(true)
     );
     const hidden = { includeHiddenElements: true };
-    expect(queryByLabelText('Dune — wishlisted', hidden)).toBeTruthy();
-    expect(queryByLabelText('Dune — purchased', hidden)).toBeNull();
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', hidden)).toBeTruthy();
+    expect(queryByLabelText('Dune — Purchased, by Frank Herbert', hidden)).toBeNull();
 
     await act(async () => {
       resolvePatch({
@@ -156,8 +157,10 @@ describe('MyBooksScreen', () => {
       });
     });
     // On success the sheet closes and the card shows the server's status.
-    await waitFor(() => expect(queryByLabelText('Dune — purchased')).toBeTruthy());
-    expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeNull();
+    await waitFor(() =>
+      expect(queryByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy()
+    );
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', { hidden: true })).toBeNull();
   });
 
   it('keeps the advanced book when the user has moved to its destination tab (#641)', async () => {
@@ -170,8 +173,8 @@ describe('MyBooksScreen', () => {
     const purchased = { ...WISHLISTED_BOOK, status: 'purchased' };
     mockGet.mockResolvedValueOnce({ data: [WISHLISTED_BOOK] });
     const { getByLabelText, queryByLabelText } = await render(<MyBooksScreen />);
-    await waitFor(() => getByLabelText('Dune — wishlisted'));
-    await fireEvent.press(getByLabelText('Dune — wishlisted'));
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
     await waitFor(() => getByLabelText('Mark as Purchased'));
 
     // Deliberately not awaited: the PATCH stays pending (see the test above).
@@ -187,13 +190,17 @@ describe('MyBooksScreen', () => {
     await act(async () => {
       await fireEvent.press(getByLabelText('Filter by Purchased', hidden));
     });
-    await waitFor(() => expect(queryByLabelText('Dune — purchased', hidden)).toBeTruthy());
+    await waitFor(() =>
+      expect(queryByLabelText('Dune — Purchased, by Frank Herbert', hidden)).toBeTruthy()
+    );
 
     await act(async () => {
       resolvePatch({ ...purchased, purchased_at: '2026-09-21T00:00:00Z' });
     });
     // The book belongs on this tab, so it must stay (updated), not vanish.
-    await waitFor(() => expect(queryByLabelText('Dune — purchased')).toBeTruthy());
+    await waitFor(() =>
+      expect(queryByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy()
+    );
   });
 
   it('ignores a second press while a request for the same book is in flight', async () => {
@@ -206,6 +213,7 @@ describe('MyBooksScreen', () => {
       expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(true)
     );
     fireEvent.press(getByLabelText('Mark as Purchased'));
+    expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true);
     fireEvent.press(getByLabelText('Remove Dune'));
 
     expect(mockPatch).toHaveBeenCalledTimes(1);
@@ -225,8 +233,8 @@ describe('MyBooksScreen', () => {
     expect(alertSpy).toHaveBeenCalledTimes(1);
     // The sheet stays open so the user can retry; its buttons are unlocked again.
     const hidden = { includeHiddenElements: true };
-    expect(queryByLabelText('Dune — purchased', hidden)).toBeNull();
-    expect(queryByLabelText('Dune — wishlisted', hidden)).toBeTruthy();
+    expect(queryByLabelText('Dune — Purchased, by Frank Herbert', hidden)).toBeNull();
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', hidden)).toBeTruthy();
     expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(false);
   });
 
@@ -234,8 +242,8 @@ describe('MyBooksScreen', () => {
     const readBook = { ...WISHLISTED_BOOK, status: 'read' };
     mockGet.mockResolvedValue({ data: [readBook] });
     const { getByLabelText, queryByLabelText } = await render(<MyBooksScreen />);
-    await waitFor(() => getByLabelText('Dune — read'));
-    await fireEvent.press(getByLabelText('Dune — read'));
+    await waitFor(() => getByLabelText('Dune — Read, by Frank Herbert'));
+    await fireEvent.press(getByLabelText('Dune — Read, by Frank Herbert'));
     await waitFor(() => expect(queryByLabelText(/Mark as/)).toBeNull());
   });
 
@@ -266,12 +274,14 @@ describe('MyBooksScreen', () => {
     await waitFor(() =>
       expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true)
     );
-    expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeTruthy();
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', { hidden: true })).toBeTruthy();
 
     await act(async () => {
       resolveDelete();
     });
-    await waitFor(() => expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeNull());
+    await waitFor(() =>
+      expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', { hidden: true })).toBeNull()
+    );
   });
 
   it('keeps the book and alerts when DELETE fails', async () => {
@@ -285,7 +295,7 @@ describe('MyBooksScreen', () => {
     });
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(queryByLabelText('Dune — wishlisted', { hidden: true })).toBeTruthy();
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', { hidden: true })).toBeTruthy();
   });
 
   it('refetches when a filter tab is tapped', async () => {
@@ -316,5 +326,117 @@ describe('MyBooksScreen', () => {
     await render(<MyBooksScreen />);
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
     expect(alertSpy.mock.calls[0][1]).not.toMatch(/Can't reach BookshelfAI/);
+  });
+});
+
+describe('MyBooksScreen row menu (#929)', () => {
+  async function openMenu() {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const screen = await render(<MyBooksScreen />);
+    await waitFor(() => screen.getByLabelText('More options for Dune'));
+    await fireEvent.press(screen.getByLabelText('More options for Dune'));
+    return screen;
+  }
+
+  it('offers the next status, View details and Remove from library', async () => {
+    const { findByLabelText } = await openMenu();
+    expect(await findByLabelText('Mark as Purchased')).toBeTruthy();
+    expect(await findByLabelText('View details')).toBeTruthy();
+    expect(await findByLabelText('Remove from library')).toBeTruthy();
+  });
+
+  it('advances the status through PATCH', async () => {
+    const { findByLabelText } = await openMenu();
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Mark as Purchased'));
+    });
+    expect(mockPatch).toHaveBeenCalledWith('/user-books/ub-1', { status: 'purchased' });
+  });
+
+  it('removes through DELETE', async () => {
+    const { findByLabelText } = await openMenu();
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Remove from library'));
+    });
+    expect(mockDelete).toHaveBeenCalledWith('/user-books/ub-1');
+  });
+
+  it('opens the detail sheet from View details (Android/web: at once)', async () => {
+    const original = Platform.OS;
+    Platform.OS = 'android';
+    try {
+      const { findByLabelText, findByText } = await openMenu();
+      await fireEvent.press(await findByLabelText('View details'));
+      expect(await findByText('A desert planet epic.')).toBeTruthy();
+    } finally {
+      Platform.OS = original;
+    }
+  });
+
+  describe('iOS: View details waits for the menu to dismiss', () => {
+    const DETAIL = 'A desert planet epic.';
+    const EMMA = userBookRow({
+      id: 'ub-2',
+      book: { id: 'b-2', title: 'Emma', author: 'Jane Austen', cover_url: null, description: 'x' },
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    /**
+     * The menu Modal's onDismiss (SheetModal passes its onHidden). Read it while the
+     * menu is open: a closed Modal renders nothing.
+     */
+    const menuOnDismiss = (screen: Awaited<ReturnType<typeof openMenu>>) => {
+      let node = screen.getByTestId('sheet-scrim').parent;
+      while (node && typeof node.props.onDismiss !== 'function') node = node.parent;
+      return node!.props.onDismiss as () => void;
+    };
+
+    it('opens the detail sheet when the menu Modal reports onDismiss', async () => {
+      const screen = await openMenu();
+      const dismiss = menuOnDismiss(screen);
+      const details = await screen.findByLabelText('View details');
+      // Fake timers, never advanced: only onDismiss can open the sheet, not the fallback.
+      jest.useFakeTimers();
+      await fireEvent.press(details);
+      // The menu is gone but its dismissal has not been reported: nothing opens yet.
+      expect(screen.queryByText(DETAIL)).toBeNull();
+      await act(async () => dismiss());
+      expect(screen.getByText(DETAIL)).toBeTruthy();
+    });
+
+    it('opens the detail sheet after the fallback when onDismiss never fires', async () => {
+      const screen = await openMenu();
+      const details = await screen.findByLabelText('View details');
+      // Fake timers first, so the fallback timer armed by the press is a fake one.
+      jest.useFakeTimers();
+      await fireEvent.press(details);
+      await act(async () => {
+        jest.advanceTimersByTime(IOS_DISMISS_FALLBACK_MS - 1);
+      });
+      expect(screen.queryByText(DETAIL)).toBeNull();
+      await act(async () => {
+        jest.advanceTimersByTime(IOS_DISMISS_FALLBACK_MS);
+      });
+      expect(await screen.findByText(DETAIL)).toBeTruthy();
+    });
+
+    it('never pops a stale detail sheet up later', async () => {
+      mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK, EMMA] });
+      const screen = await render(<MyBooksScreen />);
+      await waitFor(() => screen.getByLabelText('More options for Dune'));
+      await fireEvent.press(screen.getByLabelText('More options for Dune'));
+      const dismissDune = menuOnDismiss(screen);
+      await fireEvent.press(await screen.findByLabelText('View details'));
+      // Before the handoff completes the user opens another book's menu.
+      await fireEvent.press(await screen.findByLabelText('More options for Emma'));
+      await act(async () => dismissDune());
+      // Close the Emma menu: neither Dune's nor anything else's detail appears.
+      const dismissEmma = menuOnDismiss(screen);
+      await fireEvent.press(await screen.findByLabelText('Close'));
+      await act(async () => dismissEmma());
+      expect(screen.queryByText(DETAIL)).toBeNull();
+      expect(screen.queryByLabelText('Close detail')).toBeNull();
+    });
   });
 });
