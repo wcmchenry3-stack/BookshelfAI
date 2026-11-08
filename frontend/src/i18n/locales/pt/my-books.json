@@ -53,6 +53,7 @@
     "purgeIn_other": "Excluído de vez em {{count}} dias",
     "purgeToday": "Excluído de vez hoje",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Não verificado",
     "restore": "Restaurar",
     "restoreA11y": "Restaurar {{title}}",
     "restored": "{{title}} foi restaurado na sua biblioteca.",

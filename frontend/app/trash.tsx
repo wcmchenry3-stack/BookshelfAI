@@ -17,7 +17,13 @@ import { useTheme } from '../hooks/useTheme';
 import { listTrash, restoreUserBook, type TrashedUserBook } from '../lib/api';
 import { isServiceUnavailable } from '../lib/apiErrorReporting';
 import { notifyLibraryChanged } from '../lib/libraryChanged';
-import { daysUntilPurge, leaveTrash, PURGE_SOON_DAYS, restoreFailure } from '../lib/trash';
+import {
+  daysUntilPurge,
+  leaveTrash,
+  PURGE_SOON_DAYS,
+  restoreFailure,
+  tidyLabel,
+} from '../lib/trash';
 import { fontFor } from '../theme/typography';
 
 // The trash (#683): entries removed from the library, kept 30 days, newest
@@ -33,6 +39,8 @@ export default function TrashScreen() {
   const [items, setItems] = useState<TrashedUserBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // "Today" for the days-left lines: read once per load, so every row in a render agrees.
+  const [now, setNow] = useState(() => new Date());
   const [loadError, setLoadError] = useState<'failed' | 'unavailable' | null>(null);
   // Same double-tap guard as My Books: `restoringRef` is checked and set
   // synchronously; `restoringIds` only drives the disabled styling.
@@ -53,6 +61,7 @@ export default function TrashScreen() {
       if (loadId !== loadIdRef.current) return;
       const next = data.filter((i) => i.book != null && !restoredRef.current.has(i.id));
       itemsRef.current = next;
+      setNow(new Date());
       setItems(next);
       setLoadError(null);
     } catch (err) {
@@ -227,7 +236,7 @@ export default function TrashScreen() {
         }
         renderItem={({ item }) => {
           const disabled = !isConnected || restoringIds.has(item.id);
-          const days = daysUntilPurge(item.purge_after);
+          const days = daysUntilPurge(item.purge_after, now);
           const when =
             days === null
               ? undefined
@@ -238,13 +247,15 @@ export default function TrashScreen() {
             <LibraryRow
               item={{ ...item, edition: null }}
               testID={`trash-item-${item.id}`}
-              metaText={when}
+              metaText={when ?? ''}
               metaTone={days !== null && days <= PURGE_SOON_DAYS ? 'danger' : 'default'}
-              accessibilityLabel={t('trash.rowA11y', {
-                title: item.book.title,
-                author: item.book.author,
-                when: when ?? '',
-              })}
+              accessibilityLabel={tidyLabel(
+                t(item.unverified ? 'trash.rowUnverifiedA11y' : 'trash.rowA11y', {
+                  title: item.book.title,
+                  author: item.book.author,
+                  when: when ?? '',
+                })
+              )}
               trailing={
                 <TonalChip
                   icon="restore"

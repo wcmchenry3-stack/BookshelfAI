@@ -2,7 +2,7 @@
  * #683: listTrash / restoreUserBook and the restore error mapping.
  */
 import { api, listTrash, restoreUserBook } from '../../lib/api';
-import { daysUntilPurge, PURGE_SOON_DAYS, restoreFailure } from '../../lib/trash';
+import { daysUntilPurge, PURGE_SOON_DAYS, restoreFailure, tidyLabel } from '../../lib/trash';
 
 jest.mock('../../lib/storage', () => ({
   getItem: jest.fn().mockResolvedValue('token'),
@@ -149,5 +149,14 @@ describe('daysUntilPurge', () => {
 
   it('flags 3 days or fewer as soon', () => {
     expect(PURGE_SOON_DAYS).toBe(3);
+  });
+});
+
+describe('tidyLabel', () => {
+  it('drops a doubled or trailing sentence stop left by an empty part', () => {
+    expect(tidyLabel('Dune, Frank. ')).toBe('Dune, Frank');
+    expect(tidyLabel('Dune, Frank. . Unverified')).toBe('Dune, Frank. Unverified');
+    expect(tidyLabel('Dune、Frank。。未確認')).toBe('Dune、Frank。未確認');
+    expect(tidyLabel('Dune, Frank. 2 days. Unverified')).toBe('Dune, Frank. 2 days. Unverified');
   });
 });

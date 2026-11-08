@@ -141,9 +141,27 @@ describe('TrashScreen', () => {
 
   it('names title, author and days left in one row label', async () => {
     const { findByLabelText } = await render(<TrashScreen />);
+    expect(await findByLabelText('Dune, Frank Herbert. Deleted for good in 21 days')).toBeTruthy();
+  });
+
+  it('puts Unverified in the label of an unverified row', async () => {
+    const { findByLabelText } = await render(<TrashScreen />);
+    // FOUNDATION is the unverified entry: the grouped label swallows the badge, so it says so.
     expect(
-      await findByLabelText('Foundation, Frank Herbert. Deleted for good in 2 days')
+      await findByLabelText('Foundation, Frank Herbert. Deleted for good in 2 days. Unverified')
     ).toBeTruthy();
+  });
+
+  it('shows no status line and no trailing stop when purge_after is unreadable', async () => {
+    mockListTrash.mockResolvedValue([
+      entry('ub-9', 'Broken', { purge_after: 'nope' }),
+      entry('ub-8', 'BrokenToo', { purge_after: 'nope', unverified: true }),
+    ]);
+    const { findByLabelText, queryByText, queryAllByTestId } = await render(<TrashScreen />);
+    expect(await findByLabelText('Broken, Frank Herbert')).toBeTruthy();
+    expect(await findByLabelText('BrokenToo, Frank Herbert. Unverified')).toBeTruthy();
+    expect(queryByText('Read')).toBeNull();
+    expect(queryAllByTestId('book-row-dot')).toHaveLength(0);
   });
 
   it('shows the compact top row: Back, a centred Trash heading and no serif title', async () => {

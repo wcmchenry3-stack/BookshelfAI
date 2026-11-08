@@ -53,6 +53,7 @@
     "purgeIn_other": "Definitief verwijderd over {{count}} dagen",
     "purgeToday": "Vandaag definitief verwijderd",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Niet geverifieerd",
     "restore": "Herstellen",
     "restoreA11y": "{{title}} herstellen",
     "restored": "{{title}} is hersteld in je bibliotheek.",

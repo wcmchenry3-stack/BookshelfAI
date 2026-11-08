@@ -55,6 +55,7 @@
     "purgeIn_other": "יימחק לצמיתות בעוד {{count}} ימים",
     "purgeToday": "יימחק לצמיתות היום",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. לא מאומת",
     "restore": "שחזור",
     "restoreA11y": "שחזור {{title}}",
     "restored": "{{title}} שוחזר לספרייה שלך.",

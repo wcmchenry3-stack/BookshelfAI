@@ -53,6 +53,7 @@
     "purgeIn_other": "Endgültig gelöscht in {{count}} Tagen",
     "purgeToday": "Heute endgültig gelöscht",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Ungeprüft",
     "restore": "Wiederherstellen",
     "restoreA11y": "{{title}} wiederherstellen",
     "restored": "{{title}} wurde in deiner Bibliothek wiederhergestellt.",

@@ -52,6 +52,7 @@
     "purgeIn_other": "{{count}} 天后将被永久删除",
     "purgeToday": "今天将被永久删除",
     "rowA11y": "{{title}}，{{author}}。{{when}}",
+    "rowUnverifiedA11y": "{{title}}，{{author}}。{{when}}。未验证",
     "restore": "恢复",
     "restoreA11y": "恢复《{{title}}》",
     "restored": "已将《{{title}}》恢复到你的书库。",

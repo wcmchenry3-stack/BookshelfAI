@@ -223,6 +223,11 @@
     "tone": "neutral",
     "placeholders": ["{{title}}", "{{author}}", "{{when}}"]
   },
+  "trash.rowUnverifiedA11y": {
+    "description": "Screen-reader label of a Trash row for a book the user added themselves: title, author, days left (when, may be empty) and that it is unverified",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{author}}", "{{when}}"]
+  },
   "trash.restore": {
     "description": "Button that restores a trashed book to the library",
     "tone": "neutral",

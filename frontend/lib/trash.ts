@@ -56,3 +56,11 @@ export function daysUntilPurge(purgeAfter: string, now: Date = new Date()): numb
   const days = Math.round((dayNumber(purge) - dayNumber(now)) / 86_400_000);
   return Math.max(0, days);
 }
+
+/**
+ * Tidies a spoken label whose `{{when}}` part may be empty: drops a sentence
+ * stop that is followed by another one, and any trailing stop or space.
+ */
+export function tidyLabel(label: string): string {
+  return label.replace(/([.。।])\s*(?=[.。।])/g, '').replace(/[\s.。।]+$/, '');
+}

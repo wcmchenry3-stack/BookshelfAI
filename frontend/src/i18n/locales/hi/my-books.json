@@ -53,6 +53,7 @@
     "purgeIn_other": "{{count}} दिनों में हमेशा के लिए हटेगी",
     "purgeToday": "आज हमेशा के लिए हटेगी",
     "rowA11y": "{{title}}, {{author}}। {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}। {{when}}। असत्यापित",
     "restore": "वापस लाएँ",
     "restoreA11y": "{{title}} वापस लाएँ",
     "restored": "{{title}} आपकी लाइब्रेरी में वापस आ गई।",

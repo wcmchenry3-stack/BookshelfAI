@@ -57,6 +57,7 @@
     "purgeIn_other": "تُحذف نهائيًا خلال {{count}} يوم",
     "purgeToday": "تُحذف نهائيًا اليوم",
     "rowA11y": "{{title}}، {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}، {{author}}. {{when}}. غير موثّق",
     "restore": "استعادة",
     "restoreA11y": "استعادة {{title}}",
     "restored": "تمت استعادة {{title}} إلى مكتبتك.",

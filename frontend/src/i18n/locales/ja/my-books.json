@@ -52,6 +52,7 @@
     "purgeIn_other": "{{count}}日後に完全に削除されます",
     "purgeToday": "今日、完全に削除されます",
     "rowA11y": "{{title}}、{{author}}。{{when}}",
+    "rowUnverifiedA11y": "{{title}}、{{author}}。{{when}}。未確認",
     "restore": "元に戻す",
     "restoreA11y": "{{title}}を元に戻す",
     "restored": "{{title}}をライブラリに戻しました。",

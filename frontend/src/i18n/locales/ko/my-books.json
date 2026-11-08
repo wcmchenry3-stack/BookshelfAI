@@ -52,6 +52,7 @@
     "purgeIn_other": "{{count}}일 후 완전히 삭제됩니다",
     "purgeToday": "오늘 완전히 삭제됩니다",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. 미확인",
     "restore": "복원",
     "restoreA11y": "{{title}} 복원",
     "restored": "{{title}}을(를) 서재에 복원했습니다.",

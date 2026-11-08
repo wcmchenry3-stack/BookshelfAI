@@ -55,6 +55,7 @@
     "purgeIn_other": "Будет удалена навсегда через {{count}} дня",
     "purgeToday": "Будет удалена навсегда сегодня",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Не проверено",
     "restore": "Восстановить",
     "restoreA11y": "Восстановить «{{title}}»",
     "restored": "«{{title}}» восстановлена в вашей библиотеке.",

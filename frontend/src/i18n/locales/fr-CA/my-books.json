@@ -53,6 +53,7 @@
     "purgeIn_other": "Effacé définitivement dans {{count}} jours",
     "purgeToday": "Effacé définitivement aujourd'hui",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Non vérifié",
     "restore": "Restaurer",
     "restoreA11y": "Restaurer {{title}}",
     "restored": "{{title}} a été restauré dans votre bibliothèque.",

@@ -73,6 +73,9 @@ function LibraryRowBase({
 
   // A row with no body button reads as one element when it is given a label
   // (the trailing control stays separate): title, author and meta in one go.
+  // The caller's label must then carry everything in the block, e.g. the
+  // unverified badge. Native only: react-native-web does not pass `accessible`
+  // to the DOM, so on web the child text is still read piece by piece.
   const readAsOne = !onPress && accessibilityLabel !== undefined;
 
   // When the row is tappable the cover and text are inert (`pointerEvents="none"`)

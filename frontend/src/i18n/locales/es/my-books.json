@@ -53,6 +53,7 @@
     "purgeIn_other": "Se borra para siempre en {{count}} días",
     "purgeToday": "Se borra para siempre hoy",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Sin verificar",
     "restore": "Restaurar",
     "restoreA11y": "Restaurar {{title}}",
     "restored": "Se restauró {{title}} en tu biblioteca.",

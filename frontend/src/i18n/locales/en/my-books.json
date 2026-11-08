@@ -53,6 +53,7 @@
     "purgeIn_other": "Deleted for good in {{count}} days",
     "purgeToday": "Deleted for good today",
     "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Unverified",
     "restore": "Restore",
     "restoreA11y": "Restore {{title}}",
     "restored": "Restored {{title}} to your library.",
