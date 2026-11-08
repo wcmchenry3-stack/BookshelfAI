@@ -5,7 +5,7 @@
   "loading": "טוען רשימת משאלות…",
   "empty": "רשימת המשאלות שלך ריקה.\nסרוק כריכת ספר להוספה.",
   "bought": "נרכש",
-  "boughtA11y": "סמן את {{title}} — נרכש",
+  "boughtA11y": "סמן את {{title}} בתור נרכש",
   "rowA11y": "{{title}} — {{status}}, מאת {{author}}",
   "rowUnverifiedA11y": "{{title}} — {{status}}, מאת {{author}} — לא מאומת",
   "rowHint": "הקש לפרטים או להסרה",

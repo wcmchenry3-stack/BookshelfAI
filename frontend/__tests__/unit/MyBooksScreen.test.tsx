@@ -395,11 +395,14 @@ describe('MyBooksScreen row menu (#929)', () => {
     it('opens the detail sheet when the menu Modal reports onDismiss', async () => {
       const screen = await openMenu();
       const dismiss = menuOnDismiss(screen);
-      await fireEvent.press(await screen.findByLabelText('View details'));
+      const details = await screen.findByLabelText('View details');
+      // Fake timers, never advanced: only onDismiss can open the sheet, not the fallback.
+      jest.useFakeTimers();
+      await fireEvent.press(details);
       // The menu is gone but its dismissal has not been reported: nothing opens yet.
       expect(screen.queryByText(DETAIL)).toBeNull();
       await act(async () => dismiss());
-      expect(await screen.findByText(DETAIL)).toBeTruthy();
+      expect(screen.getByText(DETAIL)).toBeTruthy();
     });
 
     it('opens the detail sheet after the fallback when onDismiss never fires', async () => {
