@@ -42,7 +42,7 @@ export interface FallbackTitleStyle {
   initials: boolean;
 }
 
-/** Inset of the thin inner frame. */
+/** Inset of the thin inner frame; the text box keeps 1px more air on each side. */
 function fallbackInset(frameWidth: number): number {
   return Math.max(3, Math.round(frameWidth * 0.07));
 }
@@ -51,7 +51,8 @@ function fallbackInset(frameWidth: number): number {
 function initialsOf(title: string): string {
   const words = title.split(/[\s\-\u2013\u2014/]+/).filter(Boolean);
   const letters = words.length > 1 ? words.map((w) => chars(w)[0]) : chars(words[0] ?? '');
-  return letters.slice(0, 3).join('').toUpperCase();
+  // Upper-case first: 'ß' becomes 'SS', so slicing afterwards keeps the label at 3 characters.
+  return chars(letters.join('').toUpperCase()).slice(0, 3).join('');
 }
 
 const halfDown = (n: number) => Math.floor(n * 2) / 2;
@@ -69,7 +70,7 @@ const halfDown = (n: number) => Math.floor(n * 2) / 2;
 export function fallbackTitleStyle(title: string, size: BookCoverSize): FallbackTitleStyle {
   const base = FALLBACK_TEXT[size];
   const frameWidth = COVER_SIZES[size].width;
-  const width = frameWidth - 2 * fallbackInset(frameWidth);
+  const width = frameWidth - 2 * (fallbackInset(frameWidth) + 1);
   const ratio = base.lineHeight / base.fontSize;
   const fitted = halfDown(width / Math.max(longestUnitEm(title), 0.01));
   if (fitted >= FALLBACK_MIN_FONT) {

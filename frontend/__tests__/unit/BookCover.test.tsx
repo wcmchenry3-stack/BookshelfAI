@@ -239,25 +239,43 @@ describe('#924 fallback title never splits a word', () => {
   const MEASURED_EM: Record<string, number> = {
     MIDDLEMARCH: 7.953,
     MWW: 3.065,
+    MID: 2.087,
+    'Wuthering-': 5.676, // fontTools
+    'Wuthering/': 5.654,
     Middlemarch: 6.682,
     Wuthering: 5.366,
     Heights: 3.768,
   };
-  const INNER_WIDTH = { xs: 42, sm: 44, md: 90, lg: 116 };
+  const INNER_WIDTH = { xs: 40, sm: 42, md: 88, lg: 114 };
+  const MARGIN = 1.04;
 
   const fits = (word: string, size: BookCoverSize, fontSize: number) =>
     MEASURED_EM[word] * fontSize <= INNER_WIDTH[size];
 
-  it.each(SIZES)('Middlemarch and MIDDLEMARCH fit by measured width at %s', (size) => {
-    for (const word of ['Middlemarch', 'MIDDLEMARCH']) {
-      const s = fallbackTitleStyle(word, size);
-      if (s.initials) {
-        expect(s.text).toBe(word.slice(0, 3).toUpperCase());
-        continue;
-      }
-      expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
-      expect(fits(word, size, s.fontSize)).toBe(true);
+  it.each(['sm', 'md', 'lg'] as const)('Middlemarch fits by measured width at %s', (size) => {
+    const s = fallbackTitleStyle('Middlemarch', size);
+    expect(s.initials).toBe(false);
+    expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
+    expect(MEASURED_EM.Middlemarch * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH[size]);
+  });
+
+  it.each(['md', 'lg'] as const)('MIDDLEMARCH fits by measured width at %s', (size) => {
+    const s = fallbackTitleStyle('MIDDLEMARCH', size);
+    expect(s.initials).toBe(false);
+    expect(MEASURED_EM.MIDDLEMARCH * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH[size]);
+  });
+
+  it.each(['xs', 'sm'] as const)(
+    'MIDDLEMARCH and Middlemarch(xs) become initials at %s',
+    (size) => {
+      const s = fallbackTitleStyle('MIDDLEMARCH', size);
+      expect(s).toMatchObject({ initials: true, text: 'MID', lines: 1 });
+      expect(MEASURED_EM.MID * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH[size]);
     }
+  );
+
+  it('turns Middlemarch into initials at xs, where it cannot reach the floor', () => {
+    expect(fallbackTitleStyle('Middlemarch', 'xs')).toMatchObject({ initials: true, text: 'MID' });
   });
 
   it('shrinks MIDDLEMARCH at md below the default, using the capital widths', () => {
@@ -349,14 +367,49 @@ describe('#924 fallback title never splits a word', () => {
     expect(s.text).toBe('\u4e09\u4f53'.repeat(7));
   });
 
-  it('breaks AC/DC, hyphenated and em-dash titles at their separators', () => {
-    expect(fallbackTitleStyle('AC/DC', 'xs')).toMatchObject({ initials: false, fontSize: 8 });
-    const hy = fallbackTitleStyle('Jean-Baptiste', 'xs');
-    expect(hy.initials).toBe(false);
-    const em = fallbackTitleStyle('Middle\u2014march', 'xs');
-    expect(em.initials).toBe(false);
-    expect(em.fontSize).toBe(8);
-    expect(fallbackTitleStyle('Middlemarch', 'xs').fontSize).toBeLessThanOrEqual(8);
+  it('breaks hyphenated, slashed and em-dash titles at the separator', () => {
+    const size = 'md';
+    const fs = (t: string) => fallbackTitleStyle(t, size).fontSize;
+    expect(fs('Rhinoceros-Crocodiles')).toBeGreaterThan(fs('RhinocerosCrocodiles'));
+    expect(fs('Rhinoceros/Crocodiles Story')).toBeGreaterThan(fs('RhinocerosCrocodiles Story'));
+    expect(fs('Rhinoceros\u2014Crocodiles')).toBeGreaterThan(fs('RhinocerosCrocodiles'));
+    expect(fallbackTitleStyle('AC/DC Story', 'xs').fontSize).toBeGreaterThanOrEqual(
+      fallbackTitleStyle('ACDC Story', 'xs').fontSize
+    );
+  });
+
+  it.each(['Wuthering-Heights', 'Wuthering/Heights'])(
+    'keeps the trailing separator in the break unit of %s at xs',
+    (title) => {
+      const s = fallbackTitleStyle(title, 'xs');
+      const unit = MEASURED_EM[title.includes('-') ? 'Wuthering-' : 'Wuthering/'];
+      expect(s.initials).toBe(false);
+      expect(unit * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH.xs);
+    }
+  );
+
+  it('does not let CJK text hide an unbroken Latin word', () => {
+    const s = fallbackTitleStyle('\u4e09\u4f53'.repeat(6) + 'Middlemarch', 'xs');
+    // Middlemarch alone cannot reach the floor at xs, so initials apply (not the 8px default).
+    expect(s.initials).toBe(true);
+    expect(s.fontSize).not.toBe(8);
+    const md = fallbackTitleStyle('\u4e09\u4f53'.repeat(6) + 'Middlemarch', 'md');
+    expect(MEASURED_EM.Middlemarch * md.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH.md);
+  });
+
+  it('measures a Korean title as spaced words, not per character', () => {
+    const word = '\uac00'.repeat(5);
+    const s = fallbackTitleStyle(`${word} ${word}`, 'xs');
+    expect(s.initials).toBe(false);
+    expect(s.fontSize).toBeLessThan(8);
+    expect(5 * s.fontSize * MARGIN).toBeLessThanOrEqual(INNER_WIDTH.xs);
+    expect(fallbackTitleStyle('\uac00 \uac00', 'xs').fontSize).toBe(8);
+  });
+
+  it('keeps initials at 3 characters when upper-casing expands them', () => {
+    const s = fallbackTitleStyle('\u00dfzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz', 'xs');
+    expect(s.initials).toBe(true);
+    expect(Array.from(s.text)).toHaveLength(3);
   });
 
   it('renders the computed size and initials in the cover', async () => {
