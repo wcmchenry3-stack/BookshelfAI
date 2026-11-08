@@ -135,7 +135,7 @@ test.describe('My Books', () => {
     const sheet = page.getByRole('dialog');
     await expect(sheet.getByText('Sort by', { exact: true })).toBeVisible();
     await expectNoA11yViolations('My Books sort sheet');
-    await sheet.getByRole('button', { name: 'Title A–Z', exact: true }).click();
+    await sheet.getByRole('radio', { name: 'Title A–Z', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(
       page.getByRole('button', { name: 'Sort, currently Title A–Z', exact: true })
