@@ -17,7 +17,12 @@ import {
   storedTokensUsable,
   supersedeInstallCheck,
 } from '../lib/freshInstall';
-import { DEFAULT_TAB_ROUTE } from '../lib/defaultTab';
+import {
+  type DefaultTab,
+  defaultTabFromMe,
+  defaultTabRoute,
+  loadDefaultTab,
+} from '../lib/defaultTab';
 import { Sentry } from '../lib/sentry';
 import * as storage from '../lib/storage';
 
@@ -26,23 +31,32 @@ export const SESSION_CHECK_TIMEOUT_MS = 8000;
 
 type SessionCheck = 'valid' | 'dead' | 'unknown';
 
+// The session check's answer, plus the user's "Open on" tab (#913) read from
+// the same GET /auth/me. Anything but a valid session leaves it unknown
+// (null), which lands on Scan.
+interface SessionCheckResult {
+  session: SessionCheck;
+  defaultTab: DefaultTab | null;
+}
+
 // Confirms a stored session with GET /auth/me. The api interceptor refreshes
 // on 401 and signs out (deleting both tokens) when the refresh is rejected.
 // The session is 'dead' only when that happened, or when a 401 cannot be
 // refreshed because there is no refresh token. A network error, timeout,
 // 5xx or 403 is 'unknown', and the app stays signed in so offline use works.
-async function checkSession(): Promise<SessionCheck> {
+async function checkSession(): Promise<SessionCheckResult> {
+  const unknown: SessionCheckResult = { session: 'unknown', defaultTab: null };
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<SessionCheck>((resolve) => {
-    timer = setTimeout(() => resolve('unknown'), SESSION_CHECK_TIMEOUT_MS);
+  const timeout = new Promise<SessionCheckResult>((resolve) => {
+    timer = setTimeout(() => resolve(unknown), SESSION_CHECK_TIMEOUT_MS);
   });
-  const request = (async (): Promise<SessionCheck> => {
+  const request = (async (): Promise<SessionCheckResult> => {
     try {
-      await api.get('/auth/me', { timeout: SESSION_CHECK_TIMEOUT_MS });
-      return 'valid';
+      const { data } = await api.get('/auth/me', { timeout: SESSION_CHECK_TIMEOUT_MS });
+      return { session: 'valid', defaultTab: defaultTabFromMe(data) };
     } catch (error) {
       if ((error as { response?: { status?: number } })?.response?.status !== 401) {
-        return 'unknown';
+        return unknown;
       }
       const [access, refresh] = await Promise.all([
         storage.getItem(ACCESS_TOKEN_KEY),
@@ -52,7 +66,7 @@ async function checkSession(): Promise<SessionCheck> {
       // passing reason (network, 5xx, 429), so the session is kept. It also
       // covers a refresh that succeeded but whose retry still got a 401; that
       // needs an inconsistent server, so it is not handled here (#729 review).
-      return access && refresh ? 'unknown' : 'dead';
+      return access && refresh ? unknown : { session: 'dead', defaultTab: null };
     }
   })();
   try {
@@ -108,6 +122,12 @@ function startInstallCheck(): Promise<boolean> {
 interface AuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
+  /**
+   * The user's "Open on" tab (#913) as read at launch or sign-in, where the
+   * app lands. `null` when it could not be read (offline, an error, too
+   * slow, signed out): the app lands on Scan, and Settings re-reads it.
+   */
+  defaultTab: DefaultTab | null;
   login: (idToken: string) => Promise<void>;
   testLogin: (accessToken: string, refreshToken: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -116,6 +136,7 @@ interface AuthContextValue {
 export const AuthContext = createContext<AuthContextValue>({
   isAuthenticated: false,
   isLoading: true,
+  defaultTab: null,
   login: async () => {},
   testLogin: async () => {},
   logout: async () => {},
@@ -124,6 +145,7 @@ export const AuthContext = createContext<AuthContextValue>({
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [defaultTab, setDefaultTab] = useState<DefaultTab | null>(null);
   const segments = useSegments();
   const router = useRouter();
   // Started while rendering, before any child effect touches AsyncStorage or
@@ -134,6 +156,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // running (the install check alone can take 5 s); once the user has signed
   // in or out, its result must not overwrite theirs.
   const sessionChangedRef = useRef(false);
+  // Bumped by every sign-in and sign-out, so a sign-in still waiting for the
+  // user's "Open on" tab does not sign in again after a sign-out (or a later
+  // sign-in) has happened meanwhile.
+  const sessionGenRef = useRef(0);
 
   // On mount: clear tokens left in the Keychain by a previous install, then
   // confirm any stored session with the server before leaving the loading
@@ -143,6 +169,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     (async () => {
       let authed = false;
+      let tab: DefaultTab | null = null;
       try {
         // A failed wipe may have left the previous install's tokens, and a
         // failed check cannot tell: this launch is signed out (the request
@@ -151,7 +178,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const token = await storage.getItem(ACCESS_TOKEN_KEY);
         if (!token) return;
         authed = true;
-        const session = await checkSession();
+        const { session, defaultTab: checkedTab } = await checkSession();
+        tab = checkedTab;
         if (session === 'dead') {
           authed = false;
           await storage.deleteItem(ACCESS_TOKEN_KEY);
@@ -165,7 +193,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
       } finally {
         if (!cancelled) {
-          if (!sessionChangedRef.current) setIsAuthenticated(authed);
+          if (!sessionChangedRef.current) {
+            setDefaultTab(tab);
+            setIsAuthenticated(authed);
+          }
           setIsLoading(false);
         }
       }
@@ -179,13 +210,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // still running (past its 5 s cap) cannot delete the new tokens; once both
   // are written the install is marked done, so a 'pending' marker left by a
   // failed check, wipe or sign-out does not wipe them on the next launch.
+  // Then the user's "Open on" tab is read (#913): at most
+  // DEFAULT_TAB_FETCH_TIMEOUT_MS; unknown (Scan) if it fails, so sign-in always ends.
   const storeSession = useCallback(async (accessToken: string, refreshToken: string) => {
     await supersedeInstallCheck();
     await storage.setItem(ACCESS_TOKEN_KEY, accessToken);
     await storage.setItem(REFRESH_TOKEN_KEY, refreshToken);
     await markInstallDone();
     sessionChangedRef.current = true;
+    const generation = ++sessionGenRef.current;
     resumeStoredSession();
+    const tab = await loadDefaultTab();
+    if (generation !== sessionGenRef.current) return;
+    setDefaultTab(tab);
     setIsAuthenticated(true);
   }, []);
 
@@ -208,6 +245,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // the install marker is set to 'pending' so the next launch wipes the
   // tokens before using them.
   const logout = useCallback(async () => {
+    sessionGenRef.current += 1;
     gateStoredSession(Promise.resolve(false));
     try {
       const results = await Promise.allSettled([
@@ -222,6 +260,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // behind is not sent, and a refresh already in flight is dropped.
       gateStoredSession(Promise.resolve(false));
       sessionChangedRef.current = true;
+      setDefaultTab(null);
       setIsAuthenticated(false);
     }
   }, []);
@@ -238,12 +277,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
     } else if (isAuthenticated && inAuthGroup) {
-      router.replace(DEFAULT_TAB_ROUTE);
+      router.replace(defaultTabRoute(defaultTab));
     }
-  }, [isAuthenticated, isLoading, segments, router]);
+  }, [isAuthenticated, isLoading, segments, router, defaultTab]);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, login, testLogin, logout }}>
+    <AuthContext.Provider
+      value={{ isAuthenticated, isLoading, defaultTab, login, testLogin, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

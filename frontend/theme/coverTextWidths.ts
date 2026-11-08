@@ -36,10 +36,10 @@ const QUOTES_1000: readonly number[] = [269, 269, 277, 269, 474, 474];
 /** Em width assumed for any character not in the table (emoji, other scripts). */
 const UNKNOWN_EM = 1;
 /** Safety margin on every estimate: kerning, rounding and renderer differences. */
-export const MEASURE_MARGIN = 1.04;
+const MEASURE_MARGIN = 1.04;
 
 /** Array.from splits by code point, so surrogate pairs stay whole. */
-export function chars(s: string): string[] {
+function chars(s: string): string[] {
   return Array.from(s);
 }
 
@@ -66,7 +66,7 @@ function charEm(ch: string): number {
 }
 
 /** Summed advance of `s` in em, with no margin. */
-export function textEm(s: string): number {
+function textEm(s: string): number {
   return chars(s).reduce((sum, ch) => sum + charEm(ch), 0);
 }
 

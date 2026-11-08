@@ -57,7 +57,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all` |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
-| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore` |
+| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences` |
 | `rate_limit_reads` | 120/min | `GET /user-books`, `GET /user-books/trash`, `GET /auth/me`, `GET /scan/usage` |
 | `rate_limit_health` | 60/min | `GET /health`, `GET /health/db` |
 
@@ -203,14 +203,58 @@ curl -X POST https://bookshelfapi.buffingchi.com/auth/logout-all \
   "email": "you@example.com",
   "display_name": "You",
   "avatar_url": "https://lh3.googleusercontent.com/...",
-  "created_at": "2026-03-15T12:00:00Z"
+  "created_at": "2026-03-15T12:00:00Z",
+  "default_tab": null
 }
 ```
+
+`default_tab` (#913) is the "Open on" screen: `"scan"`, `"wishlist"`, `"my-books"`, or `null` (never set; the app opens on Scan). Every existing user has `null`.
 
 **Example:**
 ```bash
 curl https://bookshelfapi.buffingchi.com/auth/me \
   -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+---
+
+## Users
+
+### `PATCH /users/me/preferences` — change the signed-in user's settings
+
+**Auth:** required (Bearer access token)
+**Rate limit:** `rate_limit_writes`
+**Source:** `backend/app/api/users.py:update_preferences`
+
+Changes only the caller's own row: the user comes from the access token, and the body cannot name another user. Only the fields sent change; `null` clears one.
+
+**Request:**
+```json
+{ "default_tab": "wishlist" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `default_tab` | `"scan"` \| `"wishlist"` \| `"my-books"` \| `null`, optional | the "Open on" screen (#913); `null` means Scan. Omitted: unchanged |
+
+**Response `200`:** the user's preferences after the change.
+```json
+{ "default_tab": "wishlist" }
+```
+
+**Errors:**
+| Status | `detail` | When |
+|---|---|---|
+| `401` | `Token expired`, `Invalid token`, `token_revoked`, ... | no, bad or revoked access token |
+| `422` | FastAPI validation list | `default_tab` not one of the allowed values (e.g. `"settings"`, `"Scan"`), any other field in the body (`user_id`, `tier`, ...), or a body that is not an object |
+| `429` | rate limited | over `rate_limit_writes` |
+
+**Example:**
+```bash
+curl -X PATCH https://bookshelfapi.buffingchi.com/users/me/preferences \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"default_tab": "my-books"}'
 ```
 
 ---
