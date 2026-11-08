@@ -69,6 +69,10 @@
     "title": "Title A–Z",
     "author": "Author A–Z"
   },
+  "view": {
+    "showGrid": "Show as grid",
+    "showList": "Show as list"
+  },
   "shelfA11y_one": "Reading now, {{count}} book",
   "shelfA11y_other": "Reading now, {{count}} books",
   "shelfItemA11y": "{{title}}, by {{author}}",

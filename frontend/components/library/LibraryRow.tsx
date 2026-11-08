@@ -7,7 +7,8 @@ import { BookCover } from '../ui/BookCover';
 import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { fontFor } from '../../theme/typography';
-import { ROW_DIVIDER_INSET, STATUS_COLOR_KEY, type LibraryBook } from './libraryShared';
+import { StatusDot } from './StatusDot';
+import { ROW_DIVIDER_INSET, type LibraryBook } from './libraryShared';
 
 export interface LibraryRowProps {
   item: LibraryBook;
@@ -52,12 +53,9 @@ function LibraryRowBase({
   showStatus = true,
   testID = 'book-row',
 }: LibraryRowProps) {
-  const { theme } = useTheme();
   const { t } = useTranslation('my-books');
 
   const year = item.edition?.publish_year ?? null;
-  const statusKey = item.status as keyof typeof STATUS_COLOR_KEY;
-  const dotColor = theme.colors[STATUS_COLOR_KEY[statusKey] ?? 'onSurfaceVariant'];
   const status = t(`statusTab.${item.status}`);
   const showDot = showStatus && metaText === undefined;
   const meta =
@@ -128,9 +126,7 @@ function LibraryRowBase({
           </AppText>
           {meta ? (
             <View style={styles.metaLine}>
-              {showDot ? (
-                <View testID="book-row-dot" style={[styles.dot, { backgroundColor: dotColor }]} />
-              ) : null}
+              {showDot ? <StatusDot status={item.status} testID="book-row-dot" /> : null}
               <AppText
                 variant="meta"
                 color={metaTone === 'danger' ? 'danger' : 'onSurfaceVariant'}
@@ -165,8 +161,6 @@ export function LibraryRowSeparator() {
   );
 }
 
-const DOT_SIZE = 8;
-
 const styles = StyleSheet.create({
   row: { minHeight: ROW_MIN_HEIGHT, justifyContent: 'center' },
   overlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
@@ -179,7 +173,6 @@ const styles = StyleSheet.create({
   },
   textBlock: { flex: 1, minWidth: 0, gap: 3 },
   metaLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  dot: { width: DOT_SIZE, height: DOT_SIZE, borderRadius: DOT_SIZE / 2 },
   metaText: { flexShrink: 1 },
   metaDanger: { fontFamily: fontFor('600') },
   trailing: {},

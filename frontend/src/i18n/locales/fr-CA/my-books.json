@@ -69,6 +69,10 @@
     "title": "Titre A–Z",
     "author": "Auteur A–Z"
   },
+  "view": {
+    "showGrid": "Afficher en grille",
+    "showList": "Afficher en liste"
+  },
   "shelfA11y_one": "En cours de lecture, {{count}} livre",
   "shelfA11y_other": "En cours de lecture, {{count}} livres",
   "shelfItemA11y": "{{title}}, de {{author}}",

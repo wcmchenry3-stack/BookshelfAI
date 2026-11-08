@@ -269,6 +269,16 @@
     "tone": "neutral",
     "characterLimit": 25
   },
+  "view.showGrid": {
+    "description": "Accessibility label of the My Books header button that switches the list to a grid of covers. Shown while the list is active; an action, e.g. 'Show as grid'.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "view.showList": {
+    "description": "Accessibility label of the My Books header button that switches the grid back to the list. Shown while the grid is active; an action, e.g. 'Show as list'.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
   "shelfA11y": {
     "description": "Accessibility label of the 'Reading now' shelf, announced as a list, e.g. 'Reading now, 2 books'. Plural: _one/_other (and locale categories). {{count}} is the number of books.",
     "tone": "neutral",

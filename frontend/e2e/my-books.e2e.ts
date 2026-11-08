@@ -160,4 +160,36 @@ test.describe('My Books', () => {
     await page.getByRole('textbox', { name: 'Search your books' }).fill('dune');
     await expect(shelf).toHaveCount(0);
   });
+
+  test('switches to the cover grid, opens a book and switches back', async ({
+    page,
+    signIn,
+    expectNoA11yViolations,
+  }) => {
+    await signIn();
+    await openTab(page, 'Your book collection');
+    await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Show as grid', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Show as list', exact: true })).toBeVisible();
+    // Same labels as the rows; no shelf and no row menu in the grid.
+    await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Reading now, 1 book', exact: true })).toHaveCount(
+      0
+    );
+    await expect(page.getByRole('button', { name: 'More options for Dune' })).toHaveCount(0);
+    await expectNoA11yViolations('My Books cover grid');
+
+    await page.getByRole('button', { name: 'Dune — Purchased' }).click();
+    const detail = page.getByRole('dialog');
+    await expect(detail.getByRole('heading', { name: 'Dune' })).toBeVisible();
+    await expectNoA11yViolations('My Books book detail from the grid');
+    await detail.getByRole('button', { name: 'Close detail' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Show as list', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Show as grid', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'More options for Dune' })).toBeVisible();
+  });
 });

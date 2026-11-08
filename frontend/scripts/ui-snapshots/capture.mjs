@@ -252,6 +252,12 @@ async function runTheme(browser, scheme) {
     await step('my books', async () => {
       await tab(page, 'Your book collection');
       await shot(page, dir, '06-my-books');
+      // The cover grid (#934); switch back so later steps see the list.
+      await byLabel(page, 'Show as grid').click();
+      await settle(page, 800);
+      await shot(page, dir, '06b-my-books-grid');
+      await byLabel(page, 'Show as list').click();
+      await settle(page);
       await scrollList(page, 700);
       await shot(page, dir, '07-my-books-scrolled');
       await scrollList(page, -5000);

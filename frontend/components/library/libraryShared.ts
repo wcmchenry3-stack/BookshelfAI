@@ -94,3 +94,37 @@ export function sortBooks<T extends { book: { title: string; author: string } }>
     return collator.compare(x, y) || collator.compare(a.book[second], b.book[second]);
   });
 }
+
+/** Translator shape the label helper needs (a react-i18next `t` for `my-books`). */
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/**
+ * The spoken label of a My Books book: "Title — Status, by Author", plus
+ * "— Unverified" for a book the user added themselves (#616). The list row and
+ * the grid cell (#934) share it, so both read the same.
+ */
+export function bookA11yLabel(
+  t: Translate,
+  item: { status: string; unverified?: boolean; book: { title: string; author: string } }
+): string {
+  return t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', {
+    title: item.book.title,
+    status: t(`statusTab.${item.status}`),
+    author: item.book.author,
+  });
+}
+
+/** Cover grid geometry (#934): `md` cover width, gap between columns, gap between rows. */
+export const GRID_COVER_WIDTH = 104;
+export const GRID_COLUMN_GAP = 16;
+export const GRID_ROW_GAP = 20;
+
+/** Columns of the cover grid: at least 3, more as the window widens. */
+export function gridColumns(width: number): number {
+  return Math.max(
+    3,
+    Math.floor(
+      (width - 2 * SCREEN_PADDING + GRID_COLUMN_GAP) / (GRID_COVER_WIDTH + GRID_COLUMN_GAP)
+    )
+  );
+}
