@@ -1,17 +1,76 @@
-import { useEffect, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { usePathname, useSegments } from 'expo-router';
+import {
+  AccessibilityInfo,
+  Animated,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBanner } from '../hooks/useBanner';
 import { useTheme } from '../hooks/useTheme';
+import { fontFor } from '../theme/typography';
 
 const SLIDE_DURATION = 300;
 const DEFAULT_DISPLAY_DURATION = 5000;
+// A banner that carries an action (e.g. "Book found" + View) stays a bit longer
+// so the action is reachable (#909).
+const ACTION_DISPLAY_DURATION = 10000;
+const SIDE_MARGIN = 16;
+const GAP_BELOW_HEADER = 8;
+const SLIDE_DISTANCE = 240;
+
+/** Stack header height below the safe-area inset: 44 iOS, 56 Android, 64 web. */
+function headerContentHeight(): number {
+  return Platform.OS === 'android' ? 56 : Platform.OS === 'web' ? 64 : 44;
+}
 
 export function InAppBanner() {
   const { banner, hideBanner } = useBanner();
   const { theme } = useTheme();
-  const translateY = useRef(new Animated.Value(-120)).current;
+  const insets = useSafeAreaInsets();
+  const translateY = useRef(new Animated.Value(-SLIDE_DISTANCE)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pathname = usePathname();
+  const segments = useSegments();
+  // The sign-in route has no header, so the banner sits just below the inset.
+  const hasHeader = (segments[0] as string | undefined) !== '(auth)';
+  const [screenReaderOn, setScreenReaderOn] = useState(false);
+
+  useEffect(() => {
+    // react-native-web always reports a screen reader as on, which would make
+    // every action banner sticky: only query and subscribe on native.
+    if (Platform.OS === 'web') return;
+    let alive = true;
+    let sawEvent = false;
+    AccessibilityInfo.isScreenReaderEnabled()
+      // A late query result must not overwrite a newer change event.
+      .then((on) => alive && !sawEvent && setScreenReaderOn(on))
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', (on) => {
+      sawEvent = true;
+      setScreenReaderOn(on);
+    });
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, []);
+
+  // A banner never follows the user to another tab or screen (#909).
+  const lastPathRef = useRef(pathname);
+  useEffect(() => {
+    if (lastPathRef.current === pathname) return;
+    lastPathRef.current = pathname;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    hideBanner();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to route changes only
+  }, [pathname]);
 
   useEffect(() => {
     if (banner) {
@@ -20,29 +79,35 @@ export function InAppBanner() {
         duration: SLIDE_DURATION,
         useNativeDriver: true,
       }).start();
-
-      // A banner that carries an action stays until the user acts or taps it
-      // away: a timed-out button is unreachable for a screen-reader user, who
-      // may not find it before it disappears.
-      if (!banner.actions || banner.actions.length === 0) {
-        timerRef.current = setTimeout(() => {
-          dismiss();
-        }, banner.duration ?? DEFAULT_DISPLAY_DURATION);
-      }
     } else {
-      translateY.setValue(-120);
+      translateY.setValue(-SLIDE_DISTANCE);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only when the banner changes
+  }, [banner]);
 
+  useEffect(() => {
+    if (!banner) return;
+    const hasActions = !!banner.actions && banner.actions.length > 0;
+    // Stays until acted on, dismissed or the route changes: an error with an
+    // action (Retry, "Add it yourself"), and any action banner while a screen
+    // reader is on, because a timed-out button is unreachable for its user.
+    const sticky = hasActions && (banner.type === 'error' || screenReaderOn);
+    if (!sticky) {
+      const fallback = hasActions ? ACTION_DISPLAY_DURATION : DEFAULT_DISPLAY_DURATION;
+      timerRef.current = setTimeout(() => {
+        dismiss();
+      }, banner.duration ?? fallback);
+    }
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismiss is re-created every render; the effect must re-run only when the banner changes
-  }, [banner]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismiss is re-created every render
+  }, [banner, screenReaderOn]);
 
   function dismiss() {
     if (timerRef.current) clearTimeout(timerRef.current);
     Animated.timing(translateY, {
-      toValue: -120,
+      toValue: -SLIDE_DISTANCE,
       duration: SLIDE_DURATION,
       useNativeDriver: true,
     }).start(() => hideBanner());
@@ -66,7 +131,15 @@ export function InAppBanner() {
 
   return (
     <Animated.View
-      style={[styles.container, { backgroundColor: bgColor, transform: [{ translateY }] }]}
+      style={[
+        styles.container,
+        {
+          top: insets.top + (hasHeader ? headerContentHeight() : 0) + GAP_BELOW_HEADER,
+          backgroundColor: bgColor,
+          transform: [{ translateY }],
+        },
+      ]}
+      testID="in-app-banner"
       accessibilityRole="alert"
       accessibilityLiveRegion="assertive"
     >
@@ -103,12 +176,12 @@ export function InAppBanner() {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
+    left: SIDE_MARGIN,
+    right: SIDE_MARGIN,
     zIndex: 9999,
-    paddingTop: 50,
-    paddingBottom: 12,
+    borderRadius: 16,
+    elevation: 6,
+    paddingVertical: 12,
     paddingHorizontal: 16,
   },
   content: {
@@ -119,7 +192,7 @@ const styles = StyleSheet.create({
   },
   message: {
     flex: 1,
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 14,
   },
   actions: {
@@ -137,7 +210,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionText: {
-    fontWeight: '700',
+    fontFamily: fontFor('700'),
     fontSize: 13,
   },
 });

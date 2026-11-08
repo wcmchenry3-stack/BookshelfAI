@@ -4,7 +4,7 @@ import { Sentry } from '../lib/sentry';
 
 import '../src/i18n/i18n';
 
-import { Image, Platform, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
 import { NotoSerif_600SemiBold, NotoSerif_700Bold } from '@expo-google-fonts/noto-serif';
@@ -63,10 +63,8 @@ function HeaderLogo() {
 // Separate component so useTheme() can be called inside ThemeProvider.
 function InnerStack() {
   const { theme } = useTheme();
-  // Dark mode: semi-transparent frosted-glass header; light mode: transparent.
-  const headerBg = theme.colors.headerOverlay;
-  const webStyle = Platform.OS === 'web' && theme.isDark ? { backdropFilter: 'blur(20px)' } : {};
-
+  // Opaque header in both themes (#906): content always starts below it, so no
+  // screen needs to guess the header height. No blur, no shadow.
   return (
     <Stack
       screenOptions={{
@@ -77,13 +75,14 @@ function InnerStack() {
             <HeaderFeedbackButton />
           </View>
         ),
-        headerStyle: { backgroundColor: headerBg, ...webStyle },
+        headerStyle: { backgroundColor: theme.colors.background },
         headerShadowVisible: false,
-        headerTransparent: theme.isDark,
+        headerTransparent: false,
       }}
     >
+      {/* No app chrome on sign-in (the route is "(auth)/login": there is no (auth)/_layout); also keeps the raw route name out of the title (#908). */}
+      <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ title: '' }} />
-      {/* Opaque header: the list starts below it, not under the dark-mode glass header. */}
       <Stack.Screen name="scan-queue" options={{ title: '', headerTransparent: false }} />
       <Stack.Screen name="trash" options={{ title: '', headerTransparent: false }} />
     </Stack>
