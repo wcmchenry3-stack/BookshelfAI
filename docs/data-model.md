@@ -29,6 +29,7 @@ erDiagram
     string google_id UK
     string display_name
     string avatar_url
+    string default_tab "scan, wishlist, my-books or null (#913)"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -217,6 +218,7 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 | `display_name` | string, nullable | from Google profile |
 | `avatar_url` | string, nullable | from Google profile |
 | `token_version` | integer, not null, server default `0` | carried in every token as `tv`; bumping it revokes all the user's sessions (`app/auth/sessions.py`, #689, migration 0021) |
+| `default_tab` | string, nullable | the "Open on" screen the app opens on after sign-in and on launch (#913, migration 0029): `scan`, `wishlist` or `my-books`; NULL means Scan. Check constraint `ck_users_default_tab` (NULL or one of the three; `DEFAULT_TABS` in the model). Returned by `GET /auth/me`, set only by `PATCH /users/me/preferences` (the caller's own row). Goes with the account row; account data export (not built yet) must include it |
 | `created_at` / `updated_at` | timestamptz, server defaults | `updated_at` auto-bumps on row change |
 
 **Lockdown:** the backend enforces `ALLOWED_EMAILS` at the `/auth/google` endpoint — any Google account whose email isn't in that comma-separated env var is rejected *before* a User row is created. See [`architecture.md`](architecture.md#auth-architecture).
@@ -645,6 +647,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0025_catalog_user_split.py` — catalog/user split (#682): adds `user_books.title_override`, `author_override`, `cover_url_override` (nullable; checks for 1–500 / 1–500 / 1–2048 characters and none on unverified entries), `books.source` (nullable, check `google_books` / `open_library` / `scan`), `books.fetched_at` (nullable) and `books.merged_into_id` (self-FK `ON DELETE RESTRICT`, index `ix_books_merged_into_id`, never itself); expand only. Backfills `source` (by `source_of`'s rule) and `fetched_at = created_at` for existing books in one UPDATE. The downgrade drops the columns, constraints and index (user overrides and provenance are lost; `books` values are untouched)
 - `0026_soft_delete_trash.py` — soft delete with a 30-day trash (#683); expand only. Adds nullable `deleted_at` (timestamptz) to `user_books` and `user_custom_books`; replaces the unique constraint `uq_user_books_user_book (user_id, book_id)` with the partial unique index `uq_user_books_user_book_live` on the same columns `WHERE deleted_at IS NULL` (built before the constraint is dropped; with no trashed rows yet it enforces exactly the same thing, so nothing is lost); adds the partial index `ix_user_books_deleted_at` on `(deleted_at) WHERE deleted_at IS NOT NULL`. **The downgrade loses the trash**: it hard-deletes every trashed row (the `user_custom_books` of trashed entries, cascading to their library rows, then the remaining trashed `user_books`), since a trashed and a live entry of the same book would block the full constraint, then restores the constraint and drops the indexes and columns
 - `0027_device_attestation.py` — device attestation (#753); expand only. Adds the `device_key_platform` ENUM (`ios`, `android`) and the `device_keys` table (UUID PK, `user_id` FK CASCADE, `platform`, `key_id` VARCHAR(256), `public_key_cbor` BYTEA, `counter` BIGINT, `last_used_at` TIMESTAMPTZ nullable, `created_at` server default; unique `(user_id, key_id)`). The downgrade drops the table and the ENUM
+- `0029_users_default_tab.py` — the "Open on" preference (#913); expand only. Adds the nullable `users.default_tab` (varchar, no default, so existing users stay NULL, i.e. Scan; no backfill) and the check constraint `ck_users_default_tab` (`default_tab IS NULL OR default_tab IN ('scan', 'wishlist', 'my-books')`). The previous release never reads or writes the column. The downgrade drops the constraint and the column (users' choices are lost and the app falls back to Scan)
 
 ### Writing a new migration
 

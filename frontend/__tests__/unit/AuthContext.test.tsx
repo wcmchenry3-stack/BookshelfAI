@@ -16,6 +16,7 @@ import {
   clearTokensIfFreshInstall,
   resetInstallCheckForTests,
 } from '../../lib/freshInstall';
+import { DEFAULT_TAB_FETCH_TIMEOUT_MS } from '../../lib/defaultTab';
 
 const mockPost = jest.fn();
 const mockGet = jest.fn();
@@ -589,5 +590,195 @@ describe('AuthProvider launch validation (#722)', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('AuthProvider "Open on" tab (#913)', () => {
+  it.each([
+    ['scan', '/(tabs)/scan'],
+    ['wishlist', '/(tabs)/wishlist'],
+    ['my-books', '/(tabs)/my-books'],
+  ])('a stored session with default_tab %s lands on %s', async (tab, route) => {
+    mockSegments = ['(auth)'];
+    useKeychain(BOTH_TOKENS);
+    mockGet.mockResolvedValue({ data: { default_tab: tab } });
+
+    const { getByTestId } = await renderCapturing();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    expect(ctx.defaultTab).toBe(tab);
+    expect(mockReplace).toHaveBeenCalledWith(route);
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    // The tab comes from the session check itself: one GET /auth/me.
+    expect(mockGet).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['null', { data: { default_tab: null } }],
+    ['missing', { data: {} }],
+    ['an unknown value', { data: { default_tab: 'settings' } }],
+    ['a non-string', { data: { default_tab: 7 } }],
+    ['no body', { data: null }],
+  ])('a stored session with %s default_tab lands on Scan', async (_label, response) => {
+    mockSegments = ['(auth)'];
+    useKeychain(BOTH_TOKENS);
+    mockGet.mockResolvedValue(response);
+
+    const { getByTestId } = await renderCapturing();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    expect(ctx.defaultTab).toBe('scan');
+    expect(mockReplace).toHaveBeenCalledWith('/(tabs)/scan');
+  });
+
+  it.each([
+    ['offline', { message: 'Network Error' }],
+    ['a 5xx', { response: { status: 503 } }],
+    ['a transient 401', { response: { status: 401 } }],
+  ])('a launch whose /auth/me fails (%s) stays signed in on Scan', async (_label, error) => {
+    mockSegments = ['(auth)'];
+    useKeychain(BOTH_TOKENS);
+    mockGet.mockRejectedValue(error);
+
+    const { getByTestId } = await renderCapturing();
+
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    expect(ctx.defaultTab).toBeNull();
+    expect(mockReplace).toHaveBeenCalledWith('/(tabs)/scan');
+  });
+
+  it('a hung /auth/me at launch ends on Scan after the session check timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSegments = ['(auth)'];
+      useKeychain(BOTH_TOKENS);
+      mockGet.mockReturnValue(new Promise(() => {}));
+
+      const { getByTestId } = await renderCapturing();
+      await waitFor(() => expect(mockGet).toHaveBeenCalled());
+      await act(async () => {
+        jest.advanceTimersByTime(SESSION_CHECK_TIMEOUT_MS);
+      });
+
+      await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+      expect(ctx.defaultTab).toBeNull();
+      expect(mockReplace).toHaveBeenCalledWith('/(tabs)/scan');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(['login', 'testLogin'] as const)('%s reads the tab and lands on it', async (method) => {
+    mockSegments = ['(auth)'];
+    mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
+    useKeychain({});
+    const { getByTestId } = await renderCapturing();
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    mockGet.mockResolvedValue({ data: { default_tab: 'my-books' } });
+
+    await act(async () => {
+      if (method === 'login') await ctx.login('google-id-token');
+      else await ctx.testLogin('acc', 'ref');
+    });
+
+    expect(getByTestId('state').props.children).toBe('authed');
+    expect(mockGet).toHaveBeenCalledWith('/auth/me', expect.anything());
+    expect(ctx.defaultTab).toBe('my-books');
+    expect(mockReplace).toHaveBeenLastCalledWith('/(tabs)/my-books');
+    expect(mockReplace).not.toHaveBeenCalledWith('/(tabs)/scan');
+  });
+
+  it.each([
+    ['fails', () => mockGet.mockRejectedValue({ message: 'Network Error' }), null],
+    [
+      'returns an unknown value',
+      () => mockGet.mockResolvedValue({ data: { default_tab: 'x' } }),
+      'scan',
+    ],
+  ])('sign-in lands on Scan when /auth/me %s', async (_label, arrange, expectedTab) => {
+    mockSegments = ['(auth)'];
+    mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
+    useKeychain({});
+    const { getByTestId } = await renderCapturing();
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    arrange();
+
+    await act(async () => {
+      await ctx.login('google-id-token');
+    });
+
+    expect(getByTestId('state').props.children).toBe('authed');
+    expect(ctx.defaultTab).toBe(expectedTab);
+    expect(mockReplace).toHaveBeenLastCalledWith('/(tabs)/scan');
+  });
+
+  it('sign-in does not wait longer than DEFAULT_TAB_FETCH_TIMEOUT_MS for the tab', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSegments = ['(auth)'];
+      mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
+      useKeychain({});
+      const { getByTestId } = await renderCapturing();
+      await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+      mockGet.mockReturnValue(new Promise(() => {}));
+
+      let done = false;
+      await act(async () => {
+        void ctx.login('google-id-token').then(() => (done = true));
+      });
+      await waitFor(() => expect(mockGet).toHaveBeenCalled());
+      expect(done).toBe(false);
+
+      await act(async () => {
+        jest.advanceTimersByTime(DEFAULT_TAB_FETCH_TIMEOUT_MS);
+      });
+
+      await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+      expect(done).toBe(true);
+      expect(mockReplace).toHaveBeenLastCalledWith('/(tabs)/scan');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a sign-out while sign-in waits for the tab stays signed out', async () => {
+    mockSegments = ['(auth)'];
+    mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
+    useKeychain({});
+    const { getByTestId } = await renderCapturing();
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('guest'));
+    let answer!: (v: unknown) => void;
+    mockGet.mockReturnValue(new Promise((r) => (answer = r)));
+
+    let signingIn!: Promise<void>;
+    await act(async () => {
+      signingIn = ctx.login('google-id-token');
+    });
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    await act(async () => {
+      await ctx.logout();
+    });
+    await act(async () => {
+      answer({ data: { default_tab: 'wishlist' } });
+      await signingIn;
+    });
+
+    expect(getByTestId('state').props.children).toBe('guest');
+    expect(ctx.defaultTab).toBeNull();
+    expect(mockReplace).not.toHaveBeenCalledWith('/(tabs)/wishlist');
+  });
+
+  it('sign-out resets the tab to unknown (Scan)', async () => {
+    useKeychain(BOTH_TOKENS);
+    mockGet.mockResolvedValue({ data: { default_tab: 'wishlist' } });
+    const { getByTestId } = await renderCapturing();
+    await waitFor(() => expect(ctx.defaultTab).toBe('wishlist'));
+
+    await act(async () => {
+      await ctx.logout();
+    });
+
+    expect(getByTestId('state').props.children).toBe('guest');
+    expect(ctx.defaultTab).toBeNull();
   });
 });

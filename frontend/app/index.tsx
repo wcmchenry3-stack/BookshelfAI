@@ -2,10 +2,10 @@ import { ActivityIndicator, View } from 'react-native';
 import { Redirect } from 'expo-router';
 
 import { useAuth } from '../hooks/useAuth';
-import { DEFAULT_TAB_ROUTE } from '../lib/defaultTab';
+import { defaultTabRoute } from '../lib/defaultTab';
 
 export default function Index() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, defaultTab } = useAuth();
 
   if (isLoading) {
     return (
@@ -16,7 +16,9 @@ export default function Index() {
   }
 
   if (isAuthenticated) {
-    return <Redirect href={DEFAULT_TAB_ROUTE} />;
+    // The user's "Open on" tab (#913), read by the launch session check;
+    // Scan when unset, unknown or not answered.
+    return <Redirect href={defaultTabRoute(defaultTab)} />;
   }
 
   return <Redirect href="/(auth)/login" />;

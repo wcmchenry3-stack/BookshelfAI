@@ -37,6 +37,22 @@ describe('Index (root redirect)', () => {
     expect(getByTestId('redirect').props.children).toBe('/(tabs)/scan');
   });
 
+  it.each([
+    ['scan', '/(tabs)/scan'],
+    ['wishlist', '/(tabs)/wishlist'],
+    ['my-books', '/(tabs)/my-books'],
+  ])('redirects to the user\'s "Open on" tab %s (#913)', async (tab, route) => {
+    mockUseAuth.mockReturnValue({ isAuthenticated: true, isLoading: false, defaultTab: tab });
+    const { getByTestId } = await render(<Index />);
+    expect(getByTestId('redirect').props.children).toBe(route);
+  });
+
+  it.each([null, 'settings', 42])('redirects to Scan for an unknown tab %p (#913)', async (tab) => {
+    mockUseAuth.mockReturnValue({ isAuthenticated: true, isLoading: false, defaultTab: tab });
+    const { getByTestId } = await render(<Index />);
+    expect(getByTestId('redirect').props.children).toBe('/(tabs)/scan');
+  });
+
   it('redirects to login when not authenticated', async () => {
     mockUseAuth.mockReturnValue({ isAuthenticated: false, isLoading: false });
     const { getByTestId } = await render(<Index />);
