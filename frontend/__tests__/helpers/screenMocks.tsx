@@ -20,8 +20,16 @@ export const loadingSpinnerModule = () => ({
   },
 });
 
-/** `expo-router` with `useFocusEffect` (run once on mount), `useRouter` and `useLocalSearchParams`. */
-export const focusEffectRouterModule = () => require('./routerMock').routerModule();
+/**
+ * `expo-router` with `useFocusEffect`, `useRouter` and `useLocalSearchParams`. Like the
+ * real hook, `useFocusEffect` re-runs when the callback's identity changes.
+ */
+export const focusEffectRouterModule = () => ({
+  ...require('./routerMock').routerModule(),
+  useFocusEffect: (cb: () => void) => {
+    require('react').useEffect(cb, [cb]);
+  },
+});
 
 /** A wishlisted `/user-books` row for Dune; override fields per test. */
 export function userBookRow(overrides: Record<string, unknown> = {}) {

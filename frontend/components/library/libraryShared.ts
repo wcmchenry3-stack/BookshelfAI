@@ -12,6 +12,31 @@ export const NEXT_STATUS: Record<string, string> = {
 
 export const SCREEN_PADDING = 16;
 
+interface StatusBook {
+  status: string;
+  book: { title: string; author: string };
+}
+
+/** How many books each chip counts: `all` is every book, the rest are per status. */
+export function countByStatus(books: readonly StatusBook[]): Record<Status, number> {
+  const counts: Record<Status, number> = {
+    all: books.length,
+    wishlisted: 0,
+    purchased: 0,
+    reading: 0,
+    read: 0,
+  };
+  for (const b of books) {
+    if (b.status in counts && b.status !== 'all') counts[b.status as Status] += 1;
+  }
+  return counts;
+}
+
+/** Books on the given status chip; `all` returns `books` itself. */
+export function filterByStatus<T extends { status: string }>(books: T[], status: Status): T[] {
+  return status === 'all' ? books : books.filter((b) => b.status === status);
+}
+
 /** The fields every library list row needs; screens extend it with their own. */
 export interface LibraryBook {
   id: string;

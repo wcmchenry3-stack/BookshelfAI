@@ -1,27 +1,32 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, StyleSheet, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import React, { memo, useCallback, useMemo, useState } from 'react';
+import { FlatList, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { BookDetailSheet } from '../../components/library/BookDetailSheet';
 import { BookActionsSheet } from '../../components/library/BookActionsSheet';
-import { EmptyState } from '../../components/library/EmptyState';
-import { LibraryHeader } from '../../components/library/LibraryHeader';
+import { filterBooks } from '../../components/library/filterBooks';
 import { LibraryRow } from '../../components/library/LibraryRow';
 import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
-import { LibrarySearchBar } from '../../components/library/LibrarySearchBar';
-import { StatusTabs } from '../../components/library/StatusTabs';
+import { MyBooksHeader } from '../../components/library/MyBooksHeader';
+import { StatusChips } from '../../components/library/StatusChips';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
-import { NEXT_STATUS, SCREEN_PADDING, type Status } from '../../components/library/libraryShared';
+import {
+  NEXT_STATUS,
+  SCREEN_PADDING,
+  countByStatus,
+  filterByStatus,
+  type Status,
+} from '../../components/library/libraryShared';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { IconButton } from '../../components/ui/IconButton';
+import { SearchField } from '../../components/ui/SearchField';
 import { useModalHandoff } from '../../hooks/useModalHandoff';
+import { useLibraryBooks } from '../../hooks/useLibraryBooks';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
-import { onLibraryChanged } from '../../lib/libraryChanged';
-import { api } from '../../lib/api';
-import { isServiceUnavailable } from '../../lib/apiErrorReporting';
 
 interface UserBook {
   id: string;
@@ -81,10 +86,10 @@ const MyBookRow = memo(function MyBookRow({ item, onOpen, onMore }: MyBookRowPro
 
 export default function MyBooksScreen() {
   const { t } = useTranslation('my-books');
+  const router = useRouter();
   const { activeColor } = useLibraryAccent();
-  const [books, setBooks] = useState<UserBook[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const { books, setBooks, loading, loadError, refreshing, setRefreshing, reload, invalidate } =
+    useLibraryBooks<UserBook>();
   const [activeTab, setActiveTab] = useState<Status>('all');
   const [selected, setSelected] = useState<UserBook | null>(null);
   // The book whose ⋯ menu is open.
@@ -94,89 +99,30 @@ export default function MyBooksScreen() {
   const menuGate = useModalHandoff(actionsFor !== null);
   const [query, setQuery] = useState('');
 
-  // Read inside the async mutation handlers below, so a tab switch while a
-  // request is in flight is picked up instead of applying a stale tab's rule
-  // to whatever list is on screen by the time the server responds.
-  const activeTabRef = useRef(activeTab);
-  useEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
-
   const { isConnected, mutatingIds, advanceStatus, removeBook } = useLibraryMutations<UserBook>({
     namespace: 'my-books',
     nextStatus: (item) => NEXT_STATUS[item.status],
     onAdvanced: (item, data) => {
-      // Only after the server confirms, and against whatever tab is current —
-      // not the tab that was active when the button was pressed, which the
-      // user may have since left (fetchBooks would have already replaced
-      // `books` with that tab's data).
-      // Keep (and update) the row when it still belongs to the current tab —
-      // "all", or the tab for its new status, whose GET may already have
-      // returned it if the user switched there while the PATCH was in flight.
-      setBooks((prev) => {
-        if (!prev.some((b) => b.id === item.id)) return prev;
-        const tab = activeTabRef.current;
-        return tab === 'all' || tab === data.status
-          ? prev.map((b) => (b.id === item.id ? { ...b, ...data } : b))
-          : prev.filter((b) => b.id !== item.id);
-      });
+      // Only after the server confirms. The chip filter is derived from `books`,
+      // so a row that moved to another status just leaves the filtered view.
+      invalidate();
+      setBooks((prev) => prev.map((b) => (b.id === item.id ? { ...b, ...data } : b)));
       setSelected(null);
       setActionsFor(null);
     },
     onRemoved: (item) => {
+      invalidate();
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
       setSelected(null);
       setActionsFor(null);
     },
   });
 
-  async function fetchBooks(tab: Status) {
-    try {
-      const params = tab !== 'all' ? { status: tab } : {};
-      const { data } = await api.get<UserBook[]>('/user-books', { params });
-      setBooks(data.filter((b) => b.book != null));
-    } catch (err) {
-      Alert.alert(
-        t('errorTitle', { ns: 'common' }),
-        isServiceUnavailable(err) ? t('serviceUnavailable', { ns: 'common' }) : t('errorLoadBooks')
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
-  // The latest fetchBooks, so the effects below stay stable instead of
-  // re-running (and re-fetching) whenever `t` or the closure changes.
-  const fetchBooksRef = useRef(fetchBooks);
-  useEffect(() => {
-    fetchBooksRef.current = fetchBooks;
-  });
-
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void fetchBooksRef.current(activeTab);
-    }, [activeTab])
+  const counts = useMemo(() => countByStatus(books), [books]);
+  const filteredBooks = useMemo(
+    () => filterBooks(filterByStatus(books, activeTab), query),
+    [books, activeTab, query]
   );
-
-  // A restore from the Trash (#683) can finish after this screen's focus reload.
-  useEffect(() => onLibraryChanged(() => void fetchBooksRef.current(activeTabRef.current)), []);
-
-  function handleTabChange(tab: Status) {
-    setActiveTab(tab);
-    setQuery('');
-    setLoading(true);
-    void fetchBooks(tab);
-  }
-
-  const filteredBooks = useMemo(() => {
-    if (!query.trim()) return books;
-    const q = query.toLowerCase();
-    return books.filter(
-      (b) => b.book.title.toLowerCase().includes(q) || b.book.author.toLowerCase().includes(q)
-    );
-  }, [books, query]);
 
   const sheetActionsDisabled = !isConnected || (selected != null && mutatingIds.has(selected.id));
   const menuActionsDisabled =
@@ -208,40 +154,106 @@ export default function MyBooksScreen() {
     );
   }
 
+  const hasBooks = books.length > 0;
+  const trimmedQuery = query.trim();
+  const clearSearch = () => setQuery('');
+  const showAll = () => setActiveTab('all');
+
+  // The three empty states (#930); the search field and chips stay above the first two.
+  let empty: React.ReactElement;
+  if (!hasBooks && loadError) {
+    // A failed load is not an empty library: say so and offer a retry.
+    empty = (
+      <EmptyState
+        testID="my-books-load-error"
+        title={t('errorLoadBooks')}
+        primaryAction={{
+          label: t('loadErrorAction'),
+          onPress: () => void reload(),
+          testID: 'empty-retry',
+        }}
+        style={styles.empty}
+      />
+    );
+  } else if (!hasBooks) {
+    empty = (
+      <EmptyState
+        testID="my-books-empty-library"
+        title={t('emptyLibraryTitle')}
+        body={t('emptyLibraryBody')}
+        primaryAction={{
+          label: t('emptyLibraryAction'),
+          onPress: () => router.push('/scan?mode=camera'),
+          testID: 'empty-scan-books',
+        }}
+        style={styles.empty}
+      />
+    );
+  } else if (trimmedQuery) {
+    empty = (
+      <EmptyState
+        testID="my-books-empty-search"
+        title={t('emptySearchTitle', { query: trimmedQuery })}
+        body={t('emptySearchBody')}
+        primaryAction={{
+          label: t('emptySearchAction'),
+          onPress: clearSearch,
+          testID: 'empty-clear-search',
+        }}
+        style={styles.empty}
+      />
+    );
+  } else {
+    empty = (
+      <EmptyState
+        testID="my-books-empty-filter"
+        title={t(`emptyFilter.${activeTab}`)}
+        body={t('emptyFilterBody')}
+        primaryAction={{
+          label: t('emptyFilterAction'),
+          onPress: showAll,
+          testID: 'empty-show-all',
+        }}
+        style={styles.empty}
+      />
+    );
+  }
+
   const listHeader = (
-    <LibraryHeader
-      title={t('sectionTitle')}
-      subtitle={t('heroSubtitle')}
-      count={books.length}
-      summaryLabel={t('archiveSummary')}
-    />
+    <View>
+      <MyBooksHeader total={books.length} reading={counts.reading} />
+      {hasBooks ? (
+        <>
+          <SearchField
+            value={query}
+            onChangeText={setQuery}
+            placeholder={t('searchPlaceholder')}
+            accessibilityLabel={t('searchA11y')}
+            clearAccessibilityLabel={t('searchClearA11y')}
+            testID="my-books-search"
+            style={styles.search}
+          />
+          <StatusChips activeTab={activeTab} counts={counts} onChange={setActiveTab} />
+        </>
+      ) : null}
+    </View>
   );
 
   return (
     <LibraryScreen>
-      <LibrarySearchBar value={query} onChangeText={setQuery} />
-      <StatusTabs activeTab={activeTab} onChange={handleTabChange} />
-
       {!isConnected && <OfflineNotice />}
 
-      {/* Library list */}
-      {filteredBooks.length === 0 ? (
-        <EmptyState message={t('noBooksYet')} />
-      ) : (
-        <FlatList
-          data={filteredBooks}
-          {...LIBRARY_LIST_PROPS}
-          contentContainerStyle={styles.list}
-          ListHeaderComponent={<View style={styles.header}>{listHeader}</View>}
-          refreshControl={libraryRefreshControl(
-            refreshing,
-            setRefreshing,
-            () => fetchBooks(activeTab),
-            activeColor
-          )}
-          renderItem={renderItem}
-        />
-      )}
+      {/* One list for every state, so the header scrolls with the rows and pull to refresh always works. */}
+      <FlatList
+        data={filteredBooks}
+        {...LIBRARY_LIST_PROPS}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.list}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={empty}
+        refreshControl={libraryRefreshControl(refreshing, setRefreshing, reload, activeColor)}
+        renderItem={renderItem}
+      />
 
       <BookActionsSheet
         selected={actionsFor}
@@ -266,5 +278,6 @@ export default function MyBooksScreen() {
 
 const styles = StyleSheet.create({
   list: { paddingBottom: 32 },
-  header: { paddingHorizontal: SCREEN_PADDING },
+  search: { marginHorizontal: SCREEN_PADDING, marginTop: 12 },
+  empty: { paddingTop: 48 },
 });

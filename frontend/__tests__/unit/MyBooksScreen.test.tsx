@@ -5,6 +5,8 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 import { IOS_DISMISS_FALLBACK_MS } from '../../hooks/useModalHandoff';
 import MyBooksScreen from '../../app/(tabs)/my-books';
 import { userBookRow } from '../helpers/screenMocks';
+import { routerState } from '../helpers/routerMock';
+import { notifyLibraryChanged } from '../../lib/libraryChanged';
 
 const mockGet = jest.fn();
 const mockPatch = jest.fn();
@@ -52,20 +54,20 @@ describe('MyBooksScreen', () => {
   it('shows empty state when no books', async () => {
     mockGet.mockResolvedValue({ data: [] });
     const { getByText } = await render(<MyBooksScreen />);
-    await waitFor(() => expect(getByText('No books here yet.')).toBeTruthy(), {
+    await waitFor(() => expect(getByText('Your library is empty')).toBeTruthy(), {
       timeout: 10_000,
     });
   }, 15_000);
 
-  it('renders all filter tabs', async () => {
-    mockGet.mockResolvedValue({ data: [] });
-    const { getByText } = await render(<MyBooksScreen />);
+  it('renders all filter chips with their counts', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText } = await render(<MyBooksScreen />);
     await waitFor(() => {
-      expect(getByText('All')).toBeTruthy();
-      expect(getByText('Wishlist')).toBeTruthy();
-      expect(getByText('Purchased')).toBeTruthy();
-      expect(getByText('Reading')).toBeTruthy();
-      expect(getByText('Read')).toBeTruthy();
+      expect(getByLabelText('Filter by All, 1 book')).toBeTruthy();
+      expect(getByLabelText('Filter by Wishlist, 1 book')).toBeTruthy();
+      expect(getByLabelText('Filter by Purchased, 0 books')).toBeTruthy();
+      expect(getByLabelText('Filter by Reading, 0 books')).toBeTruthy();
+      expect(getByLabelText('Filter by Read, 0 books')).toBeTruthy();
     });
   });
 
@@ -163,7 +165,7 @@ describe('MyBooksScreen', () => {
     expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', { hidden: true })).toBeNull();
   });
 
-  it('keeps the advanced book when the user has moved to its destination tab (#641)', async () => {
+  it('keeps the advanced book when the user has moved to its destination chip (#641)', async () => {
     let resolvePatch!: (row: unknown) => void;
     mockPatch.mockReturnValue(
       new Promise((resolve) => {
@@ -183,21 +185,20 @@ describe('MyBooksScreen', () => {
       expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(true)
     );
 
-    // While it is in flight the user switches to the Purchased tab, whose GET
-    // already returns the committed, updated row.
-    mockGet.mockResolvedValueOnce({ data: [purchased] });
+    // While it is in flight the user switches to the Purchased chip. That is a
+    // client-side filter now: no request, and the still-wishlisted row leaves the view.
     const hidden = { includeHiddenElements: true };
     await act(async () => {
-      await fireEvent.press(getByLabelText('Filter by Purchased', hidden));
+      await fireEvent.press(getByLabelText(/^Filter by Purchased/, hidden));
     });
-    await waitFor(() =>
-      expect(queryByLabelText('Dune — Purchased, by Frank Herbert', hidden)).toBeTruthy()
-    );
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    // The row is still wishlisted, so it is not in the Purchased view.
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', hidden)).toBeNull();
 
     await act(async () => {
       resolvePatch({ ...purchased, purchased_at: '2026-09-21T00:00:00Z' });
     });
-    // The book belongs on this tab, so it must stay (updated), not vanish.
+    // The book now belongs to this chip, so it appears (updated), not vanishes.
     await waitFor(() =>
       expect(queryByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy()
     );
@@ -298,16 +299,16 @@ describe('MyBooksScreen', () => {
     expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', { hidden: true })).toBeTruthy();
   });
 
-  it('refetches when a filter tab is tapped', async () => {
-    mockGet.mockResolvedValue({ data: [] });
-    const { getByText } = await render(<MyBooksScreen />);
-    await waitFor(() => getByText('Reading'));
+  it('filters on the client when a chip is tapped, without a new request', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, queryByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
     await act(async () => {
-      await fireEvent.press(getByText('Reading'));
+      await fireEvent.press(getByLabelText('Filter by Reading, 0 books'));
     });
-    await waitFor(() =>
-      expect(mockGet).toHaveBeenCalledWith('/user-books', { params: { status: 'reading' } })
-    );
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith('/user-books');
   });
 
   it('shows the service-unavailable message on 403 forbidden (#724)', async () => {
@@ -438,5 +439,213 @@ describe('MyBooksScreen row menu (#929)', () => {
       expect(screen.queryByText(DETAIL)).toBeNull();
       expect(screen.queryByLabelText('Close detail')).toBeNull();
     });
+  });
+});
+
+describe('MyBooksScreen header, search and empty states (#930)', () => {
+  const EMMA = userBookRow({
+    id: 'ub-2',
+    status: 'reading',
+    book: { id: 'b-2', title: 'Emma', author: 'Jane Austen', cover_url: null, description: 'x' },
+  });
+  const GATSBY = userBookRow({
+    id: 'ub-3',
+    status: 'reading',
+    book: {
+      id: 'b-3',
+      title: 'The Great Gatsby',
+      author: 'F. Scott',
+      cover_url: null,
+      description: 'x',
+    },
+  });
+
+  it('titles the screen and counts the books and the ones being read', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK, EMMA, GATSBY] });
+    const { getByRole, getByTestId } = await render(<MyBooksScreen />);
+    await waitFor(() => expect(getByRole('header', { name: 'My Books' })).toBeTruthy());
+    expect(getByTestId('my-books-subtitle').props.children).toBe('3 books · 2 reading now');
+  });
+
+  it('leaves the reading part out when nothing is being read, and pluralises', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByTestId } = await render(<MyBooksScreen />);
+    await waitFor(() => expect(getByTestId('my-books-subtitle').props.children).toBe('1 book'));
+  });
+
+  it('makes exactly one request per focus, however often it re-renders', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.changeText(getByLabelText('Search your books'), 'dun');
+    await fireEvent.press(getByLabelText('Filter by Wishlist, 1 book'));
+    await fireEvent.changeText(getByLabelText('Search your books'), '');
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith('/user-books');
+  });
+
+  it('reloads when the library changes elsewhere', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await act(async () => notifyLibraryChanged());
+    expect(mockGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the newest response when two requests overlap', async () => {
+    let resolveFirst!: (v: unknown) => void;
+    mockGet.mockReturnValueOnce(new Promise((r) => (resolveFirst = r)));
+    mockGet.mockResolvedValueOnce({ data: [EMMA] });
+    const { getByLabelText, queryByLabelText } = await render(<MyBooksScreen />);
+    await act(async () => notifyLibraryChanged());
+    await waitFor(() => getByLabelText('Emma — Reading, by Jane Austen'));
+    await act(async () => resolveFirst({ data: [WISHLISTED_BOOK] }));
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+    expect(getByLabelText('Emma — Reading, by Jane Austen')).toBeTruthy();
+  });
+
+  it('matches title and author case-insensitively, together with the chip', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK, EMMA, GATSBY] });
+    const { getByLabelText, queryByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Emma — Reading, by Jane Austen'));
+    await fireEvent.changeText(getByLabelText('Search your books'), 'AUSTEN');
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+    expect(getByLabelText('Emma — Reading, by Jane Austen')).toBeTruthy();
+    // Chip and search narrow together; counts keep counting every book.
+    await fireEvent.changeText(getByLabelText('Search your books'), 'the');
+    await fireEvent.press(getByLabelText('Filter by Wishlist, 1 book'));
+    expect(queryByLabelText('The Great Gatsby — Reading, by F. Scott')).toBeNull();
+    expect(getByLabelText('Filter by Reading, 2 books')).toBeTruthy();
+  });
+
+  it('moving the last book out of a chip shows its empty state; the book is under its new chip (#641)', async () => {
+    mockPatch.mockResolvedValue({ data: { ...WISHLISTED_BOOK, status: 'purchased' } });
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, findByText, findByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.press(getByLabelText('Filter by Wishlist, 1 book'));
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Mark as Purchased'));
+    });
+    expect(await findByText('Nothing marked wishlisted yet')).toBeTruthy();
+    await fireEvent.press(await findByLabelText('Filter by Purchased, 1 book'));
+    expect(await findByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy();
+  });
+
+  describe('a GET that was in flight when a mutation finished is dropped', () => {
+    async function withSlowReload() {
+      mockGet.mockResolvedValueOnce({ data: [WISHLISTED_BOOK] });
+      const screen = await render(<MyBooksScreen />);
+      await waitFor(() => screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+      let resolveGet!: (v: unknown) => void;
+      mockGet.mockReturnValueOnce(new Promise((r) => (resolveGet = r)));
+      await act(async () => notifyLibraryChanged());
+      await fireEvent.press(screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+      return { screen, resolveStale: () => resolveGet({ data: [WISHLISTED_BOOK] }) };
+    }
+
+    it('does not undo an advance', async () => {
+      mockPatch.mockResolvedValue({ data: { ...WISHLISTED_BOOK, status: 'purchased' } });
+      const { screen, resolveStale } = await withSlowReload();
+      // The reload that replaces the dropped GET sees the server after the advance.
+      mockGet.mockResolvedValueOnce({ data: [{ ...WISHLISTED_BOOK, status: 'purchased' }] });
+      await act(async () => {
+        await fireEvent.press(await screen.findByLabelText('Mark as Purchased'));
+      });
+      await screen.findByLabelText('Dune — Purchased, by Frank Herbert');
+      await act(async () => resolveStale());
+      expect(screen.getByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy();
+      expect(screen.queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+    });
+
+    it('still lands a refresh that was in flight: the newest data wins, the advance stays', async () => {
+      mockPatch.mockResolvedValue({ data: { ...WISHLISTED_BOOK, status: 'purchased' } });
+      const { screen, resolveStale } = await withSlowReload();
+      // The reload that replaces the dropped one sees the server after the advance.
+      mockGet.mockResolvedValueOnce({
+        data: [{ ...WISHLISTED_BOOK, status: 'purchased' }, EMMA],
+      });
+      await act(async () => {
+        await fireEvent.press(await screen.findByLabelText('Mark as Purchased'));
+      });
+      expect(await screen.findByLabelText('Emma — Reading, by Jane Austen')).toBeTruthy();
+      await act(async () => resolveStale());
+      expect(screen.getByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy();
+      expect(screen.queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+      expect(screen.getByLabelText('Emma — Reading, by Jane Austen')).toBeTruthy();
+    });
+
+    it('does not bring a removed book back', async () => {
+      const { screen, resolveStale } = await withSlowReload();
+      await act(async () => {
+        await fireEvent.press(await screen.findByLabelText('Remove Dune'));
+      });
+      await screen.findByText('Your library is empty');
+      await act(async () => resolveStale());
+      expect(screen.queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+      expect(screen.getByText('Your library is empty')).toBeTruthy();
+    });
+  });
+
+  it('a failed first load is not an empty library: it offers Try again', async () => {
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGet.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { findByText, queryByText, getByText, findByLabelText } = await render(<MyBooksScreen />);
+    expect(await findByText('Could not load books.')).toBeTruthy();
+    expect(queryByText('Your library is empty')).toBeNull();
+    await fireEvent.press(getByText('Try again'));
+    expect(await findByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy();
+  });
+
+  it('a failed background reload does not hide the empty library after the last book is removed', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGet.mockResolvedValueOnce({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, findByLabelText, findByText, queryByText } = await render(
+      <MyBooksScreen />
+    );
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    mockGet.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    await act(async () => notifyLibraryChanged());
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Remove Dune'));
+    });
+    expect(await findByText('Your library is empty')).toBeTruthy();
+    expect(queryByText('Could not load books.')).toBeNull();
+  });
+
+  it('empty library: offers Scan books and hides the search and chips', async () => {
+    mockGet.mockResolvedValue({ data: [] });
+    const { findByText, getByText, queryByLabelText } = await render(<MyBooksScreen />);
+    expect(await findByText('Your library is empty')).toBeTruthy();
+    expect(queryByLabelText('Search your books')).toBeNull();
+    await fireEvent.press(getByText('Scan books'));
+    expect(routerState.push).toHaveBeenCalledWith('/scan?mode=camera');
+  });
+
+  it('empty filter: names the status and Show all books returns to All', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, findByText, getByText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.press(getByLabelText('Filter by Reading, 0 books'));
+    expect(await findByText('Nothing marked reading yet')).toBeTruthy();
+    // The search field and chips stay.
+    expect(getByLabelText('Search your books')).toBeTruthy();
+    await fireEvent.press(getByText('Show all books'));
+    expect(getByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy();
+  });
+
+  it('empty search: quotes the query and Clear search brings the list back', async () => {
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, findByText, getByText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.changeText(getByLabelText('Search your books'), 'zzz');
+    expect(await findByText('No books match “zzz”')).toBeTruthy();
+    expect(getByLabelText('Filter by All, 1 book')).toBeTruthy();
+    await fireEvent.press(getByText('Clear search'));
+    expect(getByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy();
   });
 });

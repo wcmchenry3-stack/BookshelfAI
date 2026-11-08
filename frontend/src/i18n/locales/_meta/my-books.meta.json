@@ -4,10 +4,62 @@
     "tone": "neutral",
     "characterLimit": 30
   },
-  "noBooksYet": {
-    "description": "Empty state message when the filtered book list is empty",
+  "emptyLibraryTitle": {
+    "description": "Title of the empty state when the library has no books at all",
+    "tone": "friendly"
+  },
+  "emptyLibraryBody": {
+    "description": "Body of the empty-library state, pointing to scanning",
+    "tone": "friendly"
+  },
+  "emptyLibraryAction": {
+    "description": "Button of the empty-library state; goes to the Scan tab",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "emptyFilter.wishlisted": {
+    "description": "Title when the 'wishlisted' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked wishlisted yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.purchased": {
+    "description": "Title when the 'purchased' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked purchased yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.reading": {
+    "description": "Title when the 'reading' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked reading yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.read": {
+    "description": "Title when the 'read' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked read yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilterBody": {
+    "description": "Body of the empty status-filter state",
+    "tone": "friendly"
+  },
+  "emptyFilterAction": {
+    "description": "Button of the empty status-filter state; switches back to All",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "emptySearchTitle": {
+    "description": "Title when the search matches no book. {{query}} is what the user typed.",
     "tone": "friendly",
-    "characterLimit": 40
+    "placeholders": ["{{query}}"]
+  },
+  "emptySearchBody": {
+    "description": "Body of the no-search-match state",
+    "tone": "friendly"
+  },
+  "emptySearchAction": {
+    "description": "Button of the no-search-match state; clears the search field",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "loadErrorAction": {
+    "description": "Button of the failed-load state in My Books; reloads the list",
+    "tone": "neutral",
+    "characterLimit": 25
   },
   "statusTab.all": {
     "description": "Filter tab label showing all books regardless of status",
@@ -55,10 +107,9 @@
     "characterLimit": 10
   },
   "filterBy": {
-    "description": "Accessibility label for filter tab buttons, e.g. 'Filter by Reading'",
+    "description": "Accessibility label of a status chip, e.g. 'Filter by Reading, 2 books'. Plural: _one/_other (and locale categories). {{count}} is the chip count. {{label}} is the chip name.",
     "tone": "neutral",
-    "placeholders": ["{{label}}"],
-    "characterLimit": 30
+    "placeholders": ["{{label}}", "{{count}}"]
   },
   "bookCardA11y": {
     "description": "Accessibility label for a library row: title, translated status, then the author",
@@ -149,25 +200,39 @@
     "characterLimit": 50
   },
   "searchPlaceholder": {
-    "description": "Placeholder text inside the library search bar",
+    "description": "Placeholder text inside the My Books search field (title or author)",
     "tone": "friendly",
     "characterLimit": 35
   },
   "searchA11y": {
-    "description": "Accessibility label for the library search input",
+    "description": "Accessibility label for the My Books search input",
     "tone": "neutral",
     "characterLimit": 30
   },
-  "sectionTitle": {
-    "description": "Heading above the book grid — 'My Library'",
+  "searchClearA11y": {
+    "description": "Accessibility label of the search field's clear button",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "screenTitle": {
+    "description": "Serif screen title of My Books",
     "tone": "neutral",
     "characterLimit": 20
   },
-  "bookCount": {
-    "description": "Subtitle below the section heading showing total volume count, e.g. '48 volumes in your collection.'",
-    "tone": "friendly",
-    "placeholders": ["{{count}}"],
-    "characterLimit": 50
+  "headerBooks": {
+    "description": "Header subtitle part: how many books are in the library. Plural: _one/_other (and locale categories). {{count}} is the number.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "headerReading": {
+    "description": "Header subtitle part: how many books are being read now, e.g. '2 reading now'. Left out when 0. Plural: _one/_other (and locale categories). {{count}} is the number.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "headerSubtitle": {
+    "description": "Header subtitle joining the two parts, e.g. '10 books · 2 reading now'",
+    "tone": "neutral",
+    "placeholders": ["{{books}}", "{{reading}}"]
   },
   "movedToTrash": {
     "description": "Banner after a library entry is moved to the trash; says it can be restored within 30 days",

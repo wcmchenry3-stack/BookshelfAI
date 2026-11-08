@@ -35,7 +35,7 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
       'Moved to Trash. You can restore it within 30 days.'
     );
     await expect(page.getByRole('button', { name: 'Frankenstein — Wishlist' })).toHaveCount(0);
-    await expect(page.getByText('No books here yet.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your library is empty' })).toBeVisible();
 
     // Undo from Trash.
     await page.getByRole('button', { name: 'View trash' }).click();
