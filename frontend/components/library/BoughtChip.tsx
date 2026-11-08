@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 
 import { AppText } from '../ui/AppText';
+import { buttonA11yProps, pressOpacity } from '../ui/buttonBehaviour';
 import { useTheme } from '../../hooks/useTheme';
 import { fontFor } from '../../theme/typography';
 
@@ -28,12 +29,8 @@ export function BoughtChip({
   return (
     <Pressable
       onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ disabled }}
-      testID={testID}
-      style={({ pressed }) => [styles.target, { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 }]}
+      {...buttonA11yProps(accessibilityLabel, disabled, testID)}
+      style={({ pressed }) => [styles.target, { opacity: pressOpacity(disabled, pressed, 0.7) }]}
     >
       <View
         style={[

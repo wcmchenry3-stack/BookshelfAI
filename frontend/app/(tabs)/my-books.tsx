@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Platform, RefreshControl, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, Platform, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -9,7 +9,8 @@ import { BookDetailSheet } from '../../components/library/BookDetailSheet';
 import { BookActionsSheet } from '../../components/library/BookActionsSheet';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
-import { LibraryRow, LibraryRowSeparator } from '../../components/library/LibraryRow';
+import { LibraryRow } from '../../components/library/LibraryRow';
+import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { LibrarySearchBar } from '../../components/library/LibrarySearchBar';
 import { StatusTabs } from '../../components/library/StatusTabs';
@@ -231,23 +232,16 @@ export default function MyBooksScreen() {
       ) : (
         <FlatList
           data={filteredBooks}
-          keyExtractor={(item) => item.id}
+          {...LIBRARY_LIST_PROPS}
           contentContainerStyle={styles.list}
           ListHeaderComponent={<View style={styles.header}>{listHeader}</View>}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                void fetchBooks(activeTab);
-              }}
-              tintColor={activeColor}
-            />
-          }
+          refreshControl={libraryRefreshControl(
+            refreshing,
+            setRefreshing,
+            () => fetchBooks(activeTab),
+            activeColor
+          )}
           renderItem={renderItem}
-          ItemSeparatorComponent={LibraryRowSeparator}
-          initialNumToRender={12}
-          removeClippedSubviews={Platform.OS === 'android'}
         />
       )}
 

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Platform, RefreshControl, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -7,7 +7,8 @@ import { BookDetailSheet, type DetailBook } from '../../components/library/BookD
 import { BoughtChip } from '../../components/library/BoughtChip';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
-import { LibraryRow, LibraryRowSeparator } from '../../components/library/LibraryRow';
+import { LibraryRow } from '../../components/library/LibraryRow';
+import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import { SCREEN_PADDING } from '../../components/library/libraryShared';
@@ -157,19 +158,15 @@ export default function WishlistScreen() {
     <LibraryScreen>
       <FlatList
         data={books}
-        keyExtractor={(item) => item.id}
+        {...LIBRARY_LIST_PROPS}
         contentContainerStyle={styles.list}
         ListHeaderComponent={<View style={styles.header}>{listHeader}</View>}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              void fetchWishlist();
-            }}
-            tintColor={activeColor}
-          />
-        }
+        refreshControl={libraryRefreshControl(
+          refreshing,
+          setRefreshing,
+          () => fetchWishlist(),
+          activeColor
+        )}
         renderItem={({ item }) => (
           <WishlistRow
             item={item}
@@ -178,9 +175,6 @@ export default function WishlistScreen() {
             onBought={markBought}
           />
         )}
-        ItemSeparatorComponent={LibraryRowSeparator}
-        initialNumToRender={12}
-        removeClippedSubviews={Platform.OS === 'android'}
       />
 
       <BookDetailSheet
