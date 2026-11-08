@@ -1,9 +1,22 @@
 {
   "title": "Verlanglijst",
-  "heroSubtitle": "Boeken die je wilt kopen",
-  "archiveSummary": "boeken op verlanglijst",
+  "subtitle_one": "{{count}} boek dat je wilt kopen",
+  "subtitle_other": "{{count}} boeken die je wilt kopen",
+  "subtitleEmpty": "Boeken die je wilt kopen",
+  "searchPlaceholder": "Titel of auteur",
+  "searchA11y": "Zoek in je verlanglijst",
+  "searchClearA11y": "Zoekopdracht wissen",
+  "emptySearch": {
+    "title": "Geen boeken gevonden voor “{{query}}”",
+    "clear": "Zoekopdracht wissen"
+  },
+  "emptyState": {
+    "title": "Nog niets op je verlanglijst",
+    "body": "Scan een boekenplank in de winkel of zoek op titel. De boeken die je kiest staan hier tot je ze koopt.",
+    "scan": "Boeken scannen",
+    "search": "Zoeken op titel"
+  },
   "loading": "Verlanglijst laden…",
-  "empty": "Je verlanglijst is leeg.\nScan een boekomslag om toe te voegen.",
   "bought": "Gekocht",
   "boughtA11y": "Markeer {{title}} als gekocht",
   "rowA11y": "{{title}} — {{status}}, door {{author}}",

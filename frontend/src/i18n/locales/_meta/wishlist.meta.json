@@ -4,11 +4,65 @@
     "tone": "neutral",
     "characterLimit": 30
   },
-  "empty": {
-    "description": "Empty state message when the wishlist has no books. Contains a line break (\\n). Second line encourages scanning.",
+  "subtitle_one": {
+    "description": "Subtitle under the Wishlist title when there is exactly one book (plural form). Not every locale has every CLDR plural category.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "subtitle_other": {
+    "description": "Subtitle under the Wishlist title for other counts (plural form): how many books the user wants to buy",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "subtitleEmpty": {
+    "description": "Subtitle under the Wishlist title when the wishlist is empty",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "searchPlaceholder": {
+    "description": "Placeholder of the Wishlist search field; it matches title and author",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "searchA11y": {
+    "description": "Spoken label of the Wishlist search field",
+    "tone": "neutral",
+    "characterLimit": 50
+  },
+  "searchClearA11y": {
+    "description": "Spoken label of the clear (x) button inside the Wishlist search field",
+    "tone": "action",
+    "characterLimit": 30
+  },
+  "emptySearch.title": {
+    "description": "Shown when the search matches no wishlist book. Keep the quotes around the query.",
+    "tone": "neutral",
+    "placeholders": ["{{query}}"]
+  },
+  "emptySearch.clear": {
+    "description": "Button that clears the Wishlist search",
+    "tone": "action",
+    "characterLimit": 30
+  },
+  "emptyState.title": {
+    "description": "Title of the empty Wishlist state",
     "tone": "friendly",
-    "characterLimit": 80,
-    "notes": "Preserve the \\n newline in translated strings"
+    "characterLimit": 50
+  },
+  "emptyState.body": {
+    "description": "Body of the empty Wishlist state: scan a shelf or search by title; picked books land here until bought",
+    "tone": "friendly",
+    "characterLimit": 130
+  },
+  "emptyState.scan": {
+    "description": "Primary button of the empty Wishlist state; opens Scan",
+    "tone": "action",
+    "characterLimit": 25
+  },
+  "emptyState.search": {
+    "description": "Text button of the empty Wishlist state; opens Scan in title search mode",
+    "tone": "action",
+    "characterLimit": 25
   },
   "errorLoadWishlist": {
     "description": "Error message when the wishlist fails to load",

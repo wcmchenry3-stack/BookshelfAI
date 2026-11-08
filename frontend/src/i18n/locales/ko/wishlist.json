@@ -1,9 +1,21 @@
 {
   "title": "위시리스트",
-  "heroSubtitle": "구매할 책 목록",
-  "archiveSummary": "권이 목록에 있음",
+  "subtitle_other": "사고 싶은 책 {{count}}권",
+  "subtitleEmpty": "사고 싶은 책",
+  "searchPlaceholder": "제목 또는 저자",
+  "searchA11y": "위시리스트 검색",
+  "searchClearA11y": "검색 지우기",
+  "emptySearch": {
+    "title": "“{{query}}”와(과) 일치하는 책이 없습니다",
+    "clear": "검색 지우기"
+  },
+  "emptyState": {
+    "title": "위시리스트가 아직 비어 있습니다",
+    "body": "서점 책장을 스캔하거나 제목으로 검색하세요. 고른 책은 구매할 때까지 여기에 보관됩니다.",
+    "scan": "책 스캔",
+    "search": "제목으로 검색"
+  },
   "loading": "위시리스트 불러오는 중…",
-  "empty": "위시리스트가 비어 있습니다.\n책 표지를 스캔해 추가하세요.",
   "bought": "구매함",
   "boughtA11y": "{{title}}을(를) 구매함으로 표시",
   "rowA11y": "{{title}} — {{status}}, 저자 {{author}}",

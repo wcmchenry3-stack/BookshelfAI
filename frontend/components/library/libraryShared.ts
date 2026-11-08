@@ -32,18 +32,9 @@ export function countByStatus(books: readonly StatusBook[]): Record<Status, numb
   return counts;
 }
 
-/** Books matching the status chip and, when set, a case-insensitive title/author query. */
-export function filterBooks<T extends StatusBook>(
-  books: readonly T[],
-  status: Status,
-  query: string
-): T[] {
-  const q = query.trim().toLowerCase();
-  return books.filter(
-    (b) =>
-      (status === 'all' || b.status === status) &&
-      (!q || b.book.title.toLowerCase().includes(q) || b.book.author.toLowerCase().includes(q))
-  );
+/** Books on the given status chip; `all` returns `books` itself. */
+export function filterByStatus<T extends { status: string }>(books: T[], status: Status): T[] {
+  return status === 'all' ? books : books.filter((b) => b.status === status);
 }
 
 /** The fields every library list row needs; screens extend it with their own. */

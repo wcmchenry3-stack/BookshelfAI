@@ -7,6 +7,7 @@ import ScanScreen from '../../app/(tabs)/scan';
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
+  ...require('../helpers/routerMock').routerModule(),
   router: { push: (...a: unknown[]) => mockPush(...a) },
 }));
 let mockJobs: { status: string }[] = [];

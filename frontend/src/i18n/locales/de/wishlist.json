@@ -1,9 +1,22 @@
 {
   "title": "Wunschliste",
-  "heroSubtitle": "Bücher, die du kaufen möchtest",
-  "archiveSummary": "Bücher auf deiner Wunschliste",
+  "subtitle_one": "{{count}} Buch, das du kaufen möchtest",
+  "subtitle_other": "{{count}} Bücher, die du kaufen möchtest",
+  "subtitleEmpty": "Bücher, die du kaufen möchtest",
+  "searchPlaceholder": "Titel oder Autor",
+  "searchA11y": "Wunschliste durchsuchen",
+  "searchClearA11y": "Suche löschen",
+  "emptySearch": {
+    "title": "Keine Bücher passen zu „{{query}}“",
+    "clear": "Suche löschen"
+  },
+  "emptyState": {
+    "title": "Noch nichts auf deiner Wunschliste",
+    "body": "Scanne ein Buchregal oder suche nach dem Titel. Die Bücher, die du auswählst, landen hier, bis du sie kaufst.",
+    "scan": "Bücher scannen",
+    "search": "Nach Titel suchen"
+  },
   "loading": "Wunschliste laden…",
-  "empty": "Deine Wunschliste ist leer.\nScanne ein Buchcover, um eins hinzuzufügen.",
   "bought": "Gekauft",
   "boughtA11y": "{{title}} als gekauft markieren",
   "rowA11y": "{{title}} — {{status}}, von {{author}}",

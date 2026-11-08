@@ -4,7 +4,8 @@ import { act, fireEvent, render, waitFor, within } from '@testing-library/react-
 
 import { IOS_DISMISS_FALLBACK_MS } from '../../hooks/useModalHandoff';
 import MyBooksScreen from '../../app/(tabs)/my-books';
-import { userBookRow, routerNavigate } from '../helpers/screenMocks';
+import { userBookRow } from '../helpers/screenMocks';
+import { routerState } from '../helpers/routerMock';
 import { notifyLibraryChanged } from '../../lib/libraryChanged';
 
 const mockGet = jest.fn();
@@ -622,7 +623,7 @@ describe('MyBooksScreen header, search and empty states (#930)', () => {
     expect(await findByText('Your library is empty')).toBeTruthy();
     expect(queryByLabelText('Search your books')).toBeNull();
     await fireEvent.press(getByText('Scan books'));
-    expect(routerNavigate).toHaveBeenCalledWith('/(tabs)/scan');
+    expect(routerState.push).toHaveBeenCalledWith('/scan');
   });
 
   it('empty filter: names the status and Show all books returns to All', async () => {

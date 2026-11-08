@@ -20,20 +20,15 @@ export const loadingSpinnerModule = () => ({
   },
 });
 
-/** What `useRouter().navigate` / `push` / `replace` call in tests using the module below. */
-export const routerNavigate = jest.fn();
-
-/** `expo-router` with `useFocusEffect` (run on mount and whenever the callback changes) and a stub `useRouter`. */
+/**
+ * `expo-router` with `useFocusEffect`, `useRouter` and `useLocalSearchParams`. Like the
+ * real hook, `useFocusEffect` re-runs when the callback's identity changes.
+ */
 export const focusEffectRouterModule = () => ({
+  ...require('./routerMock').routerModule(),
   useFocusEffect: (cb: () => void) => {
-    // Like the real hook, re-runs when the callback's identity changes.
     require('react').useEffect(cb, [cb]);
   },
-  useRouter: () => ({
-    navigate: (...args: unknown[]) => require('../helpers/screenMocks').routerNavigate(...args),
-    push: (...args: unknown[]) => require('../helpers/screenMocks').routerNavigate(...args),
-    replace: (...args: unknown[]) => require('../helpers/screenMocks').routerNavigate(...args),
-  }),
 });
 
 /** A wishlisted `/user-books` row for Dune; override fields per test. */

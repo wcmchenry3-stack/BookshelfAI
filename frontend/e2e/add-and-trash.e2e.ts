@@ -43,6 +43,8 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
     await expect(page.getByRole('heading', { name: 'Trash' })).toBeVisible();
     // Earlier runs against the same database leave copies in Trash: newest first.
     await expect(page.getByText('Mary Shelley').first()).toBeVisible();
+    // The days-left line (#932): a just-deleted book has about 30 days left.
+    await expect(page.getByText(/Deleted for good in \d+ days?/).first()).toBeVisible();
     await expectNoA11yViolations('Trash with one book');
     await page.getByRole('button', { name: 'Restore Frankenstein' }).first().click();
     await expect(page.getByText('Restored Frankenstein to your library.')).toBeVisible();

@@ -1,13 +1,12 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
+import { filterBooks } from '../../components/library/filterBooks';
 import { BookDetailSheet, type DetailBook } from '../../components/library/BookDetailSheet';
-import { EmptyState } from '../../components/library/EmptyState';
-import { LibraryHeader } from '../../components/library/LibraryHeader';
 import {
   NEXT_STATUS,
   STATUS_TAB_KEYS,
   countByStatus,
-  filterBooks,
+  filterByStatus,
 } from '../../components/library/libraryShared';
 
 jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
@@ -46,7 +45,7 @@ const SHELF = [
   row('wishlisted', 'Dune', 'Frank Herbert'),
 ];
 
-describe('countByStatus / filterBooks', () => {
+describe('countByStatus / filterByStatus', () => {
   it('counts every book under All and each status once', () => {
     expect(countByStatus(SHELF)).toEqual({
       all: 3,
@@ -57,38 +56,12 @@ describe('countByStatus / filterBooks', () => {
     });
   });
 
-  it('filters by status and by a case-insensitive title or author, together', () => {
-    expect(filterBooks(SHELF, 'all', '')).toHaveLength(3);
-    expect(filterBooks(SHELF, 'reading', '')).toEqual([SHELF[0]]);
-    expect(filterBooks(SHELF, 'all', '  AUSTEN ')).toEqual([SHELF[0], SHELF[1]]);
-    expect(filterBooks(SHELF, 'read', 'austen')).toEqual([SHELF[1]]);
-    expect(filterBooks(SHELF, 'wishlisted', 'austen')).toEqual([]);
-    expect(filterBooks(SHELF, 'all', 'dUnE')).toEqual([SHELF[2]]);
-  });
-});
-
-describe('LibraryHeader', () => {
-  it('renders title, subtitle, count, summary label and leading content', async () => {
-    const { getByText } = await render(
-      <LibraryHeader
-        title="My Books"
-        subtitle="Sub"
-        count={7}
-        summaryLabel="in your archive"
-        leading={<></>}
-      />
-    );
-    expect(getByText('My Books')).toBeTruthy();
-    expect(getByText('Sub')).toBeTruthy();
-    expect(getByText('7')).toBeTruthy();
-    expect(getByText('in your archive')).toBeTruthy();
-  });
-});
-
-describe('EmptyState', () => {
-  it('renders the message', async () => {
-    const { getByText } = await render(<EmptyState message="Nothing here" lineHeight={24} />);
-    expect(getByText('Nothing here')).toBeTruthy();
+  it('filters by status, and with the search it composes with filterBooks', () => {
+    expect(filterByStatus(SHELF, 'all')).toBe(SHELF);
+    expect(filterByStatus(SHELF, 'reading')).toEqual([SHELF[0]]);
+    expect(filterBooks(filterByStatus(SHELF, 'all'), '  AUSTEN ')).toEqual([SHELF[0], SHELF[1]]);
+    expect(filterBooks(filterByStatus(SHELF, 'read'), 'austen')).toEqual([SHELF[1]]);
+    expect(filterBooks(filterByStatus(SHELF, 'wishlisted'), 'austen')).toEqual([]);
   });
 });
 

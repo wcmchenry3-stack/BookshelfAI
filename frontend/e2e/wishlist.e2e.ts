@@ -12,7 +12,7 @@ test.describe('Wishlist', () => {
     await signIn();
 
     await page.getByRole('tab', { name: 'Your wishlist' }).click();
-    await expect(page.getByText(/Your wishlist is empty/)).toBeVisible();
+    await expect(page.getByText('Nothing on your wishlist yet')).toBeVisible();
     await expectNoA11yViolations('empty Wishlist');
 
     // Add from a search.
@@ -34,7 +34,7 @@ test.describe('Wishlist', () => {
     await expectNoA11yViolations('Wishlist book detail');
     await detail.getByRole('button', { name: 'Remove Emma' }).click();
     await expect(row('Emma')).toHaveCount(0);
-    await expect(page.getByText(/Your wishlist is empty/)).toBeVisible();
+    await expect(page.getByText('Nothing on your wishlist yet')).toBeVisible();
   });
 
   test('moves a book to purchased with the Bought chip', async ({
@@ -56,6 +56,28 @@ test.describe('Wishlist', () => {
 
     await bought.click();
     await expect(bought).toHaveCount(0);
-    await expect(page.getByText(/Your wishlist is empty/)).toBeVisible();
+    await expect(page.getByText('Nothing on your wishlist yet')).toBeVisible();
+  });
+
+  test('"Search by title" on an empty wishlist opens Scan in text search', async ({
+    page,
+    signIn,
+  }) => {
+    await signIn();
+
+    await page.getByRole('tab', { name: 'Your wishlist' }).click();
+    await expect(page.getByRole('heading', { name: 'Wishlist', exact: true })).toBeVisible();
+    await expect(page.getByText('Nothing on your wishlist yet')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Search by title' }).click();
+    await expect(page.getByLabel('Book title or author search')).toBeVisible();
+
+    // The Scan tab stays mounted: "Scan books" must still open the camera, not text search.
+    await page.getByRole('tab', { name: 'Your wishlist' }).click();
+    await page.getByRole('button', { name: 'Scan books' }).click();
+    // Camera mode: the text field is gone and the camera's capture action ("Capture books") shows.
+    // (react-native-web does not emit aria-selected for role=button, so assert what renders.)
+    await expect(page.getByLabel('Book title or author search')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Capture books', exact: true })).toBeVisible();
   });
 });

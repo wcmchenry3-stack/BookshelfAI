@@ -7,6 +7,7 @@ import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { BookDetailSheet } from '../../components/library/BookDetailSheet';
 import { BookActionsSheet } from '../../components/library/BookActionsSheet';
+import { filterBooks } from '../../components/library/filterBooks';
 import { LibraryRow } from '../../components/library/LibraryRow';
 import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/library/libraryList';
 import { LibraryScreen } from '../../components/library/LibraryScreen';
@@ -17,7 +18,7 @@ import {
   NEXT_STATUS,
   SCREEN_PADDING,
   countByStatus,
-  filterBooks,
+  filterByStatus,
   type Status,
 } from '../../components/library/libraryShared';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -119,7 +120,7 @@ export default function MyBooksScreen() {
 
   const counts = useMemo(() => countByStatus(books), [books]);
   const filteredBooks = useMemo(
-    () => filterBooks(books, activeTab, query),
+    () => filterBooks(filterByStatus(books, activeTab), query),
     [books, activeTab, query]
   );
 
@@ -182,7 +183,7 @@ export default function MyBooksScreen() {
         body={t('emptyLibraryBody')}
         primaryAction={{
           label: t('emptyLibraryAction'),
-          onPress: () => router.navigate('/(tabs)/scan'),
+          onPress: () => router.push('/scan'),
           testID: 'empty-scan-books',
         }}
         style={styles.empty}

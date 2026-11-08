@@ -37,6 +37,7 @@ export function EmptyState({
         <View
           style={styles.illustration}
           accessibilityElementsHidden
+          aria-hidden
           importantForAccessibility="no-hide-descendants"
           testID={testID ? `${testID}-illustration` : undefined}
         >
