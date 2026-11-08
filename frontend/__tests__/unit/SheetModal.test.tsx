@@ -145,6 +145,11 @@ describe('SheetModal', () => {
     expect(flat(footer).backgroundColor).toBe('#FBFAF7');
   });
 
+  it('omits the footer bar when there is no footer content', async () => {
+    const { queryByTestId } = await setup({ footer: null });
+    expect(queryByTestId('sheet-footer')).toBeNull();
+  });
+
   it('uses the scrim token behind the sheet', async () => {
     const { getByTestId } = await setup();
     const flat = Object.assign({}, ...[getByTestId('sheet-scrim').props.style].flat(3));

@@ -253,8 +253,9 @@ describe('BookDetailSheet', () => {
       />
     );
     await waitFor(() =>
-      expect(getByLabelText('Remove Dune').props.accessibilityState).toMatchObject({
+      expect(getByLabelText('Remove Dune').props.accessibilityState).toEqual({
         disabled: true,
+        busy: false,
       })
     );
     expect(queryByLabelText('Mark as Purchased')).toBeNull();

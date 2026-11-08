@@ -27,7 +27,7 @@ interface SheetModalProps {
   closeA11yLabel: string;
   /** Body between the header and the footer (usually a ScrollView). */
   children: ReactNode;
-  /** Content of the pinned footer bar (usually the primary action button). */
+  /** Content of the pinned footer bar (usually the primary action button). The bar is omitted when this is empty. */
   footer: ReactNode;
   /** Lines the title may take before it is cut. Defaults to 2. */
   titleLines?: number;
@@ -121,19 +121,21 @@ export default function SheetModal({
             {children}
           </View>
 
-          <View
-            style={[
-              styles.footer,
-              {
-                borderTopColor: colors.outline,
-                backgroundColor: colors.surfaceBar,
-                paddingBottom: 16 + insets.bottom,
-              },
-            ]}
-            testID="sheet-footer"
-          >
-            {footer}
-          </View>
+          {footer ? (
+            <View
+              style={[
+                styles.footer,
+                {
+                  borderTopColor: colors.outline,
+                  backgroundColor: colors.surfaceBar,
+                  paddingBottom: 16 + insets.bottom,
+                },
+              ]}
+              testID="sheet-footer"
+            >
+              {footer}
+            </View>
+          ) : null}
         </View>
       </View>
     </Modal>
