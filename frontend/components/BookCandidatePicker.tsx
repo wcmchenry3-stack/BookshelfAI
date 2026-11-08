@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from '../hooks/useTheme';
 import { BookCover } from './ui/BookCover';
 import SheetModal from './SheetModal';
+import { Button } from './ui/Button';
 import { isOwned, type Ownership } from '../lib/ownership';
 import { hasNoCatalogMatch } from '../lib/unverified';
 import { fontFor } from '../theme/typography';
@@ -155,28 +156,16 @@ export function BookCandidatePicker({
       closeLabel={t('bookCandidatePicker.cancel')}
       closeA11yLabel={t('bookCandidatePicker.closePicker')}
       footer={
-        <Pressable
-          style={[
-            styles.addButton,
-            { backgroundColor: theme.colors.primary, opacity: selected.size === 0 ? 0.5 : 1 },
-          ]}
+        <Button
+          label={
+            selected.size === 0
+              ? t('bookCandidatePicker.addNone')
+              : t('bookCandidatePicker.addSelected', { count: selected.size })
+          }
           onPress={confirm}
           disabled={selected.size === 0}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: selected.size === 0 }}
           accessibilityHint={t('bookCandidatePicker.addToWishlistHint')}
-        >
-          <Text
-            style={[
-              styles.addButtonText,
-              { color: theme.colors.onPrimary, fontSize: theme.typography.fontSizeBase },
-            ]}
-          >
-            {selected.size === 0
-              ? t('bookCandidatePicker.addNone')
-              : t('bookCandidatePicker.addSelected', { count: selected.size })}
-          </Text>
-        </Pressable>
+        />
       }
     >
       {candidates.length > 1 && selectable.length > 0 && (
@@ -403,12 +392,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 2,
   },
-  addButton: {
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    minHeight: 48,
-    justifyContent: 'center',
-  },
-  addButtonText: { fontFamily: fontFor('600') },
 });

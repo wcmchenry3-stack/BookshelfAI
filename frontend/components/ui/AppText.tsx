@@ -11,6 +11,8 @@ import {
 } from '../../theme/typography';
 
 export interface AppTextProps extends TextProps {
+  /** Ref to the underlying Text (React 19 passes it as a prop). */
+  ref?: React.Ref<Text>;
   /** Named text style (#899). Defaults to `body`. */
   variant?: TextVariant;
   /** Theme colour role for the text. Defaults to `onSurface`. */

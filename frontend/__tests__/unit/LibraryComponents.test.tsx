@@ -32,6 +32,7 @@ jest.mock('../../hooks/useTheme', () => ({
         surfaceContainerHigh: '#eae8e4',
         surfaceContainerHighest: '#e4e2de',
       },
+      radius: { button: 12 },
       typography: {
         fontSizeBase: 16,
         fontSizeSM: 14,
@@ -252,7 +253,10 @@ describe('BookDetailSheet', () => {
       />
     );
     await waitFor(() =>
-      expect(getByLabelText('Remove Dune').props.accessibilityState).toEqual({ disabled: true })
+      expect(getByLabelText('Remove Dune').props.accessibilityState).toEqual({
+        disabled: true,
+        busy: false,
+      })
     );
     expect(queryByLabelText('Mark as Purchased')).toBeNull();
   });
