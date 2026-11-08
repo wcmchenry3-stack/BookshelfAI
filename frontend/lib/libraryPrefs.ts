@@ -1,10 +1,10 @@
 import { getItem, setItem } from './storage';
 
-/** Device-level My Books preferences (#933). Wraps `lib/storage`; and view (#934). */
+/** Device-level My Books preferences: sort (#933) and view (#934). Wraps `lib/storage`. */
 const LIBRARY_SORT_KEY = 'library.sort';
 const LIBRARY_VIEW_KEY = 'library.view';
 
-export const LIBRARY_VIEWS = ['list', 'grid'] as const;
+const LIBRARY_VIEWS = ['list', 'grid'] as const;
 export type LibraryView = (typeof LIBRARY_VIEWS)[number];
 
 /** Reads a stored preference; a missing, unreadable or failing store gives `null`. */
