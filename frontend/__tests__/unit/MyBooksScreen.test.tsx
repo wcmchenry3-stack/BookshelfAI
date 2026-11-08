@@ -623,7 +623,7 @@ describe('MyBooksScreen header, search and empty states (#930)', () => {
     expect(await findByText('Your library is empty')).toBeTruthy();
     expect(queryByLabelText('Search your books')).toBeNull();
     await fireEvent.press(getByText('Scan books'));
-    expect(routerState.push).toHaveBeenCalledWith('/scan');
+    expect(routerState.push).toHaveBeenCalledWith('/scan?mode=camera');
   });
 
   it('empty filter: names the status and Show all books returns to All', async () => {

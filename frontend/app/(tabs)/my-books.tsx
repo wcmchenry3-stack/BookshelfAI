@@ -183,7 +183,7 @@ export default function MyBooksScreen() {
         body={t('emptyLibraryBody')}
         primaryAction={{
           label: t('emptyLibraryAction'),
-          onPress: () => router.push('/scan'),
+          onPress: () => router.push('/scan?mode=camera'),
           testID: 'empty-scan-books',
         }}
         style={styles.empty}
