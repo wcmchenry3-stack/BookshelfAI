@@ -53,7 +53,7 @@ export function ListRow({
         >
           <MaterialIcons
             name={icon}
-            testID="list-row-icon"
+            testID={testID ? `${testID}-icon` : 'list-row-icon'}
             size={20}
             color={destructive ? theme.colors.danger : theme.colors.primary}
           />
@@ -77,7 +77,7 @@ export function ListRow({
       {showChevron ? (
         <MaterialIcons
           name="chevron-right"
-          testID="list-row-chevron"
+          testID={testID ? `${testID}-chevron` : 'list-row-chevron'}
           size={22}
           color={theme.colors.onSurfaceVariant}
         />
@@ -87,7 +87,7 @@ export function ListRow({
 
   if (!onPress) {
     return (
-      <View style={styles.row} testID={testID} accessible accessibilityLabel={spoken}>
+      <View style={styles.row} testID={testID} accessible>
         {content}
       </View>
     );

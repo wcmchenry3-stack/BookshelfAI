@@ -37,37 +37,51 @@ export function SearchField({
   style,
 }: SearchFieldProps) {
   const { theme } = useTheme();
+  const inputRef = React.useRef<TextInput>(null);
+  const showClear = value.length > 0;
   return (
-    <View
-      style={[
-        styles.wrap,
-        {
-          backgroundColor: theme.colors.field,
-          borderColor: theme.colors.outlineField,
-          borderRadius: theme.radius.field,
-        },
-        style,
-      ]}
-    >
-      <MaterialIcons name="search" size={20} color={theme.colors.onSurfaceVariant} />
-      <TextInput
-        style={[styles.input, { color: theme.colors.onSurface, fontFamily: fontFor('400') }]}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={theme.colors.onSurfaceVariant}
-        returnKeyType="search"
-        onSubmitEditing={onSubmitEditing}
-        accessibilityLabel={accessibilityLabel}
-        testID={testID}
-      />
-      {value.length > 0 ? (
+    // The 44px wrapper owns the clear target (Android clips hitSlop outside the parent);
+    // the visible field is a 40px box inside it.
+    <View style={[styles.outer, style]}>
+      <View
+        style={[
+          styles.wrap,
+          {
+            backgroundColor: theme.colors.field,
+            borderColor: theme.colors.outlineField,
+            borderRadius: theme.radius.field,
+          },
+        ]}
+      >
+        <MaterialIcons name="search" size={20} color={theme.colors.onSurfaceVariant} />
+        <TextInput
+          ref={inputRef}
+          style={[
+            styles.input,
+            { color: theme.colors.onSurface, fontFamily: fontFor('400') },
+            showClear && styles.inputWithClear,
+          ]}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={theme.colors.onSurfaceVariant}
+          returnKeyType="search"
+          autoCorrect={false}
+          autoCapitalize="none"
+          onSubmitEditing={onSubmitEditing}
+          accessibilityLabel={accessibilityLabel}
+          testID={testID}
+        />
+      </View>
+      {showClear ? (
         <Pressable
-          onPress={() => onChangeText('')}
+          onPress={() => {
+            onChangeText('');
+            inputRef.current?.focus();
+          }}
           accessibilityRole="button"
           accessibilityLabel={clearAccessibilityLabel}
-          hitSlop={{ top: 2, bottom: 2, left: 4, right: 4 }}
-          testID={testID ? `${testID}-clear` : undefined}
+          testID={testID ? `${testID}-clear` : 'search-clear'}
           style={styles.clear}
         >
           <MaterialIcons name="close" size={18} color={theme.colors.onSurfaceVariant} />
@@ -78,16 +92,24 @@ export function SearchField({
 }
 
 const styles = StyleSheet.create({
+  outer: { minHeight: 44, justifyContent: 'center' },
   wrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 40,
+    minHeight: 40,
     borderWidth: 1,
     paddingLeft: 10,
     gap: 8,
   },
-  input: { flex: 1, height: '100%', fontSize: 16, paddingVertical: 0 },
-  // 38px tall inside the 40px field (1px border each side); hitSlop widens it to 42px
-  // vertically and 48px wide, the most the fixed 40px field height allows.
-  clear: { width: 40, height: 38, alignItems: 'center', justifyContent: 'center' },
+  input: { flex: 1, minHeight: 38, fontSize: 16, paddingVertical: 0 },
+  inputWithClear: { paddingRight: 44 },
+  clear: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

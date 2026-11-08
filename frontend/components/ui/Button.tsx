@@ -98,7 +98,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 20,
   },
-  solidHeight: { height: 52 },
+  solidHeight: { minHeight: 52 },
   textHeight: { minHeight: 44 },
   gap: { width: 8 },
 });

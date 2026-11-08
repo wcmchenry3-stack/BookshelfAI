@@ -7,6 +7,14 @@ import { ThemeContext, darkTheme, lightTheme } from '../../theme';
 
 const style = (el: { props: { style?: unknown } }) => StyleSheet.flatten(el.props.style as any);
 
+// Starts a press without releasing it, so the Pressable's `pressed` style applies.
+const pressIn = (el: any) =>
+  fireEvent(el, 'responderGrant', {
+    nativeEvent: { touches: [], changedTouches: [], pageX: 0, pageY: 0, timestamp: 0 },
+    currentTarget: { measure: () => {}, measureInWindow: () => {} },
+    persist: () => {},
+  });
+
 describe('Button', () => {
   it('renders the label with a button role and label', async () => {
     await render(<Button label="Save" onPress={jest.fn()} />);
@@ -24,7 +32,7 @@ describe('Button', () => {
   it('primary: 52px tall, radius 12, primary fill, onPrimary text', async () => {
     await render(<Button label="Save" onPress={jest.fn()} testID="b" />);
     const s = style(screen.getByTestId('b'));
-    expect(s.height).toBe(52);
+    expect(s.minHeight).toBe(52);
     expect(s.borderRadius).toBe(12);
     expect(s.backgroundColor).toBe(lightTheme.colors.primary);
     expect(style(screen.getByText('Save')).color).toBe(lightTheme.colors.onPrimary);
@@ -83,5 +91,21 @@ describe('Button', () => {
       <Button label="Add" icon="add" accessibilityLabel="Add a book" onPress={jest.fn()} />
     );
     expect(screen.getByRole('button', { name: 'Add a book' })).toBeTruthy();
+  });
+
+  it('uses minHeight 52 (not a fixed height) so large font scales do not clip', async () => {
+    await render(<Button label="Save" onPress={jest.fn()} testID="b" />);
+    const s = style(screen.getByTestId('b'));
+    expect(s.minHeight).toBe(52);
+    expect(s.height).toBeUndefined();
+  });
+
+  it('dims when pressed and when disabled', async () => {
+    const { rerender } = await render(<Button label="Save" onPress={jest.fn()} testID="b" />);
+    expect(style(screen.getByTestId('b')).opacity).toBe(1);
+    await pressIn(screen.getByTestId('b'));
+    expect(style(screen.getByTestId('b')).opacity).toBe(0.85);
+    await rerender(<Button label="Save" onPress={jest.fn()} disabled testID="b" />);
+    expect(style(screen.getByTestId('b')).opacity).toBe(0.4);
   });
 });

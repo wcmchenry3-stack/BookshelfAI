@@ -42,7 +42,7 @@ export function Chip({
         styles.base,
         {
           backgroundColor: selected ? theme.colors.primary : 'transparent',
-          borderColor: selected ? theme.colors.primary : theme.colors.outlineChip,
+          borderColor: selected ? theme.colors.primary : theme.colors.outlineField,
           borderRadius: theme.radius.chip,
           opacity: disabled ? 0.4 : pressed ? 0.85 : 1,
         },

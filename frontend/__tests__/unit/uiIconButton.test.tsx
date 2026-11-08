@@ -4,6 +4,14 @@ import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import { IconButton } from '../../components/ui';
 
+// Starts a press without releasing it, so the Pressable's `pressed` style applies.
+const pressIn = (el: any) =>
+  fireEvent(el, 'responderGrant', {
+    nativeEvent: { touches: [], changedTouches: [], pageX: 0, pageY: 0, timestamp: 0 },
+    currentTarget: { measure: () => {}, measureInWindow: () => {} },
+    persist: () => {},
+  });
+
 describe('IconButton', () => {
   it('has a button role and the required accessibility label', async () => {
     await render(<IconButton icon="close" accessibilityLabel="Close" onPress={jest.fn()} />);
@@ -41,5 +49,25 @@ describe('IconButton', () => {
     // @ts-expect-error accessibilityLabel is required
     const bad = <IconButton icon="close" onPress={jest.fn()} />;
     expect(bad).toBeTruthy();
+  });
+
+  it('dims when pressed and when disabled', async () => {
+    const style = (id: string) => StyleSheet.flatten(screen.getByTestId(id).props.style) as any;
+    const { rerender } = await render(
+      <IconButton icon="close" accessibilityLabel="Close" onPress={jest.fn()} testID="ib" />
+    );
+    expect(style('ib').opacity).toBe(1);
+    await pressIn(screen.getByTestId('ib'));
+    expect(style('ib').opacity).toBe(0.6);
+    await rerender(
+      <IconButton
+        icon="close"
+        accessibilityLabel="Close"
+        onPress={jest.fn()}
+        disabled
+        testID="ib"
+      />
+    );
+    expect(style('ib').opacity).toBe(0.4);
   });
 });

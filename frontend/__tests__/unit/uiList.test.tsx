@@ -9,6 +9,14 @@ const style = (el: { props: { style?: unknown } }) => StyleSheet.flatten(el.prop
 
 const iconColour = (el: any) => (StyleSheet.flatten(el.props.style) as any).color;
 
+// Starts a press without releasing it, so the Pressable's `pressed` style applies.
+const pressIn = (el: any) =>
+  fireEvent(el, 'responderGrant', {
+    nativeEvent: { touches: [], changedTouches: [], pageX: 0, pageY: 0, timestamp: 0 },
+    currentTarget: { measure: () => {}, measureInWindow: () => {} },
+    persist: () => {},
+  });
+
 describe('ListRow', () => {
   it('renders label, hint and value; press handler fires', async () => {
     const onPress = jest.fn();
@@ -50,9 +58,10 @@ describe('ListRow', () => {
   });
 
   it('static row is not a button', async () => {
-    await render(<ListRow label="Version" value="1.0" />);
+    await render(<ListRow label="Version" value="1.0" testID="v" />);
     expect(screen.queryByRole('button')).toBeNull();
-    expect(screen.getByLabelText('Version, 1.0')).toBeTruthy();
+    expect(screen.getByTestId('v').props.accessibilityLabel).toBeUndefined();
+    expect(screen.getByText('1.0')).toBeTruthy();
   });
 
   it('disabled row blocks presses and announces disabled', async () => {
@@ -61,6 +70,21 @@ describe('ListRow', () => {
     await fireEvent.press(screen.getByTestId('r'));
     expect(onPress).not.toHaveBeenCalled();
     expect(screen.getByTestId('r').props.accessibilityState).toMatchObject({ disabled: true });
+  });
+
+  it('dims when pressed and when disabled', async () => {
+    const { rerender } = await render(<ListRow label="A" onPress={jest.fn()} testID="r" />);
+    expect(style(screen.getByTestId('r')).opacity).toBe(1);
+    await pressIn(screen.getByTestId('r'));
+    expect(style(screen.getByTestId('r')).opacity).toBe(0.7);
+    await rerender(<ListRow label="A" onPress={jest.fn()} disabled testID="r" />);
+    expect(style(screen.getByTestId('r')).opacity).toBe(0.4);
+  });
+
+  it('derives icon and chevron test IDs from the row testID', async () => {
+    await render(<ListRow label="A" icon="language" onPress={jest.fn()} testID="r" />);
+    expect(screen.getByTestId('r-icon')).toBeTruthy();
+    expect(screen.getByTestId('r-chevron')).toBeTruthy();
   });
 });
 
@@ -111,5 +135,18 @@ describe('ListSection', () => {
     const s = StyleSheet.flatten(card.props.style) as any;
     expect(s.backgroundColor).toBe(lightTheme.colors.surface);
     expect(s.borderRadius).toBe(lightTheme.radius.card);
+  });
+
+  it('insets the divider 16 when the row has no icon, 60 when it has one', async () => {
+    await render(
+      <ListSection>
+        <ListRow label="One" icon="language" />
+        <ListRow label="Two" />
+        <ListRow label="Three" icon="language" />
+      </ListSection>
+    );
+    const [d1, d2] = screen.getAllByTestId('list-divider');
+    expect(style(d1).marginLeft).toBe(16);
+    expect(style(d2).marginLeft).toBe(60);
   });
 });

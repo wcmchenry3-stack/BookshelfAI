@@ -35,7 +35,11 @@ export function ListSection({ title, children, testID, style }: ListSectionProps
             {i > 0 ? (
               <View
                 testID="list-divider"
-                style={[styles.divider, { backgroundColor: theme.colors.outline }]}
+                style={[
+                  styles.divider,
+                  { backgroundColor: theme.colors.outline },
+                  !hasIcon(row) && styles.dividerNoIcon,
+                ]}
               />
             ) : null}
             {row}
@@ -46,9 +50,13 @@ export function ListSection({ title, children, testID, style }: ListSectionProps
   );
 }
 
+const hasIcon = (row: React.ReactNode) =>
+  React.isValidElement<{ icon?: unknown }>(row) && Boolean(row.props.icon);
+
 const styles = StyleSheet.create({
   title: { marginBottom: 8, marginHorizontal: 16 },
   card: { borderWidth: 1, overflow: 'hidden' },
   // Inset past the icon tile (16 padding + 32 tile + 12 gap).
   divider: { height: StyleSheet.hairlineWidth, marginLeft: 60 },
+  dividerNoIcon: { marginLeft: 16 },
 });
