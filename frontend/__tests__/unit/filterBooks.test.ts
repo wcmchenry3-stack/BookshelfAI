@@ -21,4 +21,18 @@ describe('filterBooks', () => {
   it('returns nothing when neither matches', () => {
     expect(filterBooks(books, 'zzz')).toEqual([]);
   });
+
+  it('ignores accents in both directions', () => {
+    const bronte = { id: '3', book: { title: 'Wuthering Heights', author: 'Emily Brontë' } };
+    const plain = { id: '4', book: { title: 'Jane Eyre', author: 'Charlotte Bronte' } };
+    expect(filterBooks([bronte, plain], 'bronte')).toEqual([bronte, plain]);
+    expect(filterBooks([bronte, plain], 'Brontë')).toEqual([bronte, plain]);
+  });
+
+  it('treats NFC and NFD spellings as the same text', () => {
+    const nfc = { id: '5', book: { title: 'Caf\u00e9', author: 'A' } };
+    const nfd = { id: '6', book: { title: 'Cafe\u0301 noir', author: 'B' } };
+    expect(filterBooks([nfc, nfd], 'cafe\u0301')).toEqual([nfc, nfd]);
+    expect(filterBooks([nfc, nfd], 'caf\u00e9')).toEqual([nfc, nfd]);
+  });
 });

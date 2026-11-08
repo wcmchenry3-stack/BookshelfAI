@@ -12,6 +12,7 @@ export const routerState = {
   params: {} as Record<string, string | undefined>,
   push: jest.fn(),
   setParams: jest.fn(),
+  navSetParams: jest.fn(),
 };
 
 const router = {
@@ -22,9 +23,12 @@ const router = {
   canGoBack: () => true,
 };
 
+const navigation = { setParams: (...a: unknown[]) => routerState.navSetParams(...a) };
+
 export const routerModule = () => ({
   router,
   useRouter: () => router,
+  useNavigation: () => navigation,
   useLocalSearchParams: () => routerState.params,
   // Runs once on mount, like a screen that gains focus.
   useFocusEffect: (cb: () => void) => {

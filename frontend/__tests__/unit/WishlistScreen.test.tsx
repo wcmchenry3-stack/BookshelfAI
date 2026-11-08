@@ -80,6 +80,7 @@ describe('WishlistScreen', () => {
     const props = getByTestId('wishlist-empty-illustration', HIDDEN).props;
     expect(props.accessibilityElementsHidden).toBe(true);
     expect(props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(props['aria-hidden']).toBe(true);
   });
 
   it('"Scan books" goes to Scan and "Search by title" to Scan in text mode', async () => {

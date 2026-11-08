@@ -146,24 +146,55 @@ afterEach(() => {
 // ?mode=text (Wishlist's "Search by title")
 // ---------------------------------------------------------------------------
 describe('ScanScreen — mode param', () => {
-  it('starts in text search and clears the param', async () => {
+  const FIELD = 'Book title or author search';
+
+  it('starts in text search and clears the param through its own navigation', async () => {
     routerState.params = { mode: 'text' };
     const { getByLabelText } = await render(<ScanScreen />);
-    expect(getByLabelText('Book title or author search')).toBeTruthy();
-    expect(routerState.setParams).toHaveBeenCalledWith({ mode: undefined });
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    expect(routerState.navSetParams).toHaveBeenCalledWith({ mode: undefined });
+    expect(routerState.setParams).not.toHaveBeenCalled();
   });
 
   it('opens the camera as usual without the param', async () => {
     const { queryByLabelText } = await render(<ScanScreen />);
-    expect(queryByLabelText('Book title or author search')).toBeNull();
-    expect(routerState.setParams).not.toHaveBeenCalled();
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).not.toHaveBeenCalled();
   });
 
   it('ignores any other mode value', async () => {
     routerState.params = { mode: 'camera' };
     const { queryByLabelText } = await render(<ScanScreen />);
-    expect(queryByLabelText('Book title or author search')).toBeNull();
-    expect(routerState.setParams).not.toHaveBeenCalled();
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).not.toHaveBeenCalled();
+  });
+
+  it('switches to text search when the param arrives after mount', async () => {
+    const { rerender, queryByLabelText, getByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    routerState.params = { mode: 'text' };
+    await rerender(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    expect(routerState.navSetParams).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays on the camera for later renders once the param is cleared', async () => {
+    routerState.params = { mode: 'text' };
+    const { rerender, getByLabelText } = await render(<ScanScreen />);
+    await fireEvent.press(getByLabelText('Camera scan mode'));
+    routerState.params = {}; // the clear took effect
+    await rerender(<ScanScreen />);
+    expect(getByLabelText('Text search mode')).toBeTruthy();
+    expect(() => getByLabelText(FIELD)).toThrow();
+  });
+
+  it('lets the user go back to the camera even if the clear never lands', async () => {
+    routerState.params = { mode: 'text' }; // the mocked clear leaves the param in place
+    const { rerender, getByLabelText, queryByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    await fireEvent.press(getByLabelText('Camera scan mode'));
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
   });
 });
 

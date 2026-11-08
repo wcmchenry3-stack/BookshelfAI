@@ -66,7 +66,7 @@ test.describe('Wishlist', () => {
     await signIn();
 
     await page.getByRole('tab', { name: 'Your wishlist' }).click();
-    await expect(page.getByRole('heading', { name: 'Wishlist' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Wishlist', exact: true })).toBeVisible();
     await expect(page.getByText('Nothing on your wishlist yet')).toBeVisible();
 
     await page.getByRole('button', { name: 'Search by title' }).click();

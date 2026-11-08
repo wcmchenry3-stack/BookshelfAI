@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -65,15 +65,19 @@ export default function ScanScreen() {
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
   const { mode } = useLocalSearchParams<{ mode?: string }>();
-  const router = useRouter();
+  // This screen's own navigation object: `setParams` there acts on the Scan route,
+  // not on whichever route happens to be focused.
+  const navigation = useNavigation() as unknown as { setParams: (p: { mode?: string }) => void };
   const [inputMode, setInputMode] = useState<InputMode>(mode === 'text' ? 'search' : 'camera');
-  // `?mode=text` (Wishlist's "Search by title"). The tab stays mounted, so this
-  // also runs on each later arrival: switch during render, then clear the param
-  // so a later visit starts on the camera.
-  if (mode === 'text' && inputMode !== 'search') setInputMode('search');
+  // `?mode=text` (Wishlist's "Search by title"). The tab stays mounted, so this runs
+  // on every arrival: switch to text search once, then clear the param so a later
+  // visit starts on the camera and the toggle is never held on text.
   useEffect(() => {
-    if (mode === 'text') router.setParams({ mode: undefined });
-  }, [mode, router]);
+    if (mode !== 'text') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs the route param (an external navigation event) into the screen's mode once
+    setInputMode('search');
+    navigation.setParams({ mode: undefined });
+  }, [mode, navigation]);
   const [query, setQuery] = useState('');
   const [facing, setFacing] = useState<CameraFacing>('back');
   const { cameraRef, webInputRef, capturing, handleCapture, handleWebFileChange } = useScanCapture({

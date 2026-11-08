@@ -2,6 +2,7 @@
   "title": "רשימת משאלות",
   "subtitle_one": "ספר אחד שאתה רוצה לקנות",
   "subtitle_two": "שני ספרים שאתה רוצה לקנות",
+  "subtitle_many": "{{count}} ספרים שאתה רוצה לקנות",
   "subtitle_other": "{{count}} ספרים שאתה רוצה לקנות",
   "subtitleEmpty": "ספרים שאתה רוצה לקנות",
   "searchPlaceholder": "כותרת או מחבר",
