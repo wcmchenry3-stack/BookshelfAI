@@ -38,13 +38,21 @@ export function restoreFailure(reason: unknown): RestoreFailure {
   return 'failed';
 }
 
-/** A date in the user's local time zone and locale. */
-export function formatLocalDate(iso: string, locale: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  try {
-    return d.toLocaleDateString(locale, { dateStyle: 'medium' });
-  } catch {
-    return d.toLocaleDateString();
-  }
+/** Rows with this many days left or fewer show the days-left line in the danger colour. */
+export const PURGE_SOON_DAYS = 3;
+
+/**
+ * Whole calendar days from `now` to the day `purgeAfter` falls on, both read in
+ * the device time zone: 0 on the purge day itself (any time of day), 1 the day
+ * before. Counting calendar days (not 24-hour blocks) keeps the number right
+ * across a daylight-saving change, when a day is 23 or 25 hours long. A purge
+ * date already past reads as 0; an unreadable one is null.
+ */
+export function daysUntilPurge(purgeAfter: string, now: Date = new Date()): number | null {
+  const purge = new Date(purgeAfter);
+  if (Number.isNaN(purge.getTime())) return null;
+  // Date.UTC of the LOCAL calendar fields is a day count with no DST in it.
+  const dayNumber = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((dayNumber(purge) - dayNumber(now)) / 86_400_000);
+  return Math.max(0, days);
 }

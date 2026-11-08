@@ -3,6 +3,9 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import TrashScreen from '../../app/trash';
 import { onLibraryChanged } from '../../lib/libraryChanged';
+import { StyleSheet } from 'react-native';
+import { lightTheme } from '../../theme/light';
+import { fontFor } from '../../theme/typography';
 import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
 // #683: the Trash screen (list, restore, errors, empty / loading / error).
@@ -37,32 +40,6 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: () => mockBack(), canGoBack: () => true, replace: jest.fn() },
 }));
 
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      colors: {
-        background: '#fff',
-        border: '#ccc',
-        text: '#000',
-        textSecondary: '#888',
-        primary: '#0f426f',
-        onPrimary: '#ffffff',
-        surfaceContainerLow: '#f5f3ef',
-        tertiaryFixed: '#eee',
-        onTertiaryFixed: '#111',
-      },
-      typography: {
-        fontSizeBase: 16,
-        fontSizeSM: 14,
-        fontSizeLG: 20,
-        fontSizeXS: 12,
-        fontSizeH1: 32,
-        fontFamilyHeadline: 'serif',
-      },
-    },
-  }),
-}));
-
 jest.mock('../../components/LoadingSpinner', () => ({
   LoadingSpinner: ({ message }: { message?: string }) => {
     const { Text } = require('react-native');
@@ -83,6 +60,13 @@ jest.mock('../../components/ui/BookCover', () => {
   };
 });
 
+// The days-left line counts calendar days from today, so the fixtures are dated
+// relative to now (noon local, clear of any day edge).
+function purgeIn(days: number): string {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate() + days, 12).toISOString();
+}
+
 function entry(id: string, title: string, extra: Record<string, unknown> = {}) {
   return {
     id,
@@ -91,13 +75,13 @@ function entry(id: string, title: string, extra: Record<string, unknown> = {}) {
     notes: null,
     book: { id: `b-${id}`, title, author: 'Frank Herbert', cover_url: null, description: null },
     deleted_at: '2026-10-01T12:00:00Z',
-    purge_after: '2026-10-31T12:00:00Z',
+    purge_after: purgeIn(21),
     ...extra,
   };
 }
 
 const DUNE = entry('ub-1', 'Dune');
-const FOUNDATION = entry('ub-2', 'Foundation', { unverified: true });
+const FOUNDATION = entry('ub-2', 'Foundation', { unverified: true, purge_after: purgeIn(2) });
 
 function apiError(status: number, detail?: string) {
   return { response: { status, data: detail ? { detail } : {} } };
@@ -118,27 +102,68 @@ describe('TrashScreen', () => {
     expect(getByText('Loading trash…')).toBeTruthy();
   });
 
-  it('renders the entries with author, dates and the 30-day rule', async () => {
+  it('renders the entries with author, days left and the 30-day rule', async () => {
     const { findByText, getByText, getAllByText, getByLabelText, getByTestId } = await render(
       <TrashScreen />
     );
     await findByText('Dune');
     expect(getByText('Foundation')).toBeTruthy();
     expect(getAllByText('Frank Herbert')).toHaveLength(2);
-    expect(getAllByText(/^Deleted .*2026.* · permanently removed .*2026/)).toHaveLength(2);
-    expect(getByText(/kept for 30 days/)).toBeTruthy();
+    expect(getByText('Deleted for good in 21 days')).toBeTruthy();
+    expect(getByText('Deleted for good in 2 days')).toBeTruthy();
+    expect(getByText(/stay here for 30 days/)).toBeTruthy();
     expect(getByLabelText('Restore Dune').props.accessibilityRole).toBe('button');
     // Only the user's own (unverified) entry carries the badge.
     expect(getByTestId('trash-item-ub-2')).toBeTruthy();
     expect(getAllByText('Unverified')).toHaveLength(1);
   });
 
-  it('draws each cover with a decorative BookCover (#902)', async () => {
+  it('draws the days-left line in danger at 3 days or fewer, and not at 4', async () => {
+    mockListTrash.mockResolvedValue([
+      entry('ub-3', 'Three', { purge_after: purgeIn(3) }),
+      entry('ub-4', 'Four', { purge_after: purgeIn(4) }),
+      entry('ub-0', 'Today', { purge_after: purgeIn(0) }),
+      entry('ub-1d', 'Tomorrow', { purge_after: purgeIn(1) }),
+    ]);
+    const { findByText, getByText } = await render(<TrashScreen />);
+    await findByText('Three');
+    const colourOf = (text: string) => StyleSheet.flatten(getByText(text).props.style).color;
+    const danger = lightTheme.colors.danger;
+    expect(colourOf('Deleted for good in 3 days')).toBe(danger);
+    expect(colourOf('Deleted for good in 4 days')).not.toBe(danger);
+    expect(colourOf('Deleted for good today')).toBe(danger);
+    expect(colourOf('Deleted for good in 1 day')).toBe(danger);
+    // Colour is never the only signal: the number is in the text.
+    expect(StyleSheet.flatten(getByText('Deleted for good in 3 days').props.style).fontFamily).toBe(
+      fontFor('600')
+    );
+  });
+
+  it('names title, author and days left in one row label', async () => {
+    const { findByLabelText } = await render(<TrashScreen />);
+    expect(
+      await findByLabelText('Foundation, Frank Herbert. Deleted for good in 2 days')
+    ).toBeTruthy();
+  });
+
+  it('shows the compact top row: Back, a centred Trash heading and no serif title', async () => {
+    const { findByText, getByRole, getByText } = await render(<TrashScreen />);
+    await findByText('Dune');
+    const heading = getByRole('header', { name: 'Trash' });
+    const style = StyleSheet.flatten(heading.props.style);
+    expect(style).toMatchObject({ fontSize: 17, textAlign: 'center' });
+    expect(style.fontFamily).toBe(fontFor('600'));
+    expect(style.fontWeight).toBeUndefined();
+    expect(getByText('Trash')).toBe(heading);
+    expect(getByRole('button', { name: 'Back' })).toBeTruthy();
+  });
+
+  it('draws each cover with a decorative xs BookCover (#902)', async () => {
     mockCovers.length = 0;
     const { findByText } = await render(<TrashScreen />);
     await findByText('Dune');
     expect(mockCovers.map((c) => c.title)).toEqual(expect.arrayContaining(['Dune', 'Foundation']));
-    expect(mockCovers[0]).toMatchObject({ size: 'sm', decorative: true });
+    expect(mockCovers[0]).toMatchObject({ size: 'xs', decorative: true });
   });
 
   it('pads the loading state by the top safe-area inset (#936)', async () => {

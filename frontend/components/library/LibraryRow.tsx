@@ -6,6 +6,7 @@ import { AppText } from '../ui/AppText';
 import { BookCover } from '../ui/BookCover';
 import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
+import { fontFor } from '../../theme/typography';
 import { ROW_DIVIDER_INSET, STATUS_COLOR_KEY, type LibraryBook } from './libraryShared';
 
 export interface LibraryRowProps {
@@ -20,6 +21,13 @@ export interface LibraryRowProps {
   /** Spoken label of the body button (translated by the caller). */
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  /**
+   * Replaces the meta line (status dot, status, year) with this text, for a
+   * list whose second line is not the book's status, e.g. Trash's days left.
+   */
+  metaText?: string;
+  /** `danger` draws `metaText` in the danger colour, semibold. */
+  metaTone?: 'default' | 'danger';
   /** Show the status dot and name in the meta line. Defaults to true. */
   showStatus?: boolean;
   testID?: string;
@@ -39,6 +47,8 @@ function LibraryRowBase({
   trailing,
   accessibilityLabel,
   accessibilityHint,
+  metaText,
+  metaTone = 'default',
   showStatus = true,
   testID = 'book-row',
 }: LibraryRowProps) {
@@ -49,13 +59,21 @@ function LibraryRowBase({
   const statusKey = item.status as keyof typeof STATUS_COLOR_KEY;
   const dotColor = theme.colors[STATUS_COLOR_KEY[statusKey] ?? 'onSurfaceVariant'];
   const status = t(`statusTab.${item.status}`);
-  const meta = showStatus
-    ? year
-      ? t('rowMeta', { status, year })
-      : status
-    : year
-      ? String(year)
-      : null;
+  const showDot = showStatus && metaText === undefined;
+  const meta =
+    metaText !== undefined
+      ? metaText
+      : showStatus
+        ? year
+          ? t('rowMeta', { status, year })
+          : status
+        : year
+          ? String(year)
+          : null;
+
+  // A row with no body button reads as one element when it is given a label
+  // (the trailing control stays separate): title, author and meta in one go.
+  const readAsOne = !onPress && accessibilityLabel !== undefined;
 
   // When the row is tappable the cover and text are inert (`pointerEvents="none"`)
   // so a tap falls through to the sibling overlay button, whose label already
@@ -92,7 +110,13 @@ function LibraryRowBase({
             testID="book-row-cover"
           />
         </View>
-        <View style={styles.textBlock} testID="book-row-text" {...inertProps}>
+        <View
+          style={styles.textBlock}
+          testID="book-row-text"
+          accessible={readAsOne || undefined}
+          accessibilityLabel={readAsOne ? accessibilityLabel : undefined}
+          {...inertProps}
+        >
           <AppText variant="bookTitle" numberOfLines={1}>
             {item.book.title}
           </AppText>
@@ -101,10 +125,14 @@ function LibraryRowBase({
           </AppText>
           {meta ? (
             <View style={styles.metaLine}>
-              {showStatus ? (
+              {showDot ? (
                 <View testID="book-row-dot" style={[styles.dot, { backgroundColor: dotColor }]} />
               ) : null}
-              <AppText variant="meta" color="onSurfaceVariant" style={styles.metaText}>
+              <AppText
+                variant="meta"
+                color={metaTone === 'danger' ? 'danger' : 'onSurfaceVariant'}
+                style={[styles.metaText, metaTone === 'danger' && styles.metaDanger]}
+              >
                 {meta}
               </AppText>
             </View>
@@ -150,6 +178,7 @@ const styles = StyleSheet.create({
   metaLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: DOT_SIZE, height: DOT_SIZE, borderRadius: DOT_SIZE / 2 },
   metaText: { flexShrink: 1 },
+  metaDanger: { fontFamily: fontFor('600') },
   trailing: {},
   divider: { height: StyleSheet.hairlineWidth, marginLeft: ROW_DIVIDER_INSET },
 });

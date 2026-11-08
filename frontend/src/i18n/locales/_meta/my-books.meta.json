@@ -195,7 +195,7 @@
     "characterLimit": 30
   },
   "trash.intro": {
-    "description": "Explains the 30-day trash rules under the Trash heading",
+    "description": "Info card text on the Trash screen: the 30-day rule",
     "tone": "neutral"
   },
   "trash.emptyTitle": {
@@ -207,9 +207,21 @@
     "description": "Empty state explanation of the 30-day rule",
     "tone": "friendly"
   },
-  "trash.dates": {
-    "description": "Dates line on a trashed book: deletion date and the date it is permanently removed",
-    "tone": "neutral"
+  "trash.purgeIn": {
+    "description": "Days-left line on a trashed book row. Plural: _one/_other (and locale categories). {{count}} is the number of whole days until it is deleted for good.",
+    "tone": "neutral",
+    "characterLimit": 50,
+    "placeholders": ["{{count}}"]
+  },
+  "trash.purgeToday": {
+    "description": "Days-left line on a trashed book row when it is deleted for good today",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "trash.rowA11y": {
+    "description": "Screen-reader label of a Trash row: title, author, and the days-left line (when)",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{author}}", "{{when}}"]
   },
   "trash.restore": {
     "description": "Button that restores a trashed book to the library",
