@@ -46,6 +46,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (cb: () => void) => {
     jest.requireActual<typeof import('react')>('react').useEffect(cb, []);
   },
+  useRouter: () => ({ navigate: jest.fn() }),
 }));
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
 jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());

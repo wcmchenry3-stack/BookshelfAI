@@ -156,6 +156,8 @@ async function shot(page, dir, name) {
 }
 
 const byLabel = (page, label) => page.locator(`[aria-label="${label}"]`).first();
+// For labels that end in a count, e.g. "Filter by Reading, 2 books".
+const byLabelStart = (page, label) => page.locator(`[aria-label^="${label}"]`).first();
 
 async function tab(page, label) {
   await page.locator(`[role="tab"][aria-label="${label}"]`).click();
@@ -253,10 +255,10 @@ async function runTheme(browser, scheme) {
       await scrollList(page, 700);
       await shot(page, dir, '07-my-books-scrolled');
       await scrollList(page, -5000);
-      await byLabel(page, 'Filter by Reading').click();
+      await byLabelStart(page, 'Filter by Reading').click();
       await settle(page);
       await shot(page, dir, '08-my-books-filter-reading');
-      await byLabel(page, 'Filter by All').click();
+      await byLabelStart(page, 'Filter by All').click();
       await settle(page);
       await page.locator('[aria-label^="Moby-Dick"]').first().click();
       await settle(page, 800);

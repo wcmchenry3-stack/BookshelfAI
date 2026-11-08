@@ -3,9 +3,12 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { BookDetailSheet, type DetailBook } from '../../components/library/BookDetailSheet';
 import { EmptyState } from '../../components/library/EmptyState';
 import { LibraryHeader } from '../../components/library/LibraryHeader';
-import { LibrarySearchBar } from '../../components/library/LibrarySearchBar';
-import { StatusTabs } from '../../components/library/StatusTabs';
-import { NEXT_STATUS, STATUS_TAB_KEYS } from '../../components/library/libraryShared';
+import {
+  NEXT_STATUS,
+  STATUS_TAB_KEYS,
+  countByStatus,
+  filterBooks,
+} from '../../components/library/libraryShared';
 
 jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 
@@ -33,6 +36,37 @@ describe('libraryShared', () => {
   });
 });
 
+const row = (status: string, title: string, author: string) => ({
+  status,
+  book: { title, author },
+});
+const SHELF = [
+  row('reading', 'Emma', 'Jane Austen'),
+  row('read', 'Persuasion', 'Jane Austen'),
+  row('wishlisted', 'Dune', 'Frank Herbert'),
+];
+
+describe('countByStatus / filterBooks', () => {
+  it('counts every book under All and each status once', () => {
+    expect(countByStatus(SHELF)).toEqual({
+      all: 3,
+      wishlisted: 1,
+      purchased: 0,
+      reading: 1,
+      read: 1,
+    });
+  });
+
+  it('filters by status and by a case-insensitive title or author, together', () => {
+    expect(filterBooks(SHELF, 'all', '')).toHaveLength(3);
+    expect(filterBooks(SHELF, 'reading', '')).toEqual([SHELF[0]]);
+    expect(filterBooks(SHELF, 'all', '  AUSTEN ')).toEqual([SHELF[0], SHELF[1]]);
+    expect(filterBooks(SHELF, 'read', 'austen')).toEqual([SHELF[1]]);
+    expect(filterBooks(SHELF, 'wishlisted', 'austen')).toEqual([]);
+    expect(filterBooks(SHELF, 'all', 'dUnE')).toEqual([SHELF[2]]);
+  });
+});
+
 describe('LibraryHeader', () => {
   it('renders title, subtitle, count, summary label and leading content', async () => {
     const { getByText } = await render(
@@ -55,31 +89,6 @@ describe('EmptyState', () => {
   it('renders the message', async () => {
     const { getByText } = await render(<EmptyState message="Nothing here" lineHeight={24} />);
     expect(getByText('Nothing here')).toBeTruthy();
-  });
-});
-
-describe('StatusTabs', () => {
-  it('renders every tab, marks the active one and reports changes', async () => {
-    const onChange = jest.fn();
-    const { getByText, getAllByRole } = await render(
-      <StatusTabs activeTab="reading" onChange={onChange} />
-    );
-    expect(getAllByRole('button')).toHaveLength(STATUS_TAB_KEYS.length);
-    await fireEvent.press(getByText('Purchased'));
-    expect(onChange).toHaveBeenCalledWith('purchased');
-    const selected = getAllByRole('button').filter((b) => b.props.accessibilityState?.selected);
-    expect(selected).toHaveLength(1);
-  });
-});
-
-describe('LibrarySearchBar', () => {
-  it('shows the value and reports typing', async () => {
-    const onChangeText = jest.fn();
-    const { getByDisplayValue } = await render(
-      <LibrarySearchBar value="dun" onChangeText={onChangeText} />
-    );
-    await fireEvent.changeText(getByDisplayValue('dun'), 'dune');
-    expect(onChangeText).toHaveBeenCalledWith('dune');
   });
 });
 

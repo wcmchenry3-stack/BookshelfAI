@@ -25,6 +25,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (cb: () => void) => {
     require('react').useEffect(cb, []);
   },
+  useRouter: () => ({ navigate: jest.fn() }),
 }));
 
 // Controllable connectivity: the initial state, plus a handle to push changes.

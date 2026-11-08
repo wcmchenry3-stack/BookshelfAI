@@ -26,6 +26,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (cb: () => void) => {
     require('react').useEffect(cb, []);
   },
+  useRouter: () => ({ navigate: jest.fn() }),
   router: { push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), canGoBack: () => true },
 }));
 

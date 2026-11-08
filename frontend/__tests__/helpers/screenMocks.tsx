@@ -20,11 +20,19 @@ export const loadingSpinnerModule = () => ({
   },
 });
 
-/** `expo-router` with only `useFocusEffect`, run once on mount. */
+/** What `useRouter().navigate` / `push` / `replace` call in tests using the module below. */
+export const routerNavigate = jest.fn();
+
+/** `expo-router` with `useFocusEffect` (run once on mount) and a stub `useRouter`. */
 export const focusEffectRouterModule = () => ({
   useFocusEffect: (cb: () => void) => {
     require('react').useEffect(cb, []);
   },
+  useRouter: () => ({
+    navigate: (...args: unknown[]) => require('../helpers/screenMocks').routerNavigate(...args),
+    push: (...args: unknown[]) => require('../helpers/screenMocks').routerNavigate(...args),
+    replace: (...args: unknown[]) => require('../helpers/screenMocks').routerNavigate(...args),
+  }),
 });
 
 /** A wishlisted `/user-books` row for Dune; override fields per test. */

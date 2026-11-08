@@ -22,7 +22,12 @@ test.describe('My Books', () => {
     await expect(page.getByRole('button', { name: 'The Great Gatsby — Reading' })).toBeVisible();
     await expectNoA11yViolations('My Books with three books');
 
-    // Status filter.
+    // Status filter: a client-side view of the one list, so no new request.
+    const listRequests: string[] = [];
+    page.on('request', (req) => {
+      if (req.method() === 'GET' && /\/user-books(\?|$)/.test(req.url()))
+        listRequests.push(req.url());
+    });
     await page.getByRole('button', { name: 'Filter by Purchased' }).click();
     await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toHaveCount(0);
@@ -30,12 +35,13 @@ test.describe('My Books', () => {
     await expectNoA11yViolations('My Books filtered to Purchased');
     await page.getByRole('button', { name: 'Filter by All' }).click();
     await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toBeVisible();
+    expect(listRequests).toEqual([]);
 
     // Text filter.
-    await page.getByRole('textbox', { name: 'Search your library' }).fill('austen');
+    await page.getByRole('textbox', { name: 'Search your books' }).fill('austen');
     await expect(page.getByRole('button', { name: 'Emma — Wishlist' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toHaveCount(0);
-    await page.getByRole('textbox', { name: 'Search your library' }).fill('');
+    await page.getByRole('textbox', { name: 'Search your books' }).fill('');
     await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
 
     // Details.
@@ -74,5 +80,32 @@ test.describe('My Books', () => {
     await page.getByRole('button', { name: 'Filter by Purchased' }).click();
     await expect(page.getByRole('button', { name: 'Dune — Reading' })).toHaveCount(0);
     await expectNoA11yViolations('My Books after moving a book');
+  });
+
+  test('shows the empty states for a status chip and for a search with no match', async ({
+    page,
+    signIn,
+    expectNoA11yViolations,
+  }) => {
+    await signIn();
+    await openTab(page, 'Your book collection');
+    await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
+
+    // A chip with no books: the search field and chips stay, and one tap returns to All.
+    await page.getByRole('button', { name: 'Filter by Read' }).click();
+    await expect(page.getByRole('heading', { name: 'Nothing marked read yet' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Search your books' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Filter by All' })).toBeVisible();
+    await expectNoA11yViolations('My Books with an empty status filter');
+    await page.getByRole('button', { name: 'Show all books' }).click();
+    await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
+
+    // A search with no match.
+    await page.getByRole('textbox', { name: 'Search your books' }).fill('zzzz');
+    await expect(page.getByRole('heading', { name: 'No books match “zzzz”' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Filter by All' })).toBeVisible();
+    await expectNoA11yViolations('My Books with a search that matches nothing');
+    await page.getByRole('button', { name: 'Clear search' }).first().click();
+    await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
   });
 });
