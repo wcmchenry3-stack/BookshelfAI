@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
 import { tokens } from '../../theme/tokens';
-import { chars, longestUnitEm, MEASURE_MARGIN, textEm } from '../../theme/coverTextWidths';
+import { longestUnitEm } from '../../theme/coverTextWidths';
 import { fontFor } from '../../theme/typography';
 
 export type BookCoverSize = 'xs' | 'sm' | 'md' | 'lg';
@@ -28,31 +28,24 @@ const FALLBACK_TEXT: Record<
   lg: { fontSize: 17, lineHeight: 22, lines: 6 },
 };
 
-/** Smallest title font the generated cover will use before it switches to initials. */
+/** Smallest title font the generated cover uses; below it the cover shows no title. */
 export const FALLBACK_MIN_FONT = 6;
 
 export interface FallbackTitleStyle {
-  /** What to draw: the title, or its initials when no word fits at the floor. */
+  /** The title to draw; empty when `placeholder` is set. */
   text: string;
   fontSize: number;
   lineHeight: number;
   lines: number;
   /** Width of the text box; the text is centred inside the frame. */
   width: number;
-  initials: boolean;
+  /** True when no word fits at the floor: the cover is drawn with no title. */
+  placeholder: boolean;
 }
 
 /** Inset of the thin inner frame; the text box keeps 1px more air on each side. */
 function fallbackInset(frameWidth: number): number {
   return Math.max(3, Math.round(frameWidth * 0.07));
-}
-
-/** The title's initials (up to 3 whole characters, upper case). */
-function initialsOf(title: string): string {
-  const words = title.split(/[\s\-\u2013\u2014/]+/).filter(Boolean);
-  const letters = words.length > 1 ? words.map((w) => chars(w)[0]) : chars(words[0] ?? '');
-  // Upper-case first: 'ß' becomes 'SS', so slicing afterwards keeps the label at 3 characters.
-  return chars(letters.join('').toUpperCase()).slice(0, 3).join('');
 }
 
 const halfDown = (n: number) => Math.floor(n * 2) / 2;
@@ -63,8 +56,8 @@ const halfDown = (n: number) => Math.floor(n * 2) / 2;
  * measured with the real Noto Serif SemiBold advances (`theme/coverTextWidths`)
  * plus a 4% margin. The size is the largest that fits, capped at the size's
  * normal font and floored at `FALLBACK_MIN_FONT`. If the widest unit still does
- * not fit at the floor, the cover shows the title's initials (up to 3, one line,
- * larger) instead. CJK text wraps per character, so it keeps the normal size.
+ * not fit at the floor (a long single word on a small cover), the cover is drawn
+ * as a plain placeholder with no title, rather than splitting the word. CJK text wraps per character, so it keeps the normal size.
  * Widths are estimates: a different font fallback can still differ slightly.
  */
 export function fallbackTitleStyle(title: string, size: BookCoverSize): FallbackTitleStyle {
@@ -81,20 +74,10 @@ export function fallbackTitleStyle(title: string, size: BookCoverSize): Fallback
       lineHeight: Math.round(fontSize * ratio),
       lines: base.lines,
       width,
-      initials: false,
+      placeholder: false,
     };
   }
-  const text = initialsOf(title) || title;
-  const fit = halfDown(width / (textEm(text) * MEASURE_MARGIN));
-  const fontSize = Math.min(Math.round(base.fontSize * 1.75), fit);
-  return {
-    text,
-    fontSize,
-    lineHeight: Math.round(fontSize * ratio),
-    lines: 1,
-    width,
-    initials: true,
-  };
+  return { ...base, text: '', width, placeholder: true };
 }
 
 export interface BookCoverProps {
@@ -262,25 +245,27 @@ const FallbackCover = memo(function FallbackCover({
           },
         ]}
       />
-      <Text
-        style={{
-          fontFamily: fontFor('600', 'serif'),
-          width: text.width,
-          fontSize: text.fontSize,
-          lineHeight: text.lineHeight,
-          color: theme.colors.onCoverBlank,
-          textAlign: 'center',
-        }}
-        numberOfLines={text.lines}
-        // The frame already carries the label; hide the typeset title so it is not read twice.
-        accessibilityElementsHidden
-        aria-hidden
-        importantForAccessibility="no-hide-descendants"
-        ellipsizeMode="tail"
-        allowFontScaling={false}
-      >
-        {text.text}
-      </Text>
+      {!text.placeholder && (
+        <Text
+          style={{
+            fontFamily: fontFor('600', 'serif'),
+            width: text.width,
+            fontSize: text.fontSize,
+            lineHeight: text.lineHeight,
+            color: theme.colors.onCoverBlank,
+            textAlign: 'center',
+          }}
+          numberOfLines={text.lines}
+          // The frame already carries the label; hide the typeset title so it is not read twice.
+          accessibilityElementsHidden
+          aria-hidden
+          importantForAccessibility="no-hide-descendants"
+          ellipsizeMode="tail"
+          allowFontScaling={false}
+        >
+          {text.text}
+        </Text>
+      )}
     </View>
   );
 });
