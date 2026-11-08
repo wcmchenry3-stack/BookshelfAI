@@ -30,6 +30,7 @@ import {
   bookA11yLabel,
   countByStatus,
   filterByStatus,
+  gridCellWidth,
   gridColumns,
   sortBooks,
   type SortKey,
@@ -137,14 +138,13 @@ export default function MyBooksScreen() {
   }, []);
   const toggleView = useCallback(() => {
     viewTouched.current = true;
-    setView((prev) => {
-      const next = prev === 'grid' ? 'list' : 'grid';
-      void saveLibraryView(next);
-      return next;
-    });
-  }, []);
+    const next: LibraryView = view === 'grid' ? 'list' : 'grid';
+    setView(next);
+    void saveLibraryView(next);
+  }, [view]);
   const { width } = useWindowDimensions();
   const columns = gridColumns(width);
+  const cellWidth = gridCellWidth(width, columns);
   const chooseSort = useCallback((key: SortKey) => {
     sortTouched.current = true;
     setSortKey(key);
@@ -201,8 +201,10 @@ export default function MyBooksScreen() {
   );
 
   const renderGridItem = useCallback(
-    ({ item }: { item: UserBook }) => <BookGridCell item={item} onOpen={openDetail} />,
-    [openDetail]
+    ({ item }: { item: UserBook }) => (
+      <BookGridCell item={item} onOpen={openDetail} cellWidth={cellWidth} />
+    ),
+    [openDetail, cellWidth]
   );
 
   function viewDetailsFromMenu(item: UserBook) {

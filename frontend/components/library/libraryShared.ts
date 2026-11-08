@@ -116,6 +116,7 @@ export function bookA11yLabel(
 
 /** Cover grid geometry (#934): `md` cover width, gap between columns, gap between rows. */
 export const GRID_COVER_WIDTH = 104;
+export const GRID_COVER_HEIGHT = 156;
 export const GRID_COLUMN_GAP = 16;
 export const GRID_ROW_GAP = 20;
 
@@ -126,5 +127,17 @@ export function gridColumns(width: number): number {
     Math.floor(
       (width - 2 * SCREEN_PADDING + GRID_COLUMN_GAP) / (GRID_COVER_WIDTH + GRID_COLUMN_GAP)
     )
+  );
+}
+
+/**
+ * Width of one grid cell: the `md` cover width, or less when even three columns
+ * do not fit (a window under 376 wide, e.g. a 360dp phone). Wider windows get
+ * more columns, so the formula never shrinks them.
+ */
+export function gridCellWidth(width: number, columns: number): number {
+  return Math.min(
+    GRID_COVER_WIDTH,
+    Math.floor((width - 2 * SCREEN_PADDING - (columns - 1) * GRID_COLUMN_GAP) / columns)
   );
 }
