@@ -75,9 +75,9 @@ test.describe('Wishlist', () => {
     // The Scan tab stays mounted: "Scan books" must still open the camera, not text search.
     await page.getByRole('tab', { name: 'Your wishlist' }).click();
     await page.getByRole('button', { name: 'Scan books' }).click();
-    // Camera mode: the text field is gone and the camera's "Scan Books" action shows.
+    // Camera mode: the text field is gone and the camera's capture action ("Capture books") shows.
     // (react-native-web does not emit aria-selected for role=button, so assert what renders.)
     await expect(page.getByLabel('Book title or author search')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Scan Books', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Capture books', exact: true })).toBeVisible();
   });
 });
