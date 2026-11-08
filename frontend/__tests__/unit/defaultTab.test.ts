@@ -4,7 +4,6 @@ import {
   FALLBACK_DEFAULT_TAB,
   defaultTabFromMe,
   defaultTabRoute,
-  fetchDefaultTab,
   isDefaultTab,
   loadDefaultTab,
   parseDefaultTab,
@@ -60,18 +59,21 @@ describe('default tab values (#913)', () => {
   });
 });
 
-describe('loadDefaultTab / fetchDefaultTab', () => {
+describe('loadDefaultTab', () => {
   it('returns the stored tab from GET /auth/me', async () => {
     mockGet.mockResolvedValue({ data: { default_tab: 'my-books' } });
     await expect(loadDefaultTab()).resolves.toBe('my-books');
     expect(mockGet).toHaveBeenCalledWith('/auth/me', { timeout: DEFAULT_TAB_FETCH_TIMEOUT_MS });
-    await expect(fetchDefaultTab()).resolves.toBe('my-books');
   });
 
-  it('is null (load) / Scan (fetch) when the call fails', async () => {
+  it('is null when the call fails', async () => {
     mockGet.mockRejectedValue({ message: 'Network Error' });
     await expect(loadDefaultTab()).resolves.toBeNull();
-    await expect(fetchDefaultTab()).resolves.toBe('scan');
+  });
+
+  it('reads a server null or unknown value as Scan (known, not null)', async () => {
+    mockGet.mockResolvedValue({ data: { default_tab: null } });
+    await expect(loadDefaultTab()).resolves.toBe('scan');
   });
 
   it('never rejects when the client throws synchronously or returns nothing', async () => {
@@ -88,10 +90,8 @@ describe('loadDefaultTab / fetchDefaultTab', () => {
     try {
       mockGet.mockReturnValue(new Promise(() => {}));
       const loaded = loadDefaultTab(1000);
-      const fetched = fetchDefaultTab(1000);
       jest.advanceTimersByTime(1000);
       await expect(loaded).resolves.toBeNull();
-      await expect(fetched).resolves.toBe('scan');
     } finally {
       jest.useRealTimers();
     }

@@ -79,13 +79,6 @@ export async function loadDefaultTab(
   }
 }
 
-/** The user's choice from `GET /auth/me`, or Scan when it cannot be read in time. */
-export async function fetchDefaultTab(
-  timeoutMs: number = DEFAULT_TAB_FETCH_TIMEOUT_MS
-): Promise<DefaultTab> {
-  return (await loadDefaultTab(timeoutMs)) ?? FALLBACK_DEFAULT_TAB;
-}
-
 /** Saves the user's choice; resolves to what the server stored. Rejects on failure. */
 export async function saveDefaultTab(tab: DefaultTab): Promise<DefaultTab> {
   const { data } = await api.patch('/users/me/preferences', { default_tab: tab });

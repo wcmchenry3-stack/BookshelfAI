@@ -643,7 +643,7 @@ describe('AuthProvider "Open on" tab (#913)', () => {
     const { getByTestId } = await renderCapturing();
 
     await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
-    expect(ctx.defaultTab).toBe('scan');
+    expect(ctx.defaultTab).toBeNull();
     expect(mockReplace).toHaveBeenCalledWith('/(tabs)/scan');
   });
 
@@ -661,7 +661,7 @@ describe('AuthProvider "Open on" tab (#913)', () => {
       });
 
       await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
-      expect(ctx.defaultTab).toBe('scan');
+      expect(ctx.defaultTab).toBeNull();
       expect(mockReplace).toHaveBeenCalledWith('/(tabs)/scan');
     } finally {
       jest.useRealTimers();
@@ -689,9 +689,13 @@ describe('AuthProvider "Open on" tab (#913)', () => {
   });
 
   it.each([
-    ['fails', () => mockGet.mockRejectedValue({ message: 'Network Error' })],
-    ['returns an unknown value', () => mockGet.mockResolvedValue({ data: { default_tab: 'x' } })],
-  ])('sign-in lands on Scan when /auth/me %s', async (_label, arrange) => {
+    ['fails', () => mockGet.mockRejectedValue({ message: 'Network Error' }), null],
+    [
+      'returns an unknown value',
+      () => mockGet.mockResolvedValue({ data: { default_tab: 'x' } }),
+      'scan',
+    ],
+  ])('sign-in lands on Scan when /auth/me %s', async (_label, arrange, expectedTab) => {
     mockSegments = ['(auth)'];
     mockPost.mockResolvedValue({ data: { access_token: 'acc', refresh_token: 'ref' } });
     useKeychain({});
@@ -704,7 +708,7 @@ describe('AuthProvider "Open on" tab (#913)', () => {
     });
 
     expect(getByTestId('state').props.children).toBe('authed');
-    expect(ctx.defaultTab).toBe('scan');
+    expect(ctx.defaultTab).toBe(expectedTab);
     expect(mockReplace).toHaveBeenLastCalledWith('/(tabs)/scan');
   });
 
@@ -760,11 +764,11 @@ describe('AuthProvider "Open on" tab (#913)', () => {
     });
 
     expect(getByTestId('state').props.children).toBe('guest');
-    expect(ctx.defaultTab).toBe('scan');
+    expect(ctx.defaultTab).toBeNull();
     expect(mockReplace).not.toHaveBeenCalledWith('/(tabs)/wishlist');
   });
 
-  it('sign-out resets the tab to Scan', async () => {
+  it('sign-out resets the tab to unknown (Scan)', async () => {
     useKeychain(BOTH_TOKENS);
     mockGet.mockResolvedValue({ data: { default_tab: 'wishlist' } });
     const { getByTestId } = await renderCapturing();
@@ -775,6 +779,6 @@ describe('AuthProvider "Open on" tab (#913)', () => {
     });
 
     expect(getByTestId('state').props.children).toBe('guest');
-    expect(ctx.defaultTab).toBe('scan');
+    expect(ctx.defaultTab).toBeNull();
   });
 });

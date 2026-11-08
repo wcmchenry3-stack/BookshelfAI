@@ -41,7 +41,7 @@ jest.mock('../../hooks/useTheme', () => ({
 
 const mockShowBanner = jest.fn();
 
-function renderRow(defaultTab: DefaultTab = 'scan') {
+function renderRow(defaultTab: DefaultTab | null = 'scan') {
   return render(
     <AuthContext.Provider
       value={{
@@ -67,8 +67,8 @@ const value = (utils: { getByTestId: (id: string) => { props: Record<string, unk
 
 beforeEach(() => {
   jest.clearAllMocks();
-  // The mount re-read fails unless a test says otherwise, so the row keeps
-  // the value AuthContext gave it.
+  // A re-read (only when AuthContext has no value) fails unless a test says
+  // otherwise.
   mockGet.mockRejectedValue({ message: 'Network Error' });
 });
 
@@ -79,7 +79,6 @@ describe('Settings "Open on" row (#913)', () => {
     ['my-books', 'My Books'],
   ] as const)('shows the current choice %s', async (tab, label) => {
     const utils = await renderRow(tab);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     expect(value(utils)).toBe(label);
     const row = utils.getByTestId('settings-open-on');
     expect(row.props.accessibilityLabel).toBe(`Open on: ${label}`);
@@ -87,11 +86,22 @@ describe('Settings "Open on" row (#913)', () => {
     expect(utils.getByText('Open on')).toBeTruthy();
   });
 
-  it('re-reads the value from the server on mount', async () => {
+  it('re-reads the value from the server when sign-in or launch could not', async () => {
     mockGet.mockResolvedValue({ data: { default_tab: 'wishlist' } });
-    const utils = await renderRow('scan');
+    const utils = await renderRow(null);
     await waitFor(() => expect(value(utils)).toBe('Wishlist'));
     expect(mockGet).toHaveBeenCalledWith('/auth/me', expect.anything());
+  });
+
+  it('keeps Scan when the re-read fails too', async () => {
+    const utils = await renderRow(null);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(value(utils)).toBe('Scan');
+  });
+
+  it('does not re-read when the value is already known', async () => {
+    await renderRow('wishlist');
+    expect(mockGet).not.toHaveBeenCalled();
   });
 
   it('opens a picker with the three choices, the current one checked', async () => {
@@ -109,7 +119,6 @@ describe('Settings "Open on" row (#913)', () => {
     let answer!: (v: unknown) => void;
     mockPatch.mockReturnValue(new Promise((r) => (answer = r)));
     const utils = await renderRow('scan');
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
 
     await fireEvent.press(utils.getByTestId('settings-open-on'));
     await fireEvent.press(utils.getByTestId('open-on-option-wishlist'));
@@ -124,7 +133,6 @@ describe('Settings "Open on" row (#913)', () => {
   it('a failed save restores the old value and shows a translated error banner', async () => {
     mockPatch.mockRejectedValue({ response: { status: 503, data: { detail: 'db_timeout' } } });
     const utils = await renderRow('wishlist');
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
 
     await fireEvent.press(utils.getByTestId('settings-open-on'));
     await act(async () => {
@@ -152,7 +160,7 @@ describe('Settings "Open on" row (#913)', () => {
     let answerGet!: (v: unknown) => void;
     mockGet.mockReturnValue(new Promise((r) => (answerGet = r)));
     mockPatch.mockResolvedValue({ data: { default_tab: 'my-books' } });
-    const utils = await renderRow('scan');
+    const utils = await renderRow(null);
 
     await fireEvent.press(utils.getByTestId('settings-open-on'));
     await act(async () => {

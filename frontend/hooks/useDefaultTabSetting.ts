@@ -14,8 +14,8 @@ import { Sentry } from '../lib/sentry';
 
 /**
  * The Settings "Open on" value (#913). Starts from the tab AuthContext read at
- * sign-in or launch and re-reads it from the server once on mount (launch may
- * have been offline). `choose` is optimistic: the new value shows at once,
+ * sign-in or launch; when that is unknown (null: launch was offline, the read
+ * failed), it re-reads it from the server once on mount. `choose` is optimistic: the new value shows at once,
  * and if the save fails the old value comes back and an error banner shows.
  *
  * The value lives here, not in AuthContext: the app only routes on it at
@@ -32,7 +32,11 @@ export function useDefaultTabSetting() {
   // overwrite their choice.
   const choseRef = useRef(false);
 
+  // Re-read only when sign-in or launch could not read it (AuthContext has
+  // null): otherwise the value is already the server's.
+  const needsReread = signedInTab === null;
   useEffect(() => {
+    if (!needsReread) return;
     let cancelled = false;
     void loadDefaultTab().then((tab) => {
       if (tab && !cancelled && !choseRef.current) setDefaultTab(tab);
@@ -40,7 +44,7 @@ export function useDefaultTabSetting() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [needsReread]);
 
   const choose = useCallback(
     async (tab: DefaultTab) => {

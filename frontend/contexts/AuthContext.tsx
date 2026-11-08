@@ -19,10 +19,9 @@ import {
 } from '../lib/freshInstall';
 import {
   type DefaultTab,
-  FALLBACK_DEFAULT_TAB,
   defaultTabFromMe,
   defaultTabRoute,
-  fetchDefaultTab,
+  loadDefaultTab,
 } from '../lib/defaultTab';
 import { Sentry } from '../lib/sentry';
 import * as storage from '../lib/storage';
@@ -33,10 +32,11 @@ export const SESSION_CHECK_TIMEOUT_MS = 8000;
 type SessionCheck = 'valid' | 'dead' | 'unknown';
 
 // The session check's answer, plus the user's "Open on" tab (#913) read from
-// the same GET /auth/me. Anything but a valid session leaves it on Scan.
+// the same GET /auth/me. Anything but a valid session leaves it unknown
+// (null), which lands on Scan.
 interface SessionCheckResult {
   session: SessionCheck;
-  defaultTab: DefaultTab;
+  defaultTab: DefaultTab | null;
 }
 
 // Confirms a stored session with GET /auth/me. The api interceptor refreshes
@@ -45,7 +45,7 @@ interface SessionCheckResult {
 // refreshed because there is no refresh token. A network error, timeout,
 // 5xx or 403 is 'unknown', and the app stays signed in so offline use works.
 async function checkSession(): Promise<SessionCheckResult> {
-  const unknown: SessionCheckResult = { session: 'unknown', defaultTab: FALLBACK_DEFAULT_TAB };
+  const unknown: SessionCheckResult = { session: 'unknown', defaultTab: null };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<SessionCheckResult>((resolve) => {
     timer = setTimeout(() => resolve(unknown), SESSION_CHECK_TIMEOUT_MS);
@@ -66,7 +66,7 @@ async function checkSession(): Promise<SessionCheckResult> {
       // passing reason (network, 5xx, 429), so the session is kept. It also
       // covers a refresh that succeeded but whose retry still got a 401; that
       // needs an inconsistent server, so it is not handled here (#729 review).
-      return access && refresh ? unknown : { session: 'dead', defaultTab: FALLBACK_DEFAULT_TAB };
+      return access && refresh ? unknown : { session: 'dead', defaultTab: null };
     }
   })();
   try {
@@ -124,9 +124,10 @@ interface AuthContextValue {
   isLoading: boolean;
   /**
    * The user's "Open on" tab (#913) as read at launch or sign-in, where the
-   * app lands; Scan until known. Settings keeps its own copy of the value.
+   * app lands. `null` when it could not be read (offline, an error, too
+   * slow, signed out): the app lands on Scan, and Settings re-reads it.
    */
-  defaultTab: DefaultTab;
+  defaultTab: DefaultTab | null;
   login: (idToken: string) => Promise<void>;
   testLogin: (accessToken: string, refreshToken: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -135,7 +136,7 @@ interface AuthContextValue {
 export const AuthContext = createContext<AuthContextValue>({
   isAuthenticated: false,
   isLoading: true,
-  defaultTab: FALLBACK_DEFAULT_TAB,
+  defaultTab: null,
   login: async () => {},
   testLogin: async () => {},
   logout: async () => {},
@@ -144,7 +145,7 @@ export const AuthContext = createContext<AuthContextValue>({
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [defaultTab, setDefaultTab] = useState<DefaultTab>(FALLBACK_DEFAULT_TAB);
+  const [defaultTab, setDefaultTab] = useState<DefaultTab | null>(null);
   const segments = useSegments();
   const router = useRouter();
   // Started while rendering, before any child effect touches AsyncStorage or
@@ -168,7 +169,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     (async () => {
       let authed = false;
-      let tab: DefaultTab = FALLBACK_DEFAULT_TAB;
+      let tab: DefaultTab | null = null;
       try {
         // A failed wipe may have left the previous install's tokens, and a
         // failed check cannot tell: this launch is signed out (the request
@@ -210,7 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // are written the install is marked done, so a 'pending' marker left by a
   // failed check, wipe or sign-out does not wipe them on the next launch.
   // Then the user's "Open on" tab is read (#913): at most
-  // DEFAULT_TAB_FETCH_TIMEOUT_MS, Scan if it fails, so sign-in always ends.
+  // DEFAULT_TAB_FETCH_TIMEOUT_MS; unknown (Scan) if it fails, so sign-in always ends.
   const storeSession = useCallback(async (accessToken: string, refreshToken: string) => {
     await supersedeInstallCheck();
     await storage.setItem(ACCESS_TOKEN_KEY, accessToken);
@@ -219,7 +220,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionChangedRef.current = true;
     const generation = ++sessionGenRef.current;
     resumeStoredSession();
-    const tab = await fetchDefaultTab();
+    const tab = await loadDefaultTab();
     if (generation !== sessionGenRef.current) return;
     setDefaultTab(tab);
     setIsAuthenticated(true);
@@ -259,7 +260,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // behind is not sent, and a refresh already in flight is dropped.
       gateStoredSession(Promise.resolve(false));
       sessionChangedRef.current = true;
-      setDefaultTab(FALLBACK_DEFAULT_TAB);
+      setDefaultTab(null);
       setIsAuthenticated(false);
     }
   }, []);
