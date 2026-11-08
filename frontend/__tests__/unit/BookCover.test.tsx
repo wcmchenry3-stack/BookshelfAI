@@ -1,7 +1,14 @@
 import { Image, StyleSheet } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
-import { BookCover, COVER_SIZES, type BookCoverSize } from '../../components/ui/BookCover';
+import {
+  BookCover,
+  COVER_SIZES,
+  FALLBACK_CHAR_EM,
+  FALLBACK_MIN_FONT,
+  fallbackTitleStyle,
+  type BookCoverSize,
+} from '../../components/ui/BookCover';
 import { tokens } from '../../theme/tokens';
 import { fontFor } from '../../theme/typography';
 
@@ -224,5 +231,60 @@ describe('#902 BookCover', () => {
       );
       for (const [props] of imageCalls()) expect(props.onError).toBe(first);
     });
+  });
+});
+
+describe('#924 fallback title never splits a word', () => {
+  const longest = (t: string) => Math.max(...t.split(/\s+/).map((w) => w.length));
+
+  it.each(SIZES)('keeps every word of long titles inside the text box at %s', (size) => {
+    for (const title of ['Middlemarch', 'Wuthering Heights', 'The Count of Monte Cristo']) {
+      const s = fallbackTitleStyle(title, size);
+      expect(s.initials).toBe(false);
+      expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
+      expect(longest(title) * s.fontSize * FALLBACK_CHAR_EM).toBeLessThanOrEqual(s.width);
+    }
+  });
+
+  it('sizes Middlemarch at sm to fit its width', () => {
+    const s = fallbackTitleStyle('Middlemarch', 'sm');
+    expect(s.fontSize).toBeLessThan(9);
+    expect(s.fontSize).toBeGreaterThanOrEqual(FALLBACK_MIN_FONT);
+    expect(11 * s.fontSize * FALLBACK_CHAR_EM).toBeLessThanOrEqual(s.width);
+  });
+
+  it('falls back to initials for a pathological single word at xs', () => {
+    const s = fallbackTitleStyle('A'.repeat(30), 'xs');
+    expect(s.initials).toBe(true);
+    expect(s.text).toBe('AAA');
+    expect(s.lines).toBe(1);
+    expect(3 * s.fontSize * FALLBACK_CHAR_EM).toBeLessThanOrEqual(s.width);
+  });
+
+  it('uses the first letters of each word for a long multi-word title', () => {
+    expect(fallbackTitleStyle('Pneumonoultramicroscopicsilicovolcano Dust', 'xs').text).toBe('PD');
+  });
+
+  it('keeps the default font for a short title and for md/lg ordinary titles', () => {
+    expect(fallbackTitleStyle('Dune', 'xs')).toMatchObject({ fontSize: 8, lineHeight: 10 });
+    expect(fallbackTitleStyle('Dune', 'sm')).toMatchObject({ fontSize: 9, lineHeight: 11 });
+    expect(fallbackTitleStyle('Wuthering Heights', 'md')).toMatchObject({
+      fontSize: 14,
+      lineHeight: 18,
+      lines: 6,
+    });
+    expect(fallbackTitleStyle('Middlemarch', 'lg')).toMatchObject({
+      fontSize: 17,
+      lineHeight: 22,
+      initials: false,
+    });
+  });
+
+  it('renders the computed size and initials in the cover', async () => {
+    const { getByText } = await render(<BookCover title="Middlemarch" size="sm" testID="c" />);
+    const style = StyleSheet.flatten(getByText('Middlemarch', H).props.style);
+    expect(style.fontSize).toBe(fallbackTitleStyle('Middlemarch', 'sm').fontSize);
+    const r2 = await render(<BookCover title={'B'.repeat(30)} size="xs" />);
+    expect(r2.getByText('BBB', H)).toBeTruthy();
   });
 });

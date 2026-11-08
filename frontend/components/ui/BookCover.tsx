@@ -27,6 +27,84 @@ const FALLBACK_TEXT: Record<
   lg: { fontSize: 17, lineHeight: 22, lines: 6 },
 };
 
+/** Smallest title font the generated cover will use before it switches to initials. */
+export const FALLBACK_MIN_FONT = 6;
+/**
+ * Conservative average glyph advance in em for Noto Serif SemiBold. Real text
+ * averages about 0.55em; 0.6 leaves headroom for wide letters (m, w) so a word
+ * is never wider than its estimate. Used because `adjustsFontSizeToFit` is
+ * native-only, so web could not share it.
+ */
+export const FALLBACK_CHAR_EM = 0.6;
+
+export interface FallbackTitleStyle {
+  /** What to draw: the title, or its initials when no word fits at the floor. */
+  text: string;
+  fontSize: number;
+  lineHeight: number;
+  lines: number;
+  /** Width of the text box; the text is centred inside the frame. */
+  width: number;
+  initials: boolean;
+}
+
+/** Inner text width: the frame minus the inner-frame inset and 1px of air on each side. */
+function fallbackInset(frameWidth: number): number {
+  return Math.max(3, Math.round(frameWidth * 0.07));
+}
+
+function initialsOf(title: string): string {
+  const words = title.split(/[\s\-\u2013\u2014]+/).filter(Boolean);
+  const letters =
+    words.length > 1
+      ? words.map((w) => Array.from(w)[0]).join('')
+      : Array.from(words[0] ?? '').join('');
+  return letters.slice(0, 3).toUpperCase();
+}
+
+/**
+ * Deterministic title sizing for the generated cover (#924). A word must never
+ * break mid-word, so the font is chosen from the longest word:
+ * `chars * fontSize * FALLBACK_CHAR_EM <= innerWidth`, capped at the size's
+ * normal font and floored at `FALLBACK_MIN_FONT`. If the longest word still
+ * does not fit at the floor, the cover shows the title's initials (up to 3
+ * letters), centred and larger, instead of an unreadable or split word.
+ * Line height stays proportional; `lines` still truncates by whole lines.
+ */
+export function fallbackTitleStyle(title: string, size: BookCoverSize): FallbackTitleStyle {
+  const base = FALLBACK_TEXT[size];
+  const frameWidth = COVER_SIZES[size].width;
+  const width = frameWidth - 2 * (fallbackInset(frameWidth) + 1);
+  const longest = Math.max(
+    1,
+    ...title.split(/[\s\-\u2013\u2014]+/).map((w) => Array.from(w).length)
+  );
+  const fitted = Math.floor((width / (longest * FALLBACK_CHAR_EM)) * 2) / 2;
+  const ratio = base.lineHeight / base.fontSize;
+  if (fitted >= FALLBACK_MIN_FONT) {
+    const fontSize = Math.min(base.fontSize, fitted);
+    return {
+      text: title,
+      fontSize,
+      lineHeight: Math.round(fontSize * ratio),
+      lines: base.lines,
+      width,
+      initials: false,
+    };
+  }
+  const text = initialsOf(title) || title;
+  const fit = Math.floor((width / (Array.from(text).length * FALLBACK_CHAR_EM)) * 2) / 2;
+  const fontSize = Math.min(Math.round(base.fontSize * 1.75), fit);
+  return {
+    text,
+    fontSize,
+    lineHeight: Math.round(fontSize * ratio),
+    lines: 1,
+    width,
+    initials: true,
+  };
+}
+
 export interface BookCoverProps {
   /** The book's title, drawn on the generated cover. */
   title: string;
@@ -169,8 +247,8 @@ const FallbackCover = memo(function FallbackCover({
   testID?: string;
 }) {
   const { theme } = useTheme();
-  const text = FALLBACK_TEXT[size];
-  const inset = Math.max(3, Math.round(width * 0.07));
+  const text = fallbackTitleStyle(title, size);
+  const inset = fallbackInset(width);
   return (
     <View
       style={[
@@ -195,6 +273,7 @@ const FallbackCover = memo(function FallbackCover({
       <Text
         style={{
           fontFamily: fontFor('600', 'serif'),
+          width: text.width,
           fontSize: text.fontSize,
           lineHeight: text.lineHeight,
           color: theme.colors.onCoverBlank,
@@ -208,7 +287,7 @@ const FallbackCover = memo(function FallbackCover({
         ellipsizeMode="tail"
         allowFontScaling={false}
       >
-        {title}
+        {text.text}
       </Text>
     </View>
   );
@@ -225,6 +304,6 @@ const styles = StyleSheet.create({
   },
   clip: { flex: 1, overflow: 'hidden' },
   spine: { position: 'absolute', top: 0, bottom: 0, left: 0, opacity: 0.12 },
-  fallback: { alignItems: 'center', justifyContent: 'center', padding: 8, overflow: 'hidden' },
+  fallback: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   innerFrame: { position: 'absolute', borderWidth: StyleSheet.hairlineWidth, opacity: 0.45 },
 });
