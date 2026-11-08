@@ -264,4 +264,38 @@ describe('WishlistScreen', () => {
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
     expect(alertSpy.mock.calls[0][1]).not.toMatch(/Can't reach BookshelfAI/);
   });
+
+  it('locks Remove in the sheet while a Bought request for that book is in flight', async () => {
+    mockGet.mockResolvedValue({ data: [BOOK_1] });
+    mockPatch.mockReturnValue(new Promise(() => {}));
+    const { getByLabelText } = await render(<WishlistScreen />);
+    await waitFor(() => expect(getByLabelText('Mark Dune as bought')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Mark Dune as bought'));
+    await waitFor(() =>
+      expect(getByLabelText('Mark Dune as bought').props.accessibilityState.disabled).toBe(true)
+    );
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await waitFor(() => expect(getByLabelText('Remove Dune')).toBeTruthy());
+    expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(getByLabelText('Remove Dune'));
+
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('says "Unverified" in the row label of an unverified entry (#616)', async () => {
+    const unverified = {
+      ...BOOK_1,
+      id: 'ub-u',
+      unverified: true,
+      book: { ...BOOK_1.book, id: 'b-u', title: 'Pond Notes', author: 'A. Local' },
+    };
+    mockGet.mockResolvedValue({ data: [unverified, BOOK_1] });
+    const { findByLabelText } = await render(<WishlistScreen />);
+    const row = await findByLabelText('Pond Notes — Wishlist, by A. Local — Unverified');
+    expect(row.props.accessibilityRole).toBe('button');
+    // A catalog book's label is unchanged.
+    expect(await findByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy();
+  });
 });

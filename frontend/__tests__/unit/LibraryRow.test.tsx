@@ -62,14 +62,21 @@ describe('LibraryRow layout (#929)', () => {
     expect(getByTestId('book-row-cover-wrap', HIDDEN).props['aria-hidden']).toBe(true);
   });
 
-  it.each(['https://example.com/c.jpg', null])('keeps a 2:3 frame (cover %s)', async (cover) => {
-    const item = makeItem();
-    item.book.cover_url = cover;
-    const { getByTestId } = await render(<LibraryRow item={item} />);
-    const node = getByTestId('book-row-cover', HIDDEN);
-    if (cover) expect(node.props.resizeMode).toBe('cover');
-    const style = StyleSheet.flatten(node.props.style);
-    expect(style.width! / style.height!).toBeCloseTo(2 / 3, 5);
+  it.each([
+    ['short', 'Up'],
+    ['long', 'A Very Long Title That Wraps Over Several Lines Of The Row And More And More'],
+  ])('is a fixed 2:3 frame with a %s title, with and without a cover', async (_n, title) => {
+    for (const cover of ['https://example.com/c.jpg', null]) {
+      const item = makeItem({ title });
+      item.book.cover_url = cover;
+      const { getByTestId, unmount } = await render(<LibraryRow item={item} />);
+      const node = getByTestId('book-row-cover', HIDDEN);
+      if (cover) expect(node.props.resizeMode).toBe('cover');
+      const style = StyleSheet.flatten(node.props.style);
+      expect(style.width! / style.height!).toBeCloseTo(2 / 3, 5);
+      expect(style.alignSelf).not.toBe('stretch');
+      await unmount();
+    }
   });
 
   it('shows title, author and a one-line title/author', async () => {
@@ -185,10 +192,14 @@ describe('LibraryRow interaction and accessibility (#907, #929)', () => {
     }
   });
 
-  it('keeps the text visible to assistive tech when not tappable, and has no body button', async () => {
+  it('keeps the cover and text visible to assistive tech when not tappable, and has no body button', async () => {
     const { getByTestId, queryByTestId } = await render(<LibraryRow item={makeItem()} />);
     expect(queryByTestId('book-row-body')).toBeNull();
-    expect(getByTestId('book-row-text').props.accessibilityElementsHidden).toBeUndefined();
+    for (const id of ['book-row-cover-wrap', 'book-row-text']) {
+      const props = getByTestId(id, HIDDEN).props;
+      expect(props.accessibilityElementsHidden).toBeUndefined();
+      expect(props.importantForAccessibility).toBeUndefined();
+    }
   });
 });
 

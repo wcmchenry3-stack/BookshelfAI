@@ -20,8 +20,9 @@ test.describe('Wishlist', () => {
     await addFromPicker(page, 'Emma', 'Jane Austen');
 
     await page.getByRole('tab', { name: 'Your wishlist' }).click();
-    // Tabs stay mounted, so look for the Wishlist screen's own rows.
-    const row = (title: string) => page.getByRole('button', { name: `${title} — Wishlist` });
+    // Tabs stay mounted: scope to the Wishlist screen, not My Books' rows.
+    const screen = page.getByTestId('wishlist-screen');
+    const row = (title: string) => screen.getByRole('button', { name: `${title} — Wishlist` });
     await expect(row('Emma')).toBeVisible();
     await expect(row('Dune')).toHaveCount(0); // purchased, not wishlisted
     await expectNoA11yViolations('Wishlist with one book');
@@ -46,7 +47,9 @@ test.describe('Wishlist', () => {
     await signIn();
 
     await page.getByRole('tab', { name: 'Your wishlist' }).click();
-    const bought = page.getByRole('button', { name: 'Mark Emma as bought' });
+    const bought = page.getByTestId('wishlist-screen').getByRole('button', {
+      name: 'Mark Emma as bought',
+    });
     await expect(bought).toBeVisible();
     await expect(bought).toContainText('Bought');
     await expectNoA11yViolations('Wishlist with a Bought chip');

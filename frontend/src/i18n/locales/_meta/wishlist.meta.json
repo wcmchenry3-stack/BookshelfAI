@@ -10,16 +10,6 @@
     "characterLimit": 80,
     "notes": "Preserve the \\n newline in translated strings"
   },
-  "remove": {
-    "description": "Button label to remove a book from the wishlist",
-    "tone": "neutral",
-    "characterLimit": 15
-  },
-  "removeA11y": {
-    "description": "Accessibility label for the remove button, includes book title",
-    "tone": "neutral",
-    "placeholders": ["{{title}}"]
-  },
   "errorLoadWishlist": {
     "description": "Error message when the wishlist fails to load",
     "tone": "neutral",
@@ -47,6 +37,11 @@
   },
   "rowA11y": {
     "description": "Accessibility label of a wishlist row: title, translated status, then the author",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
+  },
+  "rowUnverifiedA11y": {
+    "description": "Accessibility label of the wishlist row of an unverified book (one the user added themselves, #616): title, translated status, author, then that it is unverified",
     "tone": "neutral",
     "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
   },

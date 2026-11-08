@@ -3,13 +3,13 @@
   "noBooksYet": "Nenhum livro aqui ainda.",
   "statusTab": {
     "all": "Todos",
-    "wishlisted": "Wishlist",
+    "wishlisted": "Desejos",
     "purchased": "Comprados",
     "reading": "Lendo",
     "read": "Lidos"
   },
   "status": {
-    "wishlisted": "Wishlist",
+    "wishlisted": "Desejos",
     "purchased": "Comprado",
     "reading": "Lendo",
     "read": "Lido"

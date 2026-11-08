@@ -21,7 +21,7 @@ interface BookDetailSheetProps<T extends DetailBook> {
   onRemove: (item: T) => void;
 }
 
-/** My Books detail sheet — full book info, advance status, remove. */
+/** Book detail sheet (My Books and Wishlist) — full book info, advance status, remove. */
 export function BookDetailSheet<T extends DetailBook>({
   selected,
   actionsDisabled,
@@ -30,7 +30,7 @@ export function BookDetailSheet<T extends DetailBook>({
   onRemove,
 }: BookDetailSheetProps<T>) {
   const { theme } = useTheme();
-  // Reads the `my-books` namespace (My Books only).
+  // Reads the `my-books` namespace, for both screens.
   const { t } = useTranslation('my-books');
   const nextStatus = selected ? NEXT_STATUS[selected.status] : undefined;
 

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Platform, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -17,6 +17,7 @@ import { StatusTabs } from '../../components/library/StatusTabs';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import { NEXT_STATUS, SCREEN_PADDING, type Status } from '../../components/library/libraryShared';
 import { IconButton } from '../../components/ui/IconButton';
+import { useModalHandoff } from '../../hooks/useModalHandoff';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
 import { onLibraryChanged } from '../../lib/libraryChanged';
 import { api } from '../../lib/api';
@@ -88,9 +89,9 @@ export default function MyBooksScreen() {
   const [selected, setSelected] = useState<UserBook | null>(null);
   // The book whose ⋯ menu is open.
   const [actionsFor, setActionsFor] = useState<UserBook | null>(null);
-  // iOS cannot present a sheet while another is still dismissing, so the detail
-  // sheet opens from the menu's `onHidden` there.
-  const pendingDetail = useRef<UserBook | null>(null);
+  // iOS cannot present a sheet while another is still dismissing: the detail sheet
+  // waits for the menu to finish dismissing (see useModalHandoff).
+  const menuGate = useModalHandoff(actionsFor !== null);
   const [query, setQuery] = useState('');
 
   // Read inside the async mutation handlers below, so a tab switch while a
@@ -182,7 +183,11 @@ export default function MyBooksScreen() {
     !isConnected || (actionsFor != null && mutatingIds.has(actionsFor.id));
 
   const openDetail = useCallback((item: UserBook) => setSelected(item), []);
-  const openMenu = useCallback((item: UserBook) => setActionsFor(item), []);
+  const openMenu = useCallback((item: UserBook) => {
+    // A detail request left over from an earlier menu must never pop up later.
+    setSelected(null);
+    setActionsFor(item);
+  }, []);
   const renderItem = useCallback(
     ({ item }: { item: UserBook }) => (
       <MyBookRow item={item} onOpen={openDetail} onMore={openMenu} />
@@ -191,15 +196,8 @@ export default function MyBooksScreen() {
   );
 
   function viewDetailsFromMenu(item: UserBook) {
+    setSelected(item);
     setActionsFor(null);
-    if (Platform.OS === 'ios') pendingDetail.current = item;
-    else setSelected(item);
-  }
-
-  function menuHidden() {
-    if (!pendingDetail.current) return;
-    setSelected(pendingDetail.current);
-    pendingDetail.current = null;
   }
 
   if (loading) {
@@ -249,14 +247,14 @@ export default function MyBooksScreen() {
         selected={actionsFor}
         actionsDisabled={menuActionsDisabled}
         onClose={() => setActionsFor(null)}
-        onHidden={menuHidden}
+        onHidden={menuGate.notifyDismissed}
         onAdvance={advanceStatus}
         onViewDetails={viewDetailsFromMenu}
         onRemove={removeBook}
       />
 
       <BookDetailSheet
-        selected={selected}
+        selected={menuGate.clear ? selected : null}
         actionsDisabled={sheetActionsDisabled}
         onClose={() => setSelected(null)}
         onAdvance={advanceStatus}

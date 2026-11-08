@@ -3,13 +3,13 @@
   "noBooksYet": "Nog geen boeken hier.",
   "statusTab": {
     "all": "Alle",
-    "wishlisted": "Wishlist",
+    "wishlisted": "Verlanglijst",
     "purchased": "Gekocht",
     "reading": "Lezen",
     "read": "Gelezen"
   },
   "status": {
-    "wishlisted": "Wishlist",
+    "wishlisted": "Verlanglijst",
     "purchased": "Gekocht",
     "reading": "Lezen",
     "read": "Gelezen"

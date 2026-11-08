@@ -2,6 +2,7 @@ import React from 'react';
 import { Alert, Platform } from 'react-native';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 
+import { IOS_DISMISS_FALLBACK_MS } from '../../hooks/useModalHandoff';
 import MyBooksScreen from '../../app/(tabs)/my-books';
 import { userBookRow } from '../helpers/screenMocks';
 
@@ -212,6 +213,7 @@ describe('MyBooksScreen', () => {
       expect(getByLabelText('Mark as Purchased').props.accessibilityState.disabled).toBe(true)
     );
     fireEvent.press(getByLabelText('Mark as Purchased'));
+    expect(getByLabelText('Remove Dune').props.accessibilityState.disabled).toBe(true);
     fireEvent.press(getByLabelText('Remove Dune'));
 
     expect(mockPatch).toHaveBeenCalledTimes(1);
@@ -369,5 +371,69 @@ describe('MyBooksScreen row menu (#929)', () => {
     } finally {
       Platform.OS = original;
     }
+  });
+
+  describe('iOS: View details waits for the menu to dismiss', () => {
+    const DETAIL = 'A desert planet epic.';
+    const EMMA = userBookRow({
+      id: 'ub-2',
+      book: { id: 'b-2', title: 'Emma', author: 'Jane Austen', cover_url: null, description: 'x' },
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    /**
+     * The menu Modal's onDismiss (SheetModal passes its onHidden). Read it while the
+     * menu is open: a closed Modal renders nothing.
+     */
+    const menuOnDismiss = (screen: Awaited<ReturnType<typeof openMenu>>) => {
+      let node = screen.getByTestId('sheet-scrim').parent;
+      while (node && typeof node.props.onDismiss !== 'function') node = node.parent;
+      return node!.props.onDismiss as () => void;
+    };
+
+    it('opens the detail sheet when the menu Modal reports onDismiss', async () => {
+      const screen = await openMenu();
+      const dismiss = menuOnDismiss(screen);
+      await fireEvent.press(await screen.findByLabelText('View details'));
+      // The menu is gone but its dismissal has not been reported: nothing opens yet.
+      expect(screen.queryByText(DETAIL)).toBeNull();
+      await act(async () => dismiss());
+      expect(await screen.findByText(DETAIL)).toBeTruthy();
+    });
+
+    it('opens the detail sheet after the fallback when onDismiss never fires', async () => {
+      const screen = await openMenu();
+      const details = await screen.findByLabelText('View details');
+      // Fake timers first, so the fallback timer armed by the press is a fake one.
+      jest.useFakeTimers();
+      await fireEvent.press(details);
+      await act(async () => {
+        jest.advanceTimersByTime(IOS_DISMISS_FALLBACK_MS - 1);
+      });
+      expect(screen.queryByText(DETAIL)).toBeNull();
+      await act(async () => {
+        jest.advanceTimersByTime(IOS_DISMISS_FALLBACK_MS);
+      });
+      expect(await screen.findByText(DETAIL)).toBeTruthy();
+    });
+
+    it('never pops a stale detail sheet up later', async () => {
+      mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK, EMMA] });
+      const screen = await render(<MyBooksScreen />);
+      await waitFor(() => screen.getByLabelText('More options for Dune'));
+      await fireEvent.press(screen.getByLabelText('More options for Dune'));
+      const dismissDune = menuOnDismiss(screen);
+      await fireEvent.press(await screen.findByLabelText('View details'));
+      // Before the handoff completes the user opens another book's menu.
+      await fireEvent.press(await screen.findByLabelText('More options for Emma'));
+      await act(async () => dismissDune());
+      // Close the Emma menu: neither Dune's nor anything else's detail appears.
+      const dismissEmma = menuOnDismiss(screen);
+      await fireEvent.press(await screen.findByLabelText('Close'));
+      await act(async () => dismissEmma());
+      expect(screen.queryByText(DETAIL)).toBeNull();
+      expect(screen.queryByLabelText('Close detail')).toBeNull();
+    });
   });
 });

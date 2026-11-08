@@ -3,13 +3,13 @@
   "noBooksYet": "아직 책이 없습니다.",
   "statusTab": {
     "all": "전체",
-    "wishlisted": "Wishlist",
+    "wishlisted": "위시리스트",
     "purchased": "구매함",
     "reading": "읽는 중",
     "read": "읽음"
   },
   "status": {
-    "wishlisted": "Wishlist",
+    "wishlisted": "위시리스트",
     "purchased": "구매함",
     "reading": "읽는 중",
     "read": "읽음"

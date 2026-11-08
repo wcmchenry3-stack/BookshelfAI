@@ -40,7 +40,9 @@ const WishlistRow = memo(function WishlistRow({
       item={item}
       showStatus={false}
       onPress={() => onOpen(item)}
-      accessibilityLabel={t('rowA11y', {
+      // This labels the row's tap target (the text is inert), so the Unverified
+      // badge (#616) must be said here too.
+      accessibilityLabel={t(item.unverified ? 'rowUnverifiedA11y' : 'rowA11y', {
         title: item.book.title,
         status: t('statusTab.wishlisted', { ns: 'my-books' }),
         author: item.book.author,
@@ -155,7 +157,7 @@ export default function WishlistScreen() {
   );
 
   return (
-    <LibraryScreen>
+    <LibraryScreen testID="wishlist-screen">
       <FlatList
         data={books}
         {...LIBRARY_LIST_PROPS}
