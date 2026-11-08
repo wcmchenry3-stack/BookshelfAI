@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "Your library is empty",
   "emptyLibraryBody": "Scan a barcode or a shelf to add your first books.",
   "emptyLibraryAction": "Scan books",
-  "emptyFilterTitle": "Nothing marked {{status}} yet",
+  "emptyFilter": {
+    "wishlisted": "Nothing marked wishlisted yet",
+    "purchased": "Nothing marked purchased yet",
+    "reading": "Nothing marked reading yet",
+    "read": "Nothing marked read yet"
+  },
   "emptyFilterBody": "Change a book's status and it will show up here.",
   "emptyFilterAction": "Show all books",
   "emptySearchTitle": "No books match “{{query}}”",
   "emptySearchBody": "Check the spelling or try a different title or author.",
   "emptySearchAction": "Clear search",
+  "loadErrorAction": "Try again",
   "statusTab": {
     "all": "All",
     "wishlisted": "Wishlist",

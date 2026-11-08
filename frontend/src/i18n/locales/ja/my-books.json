@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "ライブラリはまだ空です",
   "emptyLibraryBody": "バーコードや本棚をスキャンして、最初の本を追加しましょう。",
   "emptyLibraryAction": "本をスキャン",
-  "emptyFilterTitle": "「{{status}}」の本はまだありません",
+  "emptyFilter": {
+    "wishlisted": "ウィッシュリストの本はまだありません",
+    "purchased": "購入済みの本はまだありません",
+    "reading": "読書中の本はまだありません",
+    "read": "読了した本はまだありません"
+  },
   "emptyFilterBody": "本のステータスを変更すると、ここに表示されます。",
   "emptyFilterAction": "すべての本を表示",
   "emptySearchTitle": "「{{query}}」に一致する本はありません",
   "emptySearchBody": "つづりを確認するか、別のタイトルや著者でお試しください。",
   "emptySearchAction": "検索をクリア",
+  "loadErrorAction": "もう一度試す",
   "statusTab": {
     "all": "すべて",
     "wishlisted": "ウィッシュリスト",

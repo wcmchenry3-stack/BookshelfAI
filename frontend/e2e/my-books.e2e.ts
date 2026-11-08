@@ -92,7 +92,7 @@ test.describe('My Books', () => {
     await expect(page.getByRole('button', { name: 'Dune — Purchased' })).toBeVisible();
 
     // A chip with no books: the search field and chips stay, and one tap returns to All.
-    await page.getByRole('button', { name: 'Filter by Read' }).click();
+    await page.getByRole('button', { name: /^Filter by Read,/ }).click();
     await expect(page.getByRole('heading', { name: 'Nothing marked read yet' })).toBeVisible();
     await expect(page.getByRole('textbox', { name: 'Search your books' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Filter by All' })).toBeVisible();

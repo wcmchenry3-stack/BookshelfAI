@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "서재가 비어 있습니다",
   "emptyLibraryBody": "바코드나 책장을 스캔해 첫 책을 추가해 보세요.",
   "emptyLibraryAction": "책 스캔",
-  "emptyFilterTitle": "‘{{status}}’ 상태인 책이 아직 없습니다",
+  "emptyFilter": {
+    "wishlisted": "위시리스트에 책이 아직 없습니다",
+    "purchased": "구매한 책이 아직 없습니다",
+    "reading": "읽고 있는 책이 아직 없습니다",
+    "read": "읽은 책이 아직 없습니다"
+  },
   "emptyFilterBody": "책의 상태를 바꾸면 여기에 표시됩니다.",
   "emptyFilterAction": "모든 책 보기",
   "emptySearchTitle": "‘{{query}}’와(과) 일치하는 책이 없습니다",
   "emptySearchBody": "철자를 확인하거나 다른 제목이나 저자로 검색해 보세요.",
   "emptySearchAction": "검색어 지우기",
+  "loadErrorAction": "다시 시도",
   "statusTab": {
     "all": "전체",
     "wishlisted": "위시리스트",

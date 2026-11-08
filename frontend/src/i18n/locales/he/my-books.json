@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "הספרייה שלך ריקה",
   "emptyLibraryBody": "סרקו ברקוד או מדף כדי להוסיף את הספרים הראשונים שלכם.",
   "emptyLibraryAction": "סריקת ספרים",
-  "emptyFilterTitle": "עדיין אין ספרים בסטטוס ״{{status}}״",
+  "emptyFilter": {
+    "wishlisted": "אין עדיין ספרים ברשימת המשאלות",
+    "purchased": "אין עדיין ספרים שנרכשו",
+    "reading": "אין עדיין ספרים שנקראים כעת",
+    "read": "אין עדיין ספרים שנקראו"
+  },
   "emptyFilterBody": "שנו את הסטטוס של ספר והוא יופיע כאן.",
   "emptyFilterAction": "הצגת כל הספרים",
   "emptySearchTitle": "אין ספרים שתואמים ל״{{query}}״",
   "emptySearchBody": "בדקו את האיות או נסו כותר או מחבר אחר.",
   "emptySearchAction": "ניקוי החיפוש",
+  "loadErrorAction": "נסו שוב",
   "statusTab": {
     "all": "הכל",
     "wishlisted": "רשימת משאלות",

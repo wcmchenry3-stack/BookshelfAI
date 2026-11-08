@@ -17,10 +17,21 @@
     "tone": "neutral",
     "characterLimit": 25
   },
-  "emptyFilterTitle": {
-    "description": "Title when a status chip has no books. {{status}} is the lowercased status name, e.g. 'reading'.",
-    "tone": "friendly",
-    "placeholders": ["{{status}}"]
+  "emptyFilter.wishlisted": {
+    "description": "Title when the 'wishlisted' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked wishlisted yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.purchased": {
+    "description": "Title when the 'purchased' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked purchased yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.reading": {
+    "description": "Title when the 'reading' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked reading yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.read": {
+    "description": "Title when the 'read' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked read yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
   },
   "emptyFilterBody": {
     "description": "Body of the empty status-filter state",
@@ -42,6 +53,11 @@
   },
   "emptySearchAction": {
     "description": "Button of the no-search-match state; clears the search field",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "loadErrorAction": {
+    "description": "Button of the failed-load state in My Books; reloads the list",
     "tone": "neutral",
     "characterLimit": 25
   },

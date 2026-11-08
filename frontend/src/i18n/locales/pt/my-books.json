@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "Sua biblioteca está vazia",
   "emptyLibraryBody": "Escaneie um código de barras ou uma estante para adicionar seus primeiros livros.",
   "emptyLibraryAction": "Escanear livros",
-  "emptyFilterTitle": "Nada marcado como {{status}} ainda",
+  "emptyFilter": {
+    "wishlisted": "Nada marcado como desejo ainda",
+    "purchased": "Nada marcado como comprado ainda",
+    "reading": "Nenhum livro sendo lido ainda",
+    "read": "Nada marcado como lido ainda"
+  },
   "emptyFilterBody": "Altere o status de um livro e ele aparecerá aqui.",
   "emptyFilterAction": "Mostrar todos os livros",
   "emptySearchTitle": "Nenhum livro corresponde a “{{query}}”",
   "emptySearchBody": "Verifique a ortografia ou tente outro título ou autor.",
   "emptySearchAction": "Limpar pesquisa",
+  "loadErrorAction": "Tentar novamente",
   "statusTab": {
     "all": "Todos",
     "wishlisted": "Desejos",

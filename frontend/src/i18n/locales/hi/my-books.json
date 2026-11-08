@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "आपकी लाइब्रेरी खाली है",
   "emptyLibraryBody": "अपनी पहली किताबें जोड़ने के लिए बारकोड या शेल्फ़ स्कैन करें।",
   "emptyLibraryAction": "किताबें स्कैन करें",
-  "emptyFilterTitle": "अभी तक कुछ भी “{{status}}” के रूप में चिह्नित नहीं है",
+  "emptyFilter": {
+    "wishlisted": "विशलिस्ट में अभी कुछ नहीं है",
+    "purchased": "अभी कुछ भी खरीदा हुआ चिह्नित नहीं है",
+    "reading": "अभी कुछ भी पढ़ा नहीं जा रहा",
+    "read": "अभी कुछ भी पढ़ा हुआ चिह्नित नहीं है"
+  },
   "emptyFilterBody": "किसी किताब की स्थिति बदलें, वह यहाँ दिखाई देगी।",
   "emptyFilterAction": "सभी किताबें दिखाएँ",
   "emptySearchTitle": "“{{query}}” से कोई किताब मेल नहीं खाती",
   "emptySearchBody": "वर्तनी जाँचें या कोई दूसरा शीर्षक या लेखक आज़माएँ।",
   "emptySearchAction": "खोज साफ़ करें",
+  "loadErrorAction": "फिर से कोशिश करें",
   "statusTab": {
     "all": "सभी",
     "wishlisted": "विशलिस्ट",

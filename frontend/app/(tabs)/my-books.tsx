@@ -84,10 +84,10 @@ const MyBookRow = memo(function MyBookRow({ item, onOpen, onMore }: MyBookRowPro
 });
 
 export default function MyBooksScreen() {
-  const { t, i18n } = useTranslation('my-books');
+  const { t } = useTranslation('my-books');
   const router = useRouter();
   const { activeColor } = useLibraryAccent();
-  const { books, setBooks, loading, refreshing, setRefreshing, reload } =
+  const { books, setBooks, loading, loadError, refreshing, setRefreshing, reload, invalidate } =
     useLibraryBooks<UserBook>();
   const [activeTab, setActiveTab] = useState<Status>('all');
   const [selected, setSelected] = useState<UserBook | null>(null);
@@ -104,11 +104,13 @@ export default function MyBooksScreen() {
     onAdvanced: (item, data) => {
       // Only after the server confirms. The chip filter is derived from `books`,
       // so a row that moved to another status just leaves the filtered view.
+      invalidate();
       setBooks((prev) => prev.map((b) => (b.id === item.id ? { ...b, ...data } : b)));
       setSelected(null);
       setActionsFor(null);
     },
     onRemoved: (item) => {
+      invalidate();
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
       setSelected(null);
       setActionsFor(null);
@@ -158,7 +160,21 @@ export default function MyBooksScreen() {
 
   // The three empty states (#930); the search field and chips stay above the first two.
   let empty: React.ReactElement;
-  if (!hasBooks) {
+  if (!hasBooks && loadError) {
+    // A failed load is not an empty library: say so and offer a retry.
+    empty = (
+      <EmptyState
+        testID="my-books-load-error"
+        title={t('errorLoadBooks')}
+        primaryAction={{
+          label: t('loadErrorAction'),
+          onPress: () => void reload(),
+          testID: 'empty-retry',
+        }}
+        style={styles.empty}
+      />
+    );
+  } else if (!hasBooks) {
     empty = (
       <EmptyState
         testID="my-books-empty-library"
@@ -190,9 +206,7 @@ export default function MyBooksScreen() {
     empty = (
       <EmptyState
         testID="my-books-empty-filter"
-        title={t('emptyFilterTitle', {
-          status: t(`status.${activeTab}`).toLocaleLowerCase(i18n.language),
-        })}
+        title={t(`emptyFilter.${activeTab}`)}
         body={t('emptyFilterBody')}
         primaryAction={{
           label: t('emptyFilterAction'),

@@ -14,22 +14,28 @@ import { onLibraryChanged } from '../lib/libraryChanged';
  *
  * Only the first load reports `loading`; later loads refresh in place, so the
  * search text and the chip stay on screen. Focus, a restore and a pull can
- * overlap, so only the newest request may apply its response.
+ * overlap, so only the newest request may apply its response. `loadError` is set
+ * when the newest request failed (cleared by the next success).
  */
 export function useLibraryBooks<T extends { book: object | null }>() {
   const { t } = useTranslation('my-books');
   const [books, setBooks] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const latest = useRef(0);
 
   const load = useCallback(async () => {
     const request = ++latest.current;
     try {
       const { data } = await api.get<T[]>('/user-books');
-      if (request === latest.current) setBooks(data.filter((b) => b.book != null));
+      if (request === latest.current) {
+        setBooks(data.filter((b) => b.book != null));
+        setLoadError(false);
+      }
     } catch (err) {
       if (request === latest.current) {
+        setLoadError(true);
         Alert.alert(
           t('errorTitle', { ns: 'common' }),
           isServiceUnavailable(err)
@@ -45,6 +51,16 @@ export function useLibraryBooks<T extends { book: object | null }>() {
     }
   }, [t]);
 
+  /**
+   * Drops every request still in flight. Call it when a mutation the server has
+   * confirmed is applied locally: a GET that started before it could otherwise
+   * overwrite the change or bring a removed row back.
+   */
+  const invalidate = useCallback(() => {
+    latest.current += 1;
+    setRefreshing(false);
+  }, []);
+
   // The latest load, so the effects below stay stable instead of re-running
   // (and re-fetching) whenever `t` changes.
   const loadRef = useRef(load);
@@ -59,5 +75,14 @@ export function useLibraryBooks<T extends { book: object | null }>() {
   );
   useEffect(() => onLibraryChanged(() => void loadRef.current()), []);
 
-  return { books, setBooks, loading, refreshing, setRefreshing, reload: load };
+  return {
+    books,
+    setBooks,
+    loading,
+    loadError,
+    refreshing,
+    setRefreshing,
+    reload: load,
+    invalidate,
+  };
 }

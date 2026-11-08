@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "مكتبتك فارغة",
   "emptyLibraryBody": "امسح رمزًا شريطيًا أو رفًّا لإضافة أول كتبك.",
   "emptyLibraryAction": "مسح الكتب",
-  "emptyFilterTitle": "لا شيء معلَّم بـ«{{status}}» بعد",
+  "emptyFilter": {
+    "wishlisted": "لا شيء في قائمة الرغبات بعد",
+    "purchased": "لا شيء معلَّم كمشترى بعد",
+    "reading": "لا شيء قيد القراءة بعد",
+    "read": "لا شيء معلَّم كمقروء بعد"
+  },
   "emptyFilterBody": "غيّر حالة كتاب وسيظهر هنا.",
   "emptyFilterAction": "عرض كل الكتب",
   "emptySearchTitle": "لا توجد كتب تطابق «{{query}}»",
   "emptySearchBody": "تحقق من الإملاء أو جرّب عنوانًا أو مؤلفًا آخر.",
   "emptySearchAction": "مسح البحث",
+  "loadErrorAction": "أعد المحاولة",
   "statusTab": {
     "all": "الكل",
     "wishlisted": "قائمة الرغبات",

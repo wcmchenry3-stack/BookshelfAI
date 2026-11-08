@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "Je bibliotheek is leeg",
   "emptyLibraryBody": "Scan een streepjescode of een boekenplank om je eerste boeken toe te voegen.",
   "emptyLibraryAction": "Boeken scannen",
-  "emptyFilterTitle": "Nog niets gemarkeerd als {{status}}",
+  "emptyFilter": {
+    "wishlisted": "Nog niets op de verlanglijst",
+    "purchased": "Nog niets gemarkeerd als gekocht",
+    "reading": "Je leest nog niets",
+    "read": "Nog niets gemarkeerd als gelezen"
+  },
   "emptyFilterBody": "Wijzig de status van een boek en het verschijnt hier.",
   "emptyFilterAction": "Alle boeken tonen",
   "emptySearchTitle": "Geen boeken gevonden voor “{{query}}”",
   "emptySearchBody": "Controleer de spelling of probeer een andere titel of auteur.",
   "emptySearchAction": "Zoekopdracht wissen",
+  "loadErrorAction": "Opnieuw proberen",
   "statusTab": {
     "all": "Alle",
     "wishlisted": "Verlanglijst",

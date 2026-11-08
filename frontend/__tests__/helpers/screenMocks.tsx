@@ -23,10 +23,11 @@ export const loadingSpinnerModule = () => ({
 /** What `useRouter().navigate` / `push` / `replace` call in tests using the module below. */
 export const routerNavigate = jest.fn();
 
-/** `expo-router` with `useFocusEffect` (run once on mount) and a stub `useRouter`. */
+/** `expo-router` with `useFocusEffect` (run on mount and whenever the callback changes) and a stub `useRouter`. */
 export const focusEffectRouterModule = () => ({
   useFocusEffect: (cb: () => void) => {
-    require('react').useEffect(cb, []);
+    // Like the real hook, re-runs when the callback's identity changes.
+    require('react').useEffect(cb, [cb]);
   },
   useRouter: () => ({
     navigate: (...args: unknown[]) => require('../helpers/screenMocks').routerNavigate(...args),

@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "Ваша библиотека пуста",
   "emptyLibraryBody": "Отсканируйте штрихкод или полку, чтобы добавить первые книги.",
   "emptyLibraryAction": "Сканировать книги",
-  "emptyFilterTitle": "Пока ничего не отмечено как «{{status}}»",
+  "emptyFilter": {
+    "wishlisted": "В избранном пока ничего нет",
+    "purchased": "Пока ничего не отмечено как купленное",
+    "reading": "Пока ничего не читается",
+    "read": "Пока ничего не отмечено как прочитанное"
+  },
   "emptyFilterBody": "Измените статус книги, и она появится здесь.",
   "emptyFilterAction": "Показать все книги",
   "emptySearchTitle": "Нет книг по запросу «{{query}}»",
   "emptySearchBody": "Проверьте написание или попробуйте другое название или автора.",
   "emptySearchAction": "Очистить поиск",
+  "loadErrorAction": "Повторить",
   "statusTab": {
     "all": "Все",
     "wishlisted": "Избранное",

@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "Votre bibliothèque est vide",
   "emptyLibraryBody": "Numérisez un code-barres ou une étagère pour ajouter vos premiers livres.",
   "emptyLibraryAction": "Numériser des livres",
-  "emptyFilterTitle": "Rien de marqué « {{status}} » pour l’instant",
+  "emptyFilter": {
+    "wishlisted": "Aucun livre en souhaits pour l’instant",
+    "purchased": "Aucun livre acheté pour l’instant",
+    "reading": "Aucun livre en lecture pour l’instant",
+    "read": "Aucun livre lu pour l’instant"
+  },
   "emptyFilterBody": "Changez le statut d’un livre et il apparaîtra ici.",
   "emptyFilterAction": "Afficher tous les livres",
   "emptySearchTitle": "Aucun livre ne correspond à « {{query}} »",
   "emptySearchBody": "Vérifiez l’orthographe ou essayez un autre titre ou auteur.",
   "emptySearchAction": "Effacer la recherche",
+  "loadErrorAction": "Réessayer",
   "statusTab": {
     "all": "Tous",
     "wishlisted": "Souhaits",

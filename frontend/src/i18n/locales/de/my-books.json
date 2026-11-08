@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "Deine Bibliothek ist leer",
   "emptyLibraryBody": "Scanne einen Barcode oder ein Regal, um deine ersten Bücher hinzuzufügen.",
   "emptyLibraryAction": "Bücher scannen",
-  "emptyFilterTitle": "Noch nichts als „{{status}}“ markiert",
+  "emptyFilter": {
+    "wishlisted": "Noch nichts auf der Wunschliste",
+    "purchased": "Noch nichts als gekauft markiert",
+    "reading": "Du liest gerade noch nichts",
+    "read": "Noch nichts als gelesen markiert"
+  },
   "emptyFilterBody": "Ändere den Status eines Buchs, dann erscheint es hier.",
   "emptyFilterAction": "Alle Bücher anzeigen",
   "emptySearchTitle": "Keine Bücher passen zu „{{query}}“",
   "emptySearchBody": "Prüfe die Schreibweise oder versuche einen anderen Titel oder Autor.",
   "emptySearchAction": "Suche löschen",
+  "loadErrorAction": "Erneut versuchen",
   "statusTab": {
     "all": "Alle",
     "wishlisted": "Wunschliste",

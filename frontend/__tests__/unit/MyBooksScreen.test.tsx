@@ -191,6 +191,8 @@ describe('MyBooksScreen', () => {
       await fireEvent.press(getByLabelText(/^Filter by Purchased/, hidden));
     });
     expect(mockGet).toHaveBeenCalledTimes(1);
+    // The row is still wishlisted, so it is not in the Purchased view.
+    expect(queryByLabelText('Dune — Wishlist, by Frank Herbert', hidden)).toBeNull();
 
     await act(async () => {
       resolvePatch({ ...purchased, purchased_at: '2026-09-21T00:00:00Z' });
@@ -470,10 +472,14 @@ describe('MyBooksScreen header, search and empty states (#930)', () => {
     await waitFor(() => expect(getByTestId('my-books-subtitle').props.children).toBe('1 book'));
   });
 
-  it('makes exactly one request per focus', async () => {
+  it('makes exactly one request per focus, however often it re-renders', async () => {
     mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
-    await render(<MyBooksScreen />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+    const { getByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.changeText(getByLabelText('Search your books'), 'dun');
+    await fireEvent.press(getByLabelText('Filter by Wishlist, 1 book'));
+    await fireEvent.changeText(getByLabelText('Search your books'), '');
+    expect(mockGet).toHaveBeenCalledTimes(1);
     expect(mockGet).toHaveBeenCalledWith('/user-books');
   });
 
@@ -509,6 +515,68 @@ describe('MyBooksScreen header, search and empty states (#930)', () => {
     await fireEvent.press(getByLabelText('Filter by Wishlist, 1 book'));
     expect(queryByLabelText('The Great Gatsby — Reading, by F. Scott')).toBeNull();
     expect(getByLabelText('Filter by Reading, 2 books')).toBeTruthy();
+  });
+
+  it('moving the last book out of a chip shows its empty state; the book is under its new chip (#641)', async () => {
+    mockPatch.mockResolvedValue({ data: { ...WISHLISTED_BOOK, status: 'purchased' } });
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { getByLabelText, findByText, findByLabelText } = await render(<MyBooksScreen />);
+    await waitFor(() => getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.press(getByLabelText('Filter by Wishlist, 1 book'));
+    await fireEvent.press(getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await act(async () => {
+      await fireEvent.press(await findByLabelText('Mark as Purchased'));
+    });
+    expect(await findByText('Nothing marked wishlisted yet')).toBeTruthy();
+    await fireEvent.press(await findByLabelText('Filter by Purchased, 1 book'));
+    expect(await findByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy();
+  });
+
+  describe('a GET that was in flight when a mutation finished is dropped', () => {
+    async function withSlowReload() {
+      mockGet.mockResolvedValueOnce({ data: [WISHLISTED_BOOK] });
+      const screen = await render(<MyBooksScreen />);
+      await waitFor(() => screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+      let resolveGet!: (v: unknown) => void;
+      mockGet.mockReturnValueOnce(new Promise((r) => (resolveGet = r)));
+      await act(async () => notifyLibraryChanged());
+      await fireEvent.press(screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+      return { screen, resolveStale: () => resolveGet({ data: [WISHLISTED_BOOK] }) };
+    }
+
+    it('does not undo an advance', async () => {
+      mockPatch.mockResolvedValue({ data: { ...WISHLISTED_BOOK, status: 'purchased' } });
+      const { screen, resolveStale } = await withSlowReload();
+      await act(async () => {
+        await fireEvent.press(await screen.findByLabelText('Mark as Purchased'));
+      });
+      await screen.findByLabelText('Dune — Purchased, by Frank Herbert');
+      await act(async () => resolveStale());
+      expect(screen.getByLabelText('Dune — Purchased, by Frank Herbert')).toBeTruthy();
+      expect(screen.queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+    });
+
+    it('does not bring a removed book back', async () => {
+      const { screen, resolveStale } = await withSlowReload();
+      await act(async () => {
+        await fireEvent.press(await screen.findByLabelText('Remove Dune'));
+      });
+      await screen.findByText('Your library is empty');
+      await act(async () => resolveStale());
+      expect(screen.queryByLabelText('Dune — Wishlist, by Frank Herbert')).toBeNull();
+      expect(screen.getByText('Your library is empty')).toBeTruthy();
+    });
+  });
+
+  it('a failed first load is not an empty library: it offers Try again', async () => {
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGet.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    mockGet.mockResolvedValue({ data: [WISHLISTED_BOOK] });
+    const { findByText, queryByText, getByText, findByLabelText } = await render(<MyBooksScreen />);
+    expect(await findByText('Could not load books.')).toBeTruthy();
+    expect(queryByText('Your library is empty')).toBeNull();
+    await fireEvent.press(getByText('Try again'));
+    expect(await findByLabelText('Dune — Wishlist, by Frank Herbert')).toBeTruthy();
   });
 
   it('empty library: offers Scan books and hides the search and chips', async () => {

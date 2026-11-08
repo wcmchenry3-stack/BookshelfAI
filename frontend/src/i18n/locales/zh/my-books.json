@@ -3,12 +3,18 @@
   "emptyLibraryTitle": "你的书库还是空的",
   "emptyLibraryBody": "扫描条形码或书架，添加你的第一批书。",
   "emptyLibraryAction": "扫描图书",
-  "emptyFilterTitle": "还没有标记为“{{status}}”的书",
+  "emptyFilter": {
+    "wishlisted": "愿望单里还没有书",
+    "purchased": "还没有已购买的书",
+    "reading": "还没有在读的书",
+    "read": "还没有已读的书"
+  },
   "emptyFilterBody": "更改某本书的状态后，它会显示在这里。",
   "emptyFilterAction": "显示所有图书",
   "emptySearchTitle": "没有与“{{query}}”匹配的书",
   "emptySearchBody": "请检查拼写，或换一个书名或作者试试。",
   "emptySearchAction": "清除搜索",
+  "loadErrorAction": "重试",
   "statusTab": {
     "all": "全部",
     "wishlisted": "愿望单",
