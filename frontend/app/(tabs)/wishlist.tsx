@@ -20,7 +20,7 @@ import { isServiceUnavailable } from '../../lib/apiErrorReporting';
 export default function WishlistScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation('wishlist');
-  const { topPad, activeColor } = useLibraryAccent();
+  const { activeColor } = useLibraryAccent();
   const [books, setBooks] = useState<LibraryBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -102,7 +102,7 @@ export default function WishlistScreen() {
       <FlatList
         data={books}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={[styles.list, { paddingTop: topPad }]}
+        contentContainerStyle={styles.list}
         ListHeaderComponent={listHeader}
         refreshControl={
           <RefreshControl

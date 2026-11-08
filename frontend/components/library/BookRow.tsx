@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { BookCover } from '../BookCover';
 import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
+import { fontFor } from '../../theme/typography';
 import { useLibraryAccent } from './useLibraryAccent';
 import type { LibraryBook } from './libraryShared';
 
@@ -198,10 +199,10 @@ const styles = StyleSheet.create({
   categoryLabel: {
     textTransform: 'uppercase',
     letterSpacing: 1,
-    fontWeight: '700',
+    fontFamily: fontFor('700'),
     marginBottom: 2,
   },
-  bookTitle: { fontWeight: '600', lineHeight: 22 },
+  bookTitle: { fontFamily: fontFor('600'), lineHeight: 22 },
   bookAuthor: { lineHeight: 18 },
   bookYear: { lineHeight: 16 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
@@ -213,6 +214,6 @@ const styles = StyleSheet.create({
     minWidth: 44,
     justifyContent: 'center',
   },
-  actionText: { fontWeight: '600' },
+  actionText: { fontFamily: fontFor('600') },
   actionDisabled: { opacity: 0.5 },
 });

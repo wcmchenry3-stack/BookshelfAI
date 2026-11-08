@@ -382,7 +382,6 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
         { label: t('retryNow'), onPress: () => deps.retryScan(job.id) },
         { label: t('saveForLater'), onPress: () => deps.queueForLater(job.id) },
       ],
-      duration: 8000,
     });
   }
 }
