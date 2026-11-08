@@ -3,6 +3,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 
 import { AppText } from '../ui/AppText';
 import { buttonA11yProps, pressOpacity } from '../ui/buttonBehaviour';
+import { useFocusRing } from '../ui/useFocusRing';
 import { useTheme } from '../../hooks/useTheme';
 import { fontFor } from '../../theme/typography';
 
@@ -30,11 +31,19 @@ export function TonalChip({
   testID,
 }: TonalChipProps) {
   const { theme } = useTheme();
+  const { focusProps, focusStyle } = useFocusRing();
   return (
     <Pressable
       onPress={onPress}
+      {...focusProps}
       {...buttonA11yProps(accessibilityLabel, disabled, testID)}
-      style={({ pressed }) => [styles.target, { opacity: pressOpacity(disabled, pressed, 0.7) }]}
+      style={({ pressed }) => [
+        styles.target,
+        // Round the 44px target so the focus ring follows the pill's shape.
+        { borderRadius: theme.radius.chip },
+        focusStyle,
+        { opacity: pressOpacity(disabled, pressed, 0.7) },
+      ]}
     >
       <View
         style={[

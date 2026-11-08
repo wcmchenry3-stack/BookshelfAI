@@ -321,6 +321,8 @@ Shared, themed building blocks for the v2 design. Import from `components/ui` (t
 | `EmptyState`              | Empty or first-run state: `illustration` slot (decorative, hidden from screen readers), serif `title`, `body`, `primaryAction` and `secondaryAction` (`{ label, onPress, testID? }`).                                                                                                                                                  |
 | `ProgressBar`             | Determinate bar. `value`/`min`/`max` (clamped), `accessibilityRole="progressbar"` with `accessibilityValue`. Needs `accessibilityLabel`.                                                                                                                                                                                               |
 
+**Keyboard focus ring (web, #923).** `Button`, `IconButton`, `Chip`, `ListRow`, the `SearchField` field and clear button, and `TonalChip` share one hook, `useFocusRing()` (`components/ui/useFocusRing.ts`): spread `focusProps` on the Pressable and append `focusStyle`. It draws a 2px solid `primary` outline (offset 2, so layout never shifts; `ListRow` draws it inside because its card clips) with focus-visible semantics: a module-level listener (installed once, web only) records the last input modality, and the ring shows only when focus arrives after a key press, never after a pointer or touch press. `SearchField` passes `always` because text inputs show focus on click too. Native is unchanged. New Pressable-based controls must use the hook, not a per-component copy. Tests: `__tests__/unit/uiFocusRing.test.tsx`, `e2e/focus-ring.e2e.ts`.
+
 Tests: `__tests__/unit/ui*.test.tsx` (one per component).
 
 ## Lint
