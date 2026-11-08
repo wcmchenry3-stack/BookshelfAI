@@ -32,6 +32,7 @@ export function SortSheet({ visible, value, onSelect, onClose }: SortSheetProps)
               key={key}
               label={t(`sort.${key}`)}
               selected={key === value}
+              chevron={false}
               onPress={() => onSelect(key)}
               testID={`sort-option-${key}`}
             />
