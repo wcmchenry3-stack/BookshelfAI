@@ -1,10 +1,10 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { useTheme } from '../hooks/useTheme';
-import { tokens } from '../theme/tokens';
-import { fontFor } from '../theme/typography';
+import { useTheme } from '../../hooks/useTheme';
+import { tokens } from '../../theme/tokens';
+import { fontFor } from '../../theme/typography';
 
 export type BookCoverSize = 'xs' | 'sm' | 'md' | 'lg';
 
@@ -67,6 +67,7 @@ function BookCoverBase({
 
   const { width, height } = COVER_SIZES[size];
   const showImage = !!coverUrl && failedUrl !== coverUrl;
+  const handleError = useCallback(() => setFailedUrl(coverUrl ?? null), [coverUrl]);
   const radius = size === 'md' || size === 'lg' ? tokens.radius.coverLarge : tokens.radius.cover;
 
   const label =
@@ -76,6 +77,8 @@ function BookCoverBase({
         accessible: false,
         importantForAccessibility: 'no-hide-descendants',
         accessibilityElementsHidden: true,
+        // react-native-web ignores the two native props above; it needs aria-hidden.
+        'aria-hidden': true,
       } as const)
     : ({ accessible: true, accessibilityRole: 'image', accessibilityLabel: label } as const);
 
@@ -85,7 +88,7 @@ function BookCoverBase({
       style={[
         styles.shadow,
         { width, height, borderRadius: radius },
-        { backgroundColor: theme.colors?.coverBlank, shadowColor: theme.colors?.shadow },
+        { backgroundColor: theme.colors.coverBlank, shadowColor: theme.colors.shadow },
         style,
       ]}
     >
@@ -97,7 +100,7 @@ function BookCoverBase({
             height={height}
             radius={radius}
             testID={testID}
-            onError={() => setFailedUrl(coverUrl)}
+            onError={handleError}
           />
         ) : (
           <FallbackCover
@@ -114,7 +117,7 @@ function BookCoverBase({
           pointerEvents="none"
           style={[
             styles.spine,
-            { width: Math.max(3, Math.round(width * 0.08)), backgroundColor: theme.colors?.shadow },
+            { width: Math.max(3, Math.round(width * 0.08)), backgroundColor: theme.colors.shadow },
           ]}
         />
       </View>
@@ -123,7 +126,7 @@ function BookCoverBase({
 }
 
 /** The one place that draws the cover bitmap; swap for `expo-image` in #901. */
-function CoverImage({
+const CoverImage = memo(function CoverImage({
   uri,
   width,
   height,
@@ -148,9 +151,9 @@ function CoverImage({
       testID={testID}
     />
   );
-}
+});
 
-function FallbackCover({
+const FallbackCover = memo(function FallbackCover({
   title,
   size,
   width,
@@ -172,7 +175,7 @@ function FallbackCover({
     <View
       style={[
         styles.fallback,
-        { width, height, borderRadius: radius, backgroundColor: theme.colors?.coverBlank },
+        { width, height, borderRadius: radius, backgroundColor: theme.colors.coverBlank },
       ]}
       testID={testID}
     >
@@ -185,7 +188,7 @@ function FallbackCover({
             left: inset,
             right: inset,
             bottom: inset,
-            borderColor: theme.colors?.onCoverBlank,
+            borderColor: theme.colors.onCoverBlank,
           },
         ]}
       />
@@ -194,12 +197,13 @@ function FallbackCover({
           fontFamily: fontFor('600', 'serif'),
           fontSize: text.fontSize,
           lineHeight: text.lineHeight,
-          color: theme.colors?.onCoverBlank,
+          color: theme.colors.onCoverBlank,
           textAlign: 'center',
         }}
         numberOfLines={text.lines}
         // The frame already carries the label; hide the typeset title so it is not read twice.
         accessibilityElementsHidden
+        aria-hidden
         importantForAccessibility="no-hide-descendants"
         ellipsizeMode="tail"
         allowFontScaling={false}
@@ -208,7 +212,7 @@ function FallbackCover({
       </Text>
     </View>
   );
-}
+});
 
 export const BookCover = memo(BookCoverBase);
 

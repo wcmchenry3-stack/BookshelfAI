@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, renderHook, waitFor } from '@testing-library/react-native';
+import { act, render, renderHook, waitFor, within } from '@testing-library/react-native';
 
 import { ScanJobProvider } from '../../contexts/ScanJobContext';
 import { BannerProvider } from '../../contexts/BannerContext';
@@ -197,12 +197,13 @@ describe('Unverified badge in the library (#616)', () => {
     ['my books', MyBooksScreen],
   ])('%s shows it on unverified entries only', async (_name, Screen) => {
     mockGet.mockResolvedValue({ data: [UNVERIFIED_ENTRY, CATALOG_ENTRY] });
-    const { findAllByText, getAllByTestId } = await render(<Screen />);
+    const { findAllByTestId, getAllByTestId } = await render(<Screen />);
     // My Books hides the card's text from assistive tech (the card label says it).
     const hidden = { hidden: true };
-    // The title is also typeset on the generated cover (#902), so match every copy.
-    expect((await findAllByText('Pond Notes', hidden)).length).toBeGreaterThan(0);
-    expect((await findAllByText('Dune', hidden)).length).toBeGreaterThan(0);
+    // Scoped to each row's text block: the generated cover also typesets the title.
+    const rows = await findAllByTestId('book-row-text', hidden);
+    expect(within(rows[0]).getByText('Pond Notes', hidden)).toBeTruthy();
+    expect(within(rows[1]).getByText('Dune', hidden)).toBeTruthy();
     const badges = getAllByTestId('unverified-badge', hidden);
     expect(badges).toHaveLength(1);
     expect(badges[0].props.accessibilityLabel).toBe(

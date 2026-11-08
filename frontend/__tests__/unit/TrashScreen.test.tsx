@@ -70,8 +70,8 @@ jest.mock('../../components/LoadingSpinner', () => ({
 
 // #902: the Trash cards draw their cover with BookCover (decorative: the card names the book).
 const mockCovers: Record<string, unknown>[] = [];
-jest.mock('../../components/BookCover', () => {
-  const actual = jest.requireActual('../../components/BookCover');
+jest.mock('../../components/ui/BookCover', () => {
+  const actual = jest.requireActual('../../components/ui/BookCover');
   return {
     ...actual,
     BookCover: (props: Record<string, unknown>) => {

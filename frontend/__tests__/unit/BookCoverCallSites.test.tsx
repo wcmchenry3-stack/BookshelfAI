@@ -9,8 +9,8 @@ import type { LibraryBook } from '../../components/library/libraryShared';
 // #902: every place that draws a cover renders BookCover.
 
 const mockCovers: Record<string, unknown>[] = [];
-jest.mock('../../components/BookCover', () => {
-  const actual = jest.requireActual('../../components/BookCover');
+jest.mock('../../components/ui/BookCover', () => {
+  const actual = jest.requireActual('../../components/ui/BookCover');
   const ReactLib = require('react');
   return {
     ...actual,
@@ -60,7 +60,7 @@ beforeEach(() => {
 });
 
 describe('BookCover call sites (#902)', () => {
-  it('BookRow renders BookCover (sm), decorative only when tappable', async () => {
+  it('BookRow renders a decorative BookCover (sm), tappable or not', async () => {
     await render(
       <BookRow item={ITEM} categoryLabel="x">
         <></>
@@ -70,7 +70,7 @@ describe('BookCover call sites (#902)', () => {
       title: 'Dune',
       coverUrl: 'https://example.com/c.jpg',
       size: 'sm',
-      decorative: false,
+      decorative: true,
       testID: 'book-row-cover',
     });
     mockCovers.length = 0;

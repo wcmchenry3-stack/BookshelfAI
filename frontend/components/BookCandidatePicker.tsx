@@ -4,7 +4,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
-import { BookCover } from './BookCover';
+import { BookCover } from './ui/BookCover';
 import SheetModal from './SheetModal';
 import { isOwned, type Ownership } from '../lib/ownership';
 import { hasNoCatalogMatch } from '../lib/unverified';
@@ -223,7 +223,14 @@ export function BookCandidatePicker({
                   author: book.author,
                 })}
               >
-                <BookCover title={book.title} coverUrl={book.cover_url} size="sm" />
+                <BookCover
+                  title={book.title}
+                  coverUrl={book.cover_url}
+                  size="sm"
+                  decorative
+                  testID="candidate-cover"
+                  style={styles.cover}
+                />
 
                 <View style={styles.info}>
                   <Text
@@ -364,6 +371,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingBottom: 12,
   },
+  cover: { margin: 4 },
   info: { flex: 1, padding: 12, gap: 4 },
   bookTitle: { fontFamily: fontFor('600') },
   checkbox: { justifyContent: 'center', paddingHorizontal: 12, minWidth: 44 },

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { BookCover } from '../BookCover';
+import { BookCover } from '../ui/BookCover';
 import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { fontFor } from '../../theme/typography';
@@ -40,14 +40,14 @@ export function BookRow({
     { backgroundColor: theme.colors.surfaceContainerLow, borderLeftColor: activeColor },
   ];
 
-  // `sm` (52x78) is the closest BookCover size to the old 72x108 frame. When the
-  // card is tappable its overlay label already announces the title.
+  // `sm` (52x78) is the closest BookCover size to the old 72x108 frame. The row's
+  // text announces the title (the card label when tappable), so the cover is decorative.
   const cover = (
     <BookCover
       title={item.book.title}
       coverUrl={item.book.cover_url}
       size="sm"
-      decorative={!!onPress}
+      decorative
       testID="book-row-cover"
     />
   );

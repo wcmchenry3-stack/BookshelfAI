@@ -1,8 +1,16 @@
 import { StyleSheet } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
-import { BookCover, COVER_SIZES, type BookCoverSize } from '../../components/BookCover';
+import { BookCover, COVER_SIZES, type BookCoverSize } from '../../components/ui/BookCover';
 import { tokens } from '../../theme/tokens';
+import { fontFor } from '../../theme/typography';
+
+// fontFor() runs in the render body of the fallback cover, so its call count
+// shows how often a fallback re-renders.
+jest.mock('../../theme/typography', () => {
+  const actual = jest.requireActual('../../theme/typography');
+  return { ...actual, fontFor: jest.fn(actual.fontFor) };
+});
 
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
@@ -121,6 +129,59 @@ describe('#902 BookCover', () => {
       const root = toJSON() as { props: Record<string, unknown> };
       expect(root.props.accessible).toBe(false);
       expect(root.props.importantForAccessibility).toBe('no-hide-descendants');
+    });
+  });
+
+  describe('web accessibility', () => {
+    it('sets aria-hidden on the decorative frame and on the fallback title', async () => {
+      const { toJSON, getByText } = await render(
+        <BookCover title="Dune" coverUrl={null} size="sm" decorative />
+      );
+      expect((toJSON() as { props: Record<string, unknown> }).props['aria-hidden']).toBe(true);
+      expect(getByText('Dune', H).props['aria-hidden']).toBe(true);
+    });
+
+    it('does not set aria-hidden on a labelled cover frame, but still hides the typeset title', async () => {
+      const { toJSON, getByText } = await render(
+        <BookCover title="Dune" coverUrl={null} size="sm" />
+      );
+      expect((toJSON() as { props: Record<string, unknown> }).props['aria-hidden']).toBeUndefined();
+      expect(getByText('Dune', H).props['aria-hidden']).toBe(true);
+    });
+  });
+
+  describe('performance (memoised)', () => {
+    const books = Array.from({ length: 50 }, (_, i) => ({
+      title: `Book ${i}`,
+      url: i % 2 ? URL : null,
+    }));
+    const list = (label?: string) => (
+      <>
+        {books.map((b) => (
+          <BookCover
+            key={b.title}
+            title={b.title}
+            coverUrl={b.url}
+            size="sm"
+            accessibilityLabel={label}
+          />
+        ))}
+      </>
+    );
+
+    it('does not re-render 50 covers when re-rendered with unchanged props', async () => {
+      const { rerender } = await render(list());
+      const before = (fontFor as jest.Mock).mock.calls.length;
+      expect(before).toBeGreaterThanOrEqual(25);
+      await rerender(list());
+      expect((fontFor as jest.Mock).mock.calls.length).toBe(before);
+    });
+
+    it('does not re-render the fallback when only the label changes', async () => {
+      const { rerender } = await render(list());
+      const before = (fontFor as jest.Mock).mock.calls.length;
+      await rerender(list('Changed'));
+      expect((fontFor as jest.Mock).mock.calls.length).toBe(before);
     });
   });
 });

@@ -3,7 +3,7 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'rea
 import { useFocusEffect } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import { BookCover } from '../components/BookCover';
+import { BookCover } from '../components/ui/BookCover';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { UnverifiedBadge } from '../components/UnverifiedBadge';

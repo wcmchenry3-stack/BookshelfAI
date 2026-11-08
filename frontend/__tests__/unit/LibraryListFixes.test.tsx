@@ -154,7 +154,7 @@ describe('#911 BookRow cover frame', () => {
           />
         </BookRow>
       );
-      const style = StyleSheet.flatten(getByTestId('book-row-cover').props.style);
+      const style = StyleSheet.flatten(getByTestId('book-row-cover', { hidden: true }).props.style);
       expect(style.width! / style.height!).toBeCloseTo(2 / 3, 5);
       expect(style.alignSelf).not.toBe('stretch');
       await unmount();
@@ -167,6 +167,6 @@ describe('#911 BookRow cover frame', () => {
         <></>
       </BookRow>
     );
-    expect(getByTestId('book-row-cover').props.resizeMode).toBe('cover');
+    expect(getByTestId('book-row-cover', { hidden: true }).props.resizeMode).toBe('cover');
   });
 });
