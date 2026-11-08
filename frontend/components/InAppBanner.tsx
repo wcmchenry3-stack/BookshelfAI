@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBanner } from '../hooks/useBanner';
 import { useTheme } from '../hooks/useTheme';
+import { fontFor } from '../theme/typography';
 
 const SLIDE_DURATION = 300;
 const DEFAULT_DISPLAY_DURATION = 5000;
@@ -191,7 +192,7 @@ const styles = StyleSheet.create({
   },
   message: {
     flex: 1,
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 14,
   },
   actions: {
@@ -209,7 +210,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionText: {
-    fontWeight: '700',
+    fontFamily: fontFor('700'),
     fontSize: 13,
   },
 });
