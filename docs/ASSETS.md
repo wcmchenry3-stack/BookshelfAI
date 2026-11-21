@@ -112,7 +112,7 @@ The first logo (and the old `icon.png`) was a Gemini image. It is AI-generated, 
 
 Brand navy `#263250` and cream `#EFE9D4` are fixed in `draw_logo.py` (native icons cannot read a theme). Android `iconBackground`, `splashscreen_background`, the iOS splash colour (colorset and storyboard) and `app.json` are written by the generator. Android icons keep every pixel within the 66 dp safe circle (`gen_app_icons_test.py` measures it).
 
-Not done yet: an in-app SVG `BookshelfLogo` component. It needs `react-native-svg`, a native module, so it needs `pod install` and a `Podfile.lock` change that must be made on a Mac (CLAUDE.md rule 10). Until then the login screen shows `assets/logo.png`, a raster the recipe generates. `draw_logo.py --svg` already writes the shared SVG the component will use.
+In-app logo: `frontend/components/brand/BookshelfLogo.tsx` draws the whole mark with `react-native-svg` from `frontend/components/brand/logoPaths.ts`, which `gen_app_icons.py` writes (and `--check` covers) from the same shapes as the PNGs. Its colours come from the theme (field `primary`, ink `onPrimary`), so it follows light and dark mode; the native icon and splash keep the fixed brand navy. Swapping the login screen's `assets/logo.png` for it, and removing that file, is a separate step (#961).
 
 ## Decision log
 
