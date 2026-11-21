@@ -177,10 +177,12 @@ None of these is defined under `.github/workflows/`, so their configuration is "
 
 `.github/rulesets/protect-dev.json` and `.github/rulesets/protect-main.json` are ruleset exports. GitHub does not read them from the repo; the owner imports each in Settings, Rules, Rulesets. Whether they have been imported, are `active`, and have not drifted is **to confirm in GitHub settings**.
 
-Both rulesets have enforcement `active`, no bypass actors, and the same rules except where noted: block deletion, block non-fast-forward (force) pushes, block creation; pull requests need 1 approving review, stale reviews dismissed on push, code-owner review, last-push approval not required; and the same 30 required status contexts listed under [Recommended required checks](#recommended-required-checks) below (unchanged for `main`; `strict_required_status_checks_policy` differs, see below).
+Both rulesets have enforcement `active`, no bypass actors, and the same rules except where noted: block deletion, block non-fast-forward (force) pushes, block creation; pull requests need 0 approving reviews on `dev` (owner decision — solo repo) and 1 approving review on `main`, last-push approval not required; and the same 30 required status contexts listed under [Recommended required checks](#recommended-required-checks) below (unchanged for `main`; `strict_required_status_checks_policy` differs, see below).
 
 | | `protect-dev.json` (`refs/heads/dev`) | `protect-main.json` (`refs/heads/main`) |
 | --- | --- | --- |
+| Required approving reviews | 0 (owner decision — solo repo) | 1 |
+| `require_code_owner_review` | no | yes |
 | Allowed merge methods | `squash` only | `merge` only (no squash, no rebase) |
 | `required_linear_history` | yes | no (it forbids merge commits) |
 | `strict_required_status_checks_policy` | `true` (each PR branch must be up to date with `dev` before it can merge; closes #859's two-PRs-pass-separately race without a merge queue) | `false` (see the note below) |
@@ -194,8 +196,9 @@ The `main` release flow (merge commit from `dev`, then `sync-main-to-dev.yml` an
 **Things that only GitHub settings can confirm:**
 
 - whether the ruleset above (or any classic branch protection) is applied, and to which branches;
+<<<<<<< HEAD
 - merge methods enabled in Settings, General (must allow squash and merge commits, rebase off);
-- whether the single code owner can satisfy "1 approving review" and "code-owner review" on PRs they opened themselves;
+- whether `main` requires 1 approving review as expected (dev requires 0);
 - whether any check outside the file (for example `Supabase Preview`) is required.
 
 `backend/tests/unit/test_ruleset_required_checks.py` (run by `test-python`) checks both ruleset files (`dev` and `main`, each against PRs into its own branch). It fails when a required context matches no workflow job, when its workflow has a `paths` filter or does not run on PRs into that branch, when a native build job is required directly, when the two files list different contexts, or when the allowed merge methods deviate from squash-only on `dev` or merge-only on `main`. It does not check inner names after the `/`.
