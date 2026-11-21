@@ -2,8 +2,8 @@
 
 The drawing is SVG path data in a 1024 x 1024 box (`dog_shapes`, `book_shapes`, `ring_shapes`,
 `wordmark_shapes`). One small Pillow rasteriser turns the same data into PNGs, so the shipped files
-are deterministic and need no SVG library. The in-app `BookshelfLogo` component draws the same paths
-with react-native-svg (`svg_document` here writes the shared copy).
+are deterministic and need no SVG library. `svg_document` writes the same paths as SVG, the copy a
+planned in-app `BookshelfLogo` component (react-native-svg, not built yet: docs/ASSETS.md) will draw.
 
 The mark is two ink layers on a field: cream "add" shapes and navy "erase" shapes, in painting order,
 which is what both a flat navy icon and a transparent Android foreground need.
@@ -219,9 +219,9 @@ SHIPPED = "A"
 
 def mark_shapes(style: str = SHIPPED, *, ring: bool = True, text: bool = True) -> list[Shape]:
     st = OPTIONS[style]
-    shapes = ring_shapes() if ring else []
-    shapes += book_shapes(st.page_lines) + dog_shapes(st.dog)
-    shapes = [s.scaled_stroke(st.stroke_k) if s.stroke and s not in ring_shapes() else s for s in shapes]
+    shapes = ring_shapes() if ring else []  # the ring keeps its own weight in every style
+    art = book_shapes(st.page_lines) + dog_shapes(st.dog)
+    shapes += [s.scaled_stroke(st.stroke_k) for s in art]
     if text:
         shapes += wordmark_shapes()
     return shapes

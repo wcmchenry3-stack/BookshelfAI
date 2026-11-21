@@ -57,12 +57,14 @@ def test_wordmark_has_every_letter():
 
 
 def test_letters_keep_their_counters():
-    """The 'o' is a ring: XOR fill keeps its hole, so the middle of a letter 'o' is not ink."""
-    mask = render_mask(SIZE, wordmark_shapes())
-    assert mask.getbbox() is not None
-    first_o = wordmark_shapes()[1]
-    subs = _flatten(first_o.d)
-    assert len(subs) == 2
+    """The first 'o' is a ring. Even-odd fill must leave its hole open: the centre is not ink."""
+    o = wordmark_shapes()[1]
+    assert len(_flatten(o.d)) == 2
+    mask = render_mask(SIZE, [o])
+    x0, y0, x1, y1 = mask.getbbox()
+    assert mask.getpixel(((x0 + x1) // 2, (y0 + y1) // 2)) == 0, "the counter was filled"
+    # Some pixel along the middle row is ink: the left stroke of the 'o'.
+    assert max(mask.getpixel((x, (y0 + y1) // 2)) for x in range(x0, x0 + (x1 - x0) // 4)) == 255
 
 
 def test_svg_is_well_formed_and_matches_the_shapes():

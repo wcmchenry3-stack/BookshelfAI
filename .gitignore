@@ -109,3 +109,4 @@ frontend/playwright-report/
 
 # UI snapshot output (frontend/scripts/ui-snapshots/capture.mjs)
 frontend/ui-snapshots/
+.pytest_cache/

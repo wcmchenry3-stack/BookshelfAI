@@ -46,7 +46,7 @@ Native launcher and splash rasters under `frontend/ios/` and `frontend/android/`
 - **Source of truth is vector or maths**, not a bitmap. Rasters are derived from it. SVG paths for art; numpy and a fixed sample rate for sound.
 - **Colours come from the design tokens** (`frontend/theme/tokens.ts`), copied into the recipe as named constants with a comment saying which token. Native icon files cannot read a theme, so the recipe is where a brand colour is fixed; in app code, still use `useTheme()`.
 - **`--check`** on a generator recomputes its output and fails if a shipped file differs. A pinned test runs it in CI.
-- **Pinned libraries.** `tools/assets/requirements.txt` pins exact versions; CI installs that file. Pixel-exact tests break on a resampling change, so a bump means regenerating and reviewing the diff.
+- **Pinned libraries.** `tools/assets/requirements.txt` pins exact versions; CI installs that file. Pixel-exact tests break on a resampling change, so a bump means regenerating and reviewing the diff. Regenerate on Linux (CI runs ubuntu-24.04 on Python 3.12): encoded PNG and WebP bytes depend on the zlib and libwebp inside the Pillow wheel, so another OS can report every file stale.
 
 ## Auditions: how we choose
 
@@ -110,7 +110,7 @@ The first logo (and the old `icon.png`) was a Gemini image. It is AI-generated, 
 | `assets/splash.png`, iOS splash, Android `splashscreen_logo` | the whole mark (ring and name) on navy         | A     |
 | `assets/logo.png` (login screen), `favicon.png`             | the whole mark; favicon as the icon            | A / C |
 
-Brand navy `#263250` and cream `#EFE9D4` are fixed in `draw_logo.py` (native icons cannot read a theme). Android `iconBackground`, `splashscreen_background`, the iOS splash colour and `app.json` are written by the generator.
+Brand navy `#263250` and cream `#EFE9D4` are fixed in `draw_logo.py` (native icons cannot read a theme). Android `iconBackground`, `splashscreen_background`, the iOS splash colour (colorset and storyboard) and `app.json` are written by the generator. Android icons keep every pixel within the 66 dp safe circle (`gen_app_icons_test.py` measures it).
 
 Not done yet: an in-app SVG `BookshelfLogo` component. It needs `react-native-svg`, a native module, so it needs `pod install` and a `Podfile.lock` change that must be made on a Mac (CLAUDE.md rule 10). Until then the login screen shows `assets/logo.png`, a raster the recipe generates. `draw_logo.py --svg` already writes the shared SVG the component will use.
 

@@ -192,14 +192,18 @@ jobs:
     secrets: inherit
 
   # Unit tests for the Python asset tools in tools/assets (docs/ASSETS.md). Not collected by the
-  # backend suite. Not a required check: it only has something to say when tools/ or the assets change.
+  # backend suite. Not a required check, so a red run does not block a merge; read it when assets change.
   test-tools:
     # Skip while the PR is a draft; ready_for_review starts the run (ship-story skill).
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Test tools (pytest)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version-file: backend/.python-version

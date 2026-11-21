@@ -4,7 +4,7 @@ All of it is derived from `draw_logo.py`, so edit the recipe and re-run this; ne
 
 Writes (`frontend/`):
   assets/icon.png                 iOS / store icon, 1024 px, no alpha
-  assets/adaptive-icon.png        Android adaptive foreground (transparent, inside the 66 % safe zone)
+  assets/adaptive-icon.png        Android adaptive foreground (transparent, inside the 66 dp safe circle)
   assets/monochrome-icon.png      Android 13 themed-icon layer (alpha only)
   assets/favicon.png, logo.png    web favicon; the login screen's logo (the whole mark)
   assets/splash.png               splash, the whole mark centred on navy
@@ -41,7 +41,8 @@ SS = 4
 # The dog and book occupy x 210..824, y 165..684 of the design box (centre 517, 425).
 CENTRE = (517, 425)
 ICON_SIDE = 880  # iOS / legacy: the mark fills about 70 % of the icon
-ADAPTIVE_SIDE = 1030  # Android keeps the subject inside the central 66 % (72 of 108 dp)
+ADAPTIVE_SIDE = 1300  # Android: every opaque pixel within 33 dp of the centre of the 108 dp canvas (the 66 dp
+# safe circle). The book's base corners are 383 design units from CENTRE, plus the round stroke ends.
 SPLASH_RING_SHARE = 0.58  # ring diameter as a share of the splash width
 LOGO_PX = 360  # the login logo: 120 pt at 3x
 
@@ -181,6 +182,16 @@ def text_edits() -> dict[Path, str]:
         if "<monochrome" not in s:
             s = s.replace("</adaptive-icon>", '    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>\n</adaptive-icon>')
         edits[p] = s
+
+    sb = FRONTEND / "ios/BookShelfAI/SplashScreen.storyboard"
+    s = sb.read_text()
+    # The storyboard carries its own copy of the splash colour; keep it in step with the colorset.
+    s = re.sub(
+        r'(<namedColor name="SplashScreenBackground">\s*<color alpha="1.000" )blue="[^"]*" green="[^"]*" red="[^"]*"',
+        lambda m: m.group(1) + 'blue="%s" green="%s" red="%s"' % tuple(f"{v / 255:.14f}" for v in (NAVY[2], NAVY[1], NAVY[0])),
+        s,
+    )
+    edits[sb] = s
 
     bg = XCASSETS / "SplashScreenBackground.colorset/Contents.json"
     j = json.loads(bg.read_text())
