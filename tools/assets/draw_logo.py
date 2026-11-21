@@ -297,20 +297,20 @@ def _paint(mask: Image.Image, shape: Shape, k: float, off: tuple[float, float]) 
                 d.ellipse((x - w / 2, y - w / 2, x + w / 2, y + w / 2), fill=value)
 
 
-def render_mask(size: int, shapes: list[Shape], *, scale: float = 1.0, offset: tuple[float, float] = (0.0, 0.0)) -> Image.Image:
-    """The ink as an 'L' mask (255 = cream) of `size` px. `scale` shrinks the design about its centre."""
+def render_mask(size: int, shapes: list[Shape], *, view: tuple[float, float, float] = (0, 0, SIZE)) -> Image.Image:
+    """The ink as an 'L' mask (255 = cream) of `size` px. `view` is the (x, y, side) window of the
+    1024 design box that fills the image; the default shows the whole box."""
     big = size * SS
     mask = Image.new("L", (big, big), 0)
-    k = big / SIZE * scale
-    centre = (1 - scale) / 2 * SIZE / scale  # keeps the design centred when scaled down
+    k = big / view[2]
     for sh in shapes:
-        _paint(mask, sh, k, (centre + offset[0], centre + offset[1]))
+        _paint(mask, sh, k, (-view[0], -view[1]))
     return mask.resize((size, size), Image.LANCZOS)
 
 
-def render(size: int, style: str = SHIPPED, *, scale: float = 1.0, bg: tuple[int, int, int] | None = NAVY, **kw) -> Image.Image:
+def render(size: int, style: str = SHIPPED, *, view: tuple[float, float, float] = (0, 0, SIZE), bg: tuple[int, int, int] | None = NAVY, **kw) -> Image.Image:
     """The mark on a navy field (`bg`), or on transparency when `bg` is None."""
-    mask = render_mask(size, mark_shapes(style, **kw), scale=scale)
+    mask = render_mask(size, mark_shapes(style, **kw), view=view)
     if bg is None:
         out = Image.new("RGBA", (size, size), CREAM + (0,))
         out.putalpha(mask)
