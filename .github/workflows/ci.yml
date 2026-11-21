@@ -191,6 +191,26 @@ jobs:
       coverage-threshold: 98
     secrets: inherit
 
+  # Unit tests for the Python asset tools in tools/assets (docs/ASSETS.md). Not collected by the
+  # backend suite. Not a required check: it only has something to say when tools/ or the assets change.
+  test-tools:
+    # Skip while the PR is a draft; ready_for_review starts the run (ship-story skill).
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Test tools (pytest)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: backend/.python-version
+          cache: pip
+          cache-dependency-path: tools/assets/requirements.txt
+      - name: Install tools requirements
+        run: pip install -r tools/assets/requirements.txt
+      - name: pytest
+        working-directory: tools
+        run: python -m pytest
+
   test-frontend:
     needs: [lint-python, lint-frontend, secret-scan]
     uses: wcmchenry3-stack/.github/.github/workflows/called-test-frontend.yml@main

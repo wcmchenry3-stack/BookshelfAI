@@ -1,0 +1,7 @@
+# Asset generator libraries are pinned exactly: shipped logo/icon rasters are their output, and a
+# release of any of them can move it (Pillow's resampling changed between 12.x and 13). Tests compare
+# output pixel for pixel. Upgrading one means regenerating every generated asset and reviewing the
+# diff: see docs/ASSETS.md. These versions install on Python 3.12 (backend/.python-version) and 3.13.
+numpy==2.4.6
+Pillow==13.0.0
+pytest==9.2.0

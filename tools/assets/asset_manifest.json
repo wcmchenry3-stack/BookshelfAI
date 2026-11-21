@@ -1,0 +1,11 @@
+{
+  "_doc": "Provenance index for every file under frontend/assets/. Each rule matches files by glob (repo-relative); every file must match exactly one rule. kind: generated = rebuilt by `recipe`; attested = owner-supplied, no recipe possible (see `why`); third-party = licensed from someone else and must be listed in `third_party_allowlist`. Checked by tools/assets/tests/asset_manifest_test.py. See docs/ASSETS.md.",
+  "third_party_allowlist": [],
+  "rules": [
+    {"glob": "frontend/assets/icon.png", "kind": "attested", "why": "Gemini-generated logo (owner-attested), replaced by the generated logo in the logo story. The only master until then.", "credits": "docs/ASSETS.md"},
+    {"glob": "frontend/assets/logo.png", "kind": "attested", "why": "Gemini-generated logo (owner-attested), replaced by the generated logo in the logo story.", "credits": "docs/ASSETS.md"},
+    {"glob": "frontend/assets/adaptive-icon.png", "kind": "attested", "why": "Derived from the Gemini logo by hand, replaced by the generated icons in the logo story.", "credits": "docs/ASSETS.md"},
+    {"glob": "frontend/assets/favicon.png", "kind": "attested", "why": "Derived from the Gemini logo by hand, replaced by the generated icons in the logo story.", "credits": "docs/ASSETS.md"},
+    {"glob": "frontend/assets/splash.png", "kind": "attested", "why": "Plain white placeholder, replaced by the generated splash in the logo story.", "credits": "docs/ASSETS.md"}
+  ]
+}
