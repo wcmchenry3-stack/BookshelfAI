@@ -23,7 +23,7 @@ NATIVE_DIRECT = {"ios-build-check", "android-build-check"}
 
 
 def load_required_contexts(path=RULESET):
-    ruleset = json.loads(Path(path).read_text())
+    ruleset = json.loads(Path(path).read_text(encoding="utf-8"))
     for rule in ruleset["rules"]:
         if rule["type"] == "required_status_checks":
             return [c["context"] for c in rule["parameters"]["required_status_checks"]]
@@ -164,11 +164,10 @@ class TestRulesetRequiredChecks:
 
 
 def _allowed_merge_methods(filename):
-    ruleset = json.loads((RULESETS_DIR / filename).read_text())
-    for rule in ruleset["rules"]:
-        if rule["type"] == "pull_request":
-            return rule["parameters"].get("allowed_merge_methods", [])
-    return []
+    ruleset = json.loads((RULESETS_DIR / filename).read_text(encoding="utf-8"))
+    pr_rules = [r for r in ruleset["rules"] if r["type"] == "pull_request"]
+    assert pr_rules, f"{filename}: no pull_request rule found"
+    return pr_rules[0]["parameters"].get("allowed_merge_methods", [])
 
 
 class TestRulesetsAgree:
@@ -186,7 +185,7 @@ class TestRulesetsAgree:
         methods = _allowed_merge_methods("protect-main.json")
         assert methods == ["merge"], f"main must allow merge only (no squash), got {methods}"
 
-    def test_dev_required_workflows_run_in_merge_queue(self):
+    def test_dev_required_workflows_have_merge_group_trigger(self):
         problems = check_merge_group(load_required_contexts(), load_workflows())
         assert not problems, "\n".join(problems)
 

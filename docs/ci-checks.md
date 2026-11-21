@@ -4,7 +4,7 @@ Every PR into `dev` shows about 40 checks. This page says what each one is for, 
 
 Source of truth is `.github/workflows/`. This page is a snapshot taken from `dev` at `9c0be9f` (full SHA `9c0be9fa4f460a7808cec4eddd7e504332f10f13`, committed 2026-10-30). If it disagrees with the workflow files, the workflow files win. For how the test layers fit together see [testing.md](testing.md); for the native build pipelines see [ios-ci.md](claude/ios-ci.md) and [android-ci.md](claude/android-ci.md); for the git workflow see [git.md](claude/git.md).
 
-PRs into `dev` are **squash-merged through a merge queue**; releases (`dev` into `main`) are **merge commits**. Squash is allowed on `dev` only and merge commits on `main` only; two rulesets enforce the split (see [Branch protection](#branch-protection)). This replaces the earlier setup where squash was refused with HTTP 405 on 2026-10-31 (#858) and there was no queue (#859); this change resolves both. The repo-level merge-button options in Settings, General must allow both squash and merge commits (rebase off); the rulesets decide which applies to which branch. Whether the rulesets are applied is **to confirm in GitHub settings**.
+PRs into `dev` are **squash-merged** (the branch must be up to date with `dev` before merging); releases (`dev` into `main`) are **merge commits**. Squash is allowed on `dev` only and merge commits on `main` only; two rulesets enforce the split (see [Branch protection](#branch-protection)). This replaces the earlier setup where squash was refused with HTTP 405 on 2026-10-31 (#858) and there was no race guard (#859); this change resolves both. The repo-level merge-button options in Settings, General must allow both squash and merge commits (rebase off); the rulesets decide which applies to which branch. Whether the rulesets are applied is **to confirm in GitHub settings**.
 
 ## Summary
 
@@ -52,7 +52,7 @@ Gate    native-build-gate (if: always())
 
 - `gate-main-source` is Tier 0 but is not in the Tier 1 `needs:` list, so a failure there does not skip Tier 1.
 - If `lint-python`, `lint-frontend` or `secret-scan` fails, every Tier 1 and Tier 2 job is skipped (their `needs:` failed). Skipped counts as passing for required checks, but the failed lint job is itself required, so the merge stays blocked.
-- `podfile-lock-check` and `gradle-wrapper-check` have `if: github.event_name == 'pull_request'`, so they run on PRs only (skipped in the merge queue, as is the grandfather-list step of `claude-policy`; see [Branch protection](#branch-protection)).
+- `podfile-lock-check` and `gradle-wrapper-check` have `if: github.event_name == 'pull_request'`, so they run on PRs only (see [Branch protection](#branch-protection)).
 - `backend-health` has `if: github.workflow != 'Deploy'` so a production outage cannot block the deploy that would fix it (the workflow is also called from `deploy.yml`).
 - **Stand-alone workflows** (`commitlint`, `design-token-check`, `gemini-policy`, `openai-policy`, `migration-guard`, `static-frontend`, `repo-hygiene`, `doc-reminder`, `e2e-web`, `security`) have no `needs:` and start immediately, in parallel with Tier 0.
 - **Draft PRs.** Only `ios-build-check` and `android-build-check` skip on drafts (`github.event.pull_request.draft != true`). Everything else, including `e2e-web` and the `security.yml` jobs, runs on drafts. `ready_for_review` is in the `ci.yml` trigger types, so marking a draft ready starts a new run that includes the native builds.
@@ -183,30 +183,22 @@ Both rulesets have enforcement `active`, no bypass actors, and the same rules ex
 | --- | --- | --- |
 | Allowed merge methods | `squash` only | `merge` only (no squash, no rebase) |
 | `required_linear_history` | yes | no (it forbids merge commits) |
-| Merge queue | yes: `ALLGREEN`, `SQUASH`, up to 5 entries built and merged together, 60 minute check timeout | no |
-| `strict_required_status_checks_policy` | `false` (the queue tests each entry on top of the ones ahead of it, so PRs need not be rebased by hand; this closes #859's two-PRs-pass-separately race) | `false` (see the note below) |
+| `strict_required_status_checks_policy` | `true` (each PR branch must be up to date with `dev` before it can merge; closes #859's two-PRs-pass-separately race without a merge queue) | `false` (see the note below) |
 
 The `main` release flow (merge commit from `dev`, then `sync-main-to-dev.yml` and release-please) is unchanged. Ruleset changes stay owner-applied.
 
 **Why `main` is not strict (owner decision).** After a release, `sync-main-to-dev.yml` opens a `main` to `dev` PR. With `dev` squash-only that PR lands as a squash, so `main`'s release merge commit never becomes an ancestor of `dev`. With `strict_required_status_checks_policy: true` on `main`, every later `dev` to `main` release PR would be permanently "out of date" and "Update branch" cannot fix it on a protected `dev`. So `main` is non-strict. Release PRs must still pass every required check on their own head. The squashed sync still brings any `main`-only content (hotfixes) into `dev`, and git merges identical changes made on both sides cleanly.
-
-**Merge queue (`merge_group`).** The workflows that supply required checks (`ci.yml`, `repo-hygiene.yml`, `static-frontend.yml`, `migration-guard.yml`, `design-token-check.yml`, `gemini-policy.yml`, `openai-policy.yml`) also trigger on `merge_group` (`types: [checks_requested]`), so the required contexts report on each queue entry. In the queue:
-
-- `detect-changes` diffs against `github.event.merge_group.base_sha`, so the iOS (about 15.5 minutes) and Android (about 7 minutes) builds run only when a native path changed.
-- `migration-guard` skips its scan and passes: `github.base_ref` and the PR labels (and so the `destructive-migration-approved` approval) do not exist on `merge_group`, and every PR was already scanned by its own required `pull_request` run before it could be queued.
-- `podfile-lock-check`, `gradle-wrapper-check` and the grandfather-list step of `claude-policy` are PR-only (`if: github.event_name == 'pull_request'`) and are skipped in the queue; a skipped job counts as passing, so the Gradle wrapper validation, the `Podfile`/`Podfile.lock` pairing and the grandfather check are not re-run on the merged result.
-- The reusable workflows in `wcmchenry3-stack/.github@main` (`gate-main-source`, `design-token-check`, `gemini-policy`, `openai-policy` and others) are not visible from this repo. After applying the `dev` ruleset, enqueue one trivial PR and confirm every required context reports on its `merge_group` run before relying on the queue.
 
 `.github/CODEOWNERS` names `@wcmchenry3` as owner of everything, including `.github/`, `backend/app/auth/`, `backend/app/core/`, `backend/tests/security/` and the migration guard.
 
 **Things that only GitHub settings can confirm:**
 
 - whether the ruleset above (or any classic branch protection) is applied, and to which branches;
-- merge methods enabled in Settings, General (must allow squash and merge commits, rebase off), and that the merge queue is active on `dev`;
+- merge methods enabled in Settings, General (must allow squash and merge commits, rebase off);
 - whether the single code owner can satisfy "1 approving review" and "code-owner review" on PRs they opened themselves;
 - whether any check outside the file (for example `Supabase Preview`) is required.
 
-`backend/tests/unit/test_ruleset_required_checks.py` (run by `test-python`) checks both ruleset files (`dev` and `main`, each against PRs into its own branch). It fails when a required context matches no workflow job, when its workflow has a `paths` filter or does not run on PRs into that branch, when a native build job is required directly, when the two files list different contexts, or when a workflow supplying a `protect-dev.json` context has no `merge_group` (`checks_requested`) trigger (it would stall the queue). It does not check inner names after the `/`.
+`backend/tests/unit/test_ruleset_required_checks.py` (run by `test-python`) checks both ruleset files (`dev` and `main`, each against PRs into its own branch). It fails when a required context matches no workflow job, when its workflow has a `paths` filter or does not run on PRs into that branch, when a native build job is required directly, when the two files list different contexts, or when the allowed merge methods deviate from squash-only on `dev` or merge-only on `main`. It does not check inner names after the `/`.
 
 ### Recommended required checks
 
