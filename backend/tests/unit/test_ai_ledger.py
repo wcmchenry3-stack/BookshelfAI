@@ -676,7 +676,7 @@ class TestCleanupTask:
         factory.return_value.__aexit__ = AsyncMock(return_value=False)
         sleeps = AsyncMock(side_effect=[None, _Stop()])
         with (
-            patch.object(token_cleanup, "AsyncSessionLocal", factory),
+            patch.object(token_cleanup, "JobSessionLocal", factory),
             patch.object(token_cleanup, "purge_old_quota", AsyncMock(return_value=0)),
             patch.object(token_cleanup, "purge_old_spend", AsyncMock(return_value=0)),
             patch.object(

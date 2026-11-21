@@ -8,5 +8,14 @@
   "signOutCancel": "रद्द करें",
   "trash": "ट्रैश",
   "trashA11y": "ट्रैश खोलें",
-  "trashHint": "पिछले 30 दिनों में हटाई गई किताबें वापस लाएँ"
+  "trashHint": "पिछले 30 दिनों में हटाई गई किताबें वापस लाएँ",
+  "openOn": "इस पर खोलें",
+  "openOnA11y": "इस पर खोलें: {{value}}",
+  "openOnHint": "वह स्क्रीन चुनें जिस पर ऐप खुलता है",
+  "openOnPickerTitle": "ऐप इस पर खोलें",
+  "openOnScan": "स्कैन",
+  "openOnWishlist": "विशलिस्ट",
+  "openOnMyBooks": "मेरी किताबें",
+  "openOnCancel": "रद्द करें",
+  "openOnSaveFailed": "आपकी पसंद सहेजी नहीं जा सकी। फिर से कोशिश करें।"
 }

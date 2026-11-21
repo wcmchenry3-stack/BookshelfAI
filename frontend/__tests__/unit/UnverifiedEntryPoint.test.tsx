@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, renderHook, waitFor } from '@testing-library/react-native';
+import { act, render, renderHook, waitFor, within } from '@testing-library/react-native';
 
 import { ScanJobProvider } from '../../contexts/ScanJobContext';
 import { BannerProvider } from '../../contexts/BannerContext';
@@ -42,20 +42,8 @@ jest.mock('../../lib/sentry', () => ({
 }));
 let mockUuid = 0;
 jest.mock('expo-crypto', () => ({ randomUUID: () => `mockUuid-${++mockUuid}` }));
-jest.mock('expo-router', () => ({
-  useFocusEffect: (cb: () => void) => {
-    jest.requireActual<typeof import('react')>('react').useEffect(cb, []);
-  },
-}));
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
-jest.mock('../../hooks/useTheme', () => ({
-  useTheme: () => ({
-    theme: {
-      colors: { background: '#fff', text: '#000', textSecondary: '#888', primary: '#007AFF' },
-      typography: { fontSizeBase: 16, fontSizeSM: 14, fontSizeLG: 20, fontSizeXS: 12 },
-    },
-  }),
-}));
+jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 jest.mock('../../components/LoadingSpinner', () => ({
   LoadingSpinner: () => null,
 }));
@@ -197,10 +185,14 @@ describe('Unverified badge in the library (#616)', () => {
     ['my books', MyBooksScreen],
   ])('%s shows it on unverified entries only', async (_name, Screen) => {
     mockGet.mockResolvedValue({ data: [UNVERIFIED_ENTRY, CATALOG_ENTRY] });
-    const { findByText, getAllByTestId } = await render(<Screen />);
-    expect(await findByText('Pond Notes')).toBeTruthy();
-    expect(await findByText('Dune')).toBeTruthy();
-    const badges = getAllByTestId('unverified-badge');
+    const { findAllByTestId, getAllByTestId } = await render(<Screen />);
+    // My Books hides the card's text from assistive tech (the card label says it).
+    const hidden = { hidden: true };
+    // Scoped to each row's text block: the generated cover also typesets the title.
+    const rows = await findAllByTestId('book-row-text', hidden);
+    expect(within(rows[0]).getByText('Pond Notes', hidden)).toBeTruthy();
+    expect(within(rows[1]).getByText('Dune', hidden)).toBeTruthy();
+    const badges = getAllByTestId('unverified-badge', hidden);
     expect(badges).toHaveLength(1);
     expect(badges[0].props.accessibilityLabel).toBe(
       'Unverified: added by you, not found in the catalog'
@@ -212,9 +204,9 @@ describe('Card accessibility label (#616)', () => {
   it('my books says "Unverified" in the card label, which replaces the badge for a screen reader', async () => {
     mockGet.mockResolvedValue({ data: [UNVERIFIED_ENTRY, CATALOG_ENTRY] });
     const { findByLabelText } = await render(<MyBooksScreen />);
-    const card = await findByLabelText('Pond Notes — wishlisted — Unverified');
+    const card = await findByLabelText('Pond Notes — Wishlist, by A. Local — Unverified');
     expect(card.props.accessibilityRole).toBe('button');
     // A catalog book's label is unchanged.
-    expect(await findByLabelText('Dune — wishlisted')).toBeTruthy();
+    expect(await findByLabelText('Dune — Wishlist, by A. Local')).toBeTruthy();
   });
 });

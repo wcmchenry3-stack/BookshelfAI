@@ -11,6 +11,11 @@ on:
     branches: [dev, main]
     # No paths filter: the job must always report, so it can be a required check.
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # Merge queue: the required check must still report here or no PR can merge.
+  # `github.base_ref` and the PR labels do not exist on this event, so the job
+  # skips the scan (see the first step) instead of failing.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -20,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      EVENT_NAME: ${{ github.event_name }}
       BASE_REF: ${{ github.base_ref }}
       APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'destructive-migration-approved') }}
     steps:
@@ -29,6 +35,14 @@ jobs:
           persist-credentials: false
       - name: Scan changed migrations
         run: |
+          # merge_group has no base_ref and no PR labels (so no way to read the
+          # destructive-migration-approved approval). Every PR was already scanned
+          # by its own required pull_request run before it could be queued, and the
+          # queue only builds on that PR's content, so skip with a clear message.
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            echo "Merge queue run: this PR's migrations were already scanned by its required pull_request run"
+            exit 0
+          fi
           if [ "$BASE_REF" = "main" ]; then
             echo "Release PR: migrations were already scanned on their feature PRs into dev"
             exit 0

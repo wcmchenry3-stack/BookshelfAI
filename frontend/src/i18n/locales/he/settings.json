@@ -8,5 +8,14 @@
   "signOutCancel": "ביטול",
   "trash": "פח",
   "trashA11y": "פתיחת הפח",
-  "trashHint": "שחזור ספרים שהוסרו ב-30 הימים האחרונים"
+  "trashHint": "שחזור ספרים שהוסרו ב-30 הימים האחרונים",
+  "openOn": "פתיחה במסך",
+  "openOnA11y": "פתיחה במסך: {{value}}",
+  "openOnHint": "בחר את המסך שבו האפליקציה נפתחת",
+  "openOnPickerTitle": "לפתוח את האפליקציה במסך",
+  "openOnScan": "סריקה",
+  "openOnWishlist": "רשימת משאלות",
+  "openOnMyBooks": "הספרים שלי",
+  "openOnCancel": "ביטול",
+  "openOnSaveFailed": "לא ניתן לשמור את הבחירה. נסה שוב."
 }

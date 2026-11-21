@@ -1,7 +1,6 @@
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react-native';
 import { FeedbackProvider } from '../../components/FeedbackWidget/FeedbackContext';
-import { HeaderFeedbackButton } from '../../components/FeedbackWidget/HeaderFeedbackButton';
 import SettingsScreen from '../../app/(tabs)/settings';
 import { Sentry } from '../../lib/sentry';
 
@@ -49,32 +48,6 @@ beforeEach(() => {
 });
 
 describe('feedback entry points', () => {
-  it('header "?" button opens the widget', async () => {
-    const { getByLabelText, queryByText, getByText } = await render(
-      <FeedbackProvider>
-        <HeaderFeedbackButton />
-      </FeedbackProvider>
-    );
-    expect(queryByText('Send Feedback')).toBeNull();
-    await fireEvent.press(getByLabelText('Send feedback'));
-    expect(getByText('Send Feedback')).toBeTruthy();
-  });
-
-  it('header button has a >=44pt hit target including hitSlop', async () => {
-    const { getByTestId } = await render(
-      <FeedbackProvider>
-        <HeaderFeedbackButton />
-      </FeedbackProvider>
-    );
-    const btn = getByTestId('header-feedback-button');
-    const { StyleSheet } = require('react-native');
-    const flat = StyleSheet.flatten(btn.props.style);
-    const slack = typeof btn.props.hitSlop === 'number' ? btn.props.hitSlop : 0;
-    expect(flat.width + slack * 2).toBeGreaterThanOrEqual(44);
-    expect(flat.height + slack * 2).toBeGreaterThanOrEqual(44);
-    expect(btn.props.accessibilityRole).toBe('button');
-  });
-
   it('Settings "Send feedback" row opens the widget', async () => {
     const { getByTestId, queryByLabelText, getByLabelText } = await render(
       <FeedbackProvider>

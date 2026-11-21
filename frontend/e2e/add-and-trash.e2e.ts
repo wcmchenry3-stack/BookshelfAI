@@ -26,15 +26,16 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
     );
 
     await page.getByRole('tab', { name: 'Your book collection' }).click();
-    await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Frankenstein — Wishlist' })).toBeVisible();
 
     // Delete.
-    await page.getByRole('button', { name: 'Remove Frankenstein' }).click();
+    await page.getByRole('button', { name: 'More options for Frankenstein' }).click();
+    await page.getByRole('button', { name: 'Remove from library' }).click();
     await expect(page.getByRole('alert')).toContainText(
       'Moved to Trash. You can restore it within 30 days.'
     );
-    await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toHaveCount(0);
-    await expect(page.getByText('No books here yet.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Frankenstein — Wishlist' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Your library is empty' })).toBeVisible();
 
     // Undo from Trash.
     await page.getByRole('button', { name: 'View trash' }).click();
@@ -42,18 +43,16 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
     await expect(page.getByRole('heading', { name: 'Trash' })).toBeVisible();
     // Earlier runs against the same database leave copies in Trash: newest first.
     await expect(page.getByText('Mary Shelley').first()).toBeVisible();
+    // The days-left line (#932): a just-deleted book has about 30 days left.
+    await expect(page.getByText(/Deleted for good in \d+ days?/).first()).toBeVisible();
     await expectNoA11yViolations('Trash with one book');
     await page.getByRole('button', { name: 'Restore Frankenstein' }).first().click();
     await expect(page.getByText('Restored Frankenstein to your library.')).toBeVisible();
 
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await page.getByRole('tab', { name: 'Your book collection' }).click();
-    await expect(page.getByRole('button', { name: 'Frankenstein — wishlisted' })).toBeVisible();
-    await expectNoA11yViolations('My Books after restoring', {
-      known: [
-        KNOWN_VIOLATIONS.bookCardNestedInteractive,
-        KNOWN_VIOLATIONS.successBannerContrast, // "Restored" banner
-      ],
-    });
+    await expect(page.getByRole('button', { name: 'Frankenstein — Wishlist' })).toBeVisible();
+    // No allowances: #907 removed the nested buttons and #898's success colour passes contrast.
+    await expectNoA11yViolations('My Books after restoring');
   });
 });

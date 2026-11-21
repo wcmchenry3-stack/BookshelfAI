@@ -7,6 +7,7 @@ import { useTheme } from '../../hooks/useTheme';
 import type { ScanUsage } from '../../hooks/useScanUsage';
 import type { ScanNotice } from '../../lib/scanErrors';
 import { ScanStatusPanel } from '../ScanStatusPanel';
+import { fontFor } from '../../theme/typography';
 
 interface Props {
   waitingCount: number;
@@ -144,9 +145,9 @@ const styles = StyleSheet.create({
   },
   sendNow: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   failedLink: { alignSelf: 'center', marginBottom: 8 },
-  sendNowText: { fontWeight: '600', fontSize: 13 },
+  sendNowText: { fontFamily: fontFor('600'), fontSize: 13 },
   pendingBadgeText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 12,
   },
 });

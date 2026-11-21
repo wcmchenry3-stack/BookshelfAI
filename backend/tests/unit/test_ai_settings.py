@@ -219,7 +219,7 @@ class TestFailClosed:
         with (
             _loader(OSError("db down")),
             patch.object(StarletteUploadFile, "read", new=AsyncMock()) as read,
-            patch("app.api.scan._verify_turnstile", new=AsyncMock()) as turnstile,
+            patch("app.api._bot_check._verify_turnstile", new=AsyncMock()) as turnstile,
             patch.object(ai_settings.settings, "turnstile_required", True),
             patch("app.api.scan.sanitize_image") as sanitize,
         ):

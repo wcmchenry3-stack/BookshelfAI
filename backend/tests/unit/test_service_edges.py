@@ -178,7 +178,7 @@ class TestCleanupIsolation:
         patches.append(
             patch.object(
                 token_cleanup,
-                "AsyncSessionLocal",
+                "JobSessionLocal",
                 self._factory(AsyncMock(side_effect=RuntimeError("tokens"))),
             )
         )
@@ -204,7 +204,7 @@ class TestCleanupIsolation:
             token_cleanup, "rollup_and_purge", AsyncMock(return_value=(0, 0))
         )
         patches.append(
-            patch.object(token_cleanup, "AsyncSessionLocal", self._factory(execute))
+            patch.object(token_cleanup, "JobSessionLocal", self._factory(execute))
         )
         await self._run_once(patches, caplog)
         assert caplog.text.count("error during cleanup run") == 1

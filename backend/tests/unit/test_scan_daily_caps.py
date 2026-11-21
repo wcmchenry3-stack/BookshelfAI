@@ -102,7 +102,7 @@ class TestKillSwitches:
         with (
             _set(scan_enabled=False, turnstile_required=True),
             patch.object(StarletteUploadFile, "read", new=AsyncMock()) as read,
-            patch("app.api.scan._verify_turnstile", new=AsyncMock()) as turnstile,
+            patch("app.api._bot_check._verify_turnstile", new=AsyncMock()) as turnstile,
         ):
             resp = client.post(
                 "/scan", files=_file(), data={"cf-turnstile-response": "t"}

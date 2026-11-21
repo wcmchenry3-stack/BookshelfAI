@@ -38,7 +38,6 @@ PATCHED_BY_NAME = [
     "_reserve_scan_quota",
     "_refund_scan_quota",
     "_release_scan_lease",
-    "_verify_turnstile",
     "_usage_row",
     "_settlement",
     "_dedupe_enriched",
@@ -149,7 +148,7 @@ def test_scan_awaits_its_steps_in_order():
     steps = [
         "_load_scan_settings",
         "_count_scan_request",
-        "_check_turnstile",
+        "_check_bot_protection",
         "_read_validated_upload",
         "_normalise_image",
         "_fingerprint",

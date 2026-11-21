@@ -1,5 +1,15 @@
 import { expect, type Page } from '@playwright/test';
 
+/**
+ * Open a tab by its accessible name (sign-in lands on Scan, so specs open the
+ * tab they test): 'Scan a book', 'Your wishlist', 'Your book collection',
+ * 'App settings'.
+ */
+export async function openTab(page: Page, name: string): Promise<void> {
+  await page.getByRole('tab', { name }).click();
+  await expect(page.getByRole('tab', { name })).toHaveAttribute('aria-selected', 'true');
+}
+
 /** Scan tab, Search mode: look up `query` and open the result picker. */
 export async function searchBook(page: Page, query: string, title: string): Promise<void> {
   await page.getByRole('tab', { name: 'Scan a book' }).click();

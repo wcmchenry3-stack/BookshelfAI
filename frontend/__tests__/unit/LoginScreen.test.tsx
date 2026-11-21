@@ -1,13 +1,15 @@
 import React from 'react';
 import { Alert } from 'react-native';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import LoginScreen from '../../app/(auth)/login';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockLogin = jest.fn();
 const mockTestLogin = jest.fn();
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../hooks/useAuth', () => ({
   useAuth: () => ({ login: mockLogin, testLogin: mockTestLogin }),
 }));
@@ -68,6 +70,11 @@ beforeEach(() => {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('LoginScreen', () => {
+  it('pads the top by the safe-area inset (#936)', async () => {
+    const { getByText } = await render(<LoginScreen />);
+    expect(hasTopPadding(getByText('BookshelfAI'), TEST_INSET_TOP)).toBe(true);
+  });
+
   it('renders the app title', async () => {
     const { getByText } = await render(<LoginScreen />);
     expect(getByText('BookshelfAI')).toBeTruthy();
@@ -111,6 +118,38 @@ describe('LoginScreen', () => {
     mockLogin.mockResolvedValue(undefined);
     await render(<LoginScreen />);
     await waitFor(() => expect(mockLogin).toHaveBeenCalledWith('google-id-token-abc'));
+  });
+
+  it('disables the button and marks it busy while login is pending', async () => {
+    let finish!: () => void;
+    mockLogin.mockReturnValue(new Promise<void>((r) => (finish = r)));
+    setupGoogleAuth({
+      response: { type: 'success', params: { id_token: 'slow-token' } },
+    });
+    const { getByLabelText } = await render(<LoginScreen />);
+    await waitFor(() => {
+      const btn = getByLabelText('Sign in with Google');
+      expect(btn.props.accessibilityState).toEqual(
+        expect.objectContaining({ busy: true, disabled: true })
+      );
+    });
+    await fireEvent.press(getByLabelText('Sign in with Google'));
+    expect(mockPromptAsync).not.toHaveBeenCalled();
+
+    await act(async () => finish());
+    await waitFor(() => {
+      const btn = getByLabelText('Sign in with Google');
+      expect(btn.props.accessibilityState).toEqual(
+        expect.objectContaining({ busy: false, disabled: false })
+      );
+    });
+  });
+
+  it('is not busy before a sign-in starts', async () => {
+    const { getByLabelText } = await render(<LoginScreen />);
+    expect(getByLabelText('Sign in with Google').props.accessibilityState).toEqual(
+      expect.objectContaining({ busy: false })
+    );
   });
 
   it('does not call login when response type is not success', async () => {

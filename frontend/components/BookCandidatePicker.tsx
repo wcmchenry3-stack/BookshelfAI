@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
+import { BookCover } from './ui/BookCover';
 import SheetModal from './SheetModal';
+import { Button } from './ui/Button';
 import { isOwned, type Ownership } from '../lib/ownership';
 import { hasNoCatalogMatch } from '../lib/unverified';
+import { fontFor } from '../theme/typography';
 
 export interface EnrichedBook {
   book_id?: string;
@@ -153,28 +156,16 @@ export function BookCandidatePicker({
       closeLabel={t('bookCandidatePicker.cancel')}
       closeA11yLabel={t('bookCandidatePicker.closePicker')}
       footer={
-        <Pressable
-          style={[
-            styles.addButton,
-            { backgroundColor: theme.colors.primary, opacity: selected.size === 0 ? 0.5 : 1 },
-          ]}
+        <Button
+          label={
+            selected.size === 0
+              ? t('bookCandidatePicker.addNone')
+              : t('bookCandidatePicker.addSelected', { count: selected.size })
+          }
           onPress={confirm}
           disabled={selected.size === 0}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: selected.size === 0 }}
           accessibilityHint={t('bookCandidatePicker.addToWishlistHint')}
-        >
-          <Text
-            style={[
-              styles.addButtonText,
-              { color: theme.colors.onPrimary, fontSize: theme.typography.fontSizeBase },
-            ]}
-          >
-            {selected.size === 0
-              ? t('bookCandidatePicker.addNone')
-              : t('bookCandidatePicker.addSelected', { count: selected.size })}
-          </Text>
-        </Pressable>
+        />
       }
     >
       {candidates.length > 1 && selectable.length > 0 && (
@@ -221,22 +212,14 @@ export function BookCandidatePicker({
                   author: book.author,
                 })}
               >
-                {book.cover_url ? (
-                  <Image
-                    source={{ uri: book.cover_url }}
-                    style={styles.cover}
-                    accessibilityLabel={t('coverAlt', { ns: 'common', title: book.title })}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.cover,
-                      styles.coverPlaceholder,
-                      { backgroundColor: theme.colors.border },
-                    ]}
-                    accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
-                  />
-                )}
+                <BookCover
+                  title={book.title}
+                  coverUrl={book.cover_url}
+                  size="sm"
+                  decorative
+                  testID="candidate-cover"
+                  style={styles.cover}
+                />
 
                 <View style={styles.info}>
                   <Text
@@ -332,7 +315,7 @@ export function BookCandidatePicker({
               style={{
                 color: outOfCredits ? theme.colors.textSecondary : theme.colors.primary,
                 fontSize: theme.typography.fontSizeBase,
-                fontWeight: '600',
+                fontFamily: fontFor('600'),
               }}
             >
               {t('bookCandidatePicker.enhance')}
@@ -377,10 +360,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingBottom: 12,
   },
-  cover: { width: 72, height: 108 },
-  coverPlaceholder: { opacity: 0.4 },
+  cover: { margin: 4 },
   info: { flex: 1, padding: 12, gap: 4 },
-  bookTitle: { fontWeight: '600' },
+  bookTitle: { fontFamily: fontFor('600') },
   checkbox: { justifyContent: 'center', paddingHorizontal: 12, minWidth: 44 },
   checkboxDisabled: { opacity: 0.4 },
   badge: {
@@ -390,7 +372,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginTop: 4,
   },
-  badgeText: { fontSize: 11, fontWeight: '600' },
+  badgeText: { fontSize: 11, fontFamily: fontFor('600') },
   addYourself: {
     alignSelf: 'flex-start',
     borderWidth: 1,
@@ -400,7 +382,7 @@ const styles = StyleSheet.create({
     minWidth: 44,
     justifyContent: 'center',
   },
-  addYourselfText: { fontWeight: '600' },
+  addYourselfText: { fontFamily: fontFor('600') },
   enhanceButton: {
     alignItems: 'center',
     paddingVertical: 12,
@@ -410,12 +392,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 2,
   },
-  addButton: {
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    minHeight: 48,
-    justifyContent: 'center',
-  },
-  addButtonText: { fontWeight: '600' },
 });

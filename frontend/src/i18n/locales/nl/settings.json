@@ -8,5 +8,14 @@
   "signOutCancel": "Annuleren",
   "trash": "Prullenbak",
   "trashA11y": "Prullenbak openen",
-  "trashHint": "Herstel boeken die je de afgelopen 30 dagen hebt verwijderd"
+  "trashHint": "Herstel boeken die je de afgelopen 30 dagen hebt verwijderd",
+  "openOn": "Openen op",
+  "openOnA11y": "Openen op: {{value}}",
+  "openOnHint": "Kies het scherm waarop de app opent",
+  "openOnPickerTitle": "App openen op",
+  "openOnScan": "Scan",
+  "openOnWishlist": "Verlanglijst",
+  "openOnMyBooks": "Mijn Boeken",
+  "openOnCancel": "Annuleren",
+  "openOnSaveFailed": "Je keuze kon niet worden opgeslagen. Probeer het opnieuw."
 }

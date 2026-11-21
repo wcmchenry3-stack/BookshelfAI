@@ -16,7 +16,7 @@
     "@babel/core",
     // Peer dep of @testing-library/react-native, loaded by it at runtime, never imported.
     "react-test-renderer",
-    // Native module implied by app.json userInterfaceStyle:automatic; loaded natively, never imported directly.
-    "expo-system-ui"
+    // knip's Expo plugin expects it for every Expo config, but the app has no OTA updates (native builds via Xcode Cloud and Play Console), so it is never installed.
+    "expo-updates"
   ]
 }

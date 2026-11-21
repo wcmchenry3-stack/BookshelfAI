@@ -3,10 +3,12 @@ import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View } fr
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
+import { fontFor } from '../../theme/typography';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -22,11 +24,14 @@ const showTestLogin = __DEV__ && process.env.EXPO_PUBLIC_ENVIRONMENT !== 'produc
 
 export default function LoginScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { login, testLogin } = useAuth();
   const { t } = useTranslation('auth');
 
   const [testLoading, setTestLoading] = useState(false);
   const [promptFailed, setPromptFailed] = useState(false);
+  // True while login() is pending: it can wait on the server after the tokens are stored.
+  const [signingIn, setSigningIn] = useState(false);
 
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
@@ -37,15 +42,22 @@ export default function LoginScreen() {
   const googleError = promptFailed || response?.type === 'error';
 
   useEffect(() => {
-    if (response?.type === 'success') {
-      const { id_token } = response.params;
-      login(id_token).catch((err: unknown) => {
+    if (response?.type !== 'success') return;
+    const { id_token } = response.params;
+    // Async so the busy state is set after the effect body, not inside it.
+    void (async () => {
+      setSigningIn(true);
+      try {
+        await login(id_token);
+      } catch (err: unknown) {
         Alert.alert(
           t('errorTitle', { ns: 'common' }),
           isAccountConflict(err) ? t('signInAccountConflict') : t('signInError')
         );
-      });
-    }
+      } finally {
+        setSigningIn(false);
+      }
+    })();
   }, [response, login, t]);
 
   // promptAsync can reject (blocked popup, network failure); never let that
@@ -75,7 +87,9 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
+    <View
+      style={[styles.container, { backgroundColor: theme.colors.surface, paddingTop: insets.top }]}
+    >
       {/* Brand mark */}
       <Image
         source={require('../../assets/logo.png')}
@@ -106,16 +120,17 @@ export default function LoginScreen() {
           {
             backgroundColor: theme.colors.onSurface,
             marginTop: theme.spacing.xl,
-            opacity: request ? 1 : 0.6,
+            opacity: request && !signingIn ? 1 : 0.6,
           },
         ]}
         onPress={handleGoogleSignIn}
-        disabled={!request}
+        disabled={!request || signingIn}
         accessibilityLabel={t('signIn')}
         accessibilityRole="button"
         accessibilityHint={t('signInHint')}
+        accessibilityState={{ busy: signingIn, disabled: !request || signingIn }}
       >
-        {!request ? (
+        {!request || signingIn ? (
           <ActivityIndicator color={theme.colors.surface} />
         ) : (
           <Text style={[styles.buttonText, { color: theme.colors.surface }]}>{t('signIn')}</Text>
@@ -188,7 +203,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 32,
-    fontWeight: '700',
+    fontFamily: fontFor('700', 'serif'),
     letterSpacing: -0.5,
     textAlign: 'center',
   },
@@ -223,11 +238,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   retryText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
   buttonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
 });

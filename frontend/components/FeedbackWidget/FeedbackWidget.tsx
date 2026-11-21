@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
 import { useFeedbackSubmit, FeedbackType, DESCRIPTION_MAX } from './useFeedbackSubmit';
+import { fontFor } from '../../theme/typography';
 
 interface Props {
   visible: boolean;
@@ -165,7 +166,7 @@ export function FeedbackWidget({ visible, onClose, onSubmitted }: Props) {
                   {
                     color: colors.onSurface,
                     backgroundColor: colors.surfaceContainerHigh,
-                    borderColor: descError ? colors.error : colors.outline,
+                    borderColor: descError ? colors.error : colors.outlineField,
                   },
                 ]}
                 value={description}
@@ -198,7 +199,7 @@ export function FeedbackWidget({ visible, onClose, onSubmitted }: Props) {
               <Pressable
                 style={[
                   styles.primaryBtn,
-                  { backgroundColor: isSubmitting ? colors.outline : colors.primary },
+                  { backgroundColor: isSubmitting ? colors.onSurfaceVariant : colors.primary },
                 ]}
                 onPress={handleSubmit}
                 disabled={isSubmitting}
@@ -248,7 +249,7 @@ function makeStyles(theme: ReturnType<typeof useTheme>['theme']) {
     heading: {
       ...body,
       fontSize: typography.fontSizeLG,
-      fontWeight: '600',
+      fontFamily: fontFor('600'),
       color: colors.onSurface,
     },
     closeBtn: {
@@ -267,7 +268,7 @@ function makeStyles(theme: ReturnType<typeof useTheme>['theme']) {
     label: {
       ...body,
       fontSize: typography.fontSizeSM,
-      fontWeight: '500',
+      fontFamily: fontFor('500'),
       color: colors.onSurfaceVariant,
       marginTop: 12,
       marginBottom: 4,
@@ -281,7 +282,7 @@ function makeStyles(theme: ReturnType<typeof useTheme>['theme']) {
       borderRadius: 22,
       borderWidth: 1,
     },
-    typeChipText: { ...body, fontSize: typography.fontSizeSM, fontWeight: '500' },
+    typeChipText: { ...body, fontSize: typography.fontSizeSM, fontFamily: fontFor('500') },
     textarea: {
       ...body,
       borderWidth: 1,
@@ -303,6 +304,6 @@ function makeStyles(theme: ReturnType<typeof useTheme>['theme']) {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    primaryBtnText: { ...body, fontSize: typography.fontSizeBase, fontWeight: '600' },
+    primaryBtnText: { ...body, fontSize: typography.fontSizeBase, fontFamily: fontFor('600') },
   });
 }

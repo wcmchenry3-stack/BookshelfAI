@@ -7,6 +7,8 @@ name: Repo hygiene
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [dev, main]
   schedule:

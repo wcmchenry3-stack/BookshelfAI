@@ -57,7 +57,7 @@ jest.mock('expo-router', () => {
   MockStack.Screen = function MockScreen() {
     return null;
   };
-  return { Stack: MockStack };
+  return { Stack: MockStack, usePathname: () => '/', useSegments: () => [] };
 });
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
 jest.mock('expo-font', () => ({ useFonts: jest.fn(() => [true]) }));
@@ -76,6 +76,7 @@ jest.mock('../../hooks/useTheme', () => ({
     theme: {
       isDark: false,
       colors: new Proxy({}, { get: () => '#123456' }),
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeSM: 14, fontSizeLG: 20, fontSizeXS: 12 },
     },
   }),

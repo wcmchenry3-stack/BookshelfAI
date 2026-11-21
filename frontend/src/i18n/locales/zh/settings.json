@@ -8,5 +8,14 @@
   "signOutCancel": "取消",
   "trash": "回收站",
   "trashA11y": "打开回收站",
-  "trashHint": "恢复最近 30 天内删除的书"
+  "trashHint": "恢复最近 30 天内删除的书",
+  "openOn": "打开时显示",
+  "openOnA11y": "打开时显示：{{value}}",
+  "openOnHint": "选择应用打开时显示的页面",
+  "openOnPickerTitle": "应用打开时显示",
+  "openOnScan": "扫描",
+  "openOnWishlist": "愿望清单",
+  "openOnMyBooks": "我的书籍",
+  "openOnCancel": "取消",
+  "openOnSaveFailed": "无法保存你的选择，请重试。"
 }

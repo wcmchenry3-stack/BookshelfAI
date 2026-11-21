@@ -127,7 +127,8 @@ Run it locally (about 75 s for all three scenarios):
 ```bash
 cd backend
 pip install -r requirements-perf.txt
-createdb bs539_perf && DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf alembic upgrade head   # a THROWAWAY database, its name must contain "perf"
+createdb bs539_perf && psql -d bs539_perf -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # role: once per cluster, skip if it exists (#696)
+DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf alembic upgrade head   # a THROWAWAY database, its name must contain "perf"
 PERF_CONFIRM_ISOLATED_DB=yes DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf \
   python perf/run_scan_abuse.py                      # or --scenario abuse|breaker|kill
 ```
@@ -211,7 +212,7 @@ frontend/__tests__/
 | `scanJobMocks.ts` | `scanMocks` (spies: `post`, `get`, `loadJobs`, `saveJobs`, `netFetch`, `captureMessage`, `captureException`, plus the registered `netListener` and the uuid counter), `resetScanMocks()`, the `jest.mock` factories `authedModule`, `scanApiModule`, `scanStorageModule`, `netInfoModule`, `sentryModule`, `cryptoModule`, and the fixtures `refusal`, `scanOk`, `queuedImageJob`, `queuedJob` | Every test that renders `ScanJobProvider`. It imports no app code, so the factories can be `require`d while app modules load |
 | `providers.tsx` | `ScanJobsWrapper`, `renderScanJobs`, `renderScanJobsWithBanner`, `reconnectAndDrain` | The Banner + ScanJob provider wrapper for `renderHook`, and firing the NetInfo listener then running the drain |
 | `wishlistFlow.tsx` | `book`, `httpError`, `scanAndAdd` | The "scan a photo, review, add to the wishlist" flow behind `POST /wishlist` refusal tests |
-| `screenMocks.tsx` | `themeModule`, `loadingSpinnerModule`, `focusEffectRouterModule`, `userBookRow` | Library screen tests: the `useTheme` token set, a spinner stand-in, `useFocusEffect` on mount, and a `/user-books` row |
+| `screenMocks.tsx` | `themeModule`, `loadingSpinnerModule`, `focusEffectRouterModule`, `userBookRow` | Library screen tests: `useTheme` returning the real light theme, a spinner stand-in, `useFocusEffect` on mount, and a `/user-books` row |
 
 `jest.mock` calls stay in the test file, because babel-jest hoists them above imports. Pass the helper in through a factory that `require`s it:
 
@@ -347,6 +348,7 @@ Every scenario also runs `@axe-core/playwright` with the tags `wcag2a, wcag2aa, 
 
 ```bash
 createdb bookshelf_e2e
+psql -d bookshelf_e2e -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # once per cluster, skip if it exists (#696)
 cd backend && DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e alembic upgrade head
 cd ../frontend
 npm ci
@@ -369,7 +371,7 @@ Every CI check (what it does, what it prevents, where it is defined, when it was
 
 - `test-python`: `pytest` with coverage (default, no integration). It also runs the `security`-marked tests (see "When the security suite runs" above).
 - `test-frontend`: `npx jest --coverage`; fails below the Jest `coverageThreshold` floor (see Coverage targets).
-- `test-migrations`: against a Postgres 16 service, `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres).
+- `test-migrations`: against a Postgres 16 service, create the `bookshelf_app` role (migration 0028 needs it, #696), then `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres).
 - `lint-frontend`: `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint).
 - `typecheck-frontend`: `npm run typecheck` (`tsc --noEmit`, covers tests too).
 - `static-frontend`: its own workflow (`static-frontend.yml`; every PR to `dev`/`main` with no paths filter so it can be required, and pushes to `dev`): `npm ci` then `npm run knip` (#768, #771).
@@ -400,7 +402,7 @@ The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff 
 
 ### Required status checks (#771)
 
-The required checks live in `.github/rulesets/protect-main-dev.json` (the owner applies the ruleset in GitHub settings by hand). The full per-check table and the recommended required list are in [ci-checks.md](ci-checks.md#branch-protection). A context must be exactly what GitHub reports: an in-repo job is its `name:` (else its job id); a reusable-workflow job is `<caller job id> / <inner job name>`.
+The required checks live in `.github/rulesets/protect-dev.json` / `protect-main.json` (the owner applies the ruleset in GitHub settings by hand). The full per-check table and the recommended required list are in [ci-checks.md](ci-checks.md#branch-protection). A context must be exactly what GitHub reports: an in-repo job is its `name:` (else its job id); a reusable-workflow job is `<caller job id> / <inner job name>`.
 
 - A job skipped by `if:` still reports (as skipped) and passes. A workflow that does not run at all because of `on.pull_request.paths` never reports, so it blocks every PR outside those paths: never require a path-filtered workflow unless its filter is removed. This is why `static-frontend.yml` has no `paths:` filter. `e2e-web`, everything in `security.yml`, `doc-reminder`, `external-links`, `OWASP ZAP Active Scan` and `detect-changes` are deliberately not required.
 - `ios-build-check` and `android-build-check` are never required directly: when they run they report `ios-build-check / Xcode Build (no signing)` and `android-build-check / Gradle Build (Debug)`, when skipped the plain ids, so no single name always reports. `native-build-gate` is the required stand-in for both (and for the bundle checks); this is how android-build-check is covered.
@@ -415,7 +417,7 @@ The required checks live in `.github/rulesets/protect-main-dev.json` (the owner 
 - File read at runtime rather than imported (e.g. `src/i18n/glossary.ts`, read by `scripts/translate.js`): declare it in `entry`, not `ignore`.
 - Peer or native-only dependency that is never imported: add it to `ignoreDependencies` with a one-line `//` comment above it saying who loads it and why it is not imported. An entry without a reason is not accepted. `ignore`, `ignoreIssues` and `ignoreUnresolved` are empty and stay empty: fix the code (for a test that asserts a file is gone, use `fs.existsSync`, not an unresolvable `require`). No blanket globs.
 
-Required checks are listed in `.github/rulesets/protect-main-dev.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
+Required checks are listed in `.github/rulesets/protect-dev.json` / `protect-main.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
 
 Not a required check: `.github/workflows/e2e-web.yml` runs the Playwright web e2e suite (see "Web e2e (Playwright, #470)") on pull requests to `dev` that touch the frontend, the backend or the workflow.
 
@@ -435,7 +437,7 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
   - It does not cover knip `project` negations, source ignore comments (`jscpd:ignore-start`, `eslint-disable`, `# vulture`), or workflow flags. Those stay a review matter.
   - One marker per file is enough, and it does not check that the issue exists or carries the label. It is a speed bump that sits behind CODEOWNERS review, not a substitute for it.
   - Lowering an allowlist cap or moving an existing entry is not an addition. Tested by `backend/tests/unit/test_grandfather_policy.py`.
-- **Merge safety (open owner decision #859).** The two-PRs-pass-separately race of 2026-10-30 is not closed by this story. Whether to add a merge queue or to require up-to-date branches on `dev` is an open owner decision, tracked in #859; nothing has been chosen. The ruleset file already declares `strict_required_status_checks_policy: true`. Ruleset changes are owner-applied; see [ci-checks.md](ci-checks.md#branch-protection).
+- **Merge safety (#859, resolved).** The two-PRs-pass-separately race of 2026-10-30 is closed on `dev` by a merge queue (`ALLGREEN`, squash), declared in `.github/rulesets/protect-dev.json`; required workflows also trigger on `merge_group`. `main` keeps `strict_required_status_checks_policy: true` and merge commits (`protect-main.json`). Ruleset changes are owner-applied; see [ci-checks.md](ci-checks.md#branch-protection).
 - **Docs links (lychee).** `lychee.toml` at the repo root. On PRs: `lychee --config lychee.toml --offline --include-fragments 'docs/**/*.md' README.md CLAUDE.md`, i.e. relative links and `#anchors` only, no network. External URLs are checked only by the `external-links` job, which runs weekly (Monday 06:17 UTC) and on manual dispatch and is not a PR gate. A link that cannot resolve in CI on purpose (for example the owner's `~/.claude/standards/` files) goes in `exclude` in `lychee.toml`, with a comment.
 
 ## Coverage targets

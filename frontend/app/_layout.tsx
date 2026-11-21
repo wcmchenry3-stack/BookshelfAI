@@ -4,10 +4,10 @@ import { Sentry } from '../lib/sentry';
 
 import '../src/i18n/i18n';
 
-import { Image, Platform, StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
-import { NotoSerif_700Bold, NotoSerif_800ExtraBold } from '@expo-google-fonts/noto-serif';
+import { NotoSerif_600SemiBold, NotoSerif_700Bold } from '@expo-google-fonts/noto-serif';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -19,7 +19,6 @@ import { AddUnverifiedBookSheet } from '../components/AddUnverifiedBookSheet';
 import { BookCandidatePicker } from '../components/BookCandidatePicker';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { InAppBanner } from '../components/InAppBanner';
-import { ThemeToggleButton } from '../components/ThemeToggleButton';
 import { AuthProvider } from '../contexts/AuthContext';
 import { BannerProvider } from '../contexts/BannerContext';
 import { ScanJobProvider } from '../contexts/ScanJobContext';
@@ -29,7 +28,6 @@ import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
 import { ThemeProvider } from '../theme';
 import { FeedbackProvider } from '../components/FeedbackWidget/FeedbackContext';
-import { HeaderFeedbackButton } from '../components/FeedbackWidget/HeaderFeedbackButton';
 import { SessionLogger } from '../components/FeedbackWidget/SessionLogger';
 
 // ES imports are hoisted, so every import above (Sentry first) has evaluated before
@@ -43,64 +41,29 @@ Sentry.addBreadcrumb({
   level: 'info',
 });
 
-function HeaderLogo() {
-  const { theme } = useTheme();
-  return (
-    <View style={headerStyles.row}>
-      <Image
-        source={require('../assets/icon.png')}
-        style={headerStyles.logo}
-        resizeMode="contain"
-        accessibilityLabel="BookshelfAI"
-        accessibilityRole="image"
-      />
-      <Text style={[headerStyles.wordmark, { color: theme.colors.primary }]}>BookshelfAI</Text>
-    </View>
-  );
-}
-
 // Separate component so useTheme() can be called inside ThemeProvider.
 function InnerStack() {
   const { theme } = useTheme();
-  // Dark mode: semi-transparent frosted-glass header; light mode: transparent.
-  const headerBg = theme.colors.headerOverlay;
-  const webStyle = Platform.OS === 'web' && theme.isDark ? { backdropFilter: 'blur(20px)' } : {};
-
+  // No screen shows a Stack header (#936): each owns its top safe area and its
+  // own title and Back link. The options are kept opaque in both themes (#906)
+  // as a fallback for any screen added without its own header.
   return (
     <Stack
       screenOptions={{
-        headerLeft: () => <HeaderLogo />,
-        headerRight: () => (
-          <View style={headerStyles.right}>
-            <ThemeToggleButton />
-            <HeaderFeedbackButton />
-          </View>
-        ),
-        headerStyle: { backgroundColor: headerBg, ...webStyle },
+        headerStyle: { backgroundColor: theme.colors.background },
         headerShadowVisible: false,
-        headerTransparent: theme.isDark,
+        headerTransparent: false,
       }}
     >
-      <Stack.Screen name="(tabs)" options={{ title: '' }} />
-      {/* Opaque header: the list starts below it, not under the dark-mode glass header. */}
-      <Stack.Screen name="scan-queue" options={{ title: '', headerTransparent: false }} />
-      <Stack.Screen name="trash" options={{ title: '', headerTransparent: false }} />
+      {/* No app chrome on sign-in (the route is "(auth)/login": there is no (auth)/_layout); also keeps the raw route name out of the title (#908). */}
+      <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      {/* Both have their own Back link and own the top inset (#936); #932 restyles Trash. */}
+      <Stack.Screen name="scan-queue" options={{ headerShown: false }} />
+      <Stack.Screen name="trash" options={{ headerShown: false }} />
     </Stack>
   );
 }
-
-const headerStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  // gap 16: each button has hitSlop 8, so a smaller gap makes the targets overlap.
-  right: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  logo: { width: 40, height: 40, borderRadius: 8 },
-  wordmark: {
-    fontSize: 20,
-    fontFamily: 'NotoSerif_700Bold',
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
-});
 
 /**
  * The review picker and the "Add it yourself" form (#616), never on screen at
@@ -170,9 +133,11 @@ function GlobalScanModals() {
 }
 
 function RootLayout() {
+  // One font file per weight (theme/typography.ts `fontFiles`): Android ignores
+  // fontWeight on custom fonts, so every weight a variant uses is loaded here.
   const [fontsLoaded, fontsError] = useFonts({
+    NotoSerif_600SemiBold,
     NotoSerif_700Bold,
-    NotoSerif_800ExtraBold,
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,

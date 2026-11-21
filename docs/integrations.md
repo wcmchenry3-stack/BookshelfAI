@@ -196,10 +196,11 @@ With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client I
 - Health check path: `/health`
 - Root dir: `backend/`
 
-**Database:** `bookshelf-db` — Postgres, Oregon region, connection string injected as `DATABASE_URL`.
+**Database:** Supabase Postgres (prod project; persistent branch `dev` for the dev service) through the session pooler, as the `bookshelf_app` role (#696); see [`RENDER.md`](RENDER.md#database-role). The Render Postgres `bookshelf-db` is suspended and no longer referenced.
 
 **Env vars on Render:** configured in the Render dashboard (not in `render.yaml` for secrets). Expected:
-- `DATABASE_URL` (auto, from the DB resource)
+- `DATABASE_URL` (Supabase session pooler URL as `bookshelf_app`; dashboard secret)
+- `MIGRATION_DATABASE_URL` (owner DSN, used only by `alembic upgrade head`; dashboard secret)
 - `ENVIRONMENT=production`
 - `CORS_ORIGINS` (JSON array, no wildcards)
 - `TRUSTED_HOSTS` (JSON array — **must include both the public domain and any direct-origin probe hostnames**)

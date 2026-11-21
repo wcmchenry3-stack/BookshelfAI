@@ -3,6 +3,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
+import { fontFor } from '../theme/typography';
 
 /** Persistent notice shown on library screens while the device is offline. */
 export function OfflineNotice() {
@@ -40,5 +41,5 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginVertical: 8,
   },
-  text: { flex: 1, fontWeight: '600' },
+  text: { flex: 1, fontFamily: fontFor('600') },
 });

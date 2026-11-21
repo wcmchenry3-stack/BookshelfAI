@@ -6,6 +6,8 @@ on:
     # Default types plus ready_for_review, so the native build checks (skipped
     # on drafts) run when a draft PR is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [dev, main]
   workflow_call:
@@ -17,7 +19,8 @@ concurrency:
 jobs:
   # === Change detection (#767) =============================================
   # One cheap job decides whether the expensive bundle/native build checks run.
-  # Plain `git diff` against the PR base (no third-party action). On push and
+  # Plain `git diff` against the PR base, or the merge queue's base_sha on
+  # merge_group (no third-party action). On push and
   # workflow_call (Deploy) there is no PR base, so both outputs are 'true' and
   # the checks always run. A job skipped via `if:` reports success to required
   # checks.
@@ -37,9 +40,10 @@ jobs:
         id: detect
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # PR base on pull_request; the branch tip the queue entry builds on for merge_group.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          if [ "$EVENT_NAME" != "pull_request" ]; then
+          if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "merge_group" ]; then
             echo "Event is $EVENT_NAME: running all checks"
             echo "native=true" >> "$GITHUB_OUTPUT"
             echo "frontend=true" >> "$GITHUB_OUTPUT"
@@ -187,6 +191,30 @@ jobs:
       coverage-threshold: 98
     secrets: inherit
 
+  # Unit tests for the Python asset tools in tools/assets (docs/ASSETS.md). Not collected by the
+  # backend suite. Not a required check, so a red run does not block a merge; read it when assets change.
+  test-tools:
+    # Skip while the PR is a draft; ready_for_review starts the run (ship-story skill).
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Test tools (pytest)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: backend/.python-version
+          cache: pip
+          cache-dependency-path: tools/assets/requirements.txt
+      - name: Install tools requirements
+        run: pip install -r tools/assets/requirements.txt
+      - name: pytest
+        working-directory: tools
+        run: python -m pytest
+
   test-frontend:
     needs: [lint-python, lint-frontend, secret-scan]
     uses: wcmchenry3-stack/.github/.github/workflows/called-test-frontend.yml@main
@@ -275,6 +303,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-backend
+      # Migration 0028 (#696) grants to the least-privilege app role and stops
+      # if it is missing; in prod the owner creates it by hand. Throwaway DB only.
+      - name: Create the bookshelf_app role
+        run: >-
+          psql "postgresql://test:test@localhost:5432/test" -v ON_ERROR_STOP=1
+          -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bookshelf_app') THEN CREATE ROLE bookshelf_app LOGIN PASSWORD 'test'; END IF; END \$\$;"
       - name: Upgrade to head
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
