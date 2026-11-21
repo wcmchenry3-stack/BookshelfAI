@@ -138,9 +138,9 @@ Defined in `frontend/theme/tokens.ts` (`palette`).
 
 #### Logo / App Icon
 
-- Source asset: `frontend/assets/logo.png` (chihuahua + open book on navy, 1024×1024)
-- Configured in `app.json` as iOS icon, Android adaptive foreground (`backgroundColor: #0f426f`), and web favicon
-- No longer rendered in-app: the header wordmark was removed in #936
+- Source of truth: the recipe `tools/assets/draw_logo.py` (chihuahua + open book in a ring, on navy `#263250`); `tools/assets/gen_app_icons.py` writes every raster (see `docs/ASSETS.md`). Never edit `frontend/assets/*.png`, the iOS `AppIcon` or the Android `mipmap-*` / `splashscreen_logo` files by hand.
+- Configured in `app.json` as the icon, splash, Android adaptive foreground + monochrome layer (`backgroundColor: #263250`) and web favicon
+- `assets/logo.png` (generated) is shown on the login screen. The header wordmark was removed in #936
 
 ### Default tab ("Open on", #904, #913)
 
