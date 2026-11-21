@@ -183,7 +183,9 @@ class TestRulesetsAgree:
 
     def test_main_allows_merge_only(self):
         methods = _allowed_merge_methods("protect-main.json")
-        assert methods == ["merge"], f"main must allow merge only (no squash), got {methods}"
+        assert methods == [
+            "merge"
+        ], f"main must allow merge only (no squash), got {methods}"
 
     def test_dev_required_workflows_have_merge_group_trigger(self):
         problems = check_merge_group(load_required_contexts(), load_workflows())
