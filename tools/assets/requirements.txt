@@ -5,3 +5,4 @@
 numpy==2.4.6
 Pillow==13.0.0
 pytest==9.2.0
+fonttools==4.68.0

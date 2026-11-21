@@ -88,7 +88,9 @@ cd tools && python -m pytest
 
 ## Third-party assets
 
-None. (Fonts such as the app's text faces are packages, not assets; their licenses are in `package.json` dependencies.)
+None shipped as files. The logo wordmark's letter outlines (`tools/assets/logo_glyphs.py`) are derived from Liberation Serif Regular, (c) Red Hat, Inc., SIL Open Font License 1.1, which allows embedding the outlines; the license text is at https://openfontlicense.org.
+
+None otherwise. (Fonts such as the app's text faces are packages, not assets; their licenses are in `package.json` dependencies.)
 
 ## Attested assets, until their recipes land
 
@@ -104,3 +106,4 @@ The Gemini image is AI-generated, so US copyright law generally does not protect
 | Date       | Decision                                                                                                     |
 | ---------- | ------------------------------------------------------------------------------------------------------------ |
 | 2026-11-21 | Assets are recipe-first; third party is a declared exception. Logo is the first recipe, then icons and splash. |
+| 2026-11-21 | **Logo audition** (`draw_logo.py`, `OPTIONS`). A *line*: the reference's drawing, navy head, cream outline. B *solid*: cream silhouette, navy markings. C *bold*: A with 1.5x strokes and 5 page lines. Shipped **A**: it is the mark the owner already chose from the Gemini image, and it keeps the dog's expression. B has the strongest silhouette but loses the ear and brow detail; C is the fallback if A is too thin on a phone. All three stay in code and under test; switching is `SHIPPED = "B"` plus regenerating. The wordmark is outlined glyphs (Liberation Serif Regular, SIL OFL 1.1), not live text. Lettering is unreadable at 48 px, so icons use the mark without the wordmark and ring (Story 3). |
