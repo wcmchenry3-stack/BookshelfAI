@@ -11,6 +11,7 @@ from draw_logo import (
     SHIPPED,
     SIZE,
     _flatten,
+    _tokens,
     mark_shapes,
     render,
     render_mask,
@@ -21,9 +22,9 @@ from draw_logo import (
 # sha256 of the raw RGB bytes of render(256, style). Pinned with Pillow 13.0.0 (requirements.txt).
 # An intended change to the drawing means updating these in the same commit.
 PINNED = {
-    "A": "adc68c6d22a3c819a5f5ae4734df765eec2c86b0f3f34ad36de0e58b7cc465c4",
-    "B": "f2c8fa250cfa761869e8e80d9f15b5cf04228678f2d0ad6fd153a8e9626e6222",
-    "C": "b458f4dd75d55df72f5911924363fcdcacbae7ee05211c04c5f128eae7376303",
+    "A": "7a3470c8dce8bd27fe5d2fecc3987beda9f8b0e990968475570a6e62a6228e7a",
+    "B": "f4126169cbe836d7b852600e2bea228abd98612bb49bcf87254b93c417b05d50",
+    "C": "06e9cd43464470fc5f01062963fe390bc2e41e86ab698adfb99e696303954aba",
 }
 
 
@@ -65,6 +66,15 @@ def test_letters_keep_their_counters():
     assert mask.getpixel(((x0 + x1) // 2, (y0 + y1) // 2)) == 0, "the counter was filled"
     # Some pixel along the middle row is ink: the left stroke of the 'o'.
     assert max(mask.getpixel((x, (y0 + y1) // 2)) for x in range(x0, x0 + (x1 - x0) // 4)) == 255
+
+
+def test_every_svg_path_is_valid_path_data():
+    """SVG needs whole commands: M/L take pairs, Q four numbers, C six, Z none. (TrueType's chained
+    quadratics have more than four and render wrong in a real SVG viewer, though not in our rasteriser.)"""
+    need = {"M": 2, "L": 2, "Q": 4, "C": 6, "Z": 0}
+    for shape in mark_shapes():
+        for cmd, nums in _tokens(shape.d):
+            assert len(nums) % max(need[cmd], 1) == 0 and (need[cmd] or not nums), (cmd, nums, shape.d[:50])
 
 
 def test_svg_is_well_formed_and_matches_the_shapes():

@@ -232,7 +232,7 @@ def mark_shapes(style: str = SHIPPED, *, ring: bool = True, text: bool = True) -
 
 
 def _flatten(d: str) -> list[list[tuple[float, float]]]:
-    """Subpaths of a path as polylines. Quadratics may chain off-curve points (TrueType style)."""
+    """Subpaths of a path as polylines, with SVG meaning for every command (so SVG viewers agree)."""
     subs: list[list[tuple[float, float]]] = []
     cur: list[tuple[float, float]] = []
     for cmd, n in _tokens(d):
@@ -243,17 +243,14 @@ def _flatten(d: str) -> list[list[tuple[float, float]]]:
         elif cmd == "L":
             for i in range(0, len(n), 2):
                 cur.append((n[i], n[i + 1]))
-        elif cmd == "Q":
-            pts = [(n[i], n[i + 1]) for i in range(0, len(n), 2)]
-            p0 = cur[-1]
-            offs, end = pts[:-1], pts[-1]
-            for j, c in enumerate(offs):
-                to = end if j == len(offs) - 1 else ((c[0] + offs[j + 1][0]) / 2, (c[1] + offs[j + 1][1]) / 2)
+        elif cmd == "Q":  # SVG semantics: every four numbers are one (control, end) segment
+            for i in range(0, len(n), 4):
+                p0 = cur[-1]
+                c, to = (n[i], n[i + 1]), (n[i + 2], n[i + 3])
                 for s in range(1, CURVE_STEPS + 1):
                     t = s / CURVE_STEPS
                     u = 1 - t
                     cur.append((u * u * p0[0] + 2 * u * t * c[0] + t * t * to[0], u * u * p0[1] + 2 * u * t * c[1] + t * t * to[1]))
-                p0 = to
         elif cmd == "C":
             for i in range(0, len(n), 6):
                 p0 = cur[-1]

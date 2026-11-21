@@ -24,7 +24,22 @@ OUT = Path(__file__).with_name("logo_glyphs.py")
 
 
 def _fmt(v: float) -> str:
-    return f"{v:.0f}"
+    """Whole numbers stay whole; the half-unit midpoints of expanded curves keep one decimal."""
+    return f"{v:.0f}" if v == int(v) else f"{v:.1f}"
+
+
+def _expand_quadratics(start: tuple[float, float], pts: list[tuple[float, float]]) -> list[tuple[float, float, float, float]]:
+    """A TrueType chain of off-curve points (the last is on-curve) as plain SVG quadratics.
+
+    TrueType leaves out the on-curve point between two off-curve neighbours: it is their midpoint.
+    SVG needs each (control, end) pair spelled out, so insert those midpoints here.
+    """
+    out = []
+    offs, end = pts[:-1], pts[-1]
+    for i, c in enumerate(offs):
+        to = end if i == len(offs) - 1 else ((c[0] + offs[i + 1][0]) / 2, (c[1] + offs[i + 1][1]) / 2)
+        out.append((c[0], c[1], to[0], to[1]))
+    return out
 
 
 def glyph_path(font: TTFont, ch: str) -> tuple[str, int]:
@@ -40,7 +55,7 @@ def glyph_path(font: TTFont, ch: str) -> tuple[str, int]:
         elif op == "lineTo":
             d.append("L" + " ".join(_fmt(c) for c in pts[0]))
         elif op == "qCurveTo":
-            d.append("Q" + " ".join(_fmt(c) for p in pts for c in p))
+            d.append("Q" + " ".join(_fmt(c) for seg in _expand_quadratics(None, list(pts)) for c in seg))
         elif op == "curveTo":
             d.append("C" + " ".join(_fmt(c) for p in pts for c in p))
         elif op in ("closePath", "endPath"):
