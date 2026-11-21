@@ -163,12 +163,28 @@ class TestRulesetRequiredChecks:
         assert "native-build-gate" in load_required_contexts(RULESETS_DIR / filename)
 
 
+def _allowed_merge_methods(filename):
+    ruleset = json.loads((RULESETS_DIR / filename).read_text())
+    for rule in ruleset["rules"]:
+        if rule["type"] == "pull_request":
+            return rule["parameters"].get("allowed_merge_methods", [])
+    return []
+
+
 class TestRulesetsAgree:
     def test_dev_and_main_list_identical_required_contexts(self):
         dev = load_required_contexts(RULESETS_DIR / "protect-dev.json")
         main = load_required_contexts(RULESETS_DIR / "protect-main.json")
         assert sorted(dev) == sorted(main)
         assert len(dev) == len(set(dev))
+
+    def test_dev_allows_squash_only(self):
+        methods = _allowed_merge_methods("protect-dev.json")
+        assert methods == ["squash"], f"dev must allow squash only, got {methods}"
+
+    def test_main_allows_merge_only(self):
+        methods = _allowed_merge_methods("protect-main.json")
+        assert methods == ["merge"], f"main must allow merge only (no squash), got {methods}"
 
     def test_dev_required_workflows_run_in_merge_queue(self):
         problems = check_merge_group(load_required_contexts(), load_workflows())
