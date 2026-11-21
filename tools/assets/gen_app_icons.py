@@ -12,6 +12,7 @@ Writes (`frontend/`):
   ios/.../SplashScreenLegacy.imageset/image{,@2x,@3x}.png, SplashScreenBackground.colorset
   android/.../mipmap-*/ic_launcher{,_round,_foreground,_monochrome}.webp, drawable-*/splashscreen_logo.png
   android/.../values/colors.xml (iconBackground, splashscreen_background)
+  components/brand/logoPaths.ts   the whole mark as path data for the in-app BookshelfLogo component
 
 Icons show the mark without the ring and the wordmark (unreadable at 48 px) in the bold style (C);
 the monochrome layer uses the solid silhouette (B); the splash and logo show the whole mark.
@@ -28,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-from draw_logo import CREAM, NAVY, render, render_mask, mark_shapes
+from draw_logo import CREAM, NAVY, mark_shapes, render, render_mask, ts_module
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
@@ -165,6 +166,11 @@ def outputs() -> dict[Path, bytes]:
     return out
 
 
+def source_files() -> dict[Path, bytes]:
+    """Generated source (not images): the path data the in-app `BookshelfLogo` draws."""
+    return {FRONTEND / "components/brand/logoPaths.ts": ts_module().encode()}
+
+
 def text_edits() -> dict[Path, str]:
     """Small text files that name the brand colours and the themed layer: derived, so checked too."""
     navy = _hex(NAVY)
@@ -221,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     stale: list[Path] = []
     files: dict[Path, bytes] = outputs()
+    files.update(source_files())
     files.update({p: t.encode() for p, t in text_edits().items()})
     for path, data in files.items():
         if path.exists() and path.read_bytes() == data:
