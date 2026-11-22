@@ -95,17 +95,17 @@ Facts the answers rest on:
   through `Sentry.captureFeedback` (`frontend/components/FeedbackWidget/useFeedbackSubmit.ts:79-91`).
 - `ai_usage` rows record per-user AI calls for cost control; deleting an account keeps the
   cost rows with the user detached (`backend/app/models/ai_usage.py:53`).
-- No analytics, advertising SDK, location, contacts, or advertising ID.
+- No third-party analytics or advertising SDK, no location, contacts, or advertising ID. First-party usage records (`ai_usage`, `scan_corrections`) are used for accuracy measurement, so Product Interaction carries the Analytics purpose.
 
 | Data type | Collected | Linked to user | Used for tracking | Purpose | Shared with third party | Optional | Notes |
 |---|---|---|---|---|---|---|---|
 | Email address | Yes | Yes | No | App functionality, account management | No (Google only verifies its own token) | Required | Google-verified email |
 | Name (Google `display_name`) | Yes | Yes | No | App functionality | No | Required by sign-in | Stored (`backend/app/models/user.py:30`) |
-| Profile picture URL (Google `avatar_url`) | Yes | Yes | No | App functionality | No | Required by sign-in | Stored (`user.py:31`); Apple "Photos or Videos" or "Other User Content", owner decides |
+| Profile picture URL (Google `avatar_url`) | Yes | Yes | No | App functionality | No | Required by sign-in | Stored (`user.py:31`); a URL to the Google profile photo, not an image we hold: covered by Apple "Other User Content" (declared Linked in the #1001 manifest), not "Photos or Videos" |
 | User ID (account ID, Google subject) | Yes | Yes | No | App functionality, fraud prevention | No | Required | Also sent to Sentry as an opaque ID |
 | Photos (shelf or cover scans) | Yes | Declared Linked = No, matching the #1001 manifest (open owner question: #1024) | No | App functionality | Yes, processed by Anthropic as a service provider | Optional (feature) | Not stored beyond a 30-day fingerprint; Apple: "Photos or Videos" collected; Play: "Photos" collected and shared (service-provider exemption may apply, owner decides). The request is authenticated, so whether it counts as linked is the #1024 question |
 | Other user content (library, shelves, reading status, corrections) | Yes | Yes | No | App functionality | No | Required for core use | iOS "Other User Content"; Play "Other in-app content" |
-| Product interaction / usage (AI usage records) | Yes | Linked: Yes | No | App functionality, cost and abuse control | No | Required | Apple "Product Interaction" or "Other Usage Data" |
+| Product interaction / usage (AI usage records) | Yes | Linked: Yes | No | App functionality, analytics (scan accuracy), cost and abuse control | No | Required | Apple "Product Interaction" (AppFunctionality + Analytics, as in the #1001 manifest) |
 | Crash data (device crash events) | Yes | Linked: No (no user on device events) | No | App functionality | Yes, Sentry as a service provider | Required | Play: "Crash logs" |
 | Performance data and other diagnostic data (backend Sentry) | Yes | Linked: Yes (`user.id` set) | No | App functionality | Yes, Sentry as a service provider | Required | Matches the #1001 manifest; Play: "Diagnostics" |
 | Customer support (in-app feedback via Sentry) | Yes, only when the user submits feedback | Linked: No | No | App functionality, customer support | Yes, Sentry as a service provider | Optional | `useFeedbackSubmit.ts:79-91` |
@@ -140,3 +140,5 @@ web URL must work without the app installed and be reachable from the Data safet
 | P-4 | #1017 | Remove unused permissions (`RECORD_AUDIO`, release `SYSTEM_ALERT_WINDOW`, microphone and Face ID strings) |
 | P-5 | #1018 | Owner: store review package (support URL, review demo account, age and content ratings) |
 | P-6 | #1019 | Owner: confirm Play's current target API requirement against targetSdk 36 |
+| Review | #1023 | Ask for consent before sending scan photos to a third-party AI (Apple 5.1.2(i)) |
+| Review | #1024 | Decision needed: is Photos (and backend diagnostics) linked to the user? |
