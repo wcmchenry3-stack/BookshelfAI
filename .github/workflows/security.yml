@@ -93,9 +93,11 @@ jobs:
       - name: npm audit (fail on high or critical)
         run: npm audit --audit-level=high
       # Runs even when the step above failed so the report is always uploaded.
+      # `--audit-level=none` makes npm exit 0 so this step never fails a second
+      # time; the gate above is the only step that decides pass or fail.
       - name: npm audit (JSON report)
         if: always()
-        run: npm audit --audit-level=high --json > npm-audit-report.json
+        run: npm audit --audit-level=none --json > npm-audit-report.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:

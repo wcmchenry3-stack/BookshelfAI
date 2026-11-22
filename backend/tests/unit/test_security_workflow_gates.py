@@ -13,8 +13,13 @@ def _load():
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
+def _on(wf):
+    # YAML parses the bare key `on:` as boolean True.
+    return wf.get("on", wf.get(True))
+
+
 def test_pr_paths_include_frontend_manifests():
-    paths = _load()[True]["pull_request"]["paths"]
+    paths = _on(_load())["pull_request"]["paths"]
     assert "frontend/package.json" in paths
     assert "frontend/package-lock.json" in paths
 
@@ -26,6 +31,12 @@ def test_npm_audit_job_fails_on_findings():
         r.strip().startswith("npm audit --audit-level=") and "--json" not in r
         for r in runs
     )
+    gate = next(
+        s for s in steps if s.get("run", "").strip() == "npm audit --audit-level=high"
+    )
+    assert "if" not in gate and "continue-on-error" not in gate
+    report = next(s for s in steps if "--json" in s.get("run", ""))
+    assert "--audit-level=none" in report["run"]
     uploads = [s for s in steps if "upload-artifact" in s.get("uses", "")]
     assert uploads and all(u.get("if") == "always()" for u in uploads)
 
