@@ -18,6 +18,7 @@ import {
 import { AddUnverifiedBookSheet } from '../components/AddUnverifiedBookSheet';
 import { BookCandidatePicker } from '../components/BookCandidatePicker';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { GestureRoot } from '../components/GestureRoot';
 import { InAppBanner } from '../components/InAppBanner';
 import { AuthProvider } from '../contexts/AuthContext';
 import { BannerProvider } from '../contexts/BannerContext';
@@ -150,25 +151,29 @@ function RootLayout() {
     return <View />;
   }
 
+  // One gesture-handler root for the whole tree (#901; a plain View on web).
+  // No gestures are attached yet.
   return (
-    <ErrorBoundary>
-      <ThemeProvider>
-        <BannerProvider>
-          <AuthProvider>
-            {/* One hidden Turnstile widget for every POST /scan (#740). */}
-            <TurnstileProvider>
-              <ScanJobProvider>
-                <FeedbackProvider>
-                  <InAppBanner />
-                  <InnerStack />
-                  <GlobalScanModals />
-                </FeedbackProvider>
-              </ScanJobProvider>
-            </TurnstileProvider>
-          </AuthProvider>
-        </BannerProvider>
-      </ThemeProvider>
-    </ErrorBoundary>
+    <GestureRoot testID="gesture-root">
+      <ErrorBoundary>
+        <ThemeProvider>
+          <BannerProvider>
+            <AuthProvider>
+              {/* One hidden Turnstile widget for every POST /scan (#740). */}
+              <TurnstileProvider>
+                <ScanJobProvider>
+                  <FeedbackProvider>
+                    <InAppBanner />
+                    <InnerStack />
+                    <GlobalScanModals />
+                  </FeedbackProvider>
+                </ScanJobProvider>
+              </TurnstileProvider>
+            </AuthProvider>
+          </BannerProvider>
+        </ThemeProvider>
+      </ErrorBoundary>
+    </GestureRoot>
   );
 }
 

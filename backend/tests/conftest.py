@@ -65,6 +65,31 @@ def _reset_rate_limits():
 
 
 @pytest.fixture(autouse=True)
+def _drop_stale_db_pool_connections():
+    """Never let a pooled DB connection outlive the event loop it was made on (#833).
+
+    ``app.core.database.engine`` is a module-level singleton, but every test
+    that drives the app through ``TestClient`` (or ``asyncio.run``) gets its
+    own short-lived event loop. asyncpg connections are bound to the loop that
+    opened them, so a connection left in the pool by one test is dead once
+    that loop closes. The next test that checks it out fails to terminate it,
+    and SQLAlchemy logs an ERROR ("Exception terminating connection ...
+    Event loop is closed") that Sentry's logging integration turns into an
+    extra event, breaking tests that count events.
+
+    ``dispose(close=False)`` drops the pooled connections without awaiting
+    anything (so it is safe whichever loop is, or is not, running) and gives the
+    next test a fresh pool. It does no I/O, so it adds no measurable time, and
+    it is a no-op when the pool is empty (SQLite and no-DB runs).
+    """
+    from app.core.database import engine
+
+    engine.sync_engine.dispose(close=False)
+    yield
+    engine.sync_engine.dispose(close=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_jwks_caches():
     """Empty the in-process Google JWKS cache so tests never share keys (#691)."""
     from app.auth.google import google_jwks_cache

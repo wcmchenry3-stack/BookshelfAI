@@ -207,6 +207,9 @@ export function BookCandidatePicker({
                 disabled={owned}
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked, disabled: owned }}
+                // react-native-web ignores accessibilityState: without this an
+                // unticked row has role=checkbox and no aria-checked.
+                aria-checked={checked}
                 accessibilityLabel={t('bookCandidatePicker.selectBook', {
                   title: book.title,
                   author: book.author,

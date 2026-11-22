@@ -61,6 +61,21 @@ Rules: a helper holds setup, never an assertion about the behaviour under test, 
 
 Integration tests can live in any folder (`tests/integration/`, `tests/limits/`, `tests/security/`, `tests/unit/`); the marker, not the folder, decides. The `test-migrations` job runs `pytest -m integration tests -q -rs` (all folders), so the summary line shows how many ran and `-rs` lists every skip. It also sets `REQUIRE_DB_TESTS=1`: with that variable set, `tests/_db_guard.py` makes `conftest.py` abort the run with an error if `DATABASE_URL` is missing or the dummy URL, so a mass skip can never pass (#760). `tests/unit/test_db_guard.py` covers the guard.
 
+**Event loops and the app's DB pool (#833)** — `app.core.database.engine` is one module-level engine, but each `TestClient` or `asyncio.run` test gets its own short-lived event loop, and an asyncpg connection is bound to the loop that opened it. The autouse fixture `_drop_stale_db_pool_connections` in `tests/conftest.py` calls `engine.sync_engine.dispose(close=False)` before and after every test, so a connection left pooled by one test is never reused after its loop closed. Without it, a full DB-backed run logged "Exception terminating connection ... Event loop is closed", which Sentry captured as an extra event and broke `test_real_sentry_event_has_no_secret_token_or_header_value`. `tests/integration/test_db_pool_loop_isolation.py` covers it (two ordered tests).
+
+**Full DB-backed run on a local scratch Postgres** (what CI's `test-migrations` does, but for the whole suite):
+
+```bash
+# Postgres 16 on a scratch port; initdb refuses to run as root, so use a non-root user
+initdb -D /var/tmp/pg/data && pg_ctl -D /var/tmp/pg/data -o "-p 55432 -k /var/tmp/pg" -l /var/tmp/pg/pg.log start
+psql -h /var/tmp/pg -p 55432 -d postgres \
+  -c "CREATE ROLE test SUPERUSER LOGIN PASSWORD 'test'" -c "CREATE DATABASE test OWNER test" \
+  -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'test'"   # migration 0028 needs this role
+cd backend
+export DATABASE_URL=postgresql+asyncpg://test:test@localhost:55432/test REQUIRE_DB_TESTS=1
+alembic upgrade head && python -m pytest tests/ -q
+```
+
 ### Running
 
 ```bash
@@ -362,7 +377,7 @@ DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e npm run e2e
 **Known app defects the suite carries** (each is a real finding, kept visible rather than hidden):
 
 - *Scan upload on web fails.* `ScanJobContext` appends the photo's blob URL string to the form data, which browsers reject (`parameter 2 is not of type 'Blob'`), so no `POST /scan` is sent. The scan UI test is marked `test.fail(...)`: it passes as an expected failure now and turns red once the upload works, which is the cue to remove that line (with the upload fixed it passes as written).
-- *Accessibility.* A scenario tolerates a violation only through `KNOWN_VIOLATIONS` in `e2e/support/fixtures.ts`: one rule on the matching nodes, every other rule still runs, and the call fails when axe stops reporting it (so a fix has to remove the entry). Never add one without an issue. Today: book cards that are buttons containing buttons (`nested-interactive`), picker rows with `role="checkbox"` and no `aria-checked`, the wishlist cover placeholder's `aria-label` on a role-less div, the success banner's white-on-green contrast (3.29:1), and the scan spinner as an unnamed progressbar.
+- *Accessibility.* A scenario tolerates a violation only through `KNOWN_VIOLATIONS` in `e2e/support/fixtures.ts`: one rule on the matching nodes, every other rule still runs, and the call fails when axe stops reporting it (so a fix has to remove the entry). Never add one without an issue. Today: none (#797 fixed the last ones: the picker's `aria-checked`, which react-native-web needs as its own prop because it ignores `accessibilityState`, and the scan spinner, now `aria-hidden` inside the labelled progress row).
 - The development bundle's LogBox toast (`#error-toast`) covers the tab bar, so the fixtures hide it; it is not app UI.
 - The development export does not content-hash its chunks (every name ends in the MD5 of an empty string), so two lazily loaded chunks with the same basename overwrite each other in `dist/`. That is why `app.json` keeps expo-router's async routes off (#712; see `docs/claude/frontend.md` "File Routing"). The non-English locale chunks (`src/i18n/locales/<lang>/<ns>.json`) still collide in this build, and only one language's copy of each namespace survives. The suite reads English only, which is bundled, so it is not affected; production exports hash real contents and are not affected either.
 

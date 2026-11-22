@@ -1,4 +1,5 @@
 import React from 'react';
+import TestRenderer, { act } from 'react-test-renderer';
 import { fireEvent, render } from '@testing-library/react-native';
 
 import { BookCandidatePicker, EnrichedBook } from '../../components/BookCandidatePicker';
@@ -137,6 +138,33 @@ describe('BookCandidatePicker', () => {
     );
     await fireEvent.press(getByText('Select books to add'));
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  // #797: react-native-web ignores accessibilityState, so a role=checkbox row
+  // needs aria-checked, including false (axe aria-required-attr). The native
+  // Pressable folds the prop into accessibilityState on the host node, so read
+  // it from the composite element, where the picker sets it.
+  it('sets aria-checked on every checkbox row, ticked or not', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <BookCandidatePicker
+          visible={true}
+          candidates={BOOKS}
+          onConfirm={onConfirm}
+          onDismiss={onDismiss}
+          preselect
+        />
+      );
+    });
+    const rows = renderer.root.findAll(
+      (n) => typeof n.type !== 'string' && n.props.accessibilityRole === 'checkbox'
+    );
+    // The outermost element of each row is the one the picker renders.
+    const pickerRows = rows.filter(
+      (n) => !rows.some((o) => o !== n && o.findAll((m) => m === n).length > 0)
+    );
+    expect(pickerRows.map((n) => n.props['aria-checked'])).toEqual([true, false]);
   });
 
   it('preselects every book not already in the library', async () => {
