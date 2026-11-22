@@ -165,6 +165,10 @@ the data the app sends off the device (#1001), and prebuild copies it into
 committed plist matches `app.json`, so change both together (edit `app.json`,
 then regenerate). Prebuild merges into the committed plist and appends new
 types at the end, so add a new type at the end of the `app.json` list too.
+Prebuild only appends missing types and adds purposes; it never removes a type or
+rewrites Linked or Tracking. To remove a type or change Linked/Tracking/purposes,
+delete that entry from `PrivacyInfo.xcprivacy` (or the whole file) before prebuild,
+or edit the entry by hand to match `app.json`; the test catches any mismatch.
 
 | Data type (manifest key `NSPrivacyCollectedDataType…`) | Linked to the user | Purposes | Where it comes from |
 |---|---|---|---|
@@ -178,7 +182,7 @@ types at the end, so add a new type at the end of the `app.json` list too.
 | Crash Data (`CrashData`) | No | App Functionality | Sentry crash reports from the app (no user set on the device) |
 | Performance Data (`PerformanceData`) | Yes | App Functionality | Sentry traces from the app and the API; API traces carry our user id |
 | Other Diagnostic Data (`OtherDiagnosticData`) | Yes | App Functionality | Sentry error events and breadcrumbs; API error events carry our user id |
-| Search History (`SearchHistory`) | No | App Functionality | Text searches are sent as `GET /books/search?q=<text>` (`lib/scan/executeScan.ts`). The URL is kept in device Sentry breadcrumbs (no user on the device) and in the API's uvicorn access log on Render (no account id). #1029 stops collecting it; remove this row when it ships |
+| Search History (`SearchHistory`) | No | App Functionality | Text searches are sent as `GET /books/search?q=<text>` (`lib/scan/executeScan.ts`). Not linked, on the same basis as device Crash Data: backend Sentry strips query strings (`backend/app/core/sentry_context.py`) and device transactions strip URL queries (`frontend/lib/sentryScrub.ts`), so `?q=` survives only in device error-event breadcrumbs, which carry no user, and in the uvicorn access log on Render, which has no account id and records Render's proxy IP (`--no-proxy-headers`), not the user's. #1029 stops collecting it; remove this row when it ships |
 
 **Third parties and identifiers.**
 
@@ -205,7 +209,10 @@ performance). Data is encrypted in transit, users can request deletion, and
 nothing is used for advertising or tracking.
 
 When a feature starts sending new data off the device, add the type
-here, in `app.json`, and in the store answers in the same change.
+here, in `app.json`, and in the store answers in the same change. To remove a
+type or change its Linked/Tracking/purposes, delete that entry from
+`PrivacyInfo.xcprivacy` (or the whole file) before prebuild, or edit the entry by
+hand to match `app.json`; the test catches any mismatch.
 
 ---
 

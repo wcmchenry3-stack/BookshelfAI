@@ -148,11 +148,14 @@ describe('iOS privacy manifest', () => {
   });
 
   it('the committed PrivacyInfo.xcprivacy declares the same data types as app.json', () => {
+    // Order-sensitive: prebuild appends new types to the committed plist, so new
+    // types go at the end of the app.json list (docs/claude/ios-ci.md).
     expect(plistTypes).toEqual(appJsonTypes);
     expect(byType(plistTypes)).toEqual(byType(EXPECTED_TYPES));
   });
 
   it('the committed PrivacyInfo.xcprivacy matches the whole app.json privacyManifests block', () => {
+    // Order-sensitive too; see the note above.
     expect(plist).toEqual(manifest);
   });
 
