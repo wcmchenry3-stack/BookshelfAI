@@ -3,16 +3,12 @@
 
 The daily cleanup (``app/services/token_cleanup.py``) calls
 :func:`purge_old_library_events`, which deletes events older than
-``settings.library_events_retention_days`` (default 180):
-
-- in batches of :data:`PURGE_BATCH_SIZE` rows, one transaction (and one
-  commit) per batch, at most :data:`PURGE_MAX_BATCHES` batches per run;
-  anything left waits for the next run;
-- under the transaction-level advisory lock :data:`PURGE_LOCK_KEY`
-  (``pg_try_advisory_xact_lock``), taken at the start of every batch, so two
-  instances (Render runs two during a deploy) never purge at once. If the
-  lock is held elsewhere the run stops there; it never waits for it;
-- idempotently: the ``DELETE`` re-checks the cutoff.
+``settings.library_events_retention_days`` (default 180). It works like the
+trash purge (``app/services/trash.py``): at most :data:`PURGE_MAX_BATCHES`
+batches of :data:`PURGE_BATCH_SIZE` rows a run, each its own commit, each
+starting with ``pg_try_advisory_xact_lock(PURGE_LOCK_KEY)``. A held lock
+ends the run (another instance is purging), and the ``DELETE`` re-checks
+the cutoff, so a repeated run is harmless.
 
 ``tests/security/test_library_events_append_only.py`` fails if any other module
 in ``app/`` updates or deletes ``library_events``. Logs counts only.
