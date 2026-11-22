@@ -18,7 +18,9 @@ from sqlalchemy.exc import IntegrityError
 from app.main import app
 from app.models.book import Book
 from app.models.edition import Edition
+from app.models.library_event import LibraryEvent
 from app.models.user import User
+from app.models.user_book import UserBook
 from app.schemas.book import EditionPreview, EnrichedBook
 from app.schemas.user_book import WishlistRequest
 from app.services.deduplication import (
@@ -378,7 +380,9 @@ class TestWishlistRefusesOwnedBooks:
         assert f"user_books.book_id IN ('{book.id.hex}')" in flat
         assert DUNE_13 in sql and isbn_13_to_10(DUNE_13) in sql
         assert "ORDER BY user_books.edition_id IS NULL" in sql
-        db.add.assert_called_once()
+        # The entry and its audit event (#684), nothing else.
+        added = [type(c.args[0]) for c in db.add.call_args_list]
+        assert added == [UserBook, LibraryEvent]
         db.commit.assert_awaited_once()
 
 

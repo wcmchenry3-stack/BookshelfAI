@@ -33,6 +33,7 @@ from sqlalchemy.dialects import postgresql
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.main import app
+from app.models.library_event import LibraryEvent
 from app.models.user import User
 from app.models.user_book import UserBook
 from app.models.user_custom_book import UserCustomBook
@@ -189,7 +190,10 @@ def test_create_touches_only_the_users_own_rows(post):
 
     # Only the user's own rows are written: no Book, no Edition, so no ISBN
     # is ever claimed in editions.isbn_13.
-    assert {type(o) for o in db.added} == {UserCustomBook, UserBook}
+    # Plus the entry's audit event (#684), also the user's own.
+    assert {type(o) for o in db.added} == {UserCustomBook, UserBook, LibraryEvent}
+    event = next(o for o in db.added if isinstance(o, LibraryEvent))
+    assert event.user_id == ALICE.id
     custom = next(o for o in db.added if isinstance(o, UserCustomBook))
     assert custom.user_id == ALICE.id and custom.isbn_13 == ISBN_13
     ub = next(o for o in db.added if isinstance(o, UserBook))

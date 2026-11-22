@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api import books as books_api
 from app.main import app
+from app.models.library_event import LibraryEvent
 from app.models.refresh_token import RefreshToken
 from app.schemas.book import EnrichedBook
 from tests.unit.test_user_books_endpoint import BOOK_ID, FAKE_USER, _make_user_book
@@ -119,7 +120,9 @@ class TestAddPurchased:
         assert existing.status == "purchased"
         assert isinstance(existing.purchased_at, datetime)
         assert existing.edition_id == edition_id
-        db.add.assert_not_called()  # updated in place, not duplicated
+        # Updated in place, not duplicated: the only add is the audit
+        # event (#684).
+        assert [type(c.args[0]) for c in db.add.call_args_list] == [LibraryEvent]
 
     def test_without_a_matching_edition_the_existing_edition_is_kept(self):
         existing = MagicMock(
@@ -157,7 +160,9 @@ class TestAddPurchased:
         )
         resp = self._client(db).post("/purchased", json={"book_id": str(BOOK_ID)})
         assert resp.status_code == 201
-        created = db.add.call_args.args[0]
+        # The entry, then its audit event (#684).
+        created = db.add.call_args_list[0].args[0]
+        assert isinstance(db.add.call_args.args[0], LibraryEvent)
         assert created.status == "purchased"
         assert created.user_id == FAKE_USER.id
         assert isinstance(created.purchased_at, datetime)

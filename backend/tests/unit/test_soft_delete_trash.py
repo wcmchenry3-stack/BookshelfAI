@@ -276,8 +276,11 @@ class TestLiveFilter:
         assert _live_filter_in(lookup)
         assert "FOR UPDATE OF user_books" in _sql(lookup)
         # A new live entry was added rather than a trashed one promoted.
-        (added,) = [c.args[0] for c in db.add.call_args_list]
-        assert isinstance(added, UserBook) and added.deleted_at is None
+        # (Its audit event, #684, is the other add.)
+        (added,) = [
+            c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], UserBook)
+        ]
+        assert added.deleted_at is None
 
     async def test_held_entries_ignores_trashed_entries(self):
         db = MagicMock()
@@ -336,6 +339,11 @@ class _RestoreDb:
         self.statements = []
         self.committed = False
         self.rolled_back = False
+        self.added = []
+
+    def add(self, obj):
+        # The restore's audit event (#684).
+        self.added.append(obj)
 
     async def execute(self, stmt, *a, **k):
         self.statements.append(stmt)

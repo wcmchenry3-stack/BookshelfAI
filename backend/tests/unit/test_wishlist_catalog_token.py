@@ -13,7 +13,9 @@ from app.core import catalog_token
 from app.main import app
 from app.models.book import Book
 from app.models.edition import Edition
+from app.models.library_event import LibraryEvent
 from app.models.user import User
+from app.models.user_book import UserBook
 from app.schemas.book import EditionPreview
 from app.schemas.user_book import WishlistRequest
 from app.services.wishlist import (
@@ -102,9 +104,9 @@ class TestUnsigned:
         await WishlistService().add(db, USER_ID, req)
         assert _added(db, Book) == [] and _added(db, Edition) == []
         assert book.title == "Dune" and book.description is None
-        (user_book,) = db.add.call_args_list
-        assert user_book.args[0].book_id == book.id
-        assert user_book.args[0].edition_id == edition.id
+        (user_book,) = _added(db, UserBook)
+        assert user_book.book_id == book.id
+        assert user_book.edition_id == edition.id
 
     async def test_edition_of_another_book_is_not_linked(self):
         service = WishlistService()
@@ -155,10 +157,13 @@ class TestSigned:
         # OL lookup -> book, edition lookup -> another book's, user_book -> none
         db = _mock_db(book, other, None)
         await WishlistService().add(db, USER_ID, _signed())
-        assert _added(db, Edition) == []
-        (user_book,) = db.add.call_args_list
-        assert user_book.args[0].book_id == book.id
-        assert user_book.args[0].edition_id is None
+        # Only the entry and its audit event (#684): no Book or Edition.
+        added = [c.args[0] for c in db.add.call_args_list]
+        assert [type(o) for o in added] == [UserBook, LibraryEvent]
+        assert _added(db, Book) == [] and _added(db, Edition) == []
+        (user_book,) = _added(db, UserBook)
+        assert user_book.book_id == book.id
+        assert user_book.edition_id is None
 
 
 class TestNoProviderId:

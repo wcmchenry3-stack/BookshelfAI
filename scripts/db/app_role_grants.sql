@@ -6,8 +6,9 @@
 -- migration 0028 never runs again on the restored database. See
 -- docs/backups.md ("Restoring: the app role") and the DB Restore Drill.
 --
--- Same end state as migration 0028: DML on every table in `public` except
--- `alembic_version`, USAGE on every sequence, BYPASSRLS, and the default
+-- Same end state as migrations 0028 and 0030: DML on every table in `public`
+-- except `alembic_version` (and no UPDATE on `library_events`, #684), USAGE
+-- on every sequence, BYPASSRLS, and the default
 -- privileges of the running (owner) role for later tables and sequences.
 -- Idempotent: safe to run more than once. One DO block, so it runs as a
 -- single statement from psql, the Supabase SQL editor or a driver.
@@ -25,6 +26,10 @@ BEGIN
     -- 0028 never granted anything on alembic_version: only migrations use it.
     IF to_regclass('public.alembic_version') IS NOT NULL THEN
         REVOKE ALL ON public.alembic_version FROM bookshelf_app;
+    END IF;
+    -- 0030: the library audit log is append-only for the app (#684).
+    IF to_regclass('public.library_events') IS NOT NULL THEN
+        REVOKE UPDATE ON public.library_events FROM bookshelf_app;
     END IF;
 
     ALTER ROLE bookshelf_app BYPASSRLS;

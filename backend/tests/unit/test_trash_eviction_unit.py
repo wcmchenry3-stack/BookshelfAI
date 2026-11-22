@@ -22,7 +22,10 @@ def _db(*results):
 
 def _rows(*custom_ids):
     return SimpleNamespace(
-        all=lambda: [SimpleNamespace(custom_book_id=c) for c in custom_ids]
+        all=lambda: [
+            SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4(), custom_book_id=c)
+            for c in custom_ids
+        ]
     )
 
 
@@ -36,26 +39,29 @@ async def test_delete_entries_with_no_ids_issues_no_statement():
 @pytest.mark.asyncio
 async def test_delete_entries_also_deletes_custom_books_of_deleted_rows():
     custom = uuid.uuid4()
-    db = _db(_rows(custom, None), MagicMock())
+    db = _db(_rows(custom, None), MagicMock(), MagicMock())
     n = await trash._delete_entries(db, [uuid.uuid4(), uuid.uuid4()])
     assert n == 2
-    assert db.execute.await_count == 2
-    second_sql = str(db.execute.await_args_list[1].args[0])
-    assert "user_custom_books" in second_sql
+    # The DELETE, the purged audit events (#684), the custom books.
+    assert db.execute.await_count == 3
+    assert "library_events" in str(db.execute.await_args_list[1].args[0])
+    third_sql = str(db.execute.await_args_list[2].args[0])
+    assert "user_custom_books" in third_sql
 
 
 @pytest.mark.asyncio
 async def test_delete_entries_skips_custom_delete_when_none_linked():
-    db = _db(_rows(None))
+    db = _db(_rows(None), MagicMock())
     assert await trash._delete_entries(db, [uuid.uuid4()]) == 1
-    assert db.execute.await_count == 1
+    # The DELETE and the purged audit event (#684); no custom-book delete.
+    assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_evict_over_cap_returns_number_deleted():
     over = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
     select_result = SimpleNamespace(scalars=lambda: iter(over))
-    db = _db(select_result, _rows(None, None, None))
+    db = _db(select_result, _rows(None, None, None), MagicMock())
     assert await trash.evict_over_cap(db, uuid.uuid4()) == 3
 
 

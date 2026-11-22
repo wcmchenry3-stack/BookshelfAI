@@ -25,6 +25,7 @@ from PIL import Image
 from app.ai.providers.base import ProviderResult
 from app.main import app
 from app.models.book import Book
+from app.models.library_event import LibraryEvent
 from app.models.user import User
 from app.models.user_book import UserBook
 from app.schemas.book import EditionPreview, EnrichedBook
@@ -241,8 +242,10 @@ class TestWishlistRefusesOwnedBooks:
             resp = wishlist(_body(), user=BOB, db=db)
         assert resp.status_code == 201, resp.text
         assert db.committed is True
-        (user_book,) = db.added
+        # The entry and its audit event (#684), both Bob's.
+        user_book, event = db.added
         assert user_book.user_id == BOB.id
+        assert isinstance(event, LibraryEvent) and event.user_id == BOB.id
 
 
 # ─── Scan repeats (#585) ─────────────────────────────────────────────────────

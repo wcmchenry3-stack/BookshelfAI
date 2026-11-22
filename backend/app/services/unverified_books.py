@@ -44,6 +44,7 @@ from app.models.user import User
 from app.models.user_book import UserBook
 from app.models.user_custom_book import UserCustomBook
 from app.schemas.user_book import UnverifiedBookCreate
+from app.services import library_events
 from app.services.enrichment import normalise_text
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,8 @@ class UnverifiedBookService:
             wishlisted_at=datetime.now(UTC),
         )
         db.add(user_book)
+        # The audit event commits with the entry (#684).
+        await library_events.record_created(db, user_book)
         await db.commit()
         await db.refresh(user_book, ["custom_book"])
         return user_book

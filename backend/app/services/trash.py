@@ -42,7 +42,9 @@ is bounded three ways:
 
 All three delete a library row's ``user_custom_books`` row in the same
 transaction, and only for library rows actually deleted
-(:func:`_delete_entries`). ``user_books.custom_book_id`` references
+(:func:`_delete_entries`), and write one ``purged`` event per deleted
+library row to the audit log (``library_events``, #684), also in that
+transaction. ``user_books.custom_book_id`` references
 ``user_custom_books`` (``ON DELETE CASCADE`` from the custom book to the
 library row), so the library rows go first and nothing is orphaned. Lock
 order everywhere: ``users`` → ``user_books`` → ``user_custom_books``.
@@ -60,6 +62,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.user_book import UserBook
 from app.models.user_custom_book import UserCustomBook
+from app.services import library_events
 from app.services.catalog import of_work
 from app.services.unverified_books import same_book
 
@@ -85,18 +88,22 @@ async def _try_lock(db: AsyncSession) -> bool:
 async def _delete_entries(db: AsyncSession, ids: list[uuid.UUID], *conditions) -> int:
     """Hard-delete the trashed ``user_books`` rows ``ids`` that still match
     ``conditions`` (re-checked by the ``DELETE`` itself), then the
-    ``user_custom_books`` rows of exactly the rows deleted. Returns how many
-    library rows were deleted. Does not commit."""
+    ``user_custom_books`` rows of exactly the rows deleted, and write a
+    ``purged`` library event for each (#684). Returns how many library rows
+    were deleted. Does not commit."""
     if not ids:
         return 0
     deleted = (
         await db.execute(
             delete(UserBook)
             .where(UserBook.id.in_(ids), UserBook.deleted_at.is_not(None), *conditions)
-            .returning(UserBook.custom_book_id)
+            .returning(UserBook.id, UserBook.user_id, UserBook.custom_book_id)
             .execution_options(synchronize_session=False)
         )
     ).all()
+    # One ``purged`` audit event per library row deleted, in this
+    # transaction (#684).
+    await library_events.record_purged(db, [(r.id, r.user_id) for r in deleted])
     custom_ids = [r.custom_book_id for r in deleted if r.custom_book_id is not None]
     if custom_ids:
         await db.execute(
