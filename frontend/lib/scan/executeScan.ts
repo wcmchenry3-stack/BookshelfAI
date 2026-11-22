@@ -70,7 +70,11 @@ export async function executeScan(deps: ScanExecDeps, job: ScanJob): Promise<voi
 }
 
 /** One POST /scan form body; each one carries its own Turnstile token (#740). */
-function buildScanFormData(job: ScanJob, attempt: number, turnstileToken: string | null) {
+async function buildScanFormData(
+  job: ScanJob,
+  attempt: number,
+  turnstileToken: string | null
+): Promise<FormData> {
   const formData = new FormData();
   if (job.enhanced) formData.append('enhanced', 'true');
   // The server accepts 1-6 (#603) and ignores it until that ships.
@@ -80,7 +84,11 @@ function buildScanFormData(job: ScanJob, attempt: number, turnstileToken: string
   // TURNSTILE_REQUIRED=false accepts.
   if (turnstileToken) formData.append(TURNSTILE_FORM_FIELD, turnstileToken);
   if (Platform.OS === 'web') {
-    formData.append('file', job.imageUri as unknown as Blob, 'scan.jpg');
+    // Browsers need a real Blob here, not the blob:/data: URL string (#796).
+    // A revoked or unreadable URL makes fetch reject: that propagates to
+    // runScan's catch and settles as the usual scan failure.
+    const blob = await (await fetch(job.imageUri as string)).blob();
+    formData.append('file', blob, 'scan.jpg');
   } else {
     formData.append('file', {
       uri: job.imageUri,
@@ -127,20 +135,24 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
         // Signed out while the token was being fetched: nothing is sent,
         // and the token is never used for the next account.
         if (signedOutSince() || signal.aborted) return null;
-        return api.post<ScanResponse>('/scan', buildScanFormData(job, attempt, turnstileToken), {
-          signal,
-          timeout: SCAN_UPLOAD_TIMEOUT_MS,
-          transformRequest: [
-            (data: FormData, headers: AxiosRequestHeaders) => {
-              if (Platform.OS === 'web') {
-                headers.delete('Content-Type');
-              } else {
-                headers.set('Content-Type', 'multipart/form-data');
-              }
-              return data;
-            },
-          ],
-        });
+        return api.post<ScanResponse>(
+          '/scan',
+          await buildScanFormData(job, attempt, turnstileToken),
+          {
+            signal,
+            timeout: SCAN_UPLOAD_TIMEOUT_MS,
+            transformRequest: [
+              (data: FormData, headers: AxiosRequestHeaders) => {
+                if (Platform.OS === 'web') {
+                  headers.delete('Content-Type');
+                } else {
+                  headers.set('Content-Type', 'multipart/form-data');
+                }
+                return data;
+              },
+            ],
+          }
+        );
       };
       // 429 scan_in_progress means another scan holds the user's lease:
       // wait Retry-After and retry silently, at most MAX_IN_PROGRESS_RETRIES

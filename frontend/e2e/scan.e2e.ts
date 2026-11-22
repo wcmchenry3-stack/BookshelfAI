@@ -10,16 +10,6 @@ test.describe('Scan upload', () => {
     signIn,
     expectNoA11yViolations,
   }) => {
-    // KNOWN APP BUG: on web the scan upload never reaches the server.
-    // ScanJobContext appends the photo's blob URL *string* to the form data
-    // (formData.append('file', job.imageUri as unknown as Blob, 'scan.jpg')),
-    // and browsers throw "parameter 2 is not of type 'Blob'", so no POST /scan
-    // is sent and the user sees "Scan failed". With that fixed this test
-    // passes as written (checked by hand). Until then it is an expected
-    // failure: the suite stays green, and goes red as soon as the upload
-    // works, which is the cue to delete the next line.
-    test.fail(true, 'web scan upload throws before POST /scan (FormData.append of a blob URL)');
-
     await backend.forgetScans();
     const callsBefore = await backend.providerCalls();
     await signIn();
