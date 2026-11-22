@@ -353,3 +353,62 @@ class TestGoogleClientIdWarnings:
         msgs = [r.getMessage() for r in caplog.records]
         assert any(m.startswith("GOOGLE_ANDROID_CLIENT_ID is unset") for m in msgs)
         assert "secret-id" not in " ".join(msgs)
+
+
+class TestEmailReplyTo:
+    _DB = "postgresql+asyncpg://u:p@localhost/db"
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch):
+        monkeypatch.delenv("EMAIL_REPLY_TO", raising=False)
+
+    def _settings(self, **kw):
+        return Settings(_env_file=None, database_url=self._DB, **kw)
+
+    def test_default(self):
+        assert self._settings().email_reply_to == "support@buffingchi.com"
+
+    def test_read_from_env(self, monkeypatch):
+        monkeypatch.setenv("EMAIL_REPLY_TO", "help@example.com")
+        assert self._settings().email_reply_to == "help@example.com"
+
+    def test_blank_env_falls_back_to_default(self, monkeypatch):
+        # env_ignore_empty (#648): a blank var means "unset", not "disabled".
+        monkeypatch.setenv("EMAIL_REPLY_TO", "")
+        assert self._settings().email_reply_to == "support@buffingchi.com"
+
+    def test_bad_env_value_raises_without_echoing_it(self, monkeypatch):
+        monkeypatch.setenv("EMAIL_REPLY_TO", "not-an-address-xyz")
+        with pytest.raises(ValidationError) as exc:
+            self._settings()
+        assert "not-an-address-xyz" not in str(exc.value)
+
+    @pytest.mark.parametrize("raw", [" a@b.com ", "a@b.com\n", "a@b.com\r\n"])
+    def test_strips_surrounding_whitespace(self, raw):
+        assert self._settings(email_reply_to=raw).email_reply_to == "a@b.com"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "nope",
+            "Name <a@b.com>",
+            "a@b.com, c@d.com",
+            "a@b.com\r\nBcc: x@y.com",
+            "a@b.com.",
+            "a@b..com",
+            "a..b@b.com",
+            ".a@b.com",
+            "a.@b.com",
+            "a@-b.com",
+            "a@b-.com",
+            "a@b.c",
+            "a@1.2",
+            "a@m\u00fcnchen.de",
+            "a" * 65 + "@b.com",
+            "a@" + "b" * 64 + ".com",
+            "a@" + ("b" * 60 + ".") * 5 + "com",
+        ],
+    )
+    def test_rejects_non_plain_address(self, bad):
+        with pytest.raises(ValidationError):
+            self._settings(email_reply_to=bad)

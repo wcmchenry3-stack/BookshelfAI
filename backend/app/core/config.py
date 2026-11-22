@@ -17,6 +17,7 @@ from app.ai.models_allowlist import (
     TIMEOUT_S_BOUNDS,
 )
 from app.core.db_url import to_async_url
+from app.core.email_settings import EmailSettings
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
 # asyncpg's server-side prepared statements, which asyncpg uses by default. It
@@ -113,7 +114,7 @@ class _BlankGuardSource(PydanticBaseSettingsSource):
         return {}
 
 
-class Settings(BaseSettings):
+class Settings(EmailSettings, BaseSettings):
     # hide_input_in_errors: a validation error must never echo a secret value
     # (e.g. ORIGIN_AUTH_SECRET) into boot logs.
     # env_ignore_empty (#648): a blank env var (process or .env) is treated as
