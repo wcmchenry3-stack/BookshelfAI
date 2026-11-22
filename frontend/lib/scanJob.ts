@@ -9,6 +9,25 @@ export const MAX_QUEUE_SIZE = 50;
 // Failed scans stay on the phone this long, then are removed with their image (#605).
 export const FAILED_SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+// On-device photo budget: at most 80 photos and 50 MB (50 waiting + 20 failed
+// + 10 completed but unreviewed). See docs/storage-and-retention.md (G3, G5).
+/** Failed jobs kept; when one more fails, the oldest is removed with its photo (#669, G3). */
+export const MAX_FAILED_JOBS = 20;
+/** Completed jobs not yet reviewed that keep their photo; the oldest beyond this is dismissed (#669, G3). */
+export const MAX_UNREVIEWED_JOBS = 10;
+/** A refused (`queued`) job older than this is removed with its photo (#669, G3). */
+export const QUEUED_SCAN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** A capture is refused when the phone has less free space than this (#670, G5). */
+export const LOW_FREE_SPACE_BYTES = 100 * 1024 * 1024;
+/** A capture is refused when `scan-queue/` already holds this much (#670, G5). */
+export const MAX_QUEUE_BYTES = 50 * 1024 * 1024;
+/**
+ * Whether MAX_QUEUE_BYTES is enforced. Off until scan photos are resized at
+ * capture (#668, owner decision #1037). Full-size photos (2.5–10 MB) would hit
+ * 50 MB after a handful.
+ */
+export const ENFORCE_QUEUE_BYTE_CAP = false;
+
 export type ScanJobType = 'image' | 'text';
 type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'queued';
 
@@ -52,6 +71,10 @@ export interface ScanJob {
   attempts?: number;
   /** Epoch ms when the job became failed (#605); absent on older saved jobs, which count from `createdAt`. */
   failedAt?: number;
+  /** Epoch ms when the job last became complete (#669); the age of an unreviewed photo counts from here, falling back to `createdAt`. */
+  completedAt?: number;
+  /** Epoch ms when the job last entered `queued`, including a retry of a failed job (#669); the 7-day limit counts from here, falling back to `createdAt`. */
+  queuedAt?: number;
   /** Epoch ms of the photo's next scheduled attempt (#604); absent when none is scheduled. */
   nextAttemptAt?: number;
 }
@@ -110,4 +133,45 @@ export function failedTimeOf(job: ScanJob): number {
 /** A failed job older than FAILED_SCAN_RETENTION_MS (#605). */
 export function isFailedScanExpired(job: ScanJob, now: number = Date.now()): boolean {
   return job.status === 'failed' && now - failedTimeOf(job) > FAILED_SCAN_RETENTION_MS;
+}
+
+/** A refused (`queued`) job older than QUEUED_SCAN_MAX_AGE_MS (#669). */
+export function isQueuedScanStale(job: ScanJob, now: number = Date.now()): boolean {
+  return job.status === 'queued' && now - (job.queuedAt ?? job.createdAt) > QUEUED_SCAN_MAX_AGE_MS;
+}
+
+/**
+ * Ids of jobs to remove, with their photos (#669): failed scans past 7 days or
+ * beyond the newest MAX_FAILED_JOBS, refused scans past 7 days, and completed
+ * scans beyond the newest MAX_UNREVIEWED_JOBS. `keepId` (the review that is
+ * open) is never chosen.
+ */
+export function jobsToPurge(
+  jobs: readonly ScanJob[],
+  now: number = Date.now(),
+  keepId?: string | null | readonly (string | null)[]
+): Set<string> {
+  const out = new Set<string>();
+  const keep = new Set<string | null | undefined>(Array.isArray(keepId) ? keepId : [keepId]);
+  const kept = (id: string) => keep.has(id);
+  for (const j of jobs) {
+    if (!kept(j.id) && (isFailedScanExpired(j, now) || isQueuedScanStale(j, now))) {
+      out.add(j.id);
+    }
+  }
+  // Newest first. Equal timestamps (several jobs in one millisecond) are
+  // broken by list position: the app keeps its list newest-first (`startScan`
+  // prepends), so the earlier entry counts as the newer one.
+  const indexOf = new Map(jobs.map((j, i) => [j.id, i]));
+  const newestFirst = (time: (j: ScanJob) => number) => (a: ScanJob, b: ScanJob) =>
+    time(b) - time(a) || indexOf.get(a.id)! - indexOf.get(b.id)!;
+  const failed = jobs
+    .filter((j) => j.status === 'failed' && !out.has(j.id))
+    .sort(newestFirst(failedTimeOf));
+  for (const j of failed.slice(MAX_FAILED_JOBS)) out.add(j.id);
+  const unreviewed = jobs
+    .filter((j) => j.status === 'complete' && j.imageUri && !kept(j.id))
+    .sort(newestFirst((j) => j.completedAt ?? j.createdAt));
+  for (const j of unreviewed.slice(MAX_UNREVIEWED_JOBS)) out.add(j.id);
+  return out;
 }

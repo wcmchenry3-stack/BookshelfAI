@@ -172,9 +172,9 @@ export default function ScanQueueScreen() {
             >
               {section.key === 'waiting' ? t('queueWaitingTitle') : t('queueFailedTitle')}
             </Text>
-            {section.key === 'failed' ? (
+            {section.key === 'failed' || section.data.some((j) => j.status === 'queued') ? (
               <Text style={[styles.note, { color: theme.colors.onSurfaceVariant }]}>
-                {t('queueFailedNote')}
+                {t(section.key === 'failed' ? 'queueFailedNote' : 'queueWaitingNote')}
               </Text>
             ) : null}
           </View>

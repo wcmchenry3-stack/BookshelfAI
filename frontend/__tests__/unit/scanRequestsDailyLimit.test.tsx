@@ -195,7 +195,7 @@ describe('queue behaviour', () => {
       id: `q-${i}`,
       type: 'image' as const,
       status: 'queued' as const,
-      createdAt: i,
+      createdAt: Date.now() + i,
       imageUri: `file:///q${i}.jpg`,
       retryCount: 0,
     }));
