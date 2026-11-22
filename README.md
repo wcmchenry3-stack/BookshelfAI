@@ -69,6 +69,7 @@ npx expo start            # press i for iOS sim, a for Android, w for web
 | [`docs/backups.md`](docs/backups.md) | Nightly encrypted DB backup to R2, owner setup, restore drill |
 | [`docs/testing.md`](docs/testing.md) | Test strategy (unit/integration/security/accuracy/perf), patterns, how to run |
 | [`docs/security.md`](docs/security.md) | Security controls, OWASP test cases, incident runbook |
+| [`docs/store-compliance.md`](docs/store-compliance.md) | App Store / Play Store compliance audit: pass/fail per guideline, privacy label and Data safety answers (pending owner approval) |
 | [`docs/claude/`](docs/claude/) | Claude-specific guides (git workflow, iOS/Android CI, backend/frontend conventions) |
 
 ## For Claude sessions
