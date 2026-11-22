@@ -63,6 +63,11 @@ async def verify_google_id_token(id_token: str) -> dict:
     jwks = await google_jwks_cache.get_jwks(_token_kid(id_token))
 
     allowed_auds = settings.google_client_ids
+    if not allowed_auds:
+        # Fail closed: authlib skips the aud check when ``values`` is empty,
+        # which would accept a Google token issued to any app (#988).
+        logger.warning("Google sign-in refused: no Google client IDs configured")
+        raise ValueError("no Google client IDs configured")
     logger.info("Decoding token")
     claims = authlib_jwt.decode(
         id_token,

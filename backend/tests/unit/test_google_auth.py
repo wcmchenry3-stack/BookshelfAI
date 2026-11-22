@@ -217,3 +217,39 @@ class TestAudienceMismatchDiagnostics:
 
         assert exc_info.value.claim_name == "iss"
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+class TestNoClientIdsConfigured:
+    """authlib skips the aud check when ``values`` is empty, so an empty
+    allowlist must be refused before decode (#988 security review)."""
+
+    async def test_refuses_without_decoding(self, caplog):
+        with (
+            patch(
+                "app.auth.google.google_jwks_cache.get_jwks",
+                AsyncMock(return_value=FAKE_JWKS),
+            ),
+            patch("app.auth.google.authlib_jwt.decode") as mock_decode,
+            patch("app.auth.google.settings") as mock_settings,
+        ):
+            mock_settings.google_client_ids = []
+            with pytest.raises(ValueError, match="no Google client IDs configured"):
+                await verify_google_id_token("fake.id.token")
+
+        mock_decode.assert_not_called()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert [w.getMessage() for w in warnings] == [
+            "Google sign-in refused: no Google client IDs configured"
+        ]
+
+    def test_authlib_accepts_any_aud_when_values_empty(self):
+        """Pins the authlib behaviour the guard above exists for. If authlib
+        starts rejecting this, the guard is still harmless."""
+        from authlib.jose.rfc7519.claims import JWTClaims
+
+        claims = JWTClaims(
+            {"iss": "https://accounts.google.com", "aud": "some-other-app"},
+            {},
+            options={"aud": {"essential": True, "values": []}},
+        )
+        claims.validate()

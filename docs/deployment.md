@@ -60,7 +60,7 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 printf %s "<client id>" | sha256sum | cut -c1-12
 ```
 
-If `token_aud` matches no slot, the Render service has the wrong (or no) value for that slot.
+If `token_aud` matches no slot, the Render service has the wrong (or no) value for that slot. If all three slots are blank, every Google sign-in is refused and logged as `Google sign-in refused: no Google client IDs configured` (fail closed: an empty allowlist would otherwise skip the `aud` check entirely).
 
 At startup a hardened environment (staging, production) logs a warning, `GOOGLE_<slot>_CLIENT_ID is unset: ...`, for each blank slot, and `python -m app.core.config_check` prints it as a `WARNING:` line. These are warnings only: boot is not blocked and the check still exits 0. Development and test stay silent.
 
