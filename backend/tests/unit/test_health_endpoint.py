@@ -108,3 +108,62 @@ async def test_health_db_times_out_returns_503(app, monkeypatch):
     body = response.json()
     assert body["status"] == "error"
     assert body["db"] == "error"
+
+
+def _db_ok_cm():
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=None)
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    return mock_cm
+
+
+def _db_failing_cm():
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(side_effect=Exception("connection refused"))
+    return mock_cm
+
+
+@pytest.mark.asyncio
+async def test_health_db_head_ok(app):
+    """UptimeRobot (free plan) sends HEAD to /health/db; with the DB up it must
+    get 200 with no body and the same Content-Length GET would return."""
+    with patch("app.main.AsyncSessionLocal", return_value=_db_ok_cm()):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            get_response = await client.get("/health/db")
+            head_response = await client.head("/health/db")
+
+    assert get_response.status_code == 200
+    assert head_response.status_code == 200
+    assert head_response.content == b""
+    assert head_response.headers.get("content-length") == get_response.headers.get(
+        "content-length"
+    )
+
+
+@pytest.mark.asyncio
+async def test_health_db_head_returns_503_when_db_down(app):
+    """A HEAD-based monitor must still see DB outages as a failure (503)."""
+    with patch("app.main.AsyncSessionLocal", return_value=_db_failing_cm()):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.head("/health/db")
+
+    assert response.status_code == 503
+    assert response.content == b""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["POST", "PUT", "DELETE", "PATCH"])
+async def test_health_db_disallows_other_methods(app, method):
+    """Only GET and HEAD are accepted on /health/db; any other method is 405."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.request(method, "/health/db")
+
+    assert response.status_code == 405
