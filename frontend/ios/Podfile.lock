@@ -99,6 +99,8 @@ PODS:
     - ExpoModulesCore
   - ExpoStatusBar (58.0.4):
     - ExpoModulesCore
+  - ExpoSystemUI (58.0.7):
+    - ExpoModulesCore
   - ExpoWebBrowser (58.0.7):
     - ExpoModulesCore
   - fast_float (8.0.0):
@@ -2203,6 +2205,53 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - RNSVG (15.16.0):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-cxxstableapi
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - RNSVG/common (= 15.16.0)
+    - Yoga
+  - RNSVG/common (15.16.0):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-cxxstableapi
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RNWorklets (0.13.1):
     - hermes-engine
     - RCTRequired
@@ -2306,6 +2355,7 @@ DEPENDENCIES:
   - ExpoRouter (from `../node_modules/expo-router/ios`)
   - ExpoSecureStore (from `../node_modules/expo-secure-store/ios`)
   - ExpoStatusBar (from `../node_modules/expo-status-bar/ios`)
+  - ExpoSystemUI (from `../node_modules/expo-system-ui/ios`)
   - ExpoWebBrowser (from `../node_modules/expo-web-browser/ios`)
   - fast_float (from `build/rndeps-facades/fast_float`)
   - FBLazyVector (from `build/rncore-facades/FBLazyVector`)
@@ -2399,6 +2449,7 @@ DEPENDENCIES:
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - RNScreens (from `../node_modules/react-native-screens`)
   - "RNSentry (from `../node_modules/@sentry/react-native`)"
+  - RNSVG (from `../node_modules/react-native-svg`)
   - RNWorklets (from `../node_modules/react-native-worklets`)
   - SocketRocket (from `build/rndeps-facades/SocketRocket`)
   - Yoga (from `build/rncore-facades/Yoga`)
@@ -2450,6 +2501,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-secure-store/ios"
   ExpoStatusBar:
     :path: "../node_modules/expo-status-bar/ios"
+  ExpoSystemUI:
+    :path: "../node_modules/expo-system-ui/ios"
   ExpoWebBrowser:
     :path: "../node_modules/expo-web-browser/ios"
   fast_float:
@@ -2635,6 +2688,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-screens"
   RNSentry:
     :path: "../node_modules/@sentry/react-native"
+  RNSVG:
+    :path: "../node_modules/react-native-svg"
   RNWorklets:
     :path: "../node_modules/react-native-worklets"
   SocketRocket:
@@ -2666,6 +2721,7 @@ SPEC CHECKSUMS:
   ExpoRouter: 03899d5c94d2e5c5e4dadae1fd0ba71a50f162d8
   ExpoSecureStore: 64e1fe78b5b0a1edb61beff044bb2cad03084f9c
   ExpoStatusBar: 56aa9746e1bee4d8adbab12f4d7efc97000ac49f
+  ExpoSystemUI: bfbae2409cccd81019ac00a8f57a8724f0534cfd
   ExpoWebBrowser: 2156882323a8634b7f01a8e2595d52187eb42fea
   fast_float: 7c925d1cebf8328d4018d061f49377e9f887e3b4
   FBLazyVector: 07cb4c5b92110c132f2bb73b908e87f35cbe0a19
@@ -2758,6 +2814,7 @@ SPEC CHECKSUMS:
   RNReanimated: 3018727dbf272754d0f31ef73f619e49ade7baf0
   RNScreens: 9e5d11963f4616812cd86380d8b27b95cfd72153
   RNSentry: 3cbf06d950d99c59f52035316146024280d02930
+  RNSVG: c35beed3dcf6fd14b50ca1fc0d4214a17ec5334d
   RNWorklets: c05b04d721cccc1d44182425cd09efeddb6b1bbe
   SocketRocket: 37aec555668fb852ec12e3c0de59a86ca58f0871
   Yoga: d1c536142c5ff8ec8cd856ab2a7c227a1d875c8e
