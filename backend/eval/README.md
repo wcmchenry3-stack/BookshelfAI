@@ -130,11 +130,8 @@ are not mistaken for model accuracy. F1 is 2 x matched / (predicted + truth),
 checks that the spend so far plus an upper bound for that call stays within
 the cap, and stops before the call otherwise (`spend_cap.stopped_by_cap` in
 the report). The bound is computed from the normalised photo's real
-dimensions (`ai_scan/image_tokens.py`):
-
-- Claude: `ceil(width x height / 750)` image tokens (Anthropic's vision
-  formula; their own downscaling only lowers it);
-
+dimensions (`ai_scan/image_tokens.py`): `ceil(width x height / 750)` image
+tokens (Anthropic's vision formula; their own downscaling only lowers it),
 plus 2,000 prompt tokens, all at the model's highest input rate, plus a full
 `max_tokens` reply at the output rate (so a larger `SCAN_MAX_TOKENS` raises
 the bound), and never below the registry's `est_cost_ceiling_micros`. An

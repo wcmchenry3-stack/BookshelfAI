@@ -224,7 +224,7 @@ class FakeProvider:
 
     @contextmanager
     def patch(self):
-        with (patch("app.ai.gateway.AnthropicVisionProvider", self.cls),):
+        with patch("app.ai.gateway.AnthropicVisionProvider", self.cls):
             yield self
 
 
