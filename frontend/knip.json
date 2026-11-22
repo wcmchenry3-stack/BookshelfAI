@@ -10,6 +10,7 @@
     "src/i18n/glossary.ts"
   ],
   "project": ["**/*.{ts,tsx,js}", "!android/**", "!ios/**"],
+  // owner-approved #971 — peer-dep exceptions below are permanent tool constraints
   // Every entry needs a written reason. Do not add one without it (see docs/testing.md).
   "ignoreDependencies": [
     // Peer dep of babel-preset-expo, loaded by Metro/Jest via babel.config.js, never imported.
