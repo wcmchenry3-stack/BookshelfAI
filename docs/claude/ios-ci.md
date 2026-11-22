@@ -285,10 +285,11 @@ Expo upgrade on Xcode 27 on purpose, set `ALLOW_UNSUPPORTED_XCODE=1` in the
 workflow's environment variables. When the SDK upgrade lands, the check passes
 on its own. Raise `MIN_JSI_FOR_XCODE_27` only if upstream moves the floor.
 
-Status (#713): this branch is on Expo SDK 58 / React Native 0.88.1 with
-`expo-modules-jsi` 58.0.21 in `package-lock.json`, so `check_xcode_compat.sh`
-no longer blocks Xcode 27. The Xcode Cloud workflow is still pinned to Xcode
-26.x; moving it to Xcode 27 is #717.
+Status (#717, 2026-11-22): `dev` is on Expo SDK 58 / React Native 0.88.1 with
+`expo-modules-jsi` 58.0.23 in `package-lock.json` (#994), so
+`check_xcode_compat.sh` passes on Xcode 27, and the `Default` workflow is pinned
+to Xcode 27.2 (see § Current pins). The guard now only stops an old branch that
+is still on SDK 56; build such a branch with Xcode 26.x, or merge `dev` into it.
 
 GitHub's `ios-build-check` runs on the runner's default Xcode (26.x), so it stays
 green while Xcode Cloud on 27 fails.
@@ -297,17 +298,18 @@ green while Xcode Cloud on 27 fails.
 
 | Workflow | Start condition | Builds | Xcode Version | Since |
 |---|---|---|---|---|
-| `Default` (`dev` builds; uses the dev API, see § Which backend a build talks to) | Branch changes on `dev` | Archive - iOS → TestFlight (internal) | **Xcode 26.6** | 2026-11-22 (#987) |
-| `Xcode 27 – SDK 58 test` (#716) | Branch changes on `feature/sdk58-upgrade` only | Archive - iOS → TestFlight (internal) | Xcode 27.x (owner: record the exact version) | 2026-11 (#716) |
+| `Default` (`dev` builds; uses the dev API, see § Which backend a build talks to) | Branch changes on `dev` | Archive - iOS → TestFlight (internal) | **Xcode 27.2 (27B52)** | 2026-11-22 (#717; was 26.6 from #987) |
+| `Xcode 27 – SDK 58 test` (#716) | Branch changes on `feature/717-sdk58-cutover` (last used) | Archive - iOS → TestFlight (internal) | Xcode 27.2 (27B52) | Retired at the cutover (#717): delete or disable it |
 
 Never leave a workflow on "Latest Release" or "Latest Beta". The `Default`
 workflow sat on "Latest Release" until build 159 (2026-11-22, #987): it rolled
 onto Xcode 27.2 while `dev` was still on Expo SDK 56, and
 `check_xcode_compat.sh` stopped the build in `ci_post_clone`.
 
-At the SDK 58 cutover (#717), the `Default` workflow moves from 26.6 to the
-explicit 27.x the test workflow used, and the test workflow is deleted or
-disabled. Update this table in the same PR.
+At the SDK 58 cutover (#717, 2026-11-22), `Default` moved from 26.6 to Xcode
+27.2 (27B52), the version the test workflow archived and TestFlight-tested
+(build on `5418da9`, then the TestFlight build on `aac3ac9`). The test workflow
+is no longer needed.
 
 ### Pinning the Xcode Cloud workflow (owner, App Store Connect)
 
