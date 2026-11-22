@@ -348,7 +348,9 @@ policy update (#997). To repeat it, or to switch back after a rollback:
    user is refunded).
 2. **Check the current state** from the `bookshelf-api` Render shell:
    `python -m app.ai.settings list` (the shell opens in `backend/`, the
-   service's `rootDir`). The "Providers and models"
+   service's `rootDir`). Run every command here only in that service's own
+   Render shell: the CLI writes to whatever `DATABASE_URL` the shell has, and
+   the production URL never leaves the dashboard. The "Providers and models"
    group shows `openai` / `gpt-4o-mini` and `gpt-4o` before the switch, and
    `anthropic` / `claude-haiku-5-5` and `claude-sonnet-5-5` after it.
 3. **Switch both tiers.** Each command writes the provider and its registry
@@ -365,7 +367,9 @@ policy update (#997). To repeat it, or to switch back after a rollback:
    ledger records the model, not the provider.
 5. **Rollback** is the same command with `openai`
    (`python -m app.ai.settings switch scan.standard openai --by <you>`). Keep
-   `OPENAI_API_KEY` set until the OpenAI removal PR merges.
+   `OPENAI_API_KEY` set until the OpenAI removal PR merges. Once that PR
+   merges and the OpenAI keys are revoked, there is no rollback to OpenAI;
+   the remaining dials are the kill switches (`scan.*.enabled`) and quotas.
 6. **Soak.** Production stays on Claude for 7 days with no rollback (owner
    decision on #978). Then the removal PR (#538 part 2) deletes the OpenAI
    code, and the owner revokes the OpenAI keys and drops the `openai-policy`
