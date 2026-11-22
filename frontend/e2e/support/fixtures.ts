@@ -36,22 +36,7 @@ export interface KnownViolation {
   issue: string;
 }
 
-export const KNOWN_VIOLATIONS = {
-  // Scan screen: the progress row's ActivityIndicator renders as a nameless
-  // role="progressbar" next to the labelled progress row.
-  scanSpinnerNoName: {
-    rule: 'aria-progressbar-name',
-    html: /^<div role="progressbar"/,
-    transient: true,
-    issue: 'scan ActivityIndicator is a progressbar with no name (aria-progressbar-name, serious)',
-  },
-  // BookCandidatePicker rows have role="checkbox" without aria-checked.
-  pickerCheckboxMissingAriaChecked: {
-    rule: 'aria-required-attr',
-    html: /^<[a-z]+ [^>]*role="checkbox"/,
-    issue: 'picker row has role=checkbox without aria-checked (aria-required-attr, critical)',
-  },
-} satisfies Record<string, KnownViolation>;
+export const KNOWN_VIOLATIONS = {} satisfies Record<string, KnownViolation>;
 
 type LibraryStatus = 'wishlisted' | 'purchased' | 'reading' | 'read';
 
