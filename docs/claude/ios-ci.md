@@ -148,6 +148,8 @@ the whole `git diff` afterwards and restore anything prebuild removed:
 change the API reasons and the collected data types there, not in the file, then
 regenerate it. A Linux prebuild writes the plist with 2-space indentation; re-indent it
 with tabs like the committed file so the diff shows only the real change.
+Prebuild merges into the committed plist and appends a new collected type at the
+end, so add new types at the end of the `app.json` list.
 `__tests__/unit/IosPrivacyManifest.test.ts` fails if the two differ (#1001); the
 declared types and their store answers are listed in
 `docs/claude/ios-appstore-submission.md` (App Privacy declarations).

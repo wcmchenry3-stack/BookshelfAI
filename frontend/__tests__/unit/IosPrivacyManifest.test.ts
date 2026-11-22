@@ -4,7 +4,8 @@
  * not linked: owner decision), the account is a Google sign-in (email, name,
  * user ID), the library lives on our server (other user content), in-app
  * feedback and diagnostics go to Sentry, and per-user scan usage is recorded
- * (product interaction). Nothing is used for tracking.
+ * (product interaction). Text searches leave the device in request URLs
+ * (search history). Nothing is used for tracking.
  *
  * `ios/BookShelfAI/PrivacyInfo.xcprivacy` is generated from
  * `app.json` `ios.privacyManifests` by prebuild, but it is committed and Xcode
@@ -40,6 +41,8 @@ const EXPECTED: [string, boolean, string[]][] = [
   [`${T}CrashData`, false, [APP_FUNCTIONALITY]],
   [`${T}PerformanceData`, true, [APP_FUNCTIONALITY]],
   [`${T}OtherDiagnosticData`, true, [APP_FUNCTIONALITY]],
+  // Search text is in Sentry breadcrumb URLs and the API access log (#1029).
+  [`${T}SearchHistory`, false, [APP_FUNCTIONALITY]],
 ];
 
 const EXPECTED_TYPES: CollectedDataType[] = EXPECTED.map(([type, linked, purposes]) => ({

@@ -146,7 +146,10 @@ git push
 the Xcode project. If it is missing or wrong after prebuild, restore the
 committed file (`git checkout -- frontend/ios/BookShelfAI/PrivacyInfo.xcprivacy`)
 or regenerate it from `app.json` with
-`npx expo prebuild --platform ios --no-install --no-clean`. Do not write it by
+`npx expo prebuild --platform ios --no-install --no-clean`, then follow the
+steps in `docs/claude/ios-ci.md`: re-indent the plist with tabs like the
+committed file, and revert the unrelated prebuild churn in `project.pbxproj`,
+`Info.plist` and the app icon (see the restore table there). Do not write it by
 hand: `__tests__/unit/IosPrivacyManifest.test.ts` fails when it differs from
 `app.json` `ios.privacyManifests`.
 
@@ -160,13 +163,14 @@ the data the app sends off the device (#1001), and prebuild copies it into
 (`NSPrivacyTracking` is `false`, no tracking domains, no ATT prompt).
 `__tests__/unit/IosPrivacyManifest.test.ts` pins this list and checks that the
 committed plist matches `app.json`, so change both together (edit `app.json`,
-then regenerate).
+then regenerate). Prebuild merges into the committed plist and appends new
+types at the end, so add a new type at the end of the `app.json` list too.
 
 | Data type (manifest key `NSPrivacyCollectedDataType…`) | Linked to the user | Purposes | Where it comes from |
 |---|---|---|---|
 | Photos or Videos (`PhotosorVideos`) | No (owner decision, #1001) | App Functionality | Shelf / cover scan photos go to our server and on to the AI provider (Anthropic); the server keeps only a fingerprint and the books found |
 | Email Address (`EmailAddress`) | Yes | App Functionality | Google sign-in; `users.email` |
-| Name (`Name`) | Yes | App Functionality | Google profile name; `users.display_name` |
+| Name (`Name`) | Yes | App Functionality | Google profile name; `users.display_name`. `users.avatar_url` (the Google `picture` claim) is a URL from Google's ID token, not a photo taken from the device: it is covered by Name / Other User Content, not Photos |
 | User ID (`UserID`) | Yes | App Functionality | Google account id (`users.google_id`) and our user id |
 | Other User Content (`OtherUserContent`) | Yes | App Functionality | Library and wishlist entries, notes, ratings, books added by hand |
 | Customer Support (`CustomerSupport`) | No | App Functionality | In-app feedback (text and, for a bug, redacted session logs) sent to Sentry User Feedback with no account details |
@@ -174,9 +178,33 @@ then regenerate).
 | Crash Data (`CrashData`) | No | App Functionality | Sentry crash reports from the app (no user set on the device) |
 | Performance Data (`PerformanceData`) | Yes | App Functionality | Sentry traces from the app and the API; API traces carry our user id |
 | Other Diagnostic Data (`OtherDiagnosticData`) | Yes | App Functionality | Sentry error events and breadcrumbs; API error events carry our user id |
+| Search History (`SearchHistory`) | No | App Functionality | Text searches are sent as `GET /books/search?q=<text>` (`lib/scan/executeScan.ts`). The URL is kept in device Sentry breadcrumbs (no user on the device) and in the API's uvicorn access log on Render (no account id). #1029 stops collecting it; remove this row when it ships |
 
-Answer App Store Connect → App Privacy and Play Console → Data safety with the
-same list. When a feature starts sending new data off the device, add the type
+**Third parties and identifiers.**
+
+- **Cloudflare Turnstile** (`components/TurnstileWidget.tsx`, mounted for every
+  scan in `app/_layout.tsx`) runs in a WebView, so Cloudflare sees device and
+  browser signals and the IP address to tell people from bots. This counts as
+  App Functionality (Apple lists fraud prevention and security under it). No
+  separate data type is declared: the signals are used only for the challenge,
+  we receive only a pass/fail token, and nothing is stored with the account or
+  used for tracking.
+- **Sentry per-install id**: a random UUID the Sentry SDK makes for each
+  install. It is not Apple's "Device ID" (an advertising or device-level
+  identifier) and it is covered by the diagnostics types above.
+- **Device attestation** is not live: the app never calls `/attestation/*`.
+  When it ships (#753 / #870), declare **Device ID, linked to the user**,
+  because `device_keys.key_id` is stored with `user_id`.
+
+**Store answers.** Answer App Store Connect → App Privacy with the table above
+(Tracking No for every type). In Play Console → Data safety, map the same list:
+Email address, Name and User IDs (Personal info); Photos (Photos and videos,
+processed ephemerally); App interactions, In-app search history and Other
+user-generated content (App activity); Crash logs and Diagnostics (App info and
+performance). Data is encrypted in transit, users can request deletion, and
+nothing is used for advertising or tracking.
+
+When a feature starts sending new data off the device, add the type
 here, in `app.json`, and in the store answers in the same change.
 
 ---
