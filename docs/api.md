@@ -59,7 +59,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
 | `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences` |
 | `rate_limit_reads` | 120/min | `GET /user-books`, `GET /user-books/trash`, `GET /auth/me`, `GET /scan/usage` |
-| `rate_limit_health` | 60/min | `GET /health`, `GET /health/db` |
+| `rate_limit_health` | 60/min | `GET` / `HEAD /health`, `GET` / `HEAD /health/db` |
 
 429 responses are logged at WARN level.
 
@@ -664,7 +664,7 @@ An entry past `purge_after` that the cleanup has not purged yet can still be res
 
 ## Health
 
-### `GET /health` — liveness only
+### `GET` / `HEAD /health` — liveness only
 
 **Auth:** none — explicitly exempt from `TrustedHostMiddleware` so CI + uptime probes can hit the origin directly (see [architecture.md](architecture.md#adr-ci-health-checks-bypass-cloudflare))
 **Rate limit:** `rate_limit_health`
@@ -677,7 +677,9 @@ Never touches the database — always `200`. Render restarts a service on a fail
 { "status": "ok" }
 ```
 
-### `GET /health/db` — DB connectivity check
+### `GET` / `HEAD /health/db` — DB connectivity check
+
+HEAD returns the same status with no body (for uptime monitors that send HEAD).
 
 **Auth:** none, but — unlike `/health` — NOT exempt from `TrustedHostMiddleware` or the origin lockdown, because it opens a DB connection. The DB-connectivity uptime monitor uses the public hostname anyway.
 **Rate limit:** `rate_limit_health`
