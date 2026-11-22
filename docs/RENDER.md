@@ -404,7 +404,7 @@ deletion and export stories add the code and its settings.
 |---|---|
 | Sending domain | `mail.buffingchi.com` (verified in Resend, region `us-east-1`) |
 | From address | any address on that domain, e.g. `noreply@mail.buffingchi.com`. Nothing to create: Resend sends as any address on a verified domain |
-| Reply-to | a real inbox via Cloudflare Email Routing on `buffingchi.com` (#678). Resend only sends. Set with `EMAIL_REPLY_TO` (default `support@buffingchi.com`; one bare address, empty = no Reply-To header) |
+| Reply-to | a real inbox via Cloudflare Email Routing on `buffingchi.com` (#678). Resend only sends. Set with `EMAIL_REPLY_TO` (default `support@buffingchi.com`; one bare address; a blank value counts as unset and falls back to the default) |
 | `RESEND_API_KEY` | dashboard secret (`sync: false`) on both API services; one key per environment, **Sending access** only, restricted to `mail.buffingchi.com`. Set on dev and prod (2026-10-26) |
 
 Apple's "Hide My Email" relay drops mail from senders that aren't registered:
