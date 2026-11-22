@@ -365,7 +365,7 @@ Both endpoints accept `GET` and `HEAD` (uptime monitors such as UptimeRobot's fr
 
 | Path | Used by | Method | Interval | Alert |
 |---|---|---|---|---|
-| `/health` | Render `healthCheckPath`; CI `backend-health`; existing UptimeRobot liveness monitors | GET/HEAD | Render default / 5 min | — / owner email |
+| `/health` | Render `healthCheckPath` (origin); CI `backend-health` (Render origin, via the org reusable workflow); any UptimeRobot liveness monitor | GET or HEAD (endpoint accepts both) | Render's own schedule; CI per run; monitor as configured in UptimeRobot | Render restarts the service; CI fails the run |
 | `/health/db` | UptimeRobot (prod `https://bookshelfapi.buffingchi.com/health/db`, dev `https://bookshelfapi-dev.buffingchi.com/health/db`) | HEAD, expect 2xx | 5 min | owner email, first failure |
 
 Monitors created: _pending (owner, see #562)_
