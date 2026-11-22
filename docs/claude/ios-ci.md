@@ -179,8 +179,8 @@ green while Xcode Cloud on 27 fails.
 
 | Workflow | Start condition | Builds | Xcode Version | Since |
 |---|---|---|---|---|
-| `Default` (release) | Branch changes on `dev` | Archive - iOS → TestFlight (internal) | **Xcode 26.6** | 2026-11-22 (#987) |
-| `Xcode 27 – SDK 58 test` (#716) | Branch changes on `feature/sdk58-upgrade` only | Archive - iOS → TestFlight (internal) | Xcode 27.x (exact version not recorded yet) | 2026-11 (#716) |
+| `Default` (`dev` builds; uses the dev API, see § Which backend a build talks to) | Branch changes on `dev` | Archive - iOS → TestFlight (internal) | **Xcode 26.6** | 2026-11-22 (#987) |
+| `Xcode 27 – SDK 58 test` (#716) | Branch changes on `feature/sdk58-upgrade` only | Archive - iOS → TestFlight (internal) | Xcode 27.x (owner: record the exact version) | 2026-11 (#716) |
 
 Never leave a workflow on "Latest Release" or "Latest Beta". The `Default`
 workflow sat on "Latest Release" until build 159 (2026-11-22, #987): it rolled
@@ -196,7 +196,8 @@ disabled. Update this table in the same PR.
 App Store Connect → Apps → BookShelfAI → Xcode Cloud → Manage Workflows → the
 workflow → **Environment** → Xcode Version → choose an explicit version (not
 "Latest Release" and not "Latest Beta"). Set macOS Version to the one that goes
-with it → Save. Then start a new build.
+with it (Xcode Cloud lists the macOS versions each Xcode supports; pick the newest one it
+offers) → Save. Then start a new build.
 
 ### Bumping the pin
 
@@ -205,19 +206,20 @@ Bump deliberately, together with the Expo SDK when the new Xcode needs it:
 1. **Check compatibility.** Read the Expo SDK's supported Xcode range and the
    `check_xcode_compat.sh` floor (`MIN_JSI_FOR_XCODE_27`). An Xcode major the
    app's SDK doesn't support needs the SDK upgrade first.
-2. **Try it on a test workflow first.** Duplicate the release workflow, point it
+2. **Try it on a test workflow first.** Duplicate the `Default` workflow, point it
    at the branch you're testing, and set the new Xcode Version. You need a green
-   archive before touching the release workflow.
+   archive before touching `Default`.
 3. **Smoke-test on TestFlight** on a real device: cold launch, Google sign-in
    and Sign in with Apple, deep links, camera scan, sign out, and a Sentry test
    error that arrives symbolicated.
-4. **Move the release pin** to the exact version the test workflow used, then
+4. **Move the `Default` pin** to the exact version the test workflow used, then
    delete or disable the test workflow.
 5. **Update the table above** in a PR, with the date and the issue.
 
-Every Xcode Cloud workflow also needs `SENTRY_ORG`, `SENTRY_PROJECT` and
-`SENTRY_AUTH_TOKEN`, set on the workflow or as shared environment variables.
-Without them the Sentry upload is skipped quietly (`SENTRY_ALLOW_FAILURE=true`).
+When you duplicate a workflow, check that it can see `SENTRY_ORG`,
+`SENTRY_PROJECT` and `SENTRY_AUTH_TOKEN` (set on the workflow or as shared
+environment variables). Without them, source maps aren't uploaded and the JS
+bundle depends on the fallback in § Sentry bundling fallback.
 
 ## Intel workers and Homebrew (build 156, Oct 2026, #718)
 
