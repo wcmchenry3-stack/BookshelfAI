@@ -6,6 +6,7 @@ ruff 0.17.6, and Dependabot bumped only the requirements file. The
 inputs. Offline: reads ci.yml and runs the pin-reading script locally.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -16,6 +17,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 REQUIREMENTS_DEV = REPO_ROOT / "backend" / "requirements-dev.txt"
+RULESETS_DIR = REPO_ROOT / ".github" / "rulesets"
 
 
 def _jobs():
@@ -87,11 +89,20 @@ class TestLintVersionsJob:
             "black": "${{ steps.pins.outputs.black }}",
         }
 
-    def test_script_greps_requirements_dev(self):
-        script = _pin_script()
-        assert "requirements-dev.txt" in script
-        assert "grep -E" in script
-        assert "for tool in ruff black" in script
+    def test_job_is_a_required_context_in_both_rulesets(self):
+        # A skipped lint-python passes its required check, so a failure here must
+        # block the merge directly. The name is the context string GitHub reports.
+        name = _jobs()["lint-versions"]["name"]
+        assert name == "Lint versions (requirements-dev.txt)"
+        for ruleset in ("protect-dev.json", "protect-main.json"):
+            data = json.loads((RULESETS_DIR / ruleset).read_text(encoding="utf-8"))
+            contexts = [
+                c["context"]
+                for rule in data["rules"]
+                if rule["type"] == "required_status_checks"
+                for c in rule["parameters"]["required_status_checks"]
+            ]
+            assert name in contexts, ruleset
 
 
 class TestPinScript:
@@ -135,3 +146,24 @@ class TestPinScript:
         result, output = _run_pin_script(tmp_path, text)
         assert result.returncode == 0, result.stderr
         assert "ruff=0.17.6\n" in output
+
+    def test_accepts_crlf_line_endings(self, tmp_path):
+        text = "ruff==0.17.6\r\nblack==26.10.1\r\n"
+        result, output = _run_pin_script(tmp_path, text)
+        assert result.returncode == 0, result.stderr
+        assert output.splitlines() == ["ruff=0.17.6", "black=26.10.1"]
+
+    def test_accepts_env_marker_after_a_space(self, tmp_path):
+        text = 'ruff==0.17.6 ; python_version >= "3.9"\nblack==26.10.1\n'
+        result, output = _run_pin_script(tmp_path, text)
+        assert result.returncode == 0, result.stderr
+        assert output.splitlines() == ["ruff=0.17.6", "black=26.10.1"]
+
+    def test_env_marker_without_a_space_fails_cleanly(self, tmp_path):
+        # The version runs up to whitespace, so ';' stays in it and the plain-version
+        # check rejects it. The job fails with a message and writes no outputs.
+        text = 'ruff==0.17.6;python_version>="3.9"\nblack==26.10.1\n'
+        result, output = _run_pin_script(tmp_path, text)
+        assert result.returncode != 0
+        assert "not a plain version" in result.stdout
+        assert output == ""

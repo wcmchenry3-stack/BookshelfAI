@@ -87,6 +87,10 @@ jobs:
   # with the same versions as a local run. Dependabot bumps that file and this
   # job follows it with no second edit (#1012). Fails if either pin is missing.
   lint-versions:
+    # Required context (.github/rulesets/*.json): a failure here must block the
+    # merge, because lint-python and every job after it would be skipped, and a
+    # skipped required check counts as passing.
+    name: Lint versions (requirements-dev.txt)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

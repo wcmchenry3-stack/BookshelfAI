@@ -37,6 +37,7 @@
         "required_status_checks": [
           { "context": "secret-scan / Secret scan (gitleaks)" },
           { "context": "lint-python / Lint Python (black + ruff)" },
+          { "context": "Lint versions (requirements-dev.txt)" },
           { "context": "lint-frontend / Lint frontend (eslint + prettier)" },
           { "context": "test-python / Test Python (pytest)" },
           { "context": "test-frontend / Test frontend (jest/vitest)" },
