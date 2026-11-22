@@ -2,9 +2,7 @@ name: CI
 
 on:
   pull_request:
-    # feature/sdk58-upgrade: Expo SDK 58 integration branch (epic #710), so story
-    # PRs into it get CI. Remove at cutover (#717).
-    branches: [dev, main, feature/sdk58-upgrade]
+    branches: [dev, main]
     # Default types plus ready_for_review, so the native build checks (skipped
     # on drafts) run when a draft PR is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]

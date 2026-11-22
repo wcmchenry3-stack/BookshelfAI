@@ -5,9 +5,7 @@ on:
     # Every Monday at 08:00 UTC
     - cron: '0 8 * * 1'
   pull_request:
-    # feature/sdk58-upgrade: Expo SDK 58 integration branch (epic #710), so story
-    # PRs into it get CI. Remove at cutover (#717).
-    branches: [dev, feature/sdk58-upgrade]
+    branches: [dev]
     paths:
       - 'backend/app/**'
       - 'backend/tests/security/**'
