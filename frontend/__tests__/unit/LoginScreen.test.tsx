@@ -28,6 +28,7 @@ jest.mock('../../hooks/useTheme', () => ({
         surface: '#fbf9f5',
         text: '#1b1c1a',
         primary: '#0f426f',
+        onPrimary: '#ffffff',
         onSurface: '#1b1c1a',
         onSurfaceVariant: '#42474f',
         error: '#ba1a1a',
@@ -73,6 +74,12 @@ describe('LoginScreen', () => {
   it('pads the top by the safe-area inset (#936)', async () => {
     const { getByText } = await render(<LoginScreen />);
     expect(hasTopPadding(getByText('BookshelfAI'), TEST_INSET_TOP)).toBe(true);
+  });
+
+  it('shows the logo as an image, drawn in code rather than from a bitmap (#961)', async () => {
+    const { getByRole, getByTestId } = await render(<LoginScreen />);
+    expect(getByRole('image', { name: 'BookshelfAI' })).toBeTruthy();
+    expect(getByTestId('login-logo')).toBeTruthy();
   });
 
   it('renders the app title', async () => {

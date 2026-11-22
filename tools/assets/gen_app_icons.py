@@ -6,7 +6,7 @@ Writes (`frontend/`):
   assets/icon.png                 iOS / store icon, 1024 px, no alpha
   assets/adaptive-icon.png        Android adaptive foreground (transparent, inside the 66 dp safe circle)
   assets/monochrome-icon.png      Android 13 themed-icon layer (alpha only)
-  assets/favicon.png, logo.png    web favicon; the login screen's logo (the whole mark)
+  assets/favicon.png              web favicon
   assets/splash.png               splash, the whole mark centred on navy
   ios/.../AppIcon.appiconset/App-Icon-1024x1024@1x.png
   ios/.../SplashScreenLegacy.imageset/image{,@2x,@3x}.png, SplashScreenBackground.colorset
@@ -45,7 +45,6 @@ ICON_SIDE = 880  # iOS / legacy: the mark fills about 70 % of the icon
 ADAPTIVE_SIDE = 1300  # Android: every opaque pixel within 33 dp of the centre of the 108 dp canvas (the 66 dp
 # safe circle). The book's base corners are 383 design units from CENTRE, plus the round stroke ends.
 SPLASH_RING_SHARE = 0.58  # ring diameter as a share of the splash width
-LOGO_PX = 360  # the login logo: 120 pt at 3x
 
 MIPMAP_FOREGROUND = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
 MIPMAP_LEGACY = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
@@ -150,7 +149,6 @@ def outputs() -> dict[Path, bytes]:
     out[ASSETS / "adaptive-icon.png"] = _png(adaptive_foreground(1024))
     out[ASSETS / "monochrome-icon.png"] = _png(monochrome(1024))
     out[ASSETS / "favicon.png"] = _png(icon_art(196))
-    out[ASSETS / "logo.png"] = _png(whole_mark(LOGO_PX))
     splash = _png(splash_image())
     out[ASSETS / "splash.png"] = splash
     for name in ("image.png", "image@2x.png", "image@3x.png"):
@@ -216,7 +214,6 @@ def text_edits() -> dict[Path, str]:
             '"foregroundImage": "./assets/adaptive-icon.png",',
             '"foregroundImage": "./assets/adaptive-icon.png",\n        "monochromeImage": "./assets/monochrome-icon.png",',
         )
-    s = s.replace('"favicon": "./assets/logo.png"', '"favicon": "./assets/favicon.png"')
     edits[app] = s
     return edits
 

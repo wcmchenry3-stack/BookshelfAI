@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BookshelfLogo } from '../../components/brand/BookshelfLogo';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
 import { api } from '../../lib/api';
@@ -91,12 +92,12 @@ export default function LoginScreen() {
       style={[styles.container, { backgroundColor: theme.colors.surface, paddingTop: insets.top }]}
     >
       {/* Brand mark */}
-      <Image
-        source={require('../../assets/logo.png')}
+      <BookshelfLogo
+        size={120}
+        radius={24}
+        accessibilityLabel={t('appTitle')}
+        testID="login-logo"
         style={styles.logo}
-        resizeMode="contain"
-        accessibilityLabel="BookshelfAI"
-        accessibilityRole="image"
       />
 
       <Text
@@ -196,9 +197,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   logo: {
-    width: 120,
-    height: 120,
-    borderRadius: 24,
     marginBottom: 24,
   },
   title: {
