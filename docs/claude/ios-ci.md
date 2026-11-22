@@ -60,6 +60,9 @@ not change the backend (#973).
 `.env.production` key by key, so only the API URL and environment are
 overridden; every other value comes from `.env.production`. The build log
 shows the choice (`INFO: release build …` / `INFO: non-release build …`).
+The rule is purely branch/tag based: **any** build of `main` (including a manual
+"Start Build" on a `main` workflow) is treated as a release and uses prod, and
+any build of another branch uses dev.
 To check a TestFlight build, look at the `environment` tag on its Sentry events.
 
 ## Post-build validation: `ci_post_xcodebuild.sh`

@@ -41,6 +41,16 @@ describe('select_app_env.sh (#973)', () => {
     expect(fs.existsSync(localEnv())).toBe(true);
   });
 
+  it('treats a run with no Xcode Cloud variables as non-release', () => {
+    expect(run({}).status).toBe(0);
+    expect(fs.existsSync(localEnv())).toBe(true);
+  });
+
+  it('matches main exactly, not as a substring', () => {
+    expect(run({ CI_BRANCH: 'feature/main-x' }).status).toBe(0);
+    expect(fs.existsSync(localEnv())).toBe(true);
+  });
+
   it.each([
     ['a main branch build', { CI_BRANCH: 'main' }],
     ['a PR into main', { CI_BRANCH: 'dev', CI_PULL_REQUEST_TARGET_BRANCH: 'main' }],
