@@ -111,8 +111,11 @@ describe('committed ios project', () => {
     const names = plugins.map((p) => (Array.isArray(p) ? p[0] : p));
     const ours = names.indexOf('./plugins/withSentryDebugFilesNodeEnv');
     expect(ours).toBeGreaterThan(-1);
-    expect(ours).toBeLessThan(names.indexOf('@sentry/react-native/expo'));
-    expect(ours).toBeLessThan(names.indexOf('@sentry/react-native'));
+    const sentryEntries = ['@sentry/react-native/expo', '@sentry/react-native']
+      .map((name) => names.indexOf(name))
+      .filter((i) => i !== -1);
+    expect(sentryEntries.length).toBeGreaterThan(0);
+    for (const i of sentryEntries) expect(ours).toBeLessThan(i);
   });
 });
 

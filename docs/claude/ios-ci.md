@@ -193,9 +193,18 @@ Fix: the config plugin `frontend/plugins/withSentryDebugFilesNodeEnv.js`
 prepends a `# @generated begin/end bookshelf-sentry-node-env` block that
 sources `$SRCROOT/.xcode.env` and `$SRCROOT/.xcode.env.local` (as the bundle
 phase does) before Sentry's unchanged command. If Node still can't be found it
-prints `warning:` and exits 0 when `SENTRY_ALLOW_FAILURE=true` (set in
-`.xcode.env`), else `error:` and exit 1. It throws during prebuild if the
-Sentry phase is missing or no longer calls `sentry-xcode-debug-files.sh`.
+prints `warning:` and exits 0 when `SENTRY_ALLOW_FAILURE=true`, else `error:`
+and exit 1. The committed `.xcode.env` always sets `SENTRY_ALLOW_FAILURE=true`,
+so in practice the `exit 1` branch runs only if that line is removed. It throws
+during prebuild if the Sentry phase is missing or no longer calls
+`sentry-xcode-debug-files.sh`.
+
+Side effect: because the phase now sources `.xcode.env`, Sentry's
+`sentry-xcode-debug-files.sh` also sees `SENTRY_ALLOW_FAILURE=true`, so a
+**real dSYM upload failure** (bad token, wrong org or project) is logged as a
+warning and does not fail the archive, the same as the bundle phase. Check the
+"Upload Debug Symbols to Sentry" output (or Sentry's Debug Files page) after a
+release build to confirm the upload actually happened.
 
 It must be listed **before** `@sentry/react-native/expo` in `app.json`
 `plugins`: for the same mod Expo runs the last-registered plugin's action
