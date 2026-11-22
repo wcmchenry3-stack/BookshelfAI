@@ -366,6 +366,40 @@ class TestRateLimitEnforcement:
             response = client.get("/health/db")
         assert response.status_code == 429
 
+    def test_health_db_endpoint_returns_429_after_limit_head(self) -> None:
+        """HEAD /health/db (sent by uptime monitors) is limited too, in the same
+        rate_limit_health bucket as GET; the (limit + 1)th request must be 429."""
+        from unittest.mock import AsyncMock, patch
+
+        from app.core.config import settings
+
+        limit = int(settings.rate_limit_health.split("/")[0])
+        client = TestClient(app, raise_server_exceptions=False)
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock()
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.main.AsyncSessionLocal", return_value=mock_cm):
+            for _ in range(limit):
+                assert client.head("/health/db").status_code == 200
+            response = client.head("/health/db")
+        assert response.status_code == 429
+
+    def test_health_endpoint_returns_429_after_limit_head(self) -> None:
+        """HEAD /health is limited (same rate_limit_health bucket as GET);
+        the (limit + 1)th request must be 429."""
+        from app.core.config import settings
+
+        limit = int(settings.rate_limit_health.split("/")[0])
+        client = TestClient(app, raise_server_exceptions=False)
+        for _ in range(limit):
+            client.head("/health")
+        response = client.head("/health")
+        assert response.status_code == 429
+
 
 # ---------------------------------------------------------------------------
 # A01/A07 — Authentication bypass attempts

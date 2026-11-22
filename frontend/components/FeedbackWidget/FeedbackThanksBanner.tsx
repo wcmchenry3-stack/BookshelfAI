@@ -3,6 +3,7 @@ import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-nativ
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../hooks/useTheme';
+import { fontFor } from '../../theme/typography';
 
 export const THANKS_BANNER_DURATION_MS = 4000;
 /** Approximate native header height; the banner sits just below it. */
@@ -49,7 +50,6 @@ export function FeedbackThanksBanner({ visible, onDismiss }: Props) {
           styles.text,
           {
             color: theme.colors.inverseOnSurface,
-            fontFamily: theme.typography.fontFamilyBody,
             fontSize: theme.typography.fontSizeSM,
           },
         ]}
@@ -72,5 +72,5 @@ const styles = StyleSheet.create({
     elevation: 8,
     maxWidth: 320,
   },
-  text: { fontWeight: '700', textAlign: 'center' },
+  text: { fontFamily: fontFor('700'), textAlign: 'center' },
 });

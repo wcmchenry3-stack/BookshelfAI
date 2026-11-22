@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#263250"
     },
     "ios": {
       "supportsTablet": true,
@@ -56,14 +56,15 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0f426f"
+        "monochromeImage": "./assets/monochrome-icon.png",
+        "backgroundColor": "#263250"
       },
       "package": "com.buffingchi.bookshelf",
       "versionCode": 1,
       "permissions": ["CAMERA"]
     },
     "web": {
-      "favicon": "./assets/logo.png",
+      "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
     "plugins": [

@@ -46,5 +46,48 @@
   "trashHint": {
     "description": "Settings row subtitle for the Trash row",
     "tone": "neutral"
+  },
+  "openOn": {
+    "description": "Settings row label for the screen the app opens on after sign-in and launch",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "openOnA11y": {
+    "description": "Screen-reader label for the Open on row; {{value}} is the current screen name",
+    "tone": "neutral"
+  },
+  "openOnHint": {
+    "description": "Screen-reader hint for the Open on row: what tapping it does",
+    "tone": "neutral"
+  },
+  "openOnPickerTitle": {
+    "description": "Title of the picker that chooses the screen the app opens on",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "openOnScan": {
+    "description": "Open on picker option and row value: the Scan tab",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "openOnWishlist": {
+    "description": "Open on picker option and row value: the Wishlist tab",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "openOnMyBooks": {
+    "description": "Open on picker option and row value: the My Books tab",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "openOnCancel": {
+    "description": "Closes the Open on picker without changing the choice",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "openOnSaveFailed": {
+    "description": "Error banner when the Open on choice could not be saved; the old value is restored",
+    "tone": "neutral",
+    "characterLimit": 80
   }
 }

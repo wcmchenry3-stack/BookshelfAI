@@ -138,7 +138,6 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
         message: t('scanFailedMessage'),
         type: 'error',
         actions: [{ label: t('retryNow'), onPress: () => handleCapture() }],
-        duration: 8000,
       });
     } finally {
       setCapturing(false);

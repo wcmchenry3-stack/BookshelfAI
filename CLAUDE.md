@@ -11,6 +11,7 @@ Monorepo: `backend/` · `frontend/` · `.github/` · `docs/`
 - [Frontend](docs/claude/frontend.md)
 - [Testing](docs/claude/testing.md)
 - [CI checks](docs/ci-checks.md)         ← what each PR check does, gating, required checks
+- [Assets](docs/ASSETS.md)               ← READ BEFORE adding any image, icon, sound or illustration: recipe-first, auditions, manifest
 - [iOS CI/CD](docs/claude/ios-ci.md)      ← READ BEFORE touching ios/ or ci_scripts/
 - [Android CI/CD](docs/claude/android-ci.md) ← READ BEFORE touching android/ or Gradle files
 
@@ -47,6 +48,8 @@ Monorepo: `backend/` · `frontend/` · `.github/` · `docs/`
 20. After any change to `frontend/android/` or Gradle files, verify `android-bundle-check` and `android-build-check` CI jobs pass before merging.
 21. `sentry.properties` must use environment variables for org/project/token — never hardcode Sentry credentials.
 22. Android Gradle builds require JDK 17 locally (`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`). JDK 24+ breaks CMake native loading. `frontend/android/settings.gradle` enforces this with a preflight check.
+
+23. Assets are generated, not downloaded: every file under `frontend/assets/` needs a rule in `tools/assets/asset_manifest.json`, and third-party assets are a declared exception (see `docs/ASSETS.md`). Never hand-edit a generated output; change the recipe and re-run it.
 
 ## Quick Commands
 ```

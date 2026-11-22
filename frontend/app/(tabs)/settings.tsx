@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Alert, Platform, Pressable, View, Text, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
@@ -10,11 +11,14 @@ import { useScanJobs } from '../../hooks/useScanJobs';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { noMatchRemainingToday, remainingToday } from '../../components/ScanStatusPanel';
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
+import { OpenOnSetting } from '../../components/OpenOnSetting';
 import { useFeedback } from '../../components/FeedbackWidget/FeedbackContext';
 import { openTrash } from '../../lib/trash';
+import { fontFor } from '../../theme/typography';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   // The usage figure reuses the scan screen's "scans left today" string.
   const { t } = useTranslation(['settings', 'scan']);
   const { usageRefreshKey } = useScanJobs();
@@ -60,7 +64,12 @@ export default function SettingsScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: theme.colors.background, paddingTop: insets.top },
+      ]}
+    >
       <Text style={{ color: theme.colors.text, marginBottom: theme.spacing.md }}>
         {t('heading')}
       </Text>
@@ -83,6 +92,7 @@ export default function SettingsScreen() {
         </View>
       ) : null}
       <ThemeToggleButton />
+      <OpenOnSetting />
       <Pressable
         onPress={openTrash}
         style={styles.trash}
@@ -143,10 +153,10 @@ const styles = StyleSheet.create({
   usageLabel: { fontSize: 12 },
   trash: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
   feedback: { minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 16 },
-  trashText: { fontWeight: '600' },
+  trashText: { fontFamily: fontFor('600') },
   trashHint: { textAlign: 'center' },
   signOut: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, marginTop: 16 },
   signOutBusy: { opacity: 0.5 },
-  signOutText: { fontSize: 16, fontWeight: '600' },
-  usageValue: { fontSize: 14, fontWeight: '600', textAlign: 'center' },
+  signOutText: { fontSize: 16, fontFamily: fontFor('600') },
+  usageValue: { fontSize: 14, fontFamily: fontFor('600'), textAlign: 'center' },
 });

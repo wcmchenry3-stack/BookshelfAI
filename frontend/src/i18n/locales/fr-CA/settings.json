@@ -8,5 +8,14 @@
   "signOutCancel": "Annuler",
   "trash": "Corbeille",
   "trashA11y": "Ouvrir la corbeille",
-  "trashHint": "Restaurez les livres supprimés au cours des 30 derniers jours"
+  "trashHint": "Restaurez les livres supprimés au cours des 30 derniers jours",
+  "openOn": "Ouvrir sur",
+  "openOnA11y": "Ouvrir sur : {{value}}",
+  "openOnHint": "Choisis l'écran sur lequel l'app s'ouvre",
+  "openOnPickerTitle": "Ouvrir l'app sur",
+  "openOnScan": "Numériser",
+  "openOnWishlist": "Souhaits",
+  "openOnMyBooks": "Mes Livres",
+  "openOnCancel": "Annuler",
+  "openOnSaveFailed": "Impossible d'enregistrer ton choix. Réessaie."
 }

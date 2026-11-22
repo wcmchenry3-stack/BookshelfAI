@@ -1,14 +1,17 @@
 import React from 'react';
 import { Platform } from 'react-native';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import ScanScreen from '../../app/(tabs)/scan';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
+import { routerState } from '../helpers/routerMock';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockStartScan = jest.fn();
 let mockQueueState = { pendingCount: 0, isQueueFull: false };
 
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../hooks/useScanJobs', () => ({
   useScanJobs: () => ({
     jobs: [],
@@ -130,12 +133,85 @@ function setPlatform(os: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  routerState.params = {};
   mockQueueState = { pendingCount: 0, isQueueFull: false };
   useCameraPermissions.mockReturnValue([{ granted: true }, mockRequestPermission]);
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// ?mode=text (Wishlist's "Search by title")
+// ---------------------------------------------------------------------------
+describe('ScanScreen — mode param', () => {
+  const FIELD = 'Book title or author search';
+
+  it('starts in text search and clears the param through its own navigation', async () => {
+    routerState.params = { mode: 'text' };
+    const { getByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    expect(routerState.navSetParams).toHaveBeenCalledWith({ mode: undefined });
+    expect(routerState.setParams).not.toHaveBeenCalled();
+  });
+
+  it('opens the camera as usual without the param', async () => {
+    const { queryByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).not.toHaveBeenCalled();
+  });
+
+  it('ignores any other mode value', async () => {
+    routerState.params = { mode: 'grid' };
+    const { queryByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).not.toHaveBeenCalled();
+  });
+
+  it('switches to text search when the param arrives after mount', async () => {
+    const { rerender, queryByLabelText, getByLabelText } = await render(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    routerState.params = { mode: 'text' };
+    await rerender(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    expect(routerState.navSetParams).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays on the camera for later renders once the param is cleared', async () => {
+    routerState.params = { mode: 'text' };
+    const { rerender, getByLabelText } = await render(<ScanScreen />);
+    await fireEvent.press(getByLabelText('Camera scan mode'));
+    routerState.params = {}; // the clear took effect
+    await rerender(<ScanScreen />);
+    expect(getByLabelText('Text search mode')).toBeTruthy();
+    expect(() => getByLabelText(FIELD)).toThrow();
+  });
+
+  it('switches back to the camera on mode=camera after a cleared text visit', async () => {
+    routerState.params = { mode: 'text' };
+    const { rerender, getByLabelText, queryByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    routerState.params = {}; // the text request was cleared
+    await rerender(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy(); // the tab keeps its last mode
+    routerState.params = { mode: 'camera' };
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+    expect(routerState.navSetParams).toHaveBeenLastCalledWith({ mode: undefined });
+    routerState.params = {};
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull(); // the clear did not undo it
+  });
+
+  it('lets the user go back to the camera even if the clear never lands', async () => {
+    routerState.params = { mode: 'text' }; // the mocked clear leaves the param in place
+    const { rerender, getByLabelText, queryByLabelText } = await render(<ScanScreen />);
+    expect(getByLabelText(FIELD)).toBeTruthy();
+    await fireEvent.press(getByLabelText('Camera scan mode'));
+    await rerender(<ScanScreen />);
+    expect(queryByLabelText(FIELD)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -205,6 +281,17 @@ describe('ScanScreen — native camera permissions', () => {
     expect(mockRequestPermission).toHaveBeenCalled();
   });
 
+  it('pads the permission prompt by the top safe-area inset (#936)', async () => {
+    useCameraPermissions.mockReturnValue([{ granted: false }, mockRequestPermission]);
+    const { getByLabelText } = await render(<ScanScreen />);
+    expect(hasTopPadding(getByLabelText('Grant camera permission'), TEST_INSET_TOP)).toBe(true);
+  });
+
+  it('pads the camera overlay by the inset plus 16 (#936)', async () => {
+    const { getByLabelText } = await render(<ScanScreen />);
+    expect(hasTopPadding(getByLabelText('Capture books'), TEST_INSET_TOP + 16)).toBe(true);
+  });
+
   it('renders mode toggle when permission is loading (null)', async () => {
     useCameraPermissions.mockReturnValue([null, mockRequestPermission]);
     const { getByLabelText } = await render(<ScanScreen />);
@@ -272,6 +359,19 @@ describe('ScanScreen — native capture flow', () => {
 // ---------------------------------------------------------------------------
 // Web camera mode
 // ---------------------------------------------------------------------------
+// The web file input is a raw DOM <input>, so it carries `data-testid` (a DOM
+// attribute) rather than `testID`, which RNTL's *ByTestId queries match. Find it
+// by that attribute instead. It is display:none, so query the container directly.
+async function getWebInput(utils: Awaited<ReturnType<typeof render>>) {
+  return waitFor(() => {
+    const [input] = utils.container.queryAll(
+      (node) => node.type === 'input' && node.props['data-testid'] === 'web-file-input'
+    );
+    if (!input) throw new Error('Unable to find the web file input');
+    return input;
+  });
+}
+
 describe('ScanScreen — web camera mode', () => {
   setPlatform('web');
 
@@ -280,12 +380,6 @@ describe('ScanScreen — web camera mode', () => {
     expect(getByLabelText('Capture books')).toBeTruthy();
     expect(queryByLabelText('Flip camera')).toBeNull();
   });
-
-  async function getWebInput(utils: Awaited<ReturnType<typeof render>>) {
-    // The input is style={{ display: 'none' }}, and v14 excludes hidden
-    // elements from queries by default.
-    return utils.findByTestId('web-file-input', { includeHiddenElements: true });
-  }
 
   it('renders hidden file input with correct attributes', async () => {
     const utils = await render(<ScanScreen />);
@@ -668,7 +762,7 @@ describe('ScanScreen — offline queue cap (web)', () => {
     mockQueueState = { pendingCount: 50, isQueueFull: true };
     const mockFile = new File(['img'], 'scan.jpg', { type: 'image/jpeg' });
     const utils = await render(<ScanScreen />);
-    const input = await utils.findByTestId('web-file-input', { includeHiddenElements: true });
+    const input = await getWebInput(utils);
     await act(async () => await fireEvent(input, 'change', { target: { files: [mockFile] } }));
 
     expect(mockStartScan).not.toHaveBeenCalled();

@@ -4,31 +4,65 @@
     "tone": "neutral",
     "characterLimit": 30
   },
-  "empty": {
-    "description": "Empty state message when the wishlist has no books. Contains a line break (\\n). Second line encourages scanning.",
-    "tone": "friendly",
-    "characterLimit": 80,
-    "notes": "Preserve the \\n newline in translated strings"
+  "subtitle_one": {
+    "description": "Subtitle under the Wishlist title when there is exactly one book (plural form). Not every locale has every CLDR plural category.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
   },
-  "markPurchased": {
-    "description": "Button label to move a book from wishlist to purchased",
+  "subtitle_other": {
+    "description": "Subtitle under the Wishlist title for other counts (plural form): how many books the user wants to buy",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "subtitleEmpty": {
+    "description": "Subtitle under the Wishlist title when the wishlist is empty",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "searchPlaceholder": {
+    "description": "Placeholder of the Wishlist search field; it matches title and author",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "searchA11y": {
+    "description": "Spoken label of the Wishlist search field",
+    "tone": "neutral",
+    "characterLimit": 50
+  },
+  "searchClearA11y": {
+    "description": "Spoken label of the clear (x) button inside the Wishlist search field",
+    "tone": "action",
+    "characterLimit": 30
+  },
+  "emptySearch.title": {
+    "description": "Shown when the search matches no wishlist book. Keep the quotes around the query.",
+    "tone": "neutral",
+    "placeholders": ["{{query}}"]
+  },
+  "emptySearch.clear": {
+    "description": "Button that clears the Wishlist search",
+    "tone": "action",
+    "characterLimit": 30
+  },
+  "emptyState.title": {
+    "description": "Title of the empty Wishlist state",
+    "tone": "friendly",
+    "characterLimit": 50
+  },
+  "emptyState.body": {
+    "description": "Body of the empty Wishlist state: scan a shelf or search by title; picked books land here until bought",
+    "tone": "friendly",
+    "characterLimit": 130
+  },
+  "emptyState.scan": {
+    "description": "Primary button of the empty Wishlist state; opens Scan",
     "tone": "action",
     "characterLimit": 25
   },
-  "markPurchasedA11y": {
-    "description": "Accessibility label for the mark-purchased button, includes book title",
-    "tone": "neutral",
-    "placeholders": ["{{title}}"]
-  },
-  "remove": {
-    "description": "Button label to remove a book from the wishlist",
-    "tone": "neutral",
-    "characterLimit": 15
-  },
-  "removeA11y": {
-    "description": "Accessibility label for the remove button, includes book title",
-    "tone": "neutral",
-    "placeholders": ["{{title}}"]
+  "emptyState.search": {
+    "description": "Text button of the empty Wishlist state; opens Scan in title search mode",
+    "tone": "action",
+    "characterLimit": 25
   },
   "errorLoadWishlist": {
     "description": "Error message when the wishlist fails to load",
@@ -43,6 +77,31 @@
   "errorRemoveBook": {
     "description": "Error message when removing a book fails",
     "tone": "neutral",
+    "characterLimit": 50
+  },
+  "bought": {
+    "description": "Label of the tonal chip on a wishlist row that moves the book to purchased",
+    "tone": "action",
+    "characterLimit": 15
+  },
+  "boughtA11y": {
+    "description": "Accessibility label of the Bought chip, includes the book title",
+    "tone": "neutral",
+    "placeholders": ["{{title}}"]
+  },
+  "rowA11y": {
+    "description": "Accessibility label of a wishlist row: title, translated status, then the author",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
+  },
+  "rowUnverifiedA11y": {
+    "description": "Accessibility label of the wishlist row of an unverified book (one the user added themselves, #616): title, translated status, author, then that it is unverified",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
+  },
+  "rowHint": {
+    "description": "Accessibility hint of a wishlist row: tapping opens details, where the book can be removed",
+    "tone": "informative",
     "characterLimit": 50
   }
 }

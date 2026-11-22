@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
@@ -14,15 +16,21 @@ import { isScanningLimited } from '../../lib/scanErrors';
 import { isAwaitingRetry } from '../../lib/scanJob';
 import { ScanModeToggle, type InputMode } from '../../components/scan/ScanModeToggle';
 import { ScanProgressPanel } from '../../components/scan/ScanProgressPanel';
+import { fontFor } from '../../theme/typography';
 
 type CameraFacing = 'back' | 'front';
 
+// Space between the status bar / notch and the mode toggle over the camera (the
+// root header is gone, so the screen owns the top safe area, #936).
+const CAMERA_TOP_GAP = 16;
+
 export default function ScanScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t } = useTranslation('scan');
-  // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
-  const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
-  const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
+  // The single accent (primary) in both modes — active/CTA accent (#898).
+  const activeColor = theme.colors.primary;
+  const onActiveColor = theme.colors.onPrimary;
   const {
     jobs,
     startScan,
@@ -56,7 +64,22 @@ export default function ScanScreen() {
   }
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
-  const [inputMode, setInputMode] = useState<InputMode>('camera');
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  // This screen's own navigation object: `setParams` there acts on the Scan route,
+  // not on whichever route happens to be focused.
+  const navigation = useNavigation() as unknown as { setParams: (p: { mode?: string }) => void };
+  const [inputMode, setInputMode] = useState<InputMode>(mode === 'text' ? 'search' : 'camera');
+  // `?mode=text|camera` is a one-shot request (Wishlist's "Search by title" and
+  // "Scan books"). The tab stays mounted, so its last mode would otherwise stick:
+  // set the requested mode once, then clear the param. The clear only sets `mode`
+  // to undefined, which this effect ignores, so it can never undo the mode just set.
+  // Any other value is ignored.
+  useEffect(() => {
+    if (mode !== 'text' && mode !== 'camera') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs the route param (an external navigation event) into the screen's mode once
+    setInputMode(mode === 'text' ? 'search' : 'camera');
+    navigation.setParams({ mode: undefined });
+  }, [mode, navigation]);
   const [query, setQuery] = useState('');
   const [facing, setFacing] = useState<CameraFacing>('back');
   const { cameraRef, webInputRef, capturing, handleCapture, handleWebFileChange } = useScanCapture({
@@ -115,7 +138,12 @@ export default function ScanScreen() {
   // ── Search mode ──────────────────────────────────────────────────────────
   if (inputMode === 'search') {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
         {progressPanel}
         <View style={styles.searchContainer}>
@@ -124,6 +152,7 @@ export default function ScanScreen() {
               styles.searchInput,
               {
                 backgroundColor: theme.colors.surfaceContainerHighest,
+                borderColor: theme.colors.outlineField,
                 color: theme.colors.onSurface,
                 fontSize: theme.typography.fontSizeBase,
               },
@@ -155,8 +184,10 @@ export default function ScanScreen() {
   if (Platform.OS === 'web') {
     return (
       <>
+        {/* Raw DOM element: react-native-web only maps testID on its own
+            components, so a DOM <input> needs the data-testid attribute. */}
         {React.createElement('input', {
-          testID: 'web-file-input',
+          'data-testid': 'web-file-input',
           ref: webInputRef,
           type: 'file',
           accept: 'image/*',
@@ -164,7 +195,12 @@ export default function ScanScreen() {
           style: { display: 'none' },
           onChange: handleWebFileChange,
         })}
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <View
+          style={[
+            styles.container,
+            { backgroundColor: theme.colors.background, paddingTop: insets.top },
+          ]}
+        >
           {modeToggle}
           {progressPanel}
           <Pressable
@@ -186,7 +222,12 @@ export default function ScanScreen() {
   // ── Native camera mode — permission checks ────────────────────────────────
   if (!permission) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
       </View>
     );
@@ -194,7 +235,12 @@ export default function ScanScreen() {
 
   if (!permission.granted) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
         <Text
           style={[
@@ -230,7 +276,10 @@ export default function ScanScreen() {
       {/* box-none: overlay itself doesn't intercept touches, but its Pressable
           children still receive them. Without this, iOS was swallowing the
           shutter press on top of the CameraView. */}
-      <View style={styles.overlay} pointerEvents="box-none">
+      <View
+        style={[styles.overlay, { paddingTop: insets.top + CAMERA_TOP_GAP }]}
+        pointerEvents="box-none"
+      >
         {/* Grouped so the badge appearing doesn't shift the space-between layout. */}
         <View style={styles.topGroup}>
           {modeToggle}
@@ -297,7 +346,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 60,
+    paddingBottom: 60,
   },
   topGroup: { alignItems: 'center' },
   // Viewfinder frame area — contains corner brackets and scan line.
@@ -358,7 +407,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   flipButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 12,
   },
   captureButton: {
@@ -384,7 +433,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   webCaptureButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 18,
   },
   searchContainer: {
@@ -407,7 +456,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   searchButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
   permissionText: {
@@ -423,6 +472,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   permissionButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
   },
 });

@@ -1,6 +1,7 @@
 # Frontend Conventions
 
 ## Stack
+
 Expo SDK 58 · Expo Router · React Native · TypeScript · axios · expo-secure-store
 
 ## Running Locally
@@ -15,73 +16,176 @@ npx expo start
 ## Key Patterns
 
 ### Theme
+
 - **All colours must come from `useTheme()`** — zero hardcoded colour values, ever
 - Import: `import { useTheme } from '../hooks/useTheme'`
 - Use `theme.colors.*`, `theme.spacing.*`, `theme.typography.*`, `theme.radius.*`
-- Color tokens follow the **Material Design 3** role naming convention (e.g. `primary`, `onPrimary`, `surfaceContainerLow`, `secondaryContainer`). See `frontend/theme/tokens.ts` for the full set.
-- Convenience aliases `background`, `text`, `textSecondary`, `border`, `iconActive`, `iconInactive`, `success` are kept for backward compatibility but prefer MD3 role names in new code.
+- New code uses the **v2 colour roles** (`background`, `surface`, `surfaceBar`, `field`, `onSurface`, `onSurfaceVariant`, `outline*`, `primary`, `onPrimary`, `primarySoft`, `danger*`, `success`, the status dots, `coverBlank` / `onCoverBlank`; table below). They keep the MD3 role naming style, but the older MD3 names (`surfaceContainerLow`, `secondaryContainer`, ...) are temporary aliases. See `frontend/theme/tokens.ts` for the full set.
+- **Design tokens v2 (#898)**: the approved values live in `palette` (`theme/tokens.ts`); `tokens.colors` exposes each role as `{ light, dark }` and `light.ts` / `dark.ts` resolve them with `colorsFor(mode)`. New code uses the v2 roles (table below).
+- **Temporary aliases (sunset plan):** the older MD3 roles (`primaryContainer`, `secondary*`, `tertiary*`, `surfaceContainer*`, `error*`, `outlineVariant`, ...) and the convenience aliases `background`, `text`, `textSecondary`, `border`, `iconActive`, `iconInactive` are mapped onto the v2 palette so untouched screens compile and pick up the new colours. Do not use them in new code; a follow-up removes each alias once no caller is left (`grep -rn "colors\.<alias>" app components`).
+- **Single accent:** `primary` is the only accent hue, in both modes. There is no gold dark-mode accent any more; `tertiary*` map onto `primary` / `primarySoft` (UnverifiedBadge's `tertiaryFixed` chip is now `primarySoft` with `primary` text). Never pick a colour by `theme.isDark`.
 - **Repo-wide colour check:** `__tests__/unit/noColourLiterals.test.ts` scans `app/`, `components/`, `contexts/`, `hooks/` and `lib/` (not `theme/` or tests) and fails on any string literal containing a hex colour (`#` + 3/4/6/8 hex digits) or an `rgb()/rgba()/hsl()/hsla()` call, anywhere inside the string (e.g. `'1px solid #fff'`), printing `file:line`. Comments are ignored; named colours such as `'white'` are not detected. There is no allowlist or baseline. It complements the org-level shared `design-token-check.yml` workflow.
-- **Translucent / fixed tokens:** `headerOverlay` (dark glass header; light transparent), `tabBarOverlay`, `outlineVariantFaint`, `shadow`, and the `errorBoundary*` set (fixed palette, identical in light and dark). Define new variants in `tokens.ts` with both modes, then add them to `light.ts` and `dark.ts`.
+- **Translucent / fixed tokens:** `headerOverlay` (no longer used by the root header since #906, which made it opaque; kept for now: dark `background` at 70%, light transparent), `tabBarOverlay` (`surfaceBar`; 85% in dark), `outlineVariantFaint` (dark `outline` at 40%; light transparent), `shadow`, and the `errorBoundary*` set (v2 roles per mode: `background`, `onSurface`, `onSurfaceVariant`, `danger`, `dangerSoft`, `primary`, `onPrimary`). In practice the ErrorBoundary always shows the light palette: it mounts above `ThemeProvider`, so it gets `ThemeContext`'s default (`lightTheme`). Define a new token in `tokens.ts` with both modes; `light.ts` and `dark.ts` pick it up automatically.
 - **ErrorBoundary** (a class, mounted above `ThemeProvider`) reads the theme via `ThemeContext.Consumer` and falls back to `lightTheme` if the context value is missing or malformed, so the error screen can never crash on theming.
 
 ### Design System
 
-#### Colors (MD3 roles — light / dark)
-Defined in `frontend/theme/tokens.ts`. Key roles:
+#### Colors (v2 roles — light / dark, #898)
 
-| Role | Light | Dark | Use |
-|---|---|---|---|
-| `primary` | `#0f426f` | `#a0cafe` | Brand, active states, filled buttons |
-| `onPrimary` | `#ffffff` | `#003258` | Text/icon on primary bg |
-| `secondary` | `#47645d` | `#adcdc4` | Inactive tab icons, secondary text |
-| `secondaryContainer` | `#c6e7dd` | `#2f4c45` | "Read" status badge bg |
-| `surface` | `#fbf9f5` | `#131210` | Screen backgrounds |
-| `surfaceContainerLow` | `#f5f3ef` | `#1b1c1a` | Card backgrounds, tab bar bg |
-| `surfaceContainerHighest` | `#e4e2de` | `#343532` | Input fields |
-| `onSurface` | `#1b1c1a` | `#e5e3df` | Primary text |
-| `onSurfaceVariant` | `#42474f` | `#c4c9c1` | Secondary text, ghost button text |
-| `outline` | `#737780` | `#8e9299` | Borders, dividers |
+Defined in `frontend/theme/tokens.ts` (`palette`).
 
-#### Typography
-- **Headline font**: Noto Serif (`NotoSerif_700Bold`, `NotoSerif_800ExtraBold`) — loaded via `useFonts` in `app/_layout.tsx` (if loading fails, e.g. the web 12s timeout, the app renders with system fonts rather than a blank screen)
-- **Body / label font**: Inter (`Inter_400Regular`, `Inter_500Medium`, `Inter_600SemiBold`, `Inter_700Bold`)
-- Token: `theme.typography.fontFamilyHeadline` → `'NotoSerif_700Bold'`
-- Token: `theme.typography.fontFamilyBody` → `'Inter_400Regular'`
-- Size scale: `fontSizeDisplay` (48) · `fontSizeH1` (40) · `fontSizeH2` (32) · `fontSizeH3` (24) · `fontSizeLG` (20) · `fontSizeBase` (16) · `fontSizeSM` (14)
+| Role                                                                  | Light                                         | Dark                                          | Use                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `background`                                                          | `#F6F4EF`                                     | `#121417`                                     | Screen background                                                                                                                                                                                                                   |
+| `surface`                                                             | `#FFFFFF`                                     | `#1B1E23`                                     | Cards, sheets                                                                                                                                                                                                                       |
+| `surfaceBar`                                                          | `#FBFAF7`                                     | `#16181C`                                     | Tab bar, top bars                                                                                                                                                                                                                   |
+| `field`                                                               | `#ECE8DF`                                     | `#1F2227`                                     | Inputs, search, secondary buttons                                                                                                                                                                                                   |
+| `onSurface`                                                           | `#1A1C20`                                     | `#ECE9E3`                                     | Primary text                                                                                                                                                                                                                        |
+| `onSurfaceVariant`                                                    | `#5E636B`                                     | `#A4A8AF`                                     | Secondary text, inactive icons, placeholders                                                                                                                                                                                        |
+| `outline`                                                             | `#E4DFD4`                                     | `#2A2D33`                                     | Hairlines, dividers (not for text)                                                                                                                                                                                                  |
+| `outlineCard`                                                         | `#ECE7DC`                                     | `#2A2D33`*                                    | Card borders                                                                                                                                                                                                                        |
+| `outlineChip`                                                         | `#DAD4C7`                                     | `#33363C`                                     | Chip borders                                                                                                                                                                                                                        |
+| `outlineField`                                                        | `#857F73`                                     | `#7D786F`                                     | Input borders (TextInput, search fields, outlined buttons). Meets WCAG 1.4.11 3:1 against `field`, `surface` and `background` (light 3.25 / 3.98 / 3.62, dark 3.64 / 3.81 / 4.21). Use it, not `outline`, for any control boundary. |
+| `primary`                                                             | `#0F426F`                                     | `#A9C9EE`                                     | The single accent: active states, filled buttons, links                                                                                                                                                                             |
+| `onPrimary`                                                           | `#FFFFFF`                                     | `#0B2540`                                     | Text/icon on `primary`                                                                                                                                                                                                              |
+| `primarySoft`                                                         | `#DCE6F1`                                     | `#22344A`                                     | Active pill, soft accent chips                                                                                                                                                                                                      |
+| `danger` / `onDanger`                                                 | `#B3261E` / `#FFFFFF`                         | `#FFB4AB` / `#690005`*                        | Destructive actions, errors                                                                                                                                                                                                         |
+| `dangerSoft`                                                          | `#F7E3DF`                                     | `#3A2220`*                                    | Error banners                                                                                                                                                                                                                       |
+| `success` / `onSuccess`                                               | `#2F7A4F` / `#FFFFFF`                         | `#7FC59B` / `#10291B`*                        | Success states                                                                                                                                                                                                                      |
+| `statusWishlist` · `statusPurchased` · `statusReading` · `statusRead` | `#A56A12` · `#5F6F86` · `#0F426F` · `#2F7A4F` | `#E0B062` · `#A3B1C6` · `#A9C9EE` · `#7FC59B` | Status dots                                                                                                                                                                                                                         |
+| `coverBlank` / `onCoverBlank`                                         | `#E7E1D3` / `#4A4740`                         | `#2A2C30` / `#C9C4BA`                         | Cover placeholder                                                                                                                                                                                                                   |
+
+\* Dark values not in the approved list, chosen to pass AA; pending owner review.
+
+`__tests__/unit/themeTokensV2.test.ts` checks every value above, that every token exists in both themes, and WCAG AA (4.5:1) for `onSurface` / `onSurfaceVariant` / `primary` on `background` and `surface`, `onPrimary` on `primary`, `onCoverBlank` on `coverBlank` (and a few more pairs), in both themes.
+
+#### Spacing and radii
+
+- `theme.spacing`: `xs` 4 · `sm` 8 · `ms` 12 · `md` 16 · `lg` 24 · `xl` 32 · `xxl` 48.
+- `theme.radius`: `cover` 3 · `coverLarge` 5 · `field` 10 · `button` 12 · `card` 14 · `sheet` 16 · `chip` / `pill` full (9999). The older `sm`/`md`/`lg`/`xl`/`full` scale stays while screens move over.
+
+#### Typography (#899, #912)
+
+- **Font-file rule:** custom fonts ship one file per weight and Android ignores `fontWeight` on a custom family, so a weight is chosen by naming its font FILE. Never style text with `fontWeight`. Use `AppText` with a `variant`, or `fontFor(weight, family)` from `theme/typography.ts` in a StyleSheet (`fontFor('600')` -> `Inter_600SemiBold`, `fontFor('700', 'serif')` -> `NotoSerif_700Bold`; serif has 600 and 700 only).
+- Loaded in `app/_layout.tsx` `useFonts`: `NotoSerif_600SemiBold`, `NotoSerif_700Bold`, `Inter_400Regular`, `Inter_500Medium`, `Inter_600SemiBold`, `Inter_700Bold` (no unused files; 800 was dropped). If loading fails (e.g. the web 12 s timeout) the app renders with system fonts rather than a blank screen.
+- Variants (`textVariants`, also `theme.typography.variants`):
+
+| Variant                       | Font file                               | Size / line | Notes                            |
+| ----------------------------- | --------------------------------------- | ----------- | -------------------------------- |
+| `screenTitle`                 | `NotoSerif_700Bold`                     | 32 / 40     | tracking -0.4                    |
+| `sheetTitle`                  | `NotoSerif_700Bold`                     | 24 / 30     |                                  |
+| `bookTitle`                   | `NotoSerif_600SemiBold`                 | 16 / 21     |                                  |
+| `body`                        | `Inter_400Regular`                      | 16 / 21     | default                          |
+| `bodyStrong`                  | `Inter_600SemiBold`                     | 16 / 21     |                                  |
+| `secondary`                   | `Inter_400Regular`                      | 14 / 18     |                                  |
+| `meta`                        | `Inter_400Regular`                      | 13 / 16     |                                  |
+| `sectionLabel`                | `Inter_600SemiBold`                     | 13 / 16     | uppercase, tracking +0.6, chrome |
+| `tabLabel` / `tabLabelActive` | `Inter_500Medium` / `Inter_600SemiBold` | 11 / 13     | sentence case, chrome            |
+
+- **`AppText`** (`components/ui/AppText.tsx`): `<AppText variant="bookTitle" color="onSurfaceVariant">…</AppText>`. `variant` defaults to `body`, `color` (a theme colour role) to `onSurface`, read from `useTheme()`; a `style` prop is applied last. `allowFontScaling` is always on. **Dynamic Type cap:** chrome variants (`sectionLabel`, `tabLabel*`) set `maxFontSizeMultiplier` = `CHROME_MAX_FONT_SCALE` (1.3) because they sit in fixed bars; content variants are not capped.
+- `fontFamilyHeadline` (`NotoSerif_700Bold`) and `fontFamilyBody` (`Inter_400Regular`) remain as aliases while screens move to variants. The `fontWeight*` tokens were removed.
+- Guard: `__tests__/unit/noFontWeightWithCustomFont.test.ts` fails on a style object in `app/` or `components/` that sets `fontWeight` with `fontFamily`, on `fontWeight` in any file outside its `MIGRATION_PENDING` list (files owned by other #897 PRs; the list only shrinks), and checks `useFonts` loads exactly the typography font files.
+- Size scale (older tokens): `fontSizeDisplay` (48) · `fontSizeH1` (40) · `fontSizeH2` (32) · `fontSizeH3` (24) · `fontSizeLG` (20) · `fontSizeBase` (16) · `fontSizeSM` (14)
+
+#### Tab bar (#910)
+
+`app/(tabs)/_layout.tsx`: labels always visible (`tabLabel`, 600 when active, no uppercase), the bar sizes to its content (`height: 'auto'`) plus the bottom safe-area inset, with a `minHeight` floor of top padding + React Navigation's tab-button padding (5 on each side) + 30 pill + 4 gap + the label line at the 1.3 cap + bottom padding + inset; never a fixed number. Root cause of the clipped labels (#910): `dev` had a fixed height (`Platform.OS === 'ios' ? 80 : 64`) with fixed vertical padding and 10px uppercase labels with no line height, so the label had no room; the first fix in this PR computed a height (65) that still missed React Navigation's 5px button padding. Active tab: `primary` icon inside a 56×30 `primarySoft` pill behind the icon only; inactive `onSurfaceVariant`. Bar `surfaceBar` with a hairline `outline` top border, same in both themes. Tests: `TabBarV2.test.tsx`.
 
 #### Icons
+
 - Library: **MaterialIcons** from `@expo/vector-icons`
 - Tab icons: `document-scanner` (Scan) · `auto-stories` (Wishlist) · `library-books` (My Books) · `settings` (Settings)
-- Header (`headerRight` in `InnerStack`): `dark-mode` theme toggle + feedback "?" button (`HeaderFeedbackButton`)
+- Header policy (#936): **no screen shows a Stack header.** `(tabs)`, `(auth)/login`, `trash` and `scan-queue` all set `headerShown: false` (for login, #908: with no `(auth)/_layout` the root Stack sees the route as `(auth)/login`, so a `(auth)` entry would match nothing). Each screen owns its top safe area with `useSafeAreaInsets().top` (the camera overlay on Scan; `LibraryScreen` for My Books / Wishlist; the container or list padding on Settings, Trash and the scan queue) and shows its own title; Trash and the scan queue keep their own in-content Back link. The `InnerStack` `screenOptions` stay opaque (`theme.colors.background`, no shadow, `headerTransparent: false`, #906) as a fallback for a screen added without its own header. Theme toggle (`ThemeToggleButton`) and help / feedback ("Send feedback" row, `settings-feedback`, opens the same sheet the old "?" did) live in Settings.
 - Do **not** use Ionicons — it has been replaced
 
+#### Trash (#932)
+
+- `app/trash.tsx` draws its own compact top row below the inset (a 44px "Back" button calling `leaveTrash()`, a centred 17pt 600 "Trash" `header`), then an info card (`field` background, radius 12, decorative info icon, the 30-day rule) as the list header, then `LibraryRow`s without `onPress` (xs cover, `testID` `trash-item-<id>`) with a trailing `TonalChip` "Restore {{title}}" (`BoughtChip` is the same chip with a check icon). Empty and error states are `ui/EmptyState` (`trash-empty`, `trash-error`). The row's second line is `LibraryRow`'s `metaText`: "Deleted for good in N days" (`trash.purgeIn`, CLDR plurals) or "Deleted for good today", from `daysUntilPurge(purge_after)` in `lib/trash.ts`, which counts calendar days in the device time zone (0 on the purge day, DST-safe). At 3 days or fewer (`PURGE_SOON_DAYS`) the line is `danger` 600 (`metaTone="danger"`); the number is always in the text, so colour is never the only signal. A `LibraryRow` with no `onPress` and an `accessibilityLabel` reads its text block as one element (`trash.rowA11y`, or `trash.rowUnverifiedA11y` for an unverified entry so the badge is not lost: title, author, days left; a row with an unreadable `purge_after` shows no meta line and its label has no days-left part). The grouping is native only: react-native-web does not pass `accessible` to the DOM, so on web the child text is still read piece by piece (no role is added). The day counts use one `now` read per load. Covers are not desaturated (no cross-platform image filter).
+
 #### Shared sheets
-- `components/SheetModal.tsx` is the shared page-sheet modal scaffold (themed container, title + close header, body, bordered footer) used by `BookCandidatePicker` and `AddUnverifiedBookSheet`; pass the body as children and the primary action as `footer`.
+
+- `components/InAppBanner.tsx` is a floating rounded card inset 16px, placed at safe-area top + 8 on every screen (no screen has a Stack header). Persistence (#909): every banner clears on a route change (`usePathname`); an `error` banner with actions stays until acted on or dismissed; any banner with actions also stays while a screen reader is on (`AccessibilityInfo`; iOS and Android only, because react-native-web always reports `true`); otherwise banners with actions time out after `duration` or 10 s, others after `duration` or 5 s.
+- `components/SheetModal.tsx` is the shared sheet scaffold (#903), used by `BookCandidatePicker`, `AddUnverifiedBookSheet` and `library/BookDetailSheet`. Anatomy, top to bottom: `scrim` backdrop, a 36x5 grabber (`outline`), a header (serif `sheetTitle` title with the header role, optional `subtitle`, and a text `Button` close action with `closeLabel` / `closeA11yLabel`, both translated by the caller), a body wrapper (`flexShrink: 1`; callers put their own `ScrollView` inside it), and a footer pinned below it (top hairline, `surfaceBar` background, bottom padding = 16 + safe-area inset) that holds the primary `Button`(s). The title takes screen-reader focus when the sheet opens. Pass the body as children and the actions as `footer`. Keep `flexShrink: 1` on the sheet and body, never `flex: 1` alone in a content-sized parent. `onHidden` is the Modal's `onDismiss` and is unchanged, so `useModalHandoff` in `GlobalScanModals` keeps working. The sheet is still a `pageSheet` Modal; gesture dismissal is not part of it (phase 7).
+- `FeedbackWidget` is not on `SheetModal` yet: it is a transparent bottom sheet with a `KeyboardAvoidingView` and its own `flexShrink` rules, so moving it would change behaviour.
+
+#### BookCover (#902)
+
+- `components/ui/BookCover.tsx` draws every book cover in a fixed 2:3 frame; never hand-roll a cover `Image`. Props: `title`, `coverUrl`, `size`, optional `accessibilityLabel`, `decorative`, `testID`, `style`.
+- Sizes: `xs` 48x72 (library rows: `LibraryRow`, including Trash) · `sm` 52x78 (candidate picker; all decorative) · `md` 104x156 (grids, large rows) · `lg` 136x204 (detail sheet). `md`/`lg` use `radius.coverLarge`, the rest `radius.cover`.
+- With no `coverUrl`, or after the image's `onError`, it draws a typographic cover: `coverBlank` background, the title in Noto Serif (`fontFor('600','serif')`) in `onCoverBlank`, a thin inner frame, and a line clamp scaled to the size. A shadow and a spine shade (both from the `shadow` token) decorate the frame.
+- Fallback title sizing (#924). `adjustsFontSizeToFit` is native-only, so `fallbackTitleStyle(title, size)` sizes the font deterministically from the widest unbreakable unit (a break comes after whitespace, `-`, en/em dash or `/`, and the separator stays on the line before, so the unit is e.g. `Wuthering-`), measured with real Noto Serif SemiBold advances (`theme/coverTextWidths.ts`: Basic Latin, Latin-1, Latin Extended-A and curly quotes; table generated by `scripts/gen-cover-widths.py`; unknown characters count 1em) plus a 4% margin. The font is the largest that fits the text box, capped at the size's normal font and floored at 6px (`FALLBACK_MIN_FONT`). If the widest unit does not fit at the floor (a long single word on a small cover), the cover is drawn as a plain placeholder with no title text, rather than splitting the word or showing initials (owner decision). The cover's label (`common:noCoverAvailable`, or the row's own label) still names the book. Han, Hiragana and Katakana characters each wrap alone (1em); every other run, Hangul included, is one unit, so a Latin word inside CJK text still counts whole, so they count 1em per character and keep the normal size. Line height stays proportional and `numberOfLines` still truncates by whole lines. These are estimates, so a font fallback can still differ slightly. The text box has an explicit width (frame minus the inner-frame inset and 1px on each side) and the fallback frame has no padding: text widths are xs 32 to 40, sm 36 to 42, md 88 unchanged, lg 120 to 114 (frame minus inset and 1px of air per side).
+- Accessibility: by default the frame is an `image` with `common:coverAlt` (or `common:noCoverAvailable` for the generated cover). Pass `decorative` whenever the surrounding row already announces the title: LibraryRow (tappable or not), the candidate picker and Trash are all decorative; only the detail sheet keeps the image label. `decorative` sets `accessible={false}`, `importantForAccessibility`, `accessibilityElementsHidden` **and `aria-hidden`** (react-native-web ignores the native props, so without `aria-hidden` the web a11y tree still exposes the cover). The typeset fallback title is always `aria-hidden`, so it is not read twice.
+- The bitmap is isolated in `CoverImage` (React Native `Image` for now) so it can be swapped for `expo-image` once #901 lands. `CoverImage`, `FallbackCover` and `BookCover` are memoised (stable `onError`), so a list of covers does not re-render on unrelated updates. It is not yet exported from a `components/ui` index.
 
 #### Library screens (My Books and Wishlist)
-- Both screens are built from `components/library/`: `BookRow` (+ `BookRowAction`), `LibraryHeader`, `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `StatusTabs`, `LibrarySearchBar`, `EmptyState`, `BookDetailSheet` (My Books only). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS` and the `LibraryBook` type; `useLibraryAccent()` gives the accent colours and dark-mode top padding.
+
+- Both screens are built from `components/library/`: `LibraryRow` (+ `LibraryRowSeparator`), `BookActionsSheet` (My Books ⋯ menu), `BoughtChip` (Wishlist), `LibraryScreen` (the full-height themed container, also used for the loading state, so the two screens do not duplicate that markup), `MyBooksHeader` and `StatusChips` (My Books), `BookDetailSheet` (both screens). `libraryShared.ts` is the single source of `SCREEN_PADDING`, `NEXT_STATUS`, `STATUS_TAB_KEYS`, `STATUS_COLOR_KEY`, `ROW_DIVIDER_INSET`, the `LibraryBook` type and the pure `countByStatus` / `filterByStatus`; `useLibraryAccent()` gives the accent colours (`primary` / `onPrimary` in both modes).
+- `LibraryRow` (#929, memoised): an edge-to-edge list row, at least 96px tall (grows with Dynamic Type): decorative `BookCover` `xs` (48x72), 14px gap, then the text column (`bookTitle` serif, 1 line; author in `secondary`/`onSurfaceVariant`; a `meta` line with an 8px status dot, the translated status (`my-books:statusTab.*`, the same string as the tab chips) and "· year"; the Unverified badge) and an optional `trailing` slot. Props: `item`, `onPress?`, `trailing?`, `accessibilityLabel`, `accessibilityHint?`, `showStatus?`, `testID?`. The row owns no actions: the open-detail `Pressable` is an absolute-fill overlay _sibling_ of the content (#907), the cover/text are `pointerEvents="none"` and hidden from assistive tech, and `trailing` is a sibling of the overlay. The hairline between rows is `LibraryRowSeparator` (`ItemSeparatorComponent`, inset to the text column, so the last row has none). The body label is `{{title}} — {{status}}, by {{author}}` with the **translated** status (never the raw enum).
+- My Books trailing slot: an `IconButton` (more, 44x44) opening `BookActionsSheet` (`SheetModal` + `ListSection`/`ListRow`: Mark as next, View details, Remove from library). On iOS "View details" waits for the menu's `onHidden` before opening the detail sheet; elsewhere it opens at once. Wishlist trailing slot: the tonal `BoughtChip` (32px visual, 44px target; disabled while offline or mutating); tapping the row opens `BookDetailSheet`, which has Remove (the visible remove path without swipe; swipe is S2). Rows are memo wrappers (`MyBookRow`, `WishlistRow`) with callbacks stable by id; both FlatLists use `initialNumToRender={12}` and `removeClippedSubviews` on Android.
+- My Books screen (#930), one `FlatList` for every state, so the header scrolls with the rows and pull to refresh (tint `primary`) also works on an empty state:
+  - **Header** (`MyBooksHeader`): `AppText` `screenTitle` "My Books" (role header) and a `secondary` subtitle "{{books}} · {{reading}}" from the plural keys `headerBooks` / `headerReading` (the reading part is left out at 0); a `trailing` slot holds the Sort `IconButton` (#933; the Grid button, #934, sits before it).
+  - **Data** (`hooks/useLibraryBooks.ts`): one unfiltered `GET /user-books` per focus, on `onLibraryChanged` and on pull to refresh, with no `status` param. Chips, counts and search are derived on the client (`countByStatus`, and `filterBooks(filterByStatus(books, chip), query)` inside a `useMemo`), so choosing a chip makes no request. Only the first load shows the spinner; a request counter lets only the newest response apply. Wishlist still sends `status=wishlisted`.
+  - **Reading now shelf and sort** (#933): below the chips, `ReadingNowShelf` (`SectionLabel` "Reading now" + a horizontal `ScrollView` with `role="list"` named "Reading now, N books" (plural `shelfA11y`); each item is a `role="listitem"` wrapper around a button, label `shelfItemA11y` "{{title}}, by {{author}}", with a decorative `BookCover` `md`, `bodyStrong` title and `meta` author, one line each; tap opens the detail sheet). It shows only when the chip is All, the search is empty and at least one book is `reading` (owner decision); shelf books also stay in the list. Then the `SectionLabel` "All books" with the current sort name (`sort.<key>`) on its trailing side. The Sort `IconButton` (in `MyBooksHeader`'s `trailing` slot, label `sort.buttonA11y` "Sort, currently {{label}}") opens `SortSheet` (`SheetModal` "Sort by" + `ListSection`/`ListRow`; the selected `ListRow` has `selected`, which shows a check and sets `accessibilityState.selected`).
+  - **Sort keys**: `SORT_KEYS` in `libraryShared.ts` is `added` (default, the server order, newest first), `title` and `author`; `sortBooks(books, key, collator)` runs on the client, after the chip and search filter, inside a `useMemo` with `new Intl.Collator(i18n.language)` (also memoised). Leading articles are NOT ignored ("The Hobbit" sorts under T); a missing author sorts last under Author; ties fall back to the other field. Author sorts by the stored string, so "Frank Herbert" is under F. Add new options (#452 Priority) to `SORT_KEYS` + `sort.*` + `sortBooks`.
+  - **Sort preference**: stored per device under `library.sort` by `lib/libraryPrefs.ts` (`loadLibrarySort(allowed)` returns `null` for a missing, unknown or unreadable value; `saveLibrarySort`; neither rejects), which wraps `lib/storage` (SecureStore on native, in-memory on web, so web forgets it on reload). The screen reads it once on mount; a choice made before that read finishes wins. The same module keeps the view under `library.view` (`loadLibraryView` / `saveLibraryView`, values `list` | `grid`, default `list`).
+  - **Cover grid** (#934): a header `IconButton` (icons `grid-view` / `view-list`, label `view.showGrid` "Show as grid" / `view.showList` "Show as list", testID `my-books-view-toggle`) toggles the view; the choice is saved as above and a toggle made before the saved value loads wins. In grid view the same `FlatList` gets `numColumns = gridColumns(width)` = `max(3, floor((width - 32 + 16) / (104 + 16)))` (`libraryShared.ts`; 3 at 390, 6 at 768, 8 at 1024) from `useWindowDimensions`, and `key={`grid-${columns}`}` (`'list'` in list view), because `FlatList` throws if `numColumns` changes under one key. Rows use `columnWrapperStyle` (16px column gap and screen padding) and a 20px spacer separator (`LIBRARY_GRID_PROPS` in `libraryList.tsx`: `initialNumToRender` 6 rows, `maxToRenderPerBatch` 6; the list keeps `LIBRARY_LIST_PROPS`). `BookGridCell` (memo) is one `Pressable` button: decorative `md` cover, `bookTitle` 13/17 on one line, `StatusDot` (shared with `LibraryRow`) and the status, 12/16; its label comes from `bookA11yLabel(t, item)` in `libraryShared.ts`, the same as the list row (so Unverified is said too). It opens the detail sheet; there is no ⋯ menu. The shelf is hidden in grid view; search, chips, sort, empty states and pull to refresh are shared with the list.
+  - **Search**: `components/ui/SearchField` (placeholder "Title or author", label "Search your books", clear button); `components/library/filterBooks.ts` (title and author, ignoring case and accents), applied after the chip filter.
+  - **Chips** (`StatusChips`): `components/ui/Chip` with a `count` for All, Wishlist, Purchased, Reading and Read, label "Filter by {{label}}, {{count}} books" (plural key `filterBy`; keep "Filter by" as the prefix for selectors), `accessibilityState.selected`. The ScrollView (testID `status-tabs`) keeps `flexGrow: 0` / `flexShrink: 0` (#905) and has no fixed height, so the 44px chips grow with large text. The 16px leading and trailing padding lives in the content container, so the last chip scrolls fully into view, and the selected chip is scrolled into view on mount and when it changes.
+  - **Empty states** (`components/ui/EmptyState`): (a) an empty library, "Your library is empty" + "Scan books" (goes to Scan; the search field and chips are hidden); (b) a chip with no books, a per-status title (`emptyFilter.<status>`, full sentences so each locale controls its own wording and noun case) + "Show all books"; (c) a search with no match, "No books match “{{query}}”" + "Clear search". The search field and chips stay visible in (b) and (c); (c) wins when both a chip and a search apply; (d) a failed load with no books shows the load error + "Try again" (`loadError` from `useLibraryBooks`), never the empty-library state. Mutations call `invalidate()` so a GET in flight when they finish cannot undo them.
+- Wishlist layout (#931): `LibraryScreen` > `screenTitle` header ("Wishlist", `accessibilityRole="header"`) + subtitle (`subtitle_one/_other` with the whole list's count, or `subtitleEmpty`; the old summary card is gone) > `ui/SearchField` (only when the wishlist has books; matches title and author through `components/library/filterBooks.ts`, which My Books also uses) > `OfflineNotice` (above the list, as on My Books) > the list. The header and search sit outside the `FlatList`, so they stay when nothing matches; the no-match state is `ui/EmptyState` ("No books match “{{query}}”" + "Clear search"). An empty wishlist is `ui/EmptyState` with `WishlistEmptyIllustration` (four spines drawn with views and token colours only; the `EmptyState` illustration slot hides it from screen readers), "Scan books" (`router.push('/scan')`) and "Search by title" (`router.push('/scan?mode=text')`). Pull to refresh stays on the list. Copy is in the `wishlist` namespace (`subtitle*`, `search*`, `emptySearch.*`, `emptyState.*`).
+- Scan route param (#931): `app/(tabs)/scan.tsx` reads `mode` with `useLocalSearchParams`. `mode=text` switches to the text search input (also on first render) and the screen then clears the param with `router.setParams({ mode: undefined })`, so a later visit starts on the camera. Other values are ignored. The tab stays mounted, so the effect runs on every arrival.
 - `hooks/useLibraryMutations.ts` owns advance-status and remove (the per-row in-flight guard, offline check, error alerts, the "moved to trash" banner). Each screen passes `onAdvanced` / `onRemoved` to update its own list, so My Books and Wishlist keep their different list rules. Put new shared row/header behaviour there, not in the screens.
 
 #### Logo / App Icon
-- Source asset: `frontend/assets/logo.png` (chihuahua + open book on navy, 1024×1024)
-- Configured in `app.json` as iOS icon, Android adaptive foreground (`backgroundColor: #0f426f`), and web favicon
-- Rendered in-app via `<Image source={require('../assets/logo.png')} />` in the header (`app/_layout.tsx`)
+
+- Source of truth: the recipe `tools/assets/draw_logo.py` (chihuahua + open book in a ring, on navy `#263250`); `tools/assets/gen_app_icons.py` writes every raster (see `docs/ASSETS.md`). Never edit `frontend/assets/*.png`, the iOS `AppIcon` or the Android `mipmap-*` / `splashscreen_logo` files by hand.
+- Configured in `app.json` as the icon, splash, Android adaptive foreground + monochrome layer (`backgroundColor: #263250`) and web favicon
+- The login screen shows `BookshelfLogo` (below); there is no `assets/logo.png`. The header wordmark was removed in #936
+- `components/brand/BookshelfLogo.tsx` is the in-code version: `react-native-svg` paths from `components/brand/logoPaths.ts` (generated by `gen_app_icons.py`, never hand-edited), coloured from the theme (`primary` field, `onPrimary` ink). Props: `size`, `radius`, `accessibilityLabel` (pass translated copy), `testID`, `style`.
+
+### Default tab ("Open on", #904, #913)
+
+- The user's "Open on" screen is stored on the server (`users.default_tab`: `scan`, `wishlist`, `my-books` or `null`), never on the device. `lib/defaultTab.ts` is the single source of truth: `DEFAULT_TABS`, `parseDefaultTab` / `defaultTabRoute` (anything unknown, `null` or missing is Scan), `defaultTabFromMe` (reads a `GET /auth/me` body), `loadDefaultTab` (`null` on failure or after `DEFAULT_TAB_FETCH_TIMEOUT_MS`, 3 s; never rejects) and `saveDefaultTab` (`PATCH /users/me/preferences`).
+- **Launch** never makes an extra call or waits longer: `AuthContext`'s existing session check (`GET /auth/me`, `SESSION_CHECK_TIMEOUT_MS`) also reads `default_tab`. Only a `valid` session uses it; `unknown` (offline, 5xx, 403, timeout, a 401 whose refresh failed transiently) and `dead` leave it `null` and land on Scan, and the session-check behaviour (#722) is unchanged.
+- **Sign-in** (`login` / `testLogin` -> `storeSession`) calls `loadDefaultTab()` after the tokens are stored and the request gate is open, waiting at most 3 s, then signs in; a failure or timeout leaves it `null` and lands on Scan. A sign-out during that wait wins (`sessionGenRef`), so the late answer never signs the user back in.
+- `AuthContext` exposes `defaultTab`: the tab read at launch or sign-in, or `null` when it could not be read (and after sign-out). `null` routes to Scan. A server `null` or unknown value is read as `'scan'` (known), not `null`. `app/index.tsx` redirects to `defaultTabRoute(defaultTab)`; the auth-group redirect effect does the same.
+- **Settings row** (`components/OpenOnSetting.tsx`, mounted in `app/(tabs)/settings.tsx` below the theme toggle): shows the current choice and opens a transparent modal picker (radio group: Scan, Wishlist, My Books; Cancel and the backdrop close it). `hooks/useDefaultTabSetting.ts` keeps its own copy of the value, starting from `AuthContext.defaultTab`; only when that is `null` (launch was offline, the read failed) does it re-read it once on mount with `loadDefaultTab`, and a late re-read never overwrites a choice. AuthContext's copy is not updated by a save: the app routes on it only at launch and sign-in, which both read it fresh, and tab screens stay mounted for the whole signed-in session. Picking is optimistic; on failure the old value comes back, a `settings` breadcrumb records `status` / `code` from `toApiError`, and `useBanner` shows `settings:openOnSaveFailed`. Copy is in the `settings` namespace (`openOn*` keys) in all 13 locales and `_meta`. Tests: `defaultTab.test.ts`, `AuthContext.test.tsx` ("Open on" tab), `IndexScreen.test.tsx`, `OpenOnSetting.test.tsx`.
 
 ### Feedback flow
-- Entry points: the header "?" button (`HeaderFeedbackButton`, on every Stack screen) and the "Send feedback" row in Settings. Both call `useFeedback().openFeedback()` from `FeedbackProvider` (`components/FeedbackWidget/FeedbackContext.tsx`, mounted in `app/_layout.tsx`), which owns the single bottom-sheet `FeedbackWidget` and the `FeedbackThanksBanner`.
-- Sheet: Bug / Feature request chips + description only (max 2000). On success it closes itself and the banner (4 s, non-interactive, below the header) confirms.
+
+- Entry points: the "Send feedback" row in Settings (the header "?" button was removed with the top bar, #936). It calls `useFeedback().openFeedback()` from `FeedbackProvider` (`components/FeedbackWidget/FeedbackContext.tsx`, mounted in `app/_layout.tsx`), which owns the single bottom-sheet `FeedbackWidget` and the `FeedbackThanksBanner`.
+- Sheet: Bug / Feature request chips + description only (max 2000). On success it closes itself and the banner (4 s, non-interactive, at the top of the screen below the status bar) confirms.
 - Submission goes to Sentry User Feedback (`captureFeedback`, `source: 'in_app_feedback'`, tag `feedback.type`); session logs are attached for bug reports only (`SessionLogger`: 200 lines, each cut at 1,000 chars, 100 KB total, redacted before the cut: Authorization/Bearer/JWT/email/token params; never throws). Throttled per install to 5 submissions / 10 min.
-- Sheet colours come from `useTheme()`; the backdrop uses the `scrim` token. Keep the sheet/body `flexShrink: 1` (not `flex: 1`) or the body collapses to zero height and the sheet renders blank.
+- Sheet colours come from `useTheme()`; the backdrop uses the `scrim` token (visible on Android and web through the 24px top gap; iOS `pageSheet` draws its own). The footer bar is omitted when `footer` is empty, so a closing sheet shows no empty bar. Keep the sheet/body `flexShrink: 1` (not `flex: 1`) or the body collapses to zero height and the sheet renders blank.
 - There is no floating button; do not add one over the tab bar.
 
+### UI snapshots (before/after for UI PRs)
+
+`scripts/ui-snapshots/capture.mjs` drives the Expo web dev server at iPhone size (390x844 @2x) against a mocked API (`fixtures.mjs`: public-domain titles, generated SVG covers) and saves every screen and main state in light and dark to `ui-snapshots/current/` (gitignored), plus `console-errors.txt`. Sign-in uses the `__DEV__` "Test Login" button, intercepted by the mock; web keeps tokens in memory, so the run navigates by tapping, never by reloading. Run it on `dev` and on your branch (`--out ui-snapshots/before` / `after`) and attach the pairs to UI PRs.
+
+```bash
+cd frontend
+EXPO_PUBLIC_API_URL=http://mock.api EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=snapshot npx expo start --web --port 8081
+```
+
+```bash
+cd frontend
+node scripts/ui-snapshots/capture.mjs --out ui-snapshots/current
+```
+
+Add `--video` to also record one walkthrough per theme (`<out>/<theme>-walkthrough.mp4`; Chromium screencast frames encoded by `ffmpeg`, which must be on PATH), holding about 1.4 s on each screen and showing taps; `--themes light` limits the run. Other flags: `--url` (default `http://localhost:8081`; only `localhost`/`127.0.0.1` are accepted). Every HTTP(S) request and WebSocket other than the dev server and the mock API is blocked for the whole browser context (popups and service workers included), so a stray `EXPO_PUBLIC_API_URL` or Sentry DSN never reaches a real service; blocked origins are listed in the output. Each run first deletes `<out>/<theme>/` and its walkthrough (so `--out` must be inside the current folder or the temp folder, and `--themes` only takes `light`/`dark`), and the run exits 1 with a list when any step or video encode fails, so a partial capture never passes for a complete one. `npm run lint` doesn't cover `.mjs`, so lint the script directly (`npx eslint --no-ignore scripts/ui-snapshots/capture.mjs`). Invalid arguments exit 2. `playwright-core` needs a Chromium: run `npx playwright install chromium`, or set `CHROMIUM_PATH` to an already-installed one (cloud sessions: `/opt/pw-browsers/chromium`). Selectors are accessibility labels and `testID`s, so keep those stable when redesigning; when a screen's labels change, update the script in the same PR. Not covered: the native camera view, the scan queue, the add-it-yourself form, offline/quota notices.
+
 ### Accessibility
+
 See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md). WCAG 2.2 AA required on every interactive element. React Native: `accessibilityLabel`, `accessibilityRole`, `accessibilityHint` (if non-obvious), `minWidth/minHeight: 44` on all `Pressable`.
 
 ### Token Storage
+
 - Tokens and preferences: `expo-secure-store` only
 - Never use `AsyncStorage` for anything sensitive
 
 ### File Routing
+
 - Screens live in `app/` — Expo Router picks them up automatically
 - Tabs: `app/(tabs)/<name>.tsx`
 - Auth: `app/(auth)/<name>.tsx`
@@ -94,30 +198,30 @@ Stack: `i18next` + `react-i18next`. All user-facing strings must use `useTransla
 
 #### Namespaces
 
-| Namespace | Covers |
-|-----------|--------|
-| `common` | Error title, Close, Remove, cover alt |
-| `auth` | Login screen |
-| `tabs` | Tab bar labels + a11y labels |
-| `my-books` | My Books screen — status tabs, badge, detail sheet, actions |
-| `scan` | Scan screen — alerts, mode tabs, permission, camera |
-| `settings` | Settings screen |
-| `wishlist` | Wishlist screen |
-| `components` | `BookCandidatePicker`, `ThemeToggleButton` |
-| `feedback` | In-app feedback widget |
+| Namespace    | Covers                                                      |
+| ------------ | ----------------------------------------------------------- |
+| `common`     | Error title, Close, Remove, cover alt                       |
+| `auth`       | Login screen                                                |
+| `tabs`       | Tab bar labels + a11y labels                                |
+| `my-books`   | My Books screen — status tabs, badge, detail sheet, actions |
+| `scan`       | Scan screen — alerts, mode tabs, permission, camera         |
+| `settings`   | Settings screen                                             |
+| `wishlist`   | Wishlist screen                                             |
+| `components` | `BookCandidatePicker`, `ThemeToggleButton`                  |
+| `feedback`   | In-app feedback widget                                      |
 
 #### Using translations in a screen
 
 ```tsx
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from "react-i18next";
 
-const { t } = useTranslation('my-books');
+const { t } = useTranslation("my-books");
 // Cross-namespace lookup:
-t('close', { ns: 'common' })
+t("close", { ns: "common" });
 // Interpolation:
-t('coverAlt', { ns: 'common', title: book.title })
+t("coverAlt", { ns: "common", title: book.title });
 // Dynamic nested key:
-t(`status.${item.status}`)
+t(`status.${item.status}`);
 ```
 
 #### Adding a new language
@@ -151,6 +255,7 @@ node scripts/translate.js --all
 `__tests__/unit/localeKeyParity.test.ts` fails with a list of `ns:key` entries when a locale is missing a key that `en` has, or carries a stale key that `en` no longer has. When you add or remove an `en` key, update all 12 other locales in the same PR (and `_meta/<ns>.meta.json`). Plurals: `en` uses `x_one` / `x_other`; a locale satisfies `x` with `x_other` plus its own CLDR categories (ar: zero/one/two/few/many/other, ru: one/few/many/other, he: one/two/many/other, ja/ko/zh: other only). `localeCharacterLimits.test.ts` enforces the `characterLimit` values in `_meta`. `provenance.json` currently tracks only the `feedback` namespace.
 
 #### RTL locales
+
 Arabic (`ar`) and Hebrew (`he`) are RTL. String translations are complete.
 Layout mirroring (`I18nManager.forceRTL()` + app restart) is a follow-up task.
 
@@ -208,6 +313,25 @@ Call the backend through the `api` instance in `lib/api.ts` (never bare `axios`,
 ### Dependencies: retired `decode-uri-component` vendor (#779, removed in #886)
 
 #779 vendored a CommonJS port of `decode-uri-component` 0.5.1 under `frontend/vendor/` to fix CVE-2026-118664, which reached the app through `expo-router` -> `query-string@7` and was forced onto the patched copy by an npm override. #886 removed that workaround (owner decision #884) because `expo-router` >= 58.0.20 no longer depends on `query-string`. `__tests__/unit/RouterParamParsing.test.ts` still covers Expo Router's deep-link query param parsing.
+
+### Core UI components (`components/ui/`, #900)
+
+Shared, themed building blocks for the v2 design. Import from `components/ui` (the index). All colours come from `useTheme()`, all text from `AppText` variants (no `fontWeight`), and every component takes an optional `testID`. **No copy lives inside a component**: callers pass translated strings (labels, placeholders, accessibility labels). Screens migrate to these in later phases. Icons are `MaterialIcons` names.
+
+| Component                 | Use it for                                                                                                                                                                                                                                                                                                                             |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Button`                  | Any text action. `variant`: `primary` (default; 52px, radius 12, `primary`/`onPrimary`), `secondary` (tonal `primarySoft`/`primary`), `text` (no fill, 44px min), `destructive` (`danger`/`onDanger`). Props: `label`, `onPress`, `disabled`, `loading` (spinner, blocks presses, announces `busy`), optional leading `icon`.          |
+| `IconButton`              | Icon-only action, 44x44. `accessibilityLabel` is required by the prop type.                                                                                                                                                                                                                                                            |
+| `Chip`                    | Filter chip with optional `count`. `selected` = `primary` fill + `onPrimary` text; unselected = transparent with an `outlineField` border (WCAG 1.4.11). Exposes `accessibilityState.selected`.                                                                                                                                        |
+| `SearchField`             | 40px visual field (radius 10, `field` fill, 1px `outlineField` border, WCAG 1.4.11) inside a 44px wrapper that owns a 44x44 clear button (shown when `value` is not empty; refocuses the input). Needs `placeholder`, `accessibilityLabel`, `clearAccessibilityLabel`. Controlled (`value`/`onChangeText`).                            |
+| `ListSection` + `ListRow` | Grouped inset list (settings, details). `ListSection` takes an optional `title` and puts inset dividers between its `ListRow` children. A row is at least 52px: `icon` tile, `label`, optional `hint` and `value`, chevron (default on when `onPress` is set), `destructive` variant. Without `onPress` a row is static, not a button. |
+| `SectionLabel`            | The `sectionLabel` text style (uppercase, chrome font-scale cap), announced as a header.                                                                                                                                                                                                                                               |
+| `EmptyState`              | Empty or first-run state: `illustration` slot (decorative, hidden from screen readers), serif `title`, `body`, `primaryAction` and `secondaryAction` (`{ label, onPress, testID? }`).                                                                                                                                                  |
+| `ProgressBar`             | Determinate bar. `value`/`min`/`max` (clamped), `accessibilityRole="progressbar"` with `accessibilityValue`. Needs `accessibilityLabel`.                                                                                                                                                                                               |
+
+**Keyboard focus ring (web, #923).** `Button`, `IconButton`, `Chip`, `ListRow`, the `SearchField` field and clear button, and `TonalChip` share one hook, `useFocusRing()` (`components/ui/useFocusRing.ts`): spread `focusProps` on the Pressable and append `focusStyle`. It draws a 2px solid `primary` outline (offset 2, so layout never shifts; `ListRow` draws it inside because its card clips) with focus-visible semantics: a module-level listener (installed once, web only) records the last input modality, and the ring shows only when focus arrives after a key press, never after a pointer or touch press. `SearchField` passes `always` because text inputs show focus on click too. Native is unchanged. New Pressable-based controls must use the hook, not a per-component copy. Tests: `__tests__/unit/uiFocusRing.test.tsx`, `e2e/focus-ring.e2e.ts`.
+
+Tests: `__tests__/unit/ui*.test.tsx` (one per component).
 
 ## Lint
 

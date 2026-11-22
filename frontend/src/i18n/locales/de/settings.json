@@ -8,5 +8,14 @@
   "signOutCancel": "Abbrechen",
   "trash": "Papierkorb",
   "trashA11y": "Papierkorb öffnen",
-  "trashHint": "Entfernte Bücher der letzten 30 Tage wiederherstellen"
+  "trashHint": "Entfernte Bücher der letzten 30 Tage wiederherstellen",
+  "openOn": "Öffnen mit",
+  "openOnA11y": "Öffnen mit: {{value}}",
+  "openOnHint": "Wähle den Bildschirm, mit dem die App startet",
+  "openOnPickerTitle": "App öffnen mit",
+  "openOnScan": "Scannen",
+  "openOnWishlist": "Wunschliste",
+  "openOnMyBooks": "Meine Bücher",
+  "openOnCancel": "Abbrechen",
+  "openOnSaveFailed": "Deine Auswahl konnte nicht gespeichert werden. Versuche es erneut."
 }

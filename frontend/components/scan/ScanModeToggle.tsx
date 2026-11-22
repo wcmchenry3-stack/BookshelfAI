@@ -3,13 +3,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
+import { fontFor } from '../../theme/typography';
 
 export type InputMode = 'camera' | 'search';
 
 interface Props {
   inputMode: InputMode;
   onChange: (mode: InputMode) => void;
-  /** Active tab background (gold tertiary in dark mode, primary in light). */
+  /** Active tab background (the single accent, primary, in both modes). */
   activeColor: string;
   onActiveColor: string;
 }
@@ -72,7 +73,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modeTabText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 14,
   },
 });

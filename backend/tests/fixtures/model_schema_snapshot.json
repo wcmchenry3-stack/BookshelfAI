@@ -1882,6 +1882,18 @@
         "foreign_keys": []
       },
       {
+        "name": "default_tab",
+        "type": "VARCHAR",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
         "name": "created_at",
         "type": "TIMESTAMP WITH TIME ZONE",
         "nullable": false,
@@ -1909,7 +1921,9 @@
     "indexes": [
       "CREATE UNIQUE INDEX uq_users_email_lower ON users (lower(email))"
     ],
-    "constraints": []
+    "constraints": [
+      "CheckConstraint:ck_users_default_tab"
+    ]
   },
   "device_keys": {
     "columns": [

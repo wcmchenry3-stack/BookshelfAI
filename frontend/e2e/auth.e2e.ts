@@ -1,7 +1,7 @@
 import { expect, test } from './support/fixtures';
 
 test.describe('Auth', () => {
-  test('signs in with the dev test login and lands on My Books', async ({
+  test('signs in with the dev test login and lands on Scan', async ({
     page,
     backend,
     signIn,
@@ -16,13 +16,12 @@ test.describe('Auth', () => {
 
     await signIn();
 
-    await expect(page).toHaveURL(/\/my-books$/);
-    await expect(page.getByRole('tab', { name: 'Your book collection' })).toHaveAttribute(
+    await expect(page).toHaveURL(/\/scan$/);
+    await expect(page.getByRole('tab', { name: 'Scan a book' })).toHaveAttribute(
       'aria-selected',
       'true'
     );
-    await expect(page.getByRole('textbox', { name: 'Search your library' })).toBeVisible();
-    await expect(page.getByText('No books here yet.')).toBeVisible();
-    await expectNoA11yViolations('My Books after sign-in');
+    await expect(page.getByRole('button', { name: 'Text search mode' })).toBeVisible();
+    await expectNoA11yViolations('Scan after sign-in');
   });
 });

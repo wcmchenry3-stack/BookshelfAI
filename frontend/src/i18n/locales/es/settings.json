@@ -8,5 +8,14 @@
   "signOutCancel": "Cancelar",
   "trash": "Papelera",
   "trashA11y": "Abrir la papelera",
-  "trashHint": "Restaura los libros eliminados en los últimos 30 días"
+  "trashHint": "Restaura los libros eliminados en los últimos 30 días",
+  "openOn": "Abrir en",
+  "openOnA11y": "Abrir en: {{value}}",
+  "openOnHint": "Elige la pantalla con la que se abre la app",
+  "openOnPickerTitle": "Abrir la app en",
+  "openOnScan": "Escanear",
+  "openOnWishlist": "Lista de deseos",
+  "openOnMyBooks": "Mis Libros",
+  "openOnCancel": "Cancelar",
+  "openOnSaveFailed": "No se pudo guardar tu elección. Inténtalo de nuevo."
 }

@@ -2,7 +2,7 @@
  * #683: listTrash / restoreUserBook and the restore error mapping.
  */
 import { api, listTrash, restoreUserBook } from '../../lib/api';
-import { formatLocalDate, restoreFailure } from '../../lib/trash';
+import { daysUntilPurge, PURGE_SOON_DAYS, restoreFailure, tidyLabel } from '../../lib/trash';
 
 jest.mock('../../lib/storage', () => ({
   getItem: jest.fn().mockResolvedValue('token'),
@@ -106,9 +106,57 @@ describe('restoreUserBook', () => {
   });
 });
 
-describe('formatLocalDate', () => {
-  it('formats a date and returns "" for an invalid one', () => {
-    expect(formatLocalDate('2026-10-01T12:00:00Z', 'en')).toMatch(/2026/);
-    expect(formatLocalDate('nope', 'en')).toBe('');
+describe('daysUntilPurge', () => {
+  const realTz = process.env.TZ;
+  // A zone with daylight saving; the day counts must not depend on 23 / 25 hour days.
+  beforeAll(() => {
+    process.env.TZ = 'America/New_York';
+  });
+  afterAll(() => {
+    if (realTz === undefined) delete process.env.TZ;
+    else process.env.TZ = realTz;
+  });
+
+  const local = (y: number, m: number, d: number, h = 12, min = 0) => new Date(y, m - 1, d, h, min);
+  const days = (purge: Date, now: Date) => daysUntilPurge(purge.toISOString(), now);
+
+  it('is 0 on the purge day itself, at any time of day', () => {
+    expect(days(local(2026, 6, 10, 0, 5), local(2026, 6, 10, 23, 55))).toBe(0);
+    expect(days(local(2026, 6, 10, 23, 55), local(2026, 6, 10, 0, 5))).toBe(0);
+  });
+
+  it('counts calendar days, so 23:59 to 00:01 the next day is 1', () => {
+    expect(days(local(2026, 6, 11, 0, 1), local(2026, 6, 10, 23, 59))).toBe(1);
+    expect(days(local(2026, 7, 10), local(2026, 6, 10))).toBe(30);
+  });
+
+  it('stays right when the clocks go back (a 25-hour day)', () => {
+    // 2026-11-01 is 25 hours long in New York: 26 hours apart, 2 calendar days.
+    expect(days(local(2026, 11, 2, 0, 30), local(2026, 10, 31, 23, 30))).toBe(2);
+    expect(days(local(2026, 11, 2), local(2026, 10, 31))).toBe(2);
+  });
+
+  it('stays right when the clocks go forward (a 23-hour day)', () => {
+    // 2026-03-08 is 23 hours long: 47 hours apart, 2 calendar days.
+    expect(days(local(2026, 3, 9), local(2026, 3, 7))).toBe(2);
+    expect(days(local(2026, 3, 9, 0, 30), local(2026, 3, 7, 23, 30))).toBe(2);
+  });
+
+  it('reads a purge date already past as 0 and an unreadable one as null', () => {
+    expect(days(local(2026, 6, 1), local(2026, 6, 10))).toBe(0);
+    expect(daysUntilPurge('nope')).toBeNull();
+  });
+
+  it('flags 3 days or fewer as soon', () => {
+    expect(PURGE_SOON_DAYS).toBe(3);
+  });
+});
+
+describe('tidyLabel', () => {
+  it('drops a doubled or trailing sentence stop left by an empty part', () => {
+    expect(tidyLabel('Dune, Frank. ')).toBe('Dune, Frank');
+    expect(tidyLabel('Dune, Frank. . Unverified')).toBe('Dune, Frank. Unverified');
+    expect(tidyLabel('Dune、Frank。。未確認')).toBe('Dune、Frank。未確認');
+    expect(tidyLabel('Dune, Frank. 2 days. Unverified')).toBe('Dune, Frank. 2 days. Unverified');
   });
 });

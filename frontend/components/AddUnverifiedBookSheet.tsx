@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
 import SheetModal from './SheetModal';
+import { Button } from './ui/Button';
 import { api } from '../lib/api';
 import {
   UNVERIFIED_LIMITS,
@@ -18,6 +12,7 @@ import {
   type UnverifiedDraft,
   type UnverifiedFailure,
 } from '../lib/unverified';
+import { fontFor } from '../theme/typography';
 
 const FAILURE_KEYS: Record<UnverifiedFailure, string> = {
   duplicate: 'addUnverified.duplicate',
@@ -124,7 +119,7 @@ export function AddUnverifiedBookSheet({
     {
       color: colors.onSurface,
       backgroundColor: colors.surfaceContainerHigh,
-      borderColor: hasError ? colors.error : colors.outline,
+      borderColor: hasError ? colors.error : colors.outlineField,
       fontSize: theme.typography.fontSizeBase,
     },
   ];
@@ -138,28 +133,12 @@ export function AddUnverifiedBookSheet({
       closeLabel={t('addUnverified.cancel')}
       closeA11yLabel={t('addUnverified.closeA11y')}
       footer={
-        <Pressable
-          style={[styles.saveButton, { backgroundColor: colors.primary }, saving && styles.busy]}
+        <Button
+          label={t('addUnverified.save')}
           onPress={save}
-          disabled={saving}
-          accessibilityRole="button"
-          accessibilityLabel={t('addUnverified.save')}
+          loading={saving}
           accessibilityHint={t('addUnverified.saveHint')}
-          accessibilityState={{ disabled: saving, busy: saving }}
-        >
-          {saving ? (
-            <ActivityIndicator color={colors.onPrimary} />
-          ) : (
-            <Text
-              style={[
-                styles.saveText,
-                { color: colors.onPrimary, fontSize: theme.typography.fontSizeBase },
-              ]}
-            >
-              {t('addUnverified.save')}
-            </Text>
-          )}
-        </Pressable>
+        />
       }
     >
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
@@ -243,7 +222,7 @@ export function AddUnverifiedBookSheet({
 
 const styles = StyleSheet.create({
   body: { padding: 16, gap: 8 },
-  label: { fontWeight: '600', marginTop: 8 },
+  label: { fontFamily: fontFor('600'), marginTop: 8 },
   input: {
     borderWidth: 1,
     borderRadius: 8,
@@ -252,14 +231,5 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   fieldError: { fontSize: 13 },
-  formError: { fontSize: 14, fontWeight: '600', marginTop: 8 },
-  saveButton: {
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 48,
-  },
-  busy: { opacity: 0.6 },
-  saveText: { fontWeight: '600' },
+  formError: { fontSize: 14, fontFamily: fontFor('600'), marginTop: 8 },
 });

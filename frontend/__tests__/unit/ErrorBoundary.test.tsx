@@ -111,6 +111,19 @@ describe('ErrorBoundary', () => {
       expect(getByText('Try again')).toBeTruthy();
     });
 
+    it('with no ThemeProvider it uses the light errorBoundary tokens', async () => {
+      const { getByText, getByTestId } = await render(
+        <ErrorBoundary>
+          <Bomb shouldThrow={true} />
+        </ErrorBoundary>
+      );
+      const flat = (el: { props: Record<string, any> }) =>
+        Object.assign({}, ...[el.props.style].flat(Infinity).filter(Boolean));
+      const c = lightTheme.colors;
+      expect(flat(getByTestId('eb-root')).backgroundColor).toBe(c.errorBoundarySurface);
+      expect(flat(getByText('Something went wrong')).color).toBe(c.errorBoundaryTitle);
+    });
+
     it('renders the fallback when the theme context value is null', async () => {
       const { getByText } = await renderIn(null);
       expect(getByText('Something went wrong')).toBeTruthy();
@@ -121,24 +134,28 @@ describe('ErrorBoundary', () => {
       expect(getByText('Try again')).toBeTruthy();
     });
 
+    // #898 redefines the errorBoundary* tokens per mode on the v2 palette.
     it.each([
       ['light', lightTheme],
       ['dark', darkTheme],
-    ])('uses the same fixed error palette in %s mode', async (_m, theme) => {
+    ])('uses the errorBoundary tokens of the %s theme', async (_m, theme) => {
       const { getByText, getByLabelText, getByTestId } = await renderIn({
         theme,
         mode: _m,
         toggleTheme: jest.fn(),
       });
+      const c = theme.colors;
       const flat = (el: { props: Record<string, any> }) =>
         Object.assign({}, ...[el.props.style].flat(Infinity).filter(Boolean));
-      expect(flat(getByText('Something went wrong')).color).toBe('#111');
-      expect(flat(getByText('The app ran into an unexpected error.')).color).toBe('#555');
-      expect(flat(getByText('Try again')).color).toBe('#fff');
-      expect(flat(getByLabelText('Try again')).backgroundColor).toBe('#007AFF');
-      expect(flat(getByTestId('eb-root')).backgroundColor).toBe('#fff');
-      expect(flat(getByTestId('eb-detail')).color).toBe('#c00');
-      expect(flat(getByTestId('eb-detail')).backgroundColor).toBe('#fff0f0');
+      expect(flat(getByText('Something went wrong')).color).toBe(c.errorBoundaryTitle);
+      expect(flat(getByText('The app ran into an unexpected error.')).color).toBe(
+        c.errorBoundaryBody
+      );
+      expect(flat(getByText('Try again')).color).toBe(c.errorBoundaryOnAction);
+      expect(flat(getByLabelText('Try again')).backgroundColor).toBe(c.errorBoundaryAction);
+      expect(flat(getByTestId('eb-root')).backgroundColor).toBe(c.errorBoundarySurface);
+      expect(flat(getByTestId('eb-detail')).color).toBe(c.errorBoundaryDetail);
+      expect(flat(getByTestId('eb-detail')).backgroundColor).toBe(c.errorBoundaryDetailSurface);
     });
   });
 });

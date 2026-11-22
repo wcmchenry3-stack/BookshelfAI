@@ -8,5 +8,14 @@
   "signOutCancel": "キャンセル",
   "trash": "ゴミ箱",
   "trashA11y": "ゴミ箱を開く",
-  "trashHint": "過去30日間に削除した本を元に戻します"
+  "trashHint": "過去30日間に削除した本を元に戻します",
+  "openOn": "起動時の画面",
+  "openOnA11y": "起動時の画面: {{value}}",
+  "openOnHint": "アプリを開いたときに表示する画面を選択",
+  "openOnPickerTitle": "起動時に表示する画面",
+  "openOnScan": "スキャン",
+  "openOnWishlist": "ほしい物",
+  "openOnMyBooks": "マイブック",
+  "openOnCancel": "キャンセル",
+  "openOnSaveFailed": "選択を保存できませんでした。もう一度お試しください。"
 }

@@ -23,11 +23,13 @@ def _build_app():
     app = FastAPI()
     app.add_middleware(_HealthExemptTrustedHost, allowed_hosts=["trusted.example.com"])
 
-    @app.get("/health")
+    # Mirror the production route: explicit GET+HEAD so HEAD isn't
+    # implicitly broken by decorator stacking (see app/main.py).
+    @app.api_route("/health", methods=["GET", "HEAD"])
     async def health() -> dict:
         return {"status": "ok"}
 
-    @app.get("/health/db")
+    @app.api_route("/health/db", methods=["GET", "HEAD"])
     async def health_db() -> dict:
         return {"status": "ok", "db": "ok"}
 
@@ -46,6 +48,19 @@ async def test_health_accepts_untrusted_host_header():
         base_url="http://bookshelf-api-rxp3.onrender.com",
     ) as client:
         response = await client.get("/health")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_health_head_from_untrusted_host_accepted():
+    """UptimeRobot (free plan) sends HEAD from the raw Render origin hostname;
+    the host-exemption middleware must pass it through."""
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app()),
+        base_url="http://bookshelf-api-rxp3.onrender.com",
+    ) as client:
+        response = await client.head("/health")
 
     assert response.status_code == 200
 
@@ -89,3 +104,16 @@ async def test_health_db_rejects_untrusted_host_while_health_still_allowed():
 
     assert health_response.status_code == 200
     assert health_db_response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_health_db_head_rejects_untrusted_host():
+    """HEAD /health/db is not exempt either: an untrusted Host gets 400 for HEAD
+    just as it does for GET, so the monitor must use the public hostname."""
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app()),
+        base_url="http://bookshelf-api-rxp3.onrender.com",
+    ) as client:
+        response = await client.head("/health/db")
+
+    assert response.status_code == 400
