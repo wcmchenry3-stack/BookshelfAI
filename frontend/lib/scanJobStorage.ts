@@ -1,7 +1,12 @@
 import { Platform } from 'react-native';
 import { Directory, File, Paths } from 'expo-file-system';
 
-import { LOW_FREE_SPACE_BYTES, MAX_QUEUE_BYTES, type ScanJob } from './scanJob';
+import {
+  ENFORCE_QUEUE_BYTE_CAP,
+  LOW_FREE_SPACE_BYTES,
+  MAX_QUEUE_BYTES,
+  type ScanJob,
+} from './scanJob';
 
 const STORAGE_KEY = 'scan_job_queue';
 // Directory under Paths.document where captures are persisted (see scan.tsx).
@@ -114,15 +119,19 @@ export type CaptureStorageCheck = 'ok' | 'low_space' | 'queue_full';
 
 /**
  * Whether a new photo may be saved (#670, G5): the phone needs LOW_FREE_SPACE_BYTES
- * free and `scan-queue/` must hold less than MAX_QUEUE_BYTES. Native only: web
+ * free and `scan-queue/` must hold less than MAX_QUEUE_BYTES (only while ENFORCE_QUEUE_BYTE_CAP is on). Native only: web
  * keeps jobs in memory and has no file sizes, so it always returns 'ok'. A
  * failed read also returns 'ok' so a broken API never blocks scanning.
  */
-export function checkCaptureStorage(): CaptureStorageCheck {
+export function checkCaptureStorage({
+  enforceByteCap = ENFORCE_QUEUE_BYTE_CAP,
+}: { enforceByteCap?: boolean } = {}): CaptureStorageCheck {
   if (Platform.OS === 'web') return 'ok';
   try {
     const free = Paths.availableDiskSpace;
     if (typeof free === 'number' && free < LOW_FREE_SPACE_BYTES) return 'low_space';
+    // The 50 MB cap is off until #668 (resize at capture): skip the disk walk.
+    if (!enforceByteCap) return 'ok';
     const dir = new Directory(Paths.document, SCAN_QUEUE_DIR);
     if (!dir.exists) return 'ok';
     let total = 0;

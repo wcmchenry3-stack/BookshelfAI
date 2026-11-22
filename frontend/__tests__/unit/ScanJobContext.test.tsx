@@ -1059,17 +1059,20 @@ describe('ScanJobContext — storage bounds (#669, G3)', () => {
     // Distinct, increasing timestamps: scans landing in one millisecond must not flake this.
     let clock = Date.now();
     const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => (clock += 10));
-    const { result } = await renderScanJobs();
-    for (let i = 0; i < 11; i++) {
-      await act(async () => {
-        await result.current.startScan('image', `file:///docs/scan-queue/p${i}.jpg`);
-      });
+    try {
+      const { result } = await renderScanJobs();
+      for (let i = 0; i < 11; i++) {
+        await act(async () => {
+          await result.current.startScan('image', `file:///docs/scan-queue/p${i}.jpg`);
+        });
+      }
+      await waitFor(() => expect(result.current.jobs).toHaveLength(10));
+      expect(result.current.jobs.some((j) => j.imageUri?.endsWith('/p0.jpg'))).toBe(false);
+      expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/p0.jpg');
+      expect(mockDeleteScanImage).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
     }
-    await waitFor(() => expect(result.current.jobs).toHaveLength(10));
-    expect(result.current.jobs.some((j) => j.imageUri?.endsWith('/p0.jpg'))).toBe(false);
-    expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/p0.jpg');
-    expect(mockDeleteScanImage).toHaveBeenCalledTimes(1);
-    nowSpy.mockRestore();
   });
 
   it('stamps completedAt when a job completes', async () => {
