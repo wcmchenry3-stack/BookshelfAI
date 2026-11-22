@@ -186,20 +186,25 @@ on Supabase), as the owner (`postgres` on Supabase):
    [`scripts/db/app_role_grants.sql`](../scripts/db/app_role_grants.sql)
    (paste it into the SQL editor, or `psql -v ON_ERROR_STOP=1 -f
    scripts/db/app_role_grants.sql`). It is idempotent and gives the same end
-   state as 0028: DML on every table in `public` except `alembic_version`,
-   `USAGE` on every sequence, `BYPASSRLS`, and the owner's default privileges
+   state as 0028 and 0030: DML on every table in `public` except
+   `alembic_version` (and no `UPDATE` on the append-only `library_events`,
+   #684), `USAGE` on every sequence, `BYPASSRLS`, and the owner's default privileges
    for later tables. It stops with an error if the role does not exist.
    `tests/integration/test_db_role.py` checks that it restores every grant.
 
-3. **Verify**: this must return 0 rows (every app table has DML for the role):
+3. **Verify**: this must return 0 rows (every app table has DML for the
+   role, and `library_events` has no `UPDATE`):
 
    ```sql
    SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname <> 'alembic_version'
-     AND NOT (has_table_privilege('bookshelf_app', c.oid, 'SELECT')
-          AND has_table_privilege('bookshelf_app', c.oid, 'INSERT')
-          AND has_table_privilege('bookshelf_app', c.oid, 'UPDATE')
-          AND has_table_privilege('bookshelf_app', c.oid, 'DELETE'));
+     AND (NOT (has_table_privilege('bookshelf_app', c.oid, 'SELECT')
+               AND has_table_privilege('bookshelf_app', c.oid, 'INSERT')
+               AND (c.relname = 'library_events'
+                    OR has_table_privilege('bookshelf_app', c.oid, 'UPDATE'))
+               AND has_table_privilege('bookshelf_app', c.oid, 'DELETE'))
+          OR (c.relname = 'library_events'
+              AND has_table_privilege('bookshelf_app', c.oid, 'UPDATE')));
    ```
 
 4. **Repoint the services**: `MIGRATION_DATABASE_URL` to the restored
@@ -232,7 +237,8 @@ The drill fails when any of these is true:
   check). The restore still runs in that case, so the other checks report too;
 - after creating `bookshelf_app` (no login) and running
   `scripts/db/app_role_grants.sql`, some table in `public` other than
-  `alembic_version` lacks `SELECT`, `INSERT`, `UPDATE` or `DELETE` for it (the
+  `alembic_version` lacks `SELECT`, `INSERT`, `UPDATE` (not wanted on
+  `library_events`, which must not have it, #684) or `DELETE` for it (the
   "app role grants re-applied" check, which proves the restore runbook's
   grant step works on a real dump).
 

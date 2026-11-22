@@ -140,6 +140,7 @@ class TestCleanupIsolation:
         "purge_old_zero_results",
         "purge_old_scan_records",
         "purge_trash",
+        "purge_old_library_events",
     ]
 
     @staticmethod

@@ -270,7 +270,7 @@ class TestExistingCatalogRows:
         assert resp.status_code == 201, resp.text
         assert db.catalog_writes() == []
         assert (book.title, book.description) == ("Dune", "Original.")
-        (user_book,) = db.added
+        (user_book,) = [o for o in db.added if isinstance(o, UserBook)]
         assert (user_book.book_id, user_book.edition_id) == (book.id, edition.id)
         assert user_book.user_id == ALICE.id
 
@@ -308,7 +308,7 @@ class TestExistingCatalogRows:
         )
         resp, db = wishlist(body, db=db)
         assert resp.status_code == 201
-        (user_book,) = db.added
+        (user_book,) = [o for o in db.added if isinstance(o, UserBook)]
         assert user_book.edition_id is None
 
 

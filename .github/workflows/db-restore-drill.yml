@@ -280,14 +280,18 @@ jobs:
           # The restore runbook's app-role step (docs/backups.md, #696): a
           # --no-acl restore has no grants for bookshelf_app, so create the
           # role, run scripts/db/app_role_grants.sql, and require DML on every
-          # table in public except alembic_version. Pass/fail only.
+          # table in public except alembic_version, with no UPDATE on the
+          # append-only library_events (#684). Pass/fail only.
           grants_failed=1
           missing_sql="select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
             where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relname <> 'alembic_version'
-              and not (has_table_privilege('bookshelf_app', c.oid, 'SELECT')
-                and has_table_privilege('bookshelf_app', c.oid, 'INSERT')
-                and has_table_privilege('bookshelf_app', c.oid, 'UPDATE')
-                and has_table_privilege('bookshelf_app', c.oid, 'DELETE'))"
+              and (not (has_table_privilege('bookshelf_app', c.oid, 'SELECT')
+                  and has_table_privilege('bookshelf_app', c.oid, 'INSERT')
+                  and (c.relname = 'library_events'
+                    or has_table_privilege('bookshelf_app', c.oid, 'UPDATE'))
+                  and has_table_privilege('bookshelf_app', c.oid, 'DELETE'))
+                or (c.relname = 'library_events'
+                  and has_table_privilege('bookshelf_app', c.oid, 'UPDATE')))"
           if q "create role bookshelf_app nologin" >/dev/null 2>&1 \
             && docker run --rm -i --network host -e PGPASSWORD=drill "postgres:${PG_MAJOR}" \
               psql -h localhost -U postgres -d restore_drill -v ON_ERROR_STOP=1 -q \

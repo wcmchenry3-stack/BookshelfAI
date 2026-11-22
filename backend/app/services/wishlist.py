@@ -52,7 +52,7 @@ from app.models.edition import Edition
 from app.models.user_book import UserBook
 from app.schemas.book import NOT_OWNED, Ownership
 from app.schemas.user_book import WishlistRequest
-from app.services import catalog
+from app.services import catalog, library_events
 from app.services.deduplication import (
     candidate_key,
     held_entries,
@@ -113,6 +113,8 @@ class WishlistService:
             await db.rollback()
             logger.info("wishlist: already in the library (%s)", exc.ownership)
             raise
+        # The audit event commits with the entry (#684).
+        await library_events.record_created(db, user_book)
         await db.commit()
         await db.refresh(user_book, ["book", "edition"])
         # Eagerly load book.editions for serialisation

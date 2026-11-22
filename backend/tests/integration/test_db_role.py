@@ -10,6 +10,8 @@ On a database built by ``alembic upgrade head`` (migration 0028 has run):
 - every table in ``public`` (except ``alembic_version``) has exactly
   ``SELECT, INSERT, UPDATE, DELETE`` for the role and every sequence has
   ``USAGE`` only, so a table or sequence added without grants fails the build;
+  the append-only audit log ``library_events`` (#684, migration 0030) has
+  no ``UPDATE`` (:data:`_NO_UPDATE`);
 - ``scripts/db/app_role_grants.sql`` (the restore runbook's grants,
   docs/backups.md) brings those grants back after they are lost.
 
@@ -35,6 +37,9 @@ pytestmark = pytest.mark.integration
 _INSUFFICIENT_PRIVILEGE = "42501"
 _DML = ("SELECT", "INSERT", "UPDATE", "DELETE")
 _NOT_GRANTED = ("TRUNCATE", "REFERENCES", "TRIGGER")
+# Append-only tables (#684): the role inserts, reads and (retention job
+# only) deletes, never updates.
+_NO_UPDATE = frozenset({"library_events"})
 _GRANTS_SQL = Path(__file__).resolve().parents[3] / "scripts/db/app_role_grants.sql"
 
 _APP_TABLES = sa.text("""
@@ -134,8 +139,10 @@ def grant_problems(connection) -> list[str]:
     problems = []
     for table in tables:
         privileges = _table_privileges(connection, table)
-        missing = [p for p in _DML if not privileges[p]]
-        extra = [p for p in _NOT_GRANTED if privileges[p]]
+        expected = tuple(p for p in _DML if p != "UPDATE" or table not in _NO_UPDATE)
+        not_granted = _NOT_GRANTED + (("UPDATE",) if table in _NO_UPDATE else ())
+        missing = [p for p in expected if not privileges[p]]
+        extra = [p for p in not_granted if privileges[p]]
         if missing:
             problems.append(f"{table}: missing {', '.join(missing)}")
         if extra:

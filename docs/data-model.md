@@ -9,6 +9,7 @@ PostgreSQL schema, entity reference, and the dedup strategy that makes the colle
 ```mermaid
 erDiagram
   USERS ||--o{ USER_BOOKS : owns
+  USERS |o--o{ LIBRARY_EVENTS : "library audit log (set null on delete, #684)"
   USERS ||--o{ REFRESH_TOKENS : issued
   USERS ||--o{ AI_QUOTA : "AI calls per window"
   USERS ||--o| AI_INFLIGHT : "call in flight"
@@ -176,6 +177,15 @@ erDiagram
     bigint settled_micros "check >= 0"
     smallint alerted_mask "bit per alert threshold"
   }
+  LIBRARY_EVENTS {
+    bigint id PK
+    uuid user_id FK "nullable, set null on delete"
+    uuid user_book_id "no FK: outlives the row"
+    varchar event_type "check constraint"
+    jsonb changed_fields "field: old/new; free text as changed"
+    varchar request_id "nullable"
+    timestamptz created_at "indexed"
+  }
   AI_SETTINGS {
     text key PK
     jsonb value
@@ -184,7 +194,7 @@ erDiagram
   }
 ```
 
-All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id` and `scan_corrections.id` (`BIGSERIAL`) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
+All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id`, `scan_corrections.id` and `library_events.id` (`BIGSERIAL`) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
 
 **Deletion semantics.** Shared catalog rows (`books`, `editions`) must never take user data with them:
 
@@ -197,6 +207,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 | `scan_records.user_id` → `users.id` | `CASCADE` | Deleting an account removes its scan records. |
 | `scan_corrections.scan_record_id` → `scan_records.id` | `CASCADE` | A scan record's correction flags go with it (retention purge, per-user cap, account deletion); the daily totals in `scan_corrections_daily` (no user) stay. |
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
+| `library_events.user_id` → `users.id` | `SET NULL` | Deleting an account anonymises its library audit events (`user_id` becomes NULL) instead of failing or deleting them; they still leave after 180 days (#684). `library_events.user_book_id` has no FK, so purging a library row never touches its events. |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
 | `books.merged_into_id` → `books.id` | `RESTRICT` | A book that other rows were merged into cannot be deleted (#682). |
@@ -330,6 +341,41 @@ Unverified entries (#616, migration 0016): books the user added themselves becau
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
 No provider IDs, cover, description or edition. At most `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) live rows per user (trashed rows do not count, #683, which changes #625's decision that deleting an unverified entry is permanent); plus at most `TRASH_MAX_ENTRIES_PER_USER` (default 1,000) trashed rows; each row is at most ~1.1 KB (typically ~150 B), so ~1.3 MB per user worst case (200 live + 1,000 trashed), and writes are rate limited (`rate_limit_writes`). Rows go with the account (cascade) and with their library row: `DELETE /user-books/{id}` moves both to the trash, restore brings both back, and both are deleted 30 days after deletion, when the same book is deleted again (an older trashed copy whose library row holds no user data is replaced), or when the user's trash passes the cap, whichever comes first (#683). Account deletion and data export (not built yet) must include this table. Downgrading 0016 deletes every unverified entry.
+
+### `library_events` (`backend/app/models/library_event.py`)
+
+The library audit log (#684, migration 0030): one row per change to a library entry, so support can answer "where did my book go?". **Append-only**: the app inserts (`app/services/library_events.py`) and only the retention job deletes (`app/services/library_events_retention.py`); nothing updates a row. `tests/security/test_library_events_append_only.py` fails on any `update(...)` / `delete(...)` / raw `UPDATE` or `DELETE` of the table elsewhere in `app/`, and migration 0030 revokes `UPDATE` from `bookshelf_app` (`DELETE` stays for the retention job; `scripts/db/app_role_grants.sql` does the same after a restore).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGSERIAL PK | |
+| `user_id` | UUID FK → `users.id`, nullable, `ON DELETE SET NULL` | NULL once the account is deleted (anonymised) |
+| `user_book_id` | UUID, nullable, **no FK** | the `user_books.id` the event is about; the event outlives the row (trash purge, eviction) |
+| `event_type` | varchar(32), not null, check `ck_library_events_event_type` | `created`, `updated`, `status_changed`, `deleted`, `restored`, `purged`, `format_added`, `format_removed`. The last two are reserved for book formats (#501) and not written yet |
+| `changed_fields` | JSONB, not null, default `{}` | `{field: {"old": ..., "new": ...}}` for the tracked `user_books` columns (`library_events.TRACKED_FIELDS`: `book_id`, `custom_book_id`, `edition_id`, `status`, the four status dates, `rating`, `deleted_at`, and the free-text ones). **Free text is never copied**: `notes`, `title_override`, `author_override` and `cover_url_override` are recorded as `"changed"` only (`FREE_TEXT_FIELDS`), and an unverified entry's title and author (in `user_custom_books`) are not tracked. UUIDs as strings, timestamps ISO 8601. `{}` for `purged` |
+| `request_id` | varchar(64), nullable | the server-generated `X-Request-ID` (`ledger.current_request_id`); NULL from the daily purge |
+| `created_at` | timestamptz, not null, server default `now()` | the transaction's start time |
+
+Indexes: `ix_library_events_user_created (user_id, created_at)` for a user's history (support, export #694) and the `SET NULL` on account deletion; `ix_library_events_created_at (created_at)` for retention. RLS on, no policies (#677).
+
+**Writes.** Every library mutation writes **exactly one event per entry it changes**, in its own transaction, before its commit, so a refused or failed request writes none (`tests/integration/test_library_events_db.py`):
+
+| Path | Event |
+|---|---|
+| `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased` (no live entry) | `created`, with the new entry's tracked fields as `old: null` |
+| `POST /purchased` promoting a live entry | `status_changed` (or `updated` if it was already purchased) |
+| `PATCH /user-books/{id}` | `status_changed` when the status changed, else `updated`; **none when nothing changed** |
+| `DELETE /user-books/{id}` | `deleted` for the entry, plus `purged` for each older trashed copy it evicts (`trash.evict_same_book`, `evict_over_cap`) |
+| `POST /user-books/{id}/restore` | `restored` |
+| the daily trash purge (`trash.purge_trash`) | `purged` per row, in one `INSERT` per batch |
+
+All hard deletes of `user_books` go through `trash._delete_entries`, which writes the `purged` events. A new library mutation calls `library_events.record_created` / `record_change` / `record_purged` before its commit.
+
+**Retention.** Kept `LIBRARY_EVENTS_RETENTION_DAYS` (default 180, 1–730) days: the daily cleanup (`token_cleanup.py:_purge_library_events`) deletes older rows in batches of 5,000 (one commit each, at most 20 per run) under the advisory lock `pg_try_advisory_xact_lock(library_events_retention.PURGE_LOCK_KEY)`, so two instances never run it at once (the second skips).
+
+**Volume.** About 400 B per event with its indexes (`pg_column_size`: about 70 B for `purged`, 180–260 B for a typical change, 400 B for `created`, 650 B for a change of every tracked field; plus three index entries). Expected about 2 events per active user per day, so about 144 KB per active user at steady state (see `storage-and-retention.md`). No per-user cap: the write rate limit (`rate_limit_writes`) bounds it.
+
+**Export and account deletion.** Account export (#694, not built yet) must include the user's events. Account deletion (#291) needs nothing more for this table: the `SET NULL` anonymises them.
 
 ### `refresh_tokens` (`backend/app/models/refresh_token.py`)
 

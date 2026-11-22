@@ -23,6 +23,7 @@ from app.core.database import get_db
 from app.core.limiter import limiter
 from app.models.book import Book
 from app.models.edition import Edition
+from app.models.library_event import EVENT_DELETED, EVENT_RESTORED
 from app.models.user import User
 from app.models.user_book import UserBook
 from app.schemas.user_book import (
@@ -33,7 +34,7 @@ from app.schemas.user_book import (
     UserBookUpdate,
     WishlistRequest,
 )
-from app.services import catalog
+from app.services import catalog, library_events
 from app.services.edition_check import require_edition_of_book
 from app.services.trash import evict_over_cap, evict_same_book
 from app.services.unverified_books import (
@@ -278,10 +279,12 @@ async def add_purchased(
     now = datetime.now(UTC)
 
     if user_book:
+        before = library_events.snapshot(user_book)
         user_book.status = "purchased"
         user_book.purchased_at = now
         if edition_id:
             user_book.edition_id = edition_id
+        await library_events.record_change(db, user_book, before)
     else:
         user_book = UserBook(
             user_id=current_user.id,
@@ -291,6 +294,7 @@ async def add_purchased(
             purchased_at=now,
         )
         db.add(user_book)
+        await library_events.record_created(db, user_book)
 
     return await _reread_and_commit(db, current_user.id, user_book)
 
@@ -332,6 +336,7 @@ async def update_user_book(
     if not user_book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
+    before = library_events.snapshot(user_book)
     # The user's own title / author / cover (#682): this entry only, never
     # the shared catalog row. Checked first, so a refusal changes nothing.
     _apply_overrides(user_book, req)
@@ -352,6 +357,8 @@ async def update_user_book(
     if req.rating is not None:
         user_book.rating = req.rating
 
+    # One event for the whole PATCH (#684); none when nothing changed.
+    await library_events.record_change(db, user_book, before)
     return await _reread_and_commit(db, current_user.id, user_book)
 
 
@@ -439,11 +446,13 @@ async def delete_user_book(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
     now = datetime.now(UTC)
+    before = library_events.snapshot(user_book)
     user_book.deleted_at = now
     if user_book.custom_book is not None:
         # An unverified entry exists only for this library row: it goes to
         # the trash with it, and so no longer counts towards the cap.
         user_book.custom_book.deleted_at = now
+    await library_events.record_change(db, user_book, before, EVENT_DELETED)
     await evict_same_book(db, current_user.id, user_book)
     await evict_over_cap(db, current_user.id)
     await db.commit()
@@ -495,9 +504,11 @@ async def restore_user_book(
     elif await _has_live_entry_of_work(db, user_id, user_book.book):
         await _refuse_restore(db, RESTORE_CONFLICT)
 
+    before = library_events.snapshot(user_book)
     user_book.deleted_at = None
     if custom is not None:
         custom.deleted_at = None
+    await library_events.record_change(db, user_book, before, EVENT_RESTORED)
     try:
         return await _reread_and_commit(db, user_id, user_book)
     except IntegrityError:

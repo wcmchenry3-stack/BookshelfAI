@@ -378,7 +378,8 @@ class TestWishlistRefusesOwnedBooks:
         assert f"user_books.book_id IN ('{book.id.hex}')" in flat
         assert DUNE_13 in sql and isbn_13_to_10(DUNE_13) in sql
         assert "ORDER BY user_books.edition_id IS NULL" in sql
-        db.add.assert_called_once()
+        # The entry and its audit event (#684).
+        assert db.add.call_count == 2
         db.commit.assert_awaited_once()
 
 

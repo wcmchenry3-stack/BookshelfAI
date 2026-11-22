@@ -2033,5 +2033,102 @@
     "constraints": [
       "UniqueConstraint:uq_device_keys_user_key"
     ]
+  },
+  "library_events": {
+    "columns": [
+      {
+        "name": "id",
+        "type": "BIGINT",
+        "nullable": false,
+        "primary_key": true,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "user_id",
+        "type": "UUID",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": [
+          "users.id ondelete=SET NULL"
+        ]
+      },
+      {
+        "name": "user_book_id",
+        "type": "UUID",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "event_type",
+        "type": "VARCHAR(32)",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "changed_fields",
+        "type": "JSONB",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": "sql:'{}'::jsonb",
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "request_id",
+        "type": "VARCHAR(64)",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": "sql:now()",
+        "onupdate": null,
+        "foreign_keys": []
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX ix_library_events_created_at ON library_events (created_at)",
+      "CREATE INDEX ix_library_events_user_created ON library_events (user_id, created_at)"
+    ],
+    "constraints": [
+      "CheckConstraint:ck_library_events_event_type"
+    ]
   }
 }
