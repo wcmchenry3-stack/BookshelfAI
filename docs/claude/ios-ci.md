@@ -26,7 +26,7 @@ Xcode Cloud automatically executes
 `frontend/ios/ci_scripts/ci_post_clone.sh` after cloning. The script:
 
 1. Sets `SENTRY_ALLOW_FAILURE=true` so `sentry-cli` failures don't block the build
-2. Runs `check_xcode_compat.sh`, which fails in seconds if the selected Xcode is too new for the Expo SDK (see § Xcode version rollovers)
+2. Runs `check_xcode_compat.sh`, which first logs the Xcode Cloud workflow, branch and PR target (`CI_WORKFLOW`, `CI_BRANCH`, `CI_PULL_REQUEST_TARGET_BRANCH`, #987), then fails in seconds if the selected Xcode is too new for the Expo SDK (see § Xcode version rollovers)
 3. Installs **Node 22 LTS** from the official nodejs.org tarball, with the version pinned and the SHA-256 checked, for arm64 or x86_64 (Node 25.x ships npm 11.x, which crashes on our package-lock.json tree). It doesn't use Homebrew; see § Intel workers below
 4. Persists `NODE_BINARY` to `.xcode.env.local` (this Node is not on the default PATH on Xcode Cloud — without this, the "Bundle React Native code" phase fails silently)
 5. Runs `select_app_env.sh`, which points non-release builds at the dev backend (see § Which backend a build talks to)

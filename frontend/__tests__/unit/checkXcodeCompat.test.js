@@ -53,6 +53,33 @@ describe('check_xcode_compat.sh (#708)', () => {
     }
   });
 
+  it('logs the Xcode Cloud workflow and branch before the check (#987)', () => {
+    const result = run(fixture('sdk56.json'), {
+      XCODE_VERSION_OVERRIDE: 'Xcode 27.2',
+      CI_WORKFLOW: 'Default',
+      CI_BRANCH: 'dev',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('INFO: workflow Default, branch dev, PR target none');
+  });
+
+  it('logs the PR target branch and still logs when the lockfile is missing', () => {
+    const result = run(fixture('missing.json'), {
+      CI_WORKFLOW: 'Xcode 27 – SDK 58 test',
+      CI_BRANCH: 'feature/x',
+      CI_PULL_REQUEST_TARGET_BRANCH: 'dev',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      'INFO: workflow Xcode 27 – SDK 58 test, branch feature/x, PR target dev'
+    );
+  });
+
+  it('logs unknown when the Xcode Cloud variables are unset', () => {
+    const result = run(fixture('sdk56.json'), { XCODE_VERSION_OVERRIDE: 'Xcode 26.6' });
+    expect(result.stdout).toContain('INFO: workflow unknown, branch unknown, PR target none');
+  });
+
   it('fails when the lockfile is missing', () => {
     const result = run(fixture('missing.json'), { XCODE_VERSION_OVERRIDE: 'Xcode 26.6' });
     expect(result.status).toBe(1);
