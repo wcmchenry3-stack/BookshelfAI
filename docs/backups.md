@@ -273,3 +273,26 @@ printed in the public job summary, so check the object size in the Cloudflare
 dashboard as data grows; if `size x 30` approaches the free tier, shorten
 retention in the lifecycle rule or reduce the schedule. GitHub Actions minutes
 are a few minutes per night.
+
+**Checked against measured size (#673, 2026-11-22).** Production database:
+12 MB (`pg_database_size`, whole database, pre-launch). The dump holds only the
+`public` schema, is compressed (`-Fc`) and is therefore smaller than that, so 30
+dumps are well under 0.4 GB, about 4% of R2's 10 GB free tier. The dump size
+itself is not logged, so this is a bound from the database size, not a
+measurement; read one object's size in the Cloudflare dashboard to confirm.
+The 30-day lifecycle rule is fine today. Revisit it when the database reaches
+about **330 MB** (30 x 330 MB = 10 GB, assuming the dump is as large as the
+database, the worst case), or about 1 GB if the dump compresses 3 to 1. By the
+growth table in [`storage-and-retention.md`](storage-and-retention.md#expected-growth)
+that is roughly 700 to 2,000 daily-active users. At that point shorten
+retention, thin older dumps to weekly, or move to paid R2 (about $0.015 per
+GB-month).
+
+## Size alert
+
+The `size-check` job in `db-backup.yml` fails when the production database is at
+or above 70% of `DB_SIZE_LIMIT_GB` (default 8, the Supabase Pro disk). It uses
+the same `backup` environment and `BACKUP_DATABASE_URL`, runs one read-only
+`SELECT pg_database_size(current_database())`, and prints no sizes. See
+[`RENDER.md`](RENDER.md#database-size-and-limits) for the limit, the spend cap
+and the owner steps.

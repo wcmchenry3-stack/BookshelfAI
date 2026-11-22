@@ -270,6 +270,68 @@ Storage, or the Data API.
   Render Postgres `bookshelf-db` is suspended and no longer referenced (see
   Topology).
 
+## Database size and limits
+
+Recorded for #673 (gaps G8 and G9 in
+[`storage-and-retention.md`](storage-and-retention.md)). Vendor limits change:
+re-check the linked pages when the plan changes.
+
+| Database | Plan | Limit | Notes |
+| --- | --- | --- | --- |
+| Production: Supabase project `bookshelfai` (us-west-2, Postgres 17) | Supabase organization on **Pro** | **8 GB disk included** per project; disk is provisioned at 8 GB and billed only above that | Measured 2026-11-22: 12 MB (pre-launch baseline, see the growth table in `storage-and-retention.md`) |
+| Dev: Supabase persistent branch `dev` | same organization, Pro | a branch has its own database and disk; no size is recorded for it | Not covered by the size alert |
+| Render Postgres `bookshelf-db` (`basic_256mb`, 15 GB disk, disk autoscaling off) | Render workspace **Professional** | 15 GB disk | **Suspended**, unused, kept in `render.yaml` only so a blueprint sync does not delete it. Not monitored |
+
+**Supabase Pro disk behaviour** (checked 2026-11-22,
+[Understanding Database and Disk Size](https://supabase.com/docs/guides/platform/database-size),
+[Manage Disk size usage](https://supabase.com/docs/guides/platform/manage-your-usage/disk-size),
+[Control your costs](https://supabase.com/docs/guides/platform/cost-control)):
+
+- The disk auto-expands by 50% when the database reaches 90% of the disk
+  (8 GB to 12 GB), at most four resizes in a rolling 24 hours, capped at +200 GB
+  per resize. At 95% use with the resize quota exhausted the project goes
+  **read-only** (`cannot execute INSERT in a read-only transaction`).
+- **The spend cap covers Disk Size.** With the cap on (the Pro default), usage
+  beyond the included 8 GB is not allowed and Supabase's own text says to
+  disable the cap "if you want your Pro instance to auto-scale beyond the 8 GB
+  disk size limit". Treat 8 GB as the hard limit until the owner turns the cap
+  off, at which point extra disk is billed at $0.125 per GB-month.
+- The disk also holds WAL and system files, so disk use is somewhat above
+  `pg_database_size`. The alert below uses the database size against 8 GB, so
+  70% of it (5.6 GB) leaves headroom for that.
+
+**Log retention.** Sentry (Developer plan, free), checked 2026-11-22
+([Data Retention Periods](https://docs.sentry.io/security-legal-pii/security/data-retention-periods)):
+errors, logs, spans and attachments are kept **30 days**. Render (workspace
+Professional), checked 2026-11-22 ([Logs in the Render Dashboard](https://render.com/docs/logging)):
+service logs are kept **14 days** (Hobby 7, Organization/Enterprise 30). Logs
+older than the retention are gone even after an upgrade; stream them to a
+syslog provider if longer history is ever needed. Render renamed its workspace
+plans in 2026 (Pro / Scale / Enterprise); if the dashboard shows "Pro", confirm
+the figure on its plan page.
+
+**Measuring.** Run [`scripts/db/db_size_report.sql`](../scripts/db/db_size_report.sql)
+(read-only: database size, size per `public` table, average and largest
+`scan_records` row) in the Supabase SQL editor or with `psql -f`. Keep the
+output out of public issues and PRs.
+
+**Size alert.** The `size-check` job of `.github/workflows/db-backup.yml` runs
+after the schedule (daily 07:17 UTC) and on manual runs. It runs one read-only
+`SELECT pg_database_size(current_database())` on production through
+`BACKUP_DATABASE_URL` and `scripts/db/check_size_threshold.sh`, and **fails the
+job at 70% of `DB_SIZE_LIMIT_GB`** (default 8), so GitHub notifies the owner the
+same way as for a failed backup ([`backups.md`](backups.md), owner setup step
+7). The log shows a verdict only, never a size (public repository). Owner
+steps:
+
+1. If you raise the disk (or turn the spend cap off and size the disk by hand),
+   set the `DB_SIZE_LIMIT_GB` **variable** of the `backup` GitHub environment to
+   the new size in whole GB.
+2. Optional, dashboard side: Supabase sends disk-usage emails to the
+   organization owner; confirm the billing email is monitored. There is no
+   Supabase setting for a custom threshold, which is why the job exists.
+3. After the first run, confirm the `size-check` job is green.
+
 ## Secrets policy
 
 Every credential is `sync: false` in `render.yaml` and is pasted directly into
