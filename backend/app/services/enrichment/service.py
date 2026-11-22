@@ -128,7 +128,7 @@ def _fallback_query(title: str) -> str | None:
     if not _split_title(title)[1]:
         return None
     head = _SUBTITLE.split(title, maxsplit=1)[0].strip()
-    if len(head) < FALLBACK_MIN_TITLE_CHARS or head.lower() in ("the", "a", "an"):
+    if len(head) < FALLBACK_MIN_TITLE_CHARS:
         return None
     deadline = _DEADLINE_AT.get()
     if (
