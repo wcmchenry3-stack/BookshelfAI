@@ -117,6 +117,20 @@ describe('scan queue screen (#605)', () => {
     expect(getByText('No failed scans.')).toBeTruthy();
   });
 
+  it('shows the 7-day waiting note when a queued photo is listed (#669)', async () => {
+    const { getByText } = await renderScreen([
+      job('q', { status: 'queued', createdAt: NOW - 1000 }),
+    ]);
+    expect(getByText('Waiting scans are removed after 7 days.')).toBeTruthy();
+  });
+
+  it('does not show the waiting note for a pending photo, which never ages out (#669)', async () => {
+    const { queryByText } = await renderScreen([
+      job('p', { status: 'pending', createdAt: NOW - 1000 }),
+    ]);
+    expect(queryByText('Waiting scans are removed after 7 days.')).toBeNull();
+  });
+
   it('pads a fixed wrapper by the top safe-area inset, not the scrolled content (#936)', async () => {
     const { getByTestId, getByText } = await renderScreen([]);
     const wrapper = getByTestId('scan-queue-screen');
@@ -557,6 +571,7 @@ describe('failed scans expire after 7 days (#605)', () => {
   it('the purge leaves pending, recent queued and in-flight jobs alone (queued past 7 days is #669)', async () => {
     mockPost.mockReturnValue(new Promise(() => {}));
     mockLoadJobs.mockResolvedValue([
+      // Created 29 days after NOW: one day old at the advanced clock (NOW + 30 days), so not stale.
       job('queued', { status: 'queued', createdAt: NOW + 29 * DAY }),
       job('pending', { status: 'pending', createdAt: NOW - 30 * DAY }),
     ]);

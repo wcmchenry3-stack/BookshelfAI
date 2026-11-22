@@ -1056,6 +1056,9 @@ describe('ScanJobContext — storage bounds (#669, G3)', () => {
 
   it('dismisses the oldest completed job and its photo when an 11th completes', async () => {
     mockPost.mockResolvedValue(scanResponse([{ title: 'Dune', author: 'Herbert' }]));
+    // Distinct, increasing timestamps: scans landing in one millisecond must not flake this.
+    let clock = Date.now();
+    const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => (clock += 10));
     const { result } = await renderScanJobs();
     for (let i = 0; i < 11; i++) {
       await act(async () => {
@@ -1066,6 +1069,70 @@ describe('ScanJobContext — storage bounds (#669, G3)', () => {
     expect(result.current.jobs.some((j) => j.imageUri?.endsWith('/p0.jpg'))).toBe(false);
     expect(mockDeleteScanImage).toHaveBeenCalledWith('file:///docs/scan-queue/p0.jpg');
     expect(mockDeleteScanImage).toHaveBeenCalledTimes(1);
+    nowSpy.mockRestore();
+  });
+
+  it('stamps completedAt when a job completes', async () => {
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'Herbert' }]));
+    const { result } = await renderScanJobs();
+    const before = Date.now();
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/a.jpg');
+    });
+    const done = result.current.jobs[0];
+    expect(done.status).toBe('complete');
+    expect(done.completedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('keeps the job whose review a restored enhanced re-scan reopens, with its photo', async () => {
+    const { result } = await renderScanJobs();
+    mockPost.mockResolvedValueOnce(scanResponse([{ title: 'Dune', author: 'A' }]));
+    await act(async () => {
+      await result.current.startScan('image', 'file:///docs/scan-queue/old.jpg');
+    });
+    const oldId = result.current.jobs[0].id;
+    // The enhanced re-scan stays in flight while 10 newer scans complete.
+    let finishEnhanced: (v: unknown) => void = () => {};
+    mockPost.mockReturnValueOnce(new Promise((res) => (finishEnhanced = res)));
+    let enhanced: Promise<void> | void;
+    await act(async () => {
+      enhanced = result.current.requestEnhancedScan(oldId);
+    });
+    mockPost.mockResolvedValue(scanResponse([{ title: 'Emma', author: 'B' }]));
+    for (let i = 0; i < 10; i++) {
+      await act(async () => {
+        await result.current.startScan('image', `file:///docs/scan-queue/n${i}.jpg`);
+      });
+    }
+    // It finds nothing, so the earlier results are restored and reopened.
+    await act(async () => {
+      finishEnhanced(scanResponse([]));
+      await Promise.resolve(enhanced);
+    });
+    expect(result.current.reviewingJob?.id).toBe(oldId);
+    expect(result.current.jobs.some((j) => j.id === oldId)).toBe(true);
+    expect(mockDeleteScanImage).not.toHaveBeenCalledWith('file:///docs/scan-queue/old.jpg');
+  });
+
+  it('a failed job retried after 7 days is not purged: it counts from when it was queued', async () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    mockLoadJobs.mockResolvedValue([
+      {
+        ...queuedJob(1),
+        id: 'old-fail',
+        status: 'failed',
+        createdAt: Date.now() - 30 * DAY_MS,
+        failedAt: Date.now() - DAY_MS,
+      },
+    ]);
+    const { result } = await renderScanJobs();
+    await act(async () => {
+      result.current.queueForLater('old-fail');
+    });
+    const job = result.current.jobs.find((j) => j.id === 'old-fail');
+    expect(job?.status).toBe('queued');
+    expect(job?.queuedAt).toBeGreaterThan(Date.now() - 60_000);
+    expect(mockDeleteScanImage).not.toHaveBeenCalled();
   });
 
   it('drops a queued job older than 7 days on launch and keeps a recent one', async () => {

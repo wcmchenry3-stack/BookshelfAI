@@ -65,6 +65,10 @@ export interface ScanJob {
   attempts?: number;
   /** Epoch ms when the job became failed (#605); absent on older saved jobs, which count from `createdAt`. */
   failedAt?: number;
+  /** Epoch ms when the job last became complete (#669); the age of an unreviewed photo counts from here, falling back to `createdAt`. */
+  completedAt?: number;
+  /** Epoch ms when the job last entered `queued`, including a retry of a failed job (#669); the 7-day limit counts from here, falling back to `createdAt`. */
+  queuedAt?: number;
   /** Epoch ms of the photo's next scheduled attempt (#604); absent when none is scheduled. */
   nextAttemptAt?: number;
 }
@@ -127,7 +131,7 @@ export function isFailedScanExpired(job: ScanJob, now: number = Date.now()): boo
 
 /** A refused (`queued`) job older than QUEUED_SCAN_MAX_AGE_MS (#669). */
 export function isQueuedScanStale(job: ScanJob, now: number = Date.now()): boolean {
-  return job.status === 'queued' && now - job.createdAt > QUEUED_SCAN_MAX_AGE_MS;
+  return job.status === 'queued' && now - (job.queuedAt ?? job.createdAt) > QUEUED_SCAN_MAX_AGE_MS;
 }
 
 /**
@@ -147,14 +151,19 @@ export function jobsToPurge(
       out.add(j.id);
     }
   }
-  const newestFirst = (a: number, b: number) => b - a;
+  // Newest first. Equal timestamps (several jobs in one millisecond) are
+  // broken by list position: the app keeps its list newest-first (`startScan`
+  // prepends), so the earlier entry counts as the newer one.
+  const indexOf = new Map(jobs.map((j, i) => [j.id, i]));
+  const newestFirst = (time: (j: ScanJob) => number) => (a: ScanJob, b: ScanJob) =>
+    time(b) - time(a) || indexOf.get(a.id)! - indexOf.get(b.id)!;
   const failed = jobs
     .filter((j) => j.status === 'failed' && !out.has(j.id))
-    .sort((a, b) => newestFirst(failedTimeOf(a), failedTimeOf(b)));
+    .sort(newestFirst(failedTimeOf));
   for (const j of failed.slice(MAX_FAILED_JOBS)) out.add(j.id);
   const unreviewed = jobs
     .filter((j) => j.status === 'complete' && j.imageUri && j.id !== keepId)
-    .sort((a, b) => newestFirst(a.createdAt, b.createdAt));
+    .sort(newestFirst((j) => j.completedAt ?? j.createdAt));
   for (const j of unreviewed.slice(MAX_UNREVIEWED_JOBS)) out.add(j.id);
   return out;
 }

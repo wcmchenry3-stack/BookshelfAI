@@ -70,4 +70,47 @@ describe('scan queue bounds (#669, G3)', () => {
     ];
     expect([...jobsToPurge(jobs, NOW)].sort()).toEqual(['old-failed', 'old-queued']);
   });
+
+  it('ages a completed job from completedAt, not createdAt', () => {
+    // 11 completed jobs; c10 was captured first but completed last, so it is
+    // the newest and the job completed first (c0) is the one dismissed.
+    const jobs = Array.from({ length: 11 }, (_, i) =>
+      job(`c${i}`, {
+        status: 'complete',
+        createdAt: NOW - 20 * DAY + i,
+        completedAt: i === 10 ? NOW : NOW - 10 * DAY + i,
+      })
+    );
+    expect([...jobsToPurge(jobs, NOW)]).toEqual(['c0']);
+  });
+
+  it('falls back to createdAt for a completed job with no completedAt', () => {
+    const jobs = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        job(`n${i}`, { status: 'complete', createdAt: NOW - i, completedAt: NOW - i })
+      ),
+      job('legacy', { status: 'complete', createdAt: NOW - 5 * DAY }),
+    ];
+    expect([...jobsToPurge(jobs, NOW)]).toEqual(['legacy']);
+  });
+
+  it('ages a queued job from queuedAt, so a retried old failure is kept', () => {
+    const retried = job('r', {
+      status: 'queued',
+      createdAt: NOW - 30 * DAY,
+      queuedAt: NOW - 1000,
+    });
+    expect(isQueuedScanStale(retried, NOW)).toBe(false);
+    expect(isQueuedScanStale({ ...retried, queuedAt: NOW - 8 * DAY }, NOW)).toBe(true);
+    expect(jobsToPurge([retried], NOW).size).toBe(0);
+  });
+
+  it('breaks equal timestamps by list position (the list is newest-first)', () => {
+    const failed = Array.from({ length: 21 }, (_, i) => job(`f${i}`, { failedAt: NOW }));
+    expect([...jobsToPurge(failed, NOW)]).toEqual(['f20']);
+    const done = Array.from({ length: 11 }, (_, i) =>
+      job(`c${i}`, { status: 'complete', completedAt: NOW })
+    );
+    expect([...jobsToPurge(done, NOW)]).toEqual(['c10']);
+  });
 });

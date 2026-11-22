@@ -305,7 +305,25 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
               : updates.status
                 ? undefined
                 : j.failedAt;
-          return { ...j, ...updates, failedAt };
+          // Same for the time it became complete or queued (#669): the age of
+          // an unreviewed or refused photo counts from then, not from capture.
+          const completedAt =
+            updates.status === 'complete'
+              ? j.status === 'complete'
+                ? (updates.completedAt ?? j.completedAt)
+                : (updates.completedAt ?? Date.now())
+              : updates.status
+                ? undefined
+                : j.completedAt;
+          const queuedAt =
+            updates.status === 'queued'
+              ? j.status === 'queued'
+                ? (updates.queuedAt ?? j.queuedAt)
+                : (updates.queuedAt ?? Date.now())
+              : updates.status
+                ? undefined
+                : j.queuedAt;
+          return { ...j, ...updates, failedAt, completedAt, queuedAt };
         })
       ),
     [setJobsAndRef]
@@ -338,30 +356,36 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // scans are kept 7 days and at most 20, refused (queued) scans 7 days, and at
   // most 10 completed scans keep their photo. Runs on launch (the load above),
   // when the queue screen opens, and whenever the jobs change.
-  const purgeExpiredFailedJobs = useCallback(() => {
-    const now = Date.now();
-    const ids = jobsToPurge(jobsRef.current, now, reviewingJobIdRef.current);
-    if (ids.size === 0) return;
-    const expired = jobsRef.current.filter((j) => ids.has(j.id));
-    if (expired.length === 0) return;
-    setJobsAndRef((prev) => prev.filter((j) => !ids.has(j.id)));
-    // Save the pruned list first, then delete the images, so a kill in
-    // between can't leave a saved job whose image is gone. If the save fails
-    // the images stay; the next launch's load drops the jobs and sweeps them.
-    void (async () => {
-      try {
-        await saveJobs(jobsRef.current);
-      } catch {
-        return;
-      }
-      for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
-    })();
-  }, [setJobsAndRef]);
+  // `keepId` is the open review: the effect below passes it from state, since
+  // the ref is only synced after render and would miss a review reopened in
+  // the same update that completed the job.
+  const purgeExpiredFailedJobs = useCallback(
+    (keepId: string | null = reviewingJobIdRef.current) => {
+      const now = Date.now();
+      const ids = jobsToPurge(jobsRef.current, now, keepId);
+      if (ids.size === 0) return;
+      const expired = jobsRef.current.filter((j) => ids.has(j.id));
+      if (expired.length === 0) return;
+      setJobsAndRef((prev) => prev.filter((j) => !ids.has(j.id)));
+      // Save the pruned list first, then delete the images, so a kill in
+      // between can't leave a saved job whose image is gone. If the save fails
+      // the images stay; the next launch's load drops the jobs and sweeps them.
+      void (async () => {
+        try {
+          await saveJobs(jobsRef.current);
+        } catch {
+          return;
+        }
+        for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
+      })();
+    },
+    [setJobsAndRef]
+  );
 
   // The 20-failed and 10-unreviewed caps apply the moment a job fails or completes.
   useEffect(() => {
-    if (loaded) purgeExpiredFailedJobs();
-  }, [jobs, loaded, purgeExpiredFailedJobs]);
+    if (loaded) purgeExpiredFailedJobs(reviewingJobId);
+  }, [jobs, loaded, reviewingJobId, purgeExpiredFailedJobs]);
 
   const queueForLater = useCallback(
     (jobId: string) => {
