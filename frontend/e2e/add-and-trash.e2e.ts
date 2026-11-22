@@ -1,4 +1,4 @@
-import { expect, KNOWN_VIOLATIONS, test } from './support/fixtures';
+import { expect, test } from './support/fixtures';
 import { addFromPicker, searchBook } from './support/flows';
 
 // The search goes through the real backend and the real Open Library and
@@ -17,9 +17,7 @@ test.describe('Add a book, delete it, restore it from Trash', () => {
 
     // Search -> add.
     await searchBook(page, 'frankenstein', 'Frankenstein');
-    await expectNoA11yViolations('search result picker', {
-      known: [KNOWN_VIOLATIONS.pickerCheckboxMissingAriaChecked],
-    });
+    await expectNoA11yViolations('search result picker');
     await addFromPicker(page, 'Frankenstein', 'Mary Shelley');
     await expect(page.getByRole('alert')).toContainText(
       '"Frankenstein" has been added to your wishlist.'

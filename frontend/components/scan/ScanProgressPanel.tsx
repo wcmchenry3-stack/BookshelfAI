@@ -105,6 +105,9 @@ export function ScanProgressPanel({
               size="small"
               color={theme.colors.primary}
               importantForAccessibility="no"
+              // react-native-web renders a nameless role=progressbar and ignores
+              // importantForAccessibility; the labelled row is the progressbar.
+              aria-hidden
             />
             <Text
               style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}
