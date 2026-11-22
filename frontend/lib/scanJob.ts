@@ -9,6 +9,19 @@ export const MAX_QUEUE_SIZE = 50;
 // Failed scans stay on the phone this long, then are removed with their image (#605).
 export const FAILED_SCAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+// On-device photo budget: at most 80 photos and 50 MB (50 waiting + 20 failed
+// + 10 completed but unreviewed). See docs/storage-and-retention.md (G3, G5).
+/** Failed jobs kept; when one more fails, the oldest is removed with its photo (#669, G3). */
+export const MAX_FAILED_JOBS = 20;
+/** Completed jobs not yet reviewed that keep their photo; the oldest beyond this is dismissed (#669, G3). */
+export const MAX_UNREVIEWED_JOBS = 10;
+/** A refused (`queued`) job older than this is removed with its photo (#669, G3). */
+export const QUEUED_SCAN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** A capture is refused when the phone has less free space than this (#670, G5). */
+export const LOW_FREE_SPACE_BYTES = 100 * 1024 * 1024;
+/** A capture is refused when `scan-queue/` already holds this much (#670, G5). */
+export const MAX_QUEUE_BYTES = 50 * 1024 * 1024;
+
 export type ScanJobType = 'image' | 'text';
 type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'queued';
 
@@ -110,4 +123,38 @@ export function failedTimeOf(job: ScanJob): number {
 /** A failed job older than FAILED_SCAN_RETENTION_MS (#605). */
 export function isFailedScanExpired(job: ScanJob, now: number = Date.now()): boolean {
   return job.status === 'failed' && now - failedTimeOf(job) > FAILED_SCAN_RETENTION_MS;
+}
+
+/** A refused (`queued`) job older than QUEUED_SCAN_MAX_AGE_MS (#669). */
+export function isQueuedScanStale(job: ScanJob, now: number = Date.now()): boolean {
+  return job.status === 'queued' && now - job.createdAt > QUEUED_SCAN_MAX_AGE_MS;
+}
+
+/**
+ * Ids of jobs to remove, with their photos (#669): failed scans past 7 days or
+ * beyond the newest MAX_FAILED_JOBS, refused scans past 7 days, and completed
+ * scans beyond the newest MAX_UNREVIEWED_JOBS. `keepId` (the review that is
+ * open) is never chosen.
+ */
+export function jobsToPurge(
+  jobs: readonly ScanJob[],
+  now: number = Date.now(),
+  keepId?: string | null
+): Set<string> {
+  const out = new Set<string>();
+  for (const j of jobs) {
+    if (j.id !== keepId && (isFailedScanExpired(j, now) || isQueuedScanStale(j, now))) {
+      out.add(j.id);
+    }
+  }
+  const newestFirst = (a: number, b: number) => b - a;
+  const failed = jobs
+    .filter((j) => j.status === 'failed' && !out.has(j.id))
+    .sort((a, b) => newestFirst(failedTimeOf(a), failedTimeOf(b)));
+  for (const j of failed.slice(MAX_FAILED_JOBS)) out.add(j.id);
+  const unreviewed = jobs
+    .filter((j) => j.status === 'complete' && j.imageUri && j.id !== keepId)
+    .sort((a, b) => newestFirst(a.createdAt, b.createdAt));
+  for (const j of unreviewed.slice(MAX_UNREVIEWED_JOBS)) out.add(j.id);
+  return out;
 }

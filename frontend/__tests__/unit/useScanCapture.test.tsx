@@ -36,6 +36,11 @@ jest.mock('expo-file-system', () => ({
   }),
 }));
 
+let mockStorageCheck: 'ok' | 'low_space' | 'queue_full' = 'ok';
+jest.mock('../../lib/scanJobStorage', () => ({
+  checkCaptureStorage: () => mockStorageCheck,
+}));
+
 const startScan = jest.fn();
 
 async function setup(opts: { isQueueFull?: boolean } = {}) {
@@ -55,6 +60,7 @@ async function setup(opts: { isQueueFull?: boolean } = {}) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockFileUris.length = 0;
+  mockStorageCheck = 'ok';
 });
 
 describe('useScanCapture — native capture', () => {
@@ -116,6 +122,24 @@ describe('useScanCapture — native capture', () => {
     expect(mockFileCopy).not.toHaveBeenCalled();
     expect(mockShowBanner).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'queue full', type: 'error' })
+    );
+  });
+
+  it.each([
+    ['low_space', 'Your phone is almost out of space. Free some up to scan more.'],
+    ['queue_full', 'Too many photos are saved on this phone. Send or remove some first.'],
+  ] as const)('refuses with a specific message when storage is %s (#670)', async (check, text) => {
+    mockStorageCheck = check;
+    const { result, takePictureAsync } = await setup();
+    await act(async () => {
+      await result.current.handleCapture();
+    });
+    expect(takePictureAsync).not.toHaveBeenCalled();
+    expect(mockFileCopy).not.toHaveBeenCalled();
+    expect(startScan).not.toHaveBeenCalled();
+    expect(mockCaptureException).not.toHaveBeenCalled();
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      expect.objectContaining({ message: text, type: 'error' })
     );
   });
 

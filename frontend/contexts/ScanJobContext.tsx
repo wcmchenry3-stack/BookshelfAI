@@ -11,7 +11,7 @@ import { useTurnstile } from '../hooks/useTurnstile';
 import { Sentry } from '../lib/sentry';
 import { MAX_SCAN_RETRY_DELAY_MS, type ScanNotice } from '../lib/scanErrors';
 import {
-  isFailedScanExpired,
+  jobsToPurge,
   isPendingUpload,
   MAX_QUEUE_SIZE,
   type ScanJob,
@@ -276,11 +276,13 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
             ? { ...j, nextAttemptAt: latestRetryAt }
             : j
         );
-      // Failed scans older than 7 days are dropped (#605). Their images are
+      // Failed scans past 7 days or the 20 newest, and refused scans past
+      // 7 days, are dropped (#605, #669). Their images are
       // not deleted here: the sweep below removes files no kept job refers to
       // (they are older than `launchedAt`, so the sweep's age guard allows it),
       // so a job is never saved with its image already gone.
-      const kept = restored.filter((j) => !isFailedScanExpired(j, launchedAt));
+      const dropIds = jobsToPurge(restored, launchedAt);
+      const kept = restored.filter((j) => !dropIds.has(j.id));
       setJobsAndRef(() => kept);
       setLoaded(true);
       await sweepOrphanedScanFiles(kept, launchedAt);
@@ -332,13 +334,16 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const pendingCount = useMemo(() => jobs.filter(isPendingUpload).length, [jobs]);
   const isQueueFull = pendingCount >= MAX_QUEUE_SIZE;
 
-  // Failed scans are kept 7 days (#605): on launch (the load above) and when
-  // the queue screen opens, older ones are removed with their images.
+  // Bounds on kept photos (#605, #669; docs/storage-and-retention.md G3): failed
+  // scans are kept 7 days and at most 20, refused (queued) scans 7 days, and at
+  // most 10 completed scans keep their photo. Runs on launch (the load above),
+  // when the queue screen opens, and whenever the jobs change.
   const purgeExpiredFailedJobs = useCallback(() => {
     const now = Date.now();
-    const expired = jobsRef.current.filter((j) => isFailedScanExpired(j, now));
+    const ids = jobsToPurge(jobsRef.current, now, reviewingJobIdRef.current);
+    if (ids.size === 0) return;
+    const expired = jobsRef.current.filter((j) => ids.has(j.id));
     if (expired.length === 0) return;
-    const ids = new Set(expired.map((j) => j.id));
     setJobsAndRef((prev) => prev.filter((j) => !ids.has(j.id)));
     // Save the pruned list first, then delete the images, so a kill in
     // between can't leave a saved job whose image is gone. If the save fails
@@ -352,6 +357,11 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       for (const j of expired) if (j.imageUri) void deleteScanImage(j.imageUri);
     })();
   }, [setJobsAndRef]);
+
+  // The 20-failed and 10-unreviewed caps apply the moment a job fails or completes.
+  useEffect(() => {
+    if (loaded) purgeExpiredFailedJobs();
+  }, [jobs, loaded, purgeExpiredFailedJobs]);
 
   const queueForLater = useCallback(
     (jobId: string) => {

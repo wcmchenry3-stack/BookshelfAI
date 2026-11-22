@@ -5,6 +5,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { useTranslation } from 'react-i18next';
 
 import { Sentry } from '../lib/sentry';
+import { checkCaptureStorage } from '../lib/scanJobStorage';
 import { useBanner } from './useBanner';
 
 interface Options {
@@ -54,6 +55,17 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
     // Check before copying to scan-queue/ so a rejected capture leaves no file behind.
     if (isQueueFull) {
       showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
+      return;
+    }
+    // Free space and the 50 MB queue budget (#670): refuse with a specific
+    // message before taking the photo, rather than fail the save generically.
+    const storage = checkCaptureStorage();
+    if (storage !== 'ok') {
+      showBanner({
+        message: t(storage === 'low_space' ? 'storageLow' : 'queueStorageFull'),
+        type: 'error',
+        duration: 5000,
+      });
       return;
     }
     setCapturing(true);

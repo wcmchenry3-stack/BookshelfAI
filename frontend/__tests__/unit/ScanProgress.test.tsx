@@ -25,6 +25,7 @@ jest.mock('../../lib/scanJobStorage', () => ({
   clearJobs: jest.fn(),
   sweepOrphanedScanFiles: () => Promise.resolve(0),
   deleteScanImage: jest.fn(),
+  checkCaptureStorage: () => 'ok',
 }));
 let mockConnected = true;
 jest.mock('@react-native-community/netinfo', () => ({

@@ -195,7 +195,7 @@ describe('POST /scan carries a Turnstile token (#740)', () => {
         id: 'q-1',
         type: 'image',
         status: 'queued',
-        createdAt: 1,
+        createdAt: Date.now(),
         imageUri: 'file:///q1.jpg',
         retryCount: 0,
       },
