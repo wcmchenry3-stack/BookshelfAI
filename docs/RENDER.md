@@ -38,7 +38,9 @@ done **manually**, not applied from the blueprint — every secret is
 **Until checklist step 3, `bookshelfapi.buffingchi.com` (prod) still serves the
 `dev` branch against the existing Render `bookshelf-db`.** Native release
 builds compiled from `frontend/.env.production` already point at that
-hostname, so they're talking to dev code/data right now. Do the dev cutover
+hostname, so they're talking to dev code/data right now. (Since #973 this
+applies to Xcode Cloud builds from `main` and tags only; builds from `dev` use
+`bookshelfapi-dev` — see `docs/claude/ios-ci.md` § Which backend a build talks to.) Do the dev cutover
 (step 2) first and verify it end to end before step 3.
 
 **Step 3 replaces prod's database.** Once `DATABASE_URL` on `bookshelf-api`
