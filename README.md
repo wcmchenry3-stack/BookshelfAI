@@ -6,7 +6,7 @@ Point your camera at a book, the app identifies it (OpenAI `gpt-4o-mini` vision 
 
 ## Stack
 
-**Frontend** — Expo SDK 55 · React Native 0.83 · Expo Router · TypeScript · i18next (10 locales) · Sentry
+**Frontend** — Expo SDK 58 · React Native 0.88 · Expo Router · TypeScript · i18next (10 locales) · Sentry
 **Backend** — FastAPI · SQLAlchemy (async) · Alembic · PostgreSQL · slowapi rate limiting · JWT (RS256) auth via Google OAuth
 **External** — OpenAI Vision · Google Books API · Open Library · Cloudflare (Turnstile + WAF) · Sentry
 **Infra** — Render (backend + Postgres) · Xcode Cloud (iOS) · local Gradle → Play Console (Android) · GitHub Actions CI

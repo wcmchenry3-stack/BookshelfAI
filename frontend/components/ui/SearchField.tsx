@@ -6,6 +6,7 @@ import {
   TextInput,
   View,
   type StyleProp,
+  type TextInputInstance,
   type ViewStyle,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -39,7 +40,7 @@ export function SearchField({
   style,
 }: SearchFieldProps) {
   const { theme } = useTheme();
-  const inputRef = React.useRef<TextInput>(null);
+  const inputRef = React.useRef<TextInputInstance>(null);
   const showClear = value.length > 0;
   // Text inputs show focus on click too, so the field ring appears on any focus.
   const field = useFocusRing({ always: true });

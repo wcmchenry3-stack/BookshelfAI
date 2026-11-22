@@ -51,6 +51,14 @@ const ALWAYS_KEYS: ReadonlySet<string> = new Set([
   'apikey',
   'api-key',
 ]);
+// Transactions only (#715): URL query / fragment attributes are dropped wholesale.
+const QUERY_KEYS: ReadonlySet<string> = new Set([
+  'http.query',
+  'url.query',
+  'http.fragment',
+  'url.fragment',
+  'query_string',
+]);
 const HTTP_CONTAINERS: ReadonlySet<string> = new Set(['config', 'request']);
 const XHR_REQUEST_KEYS = [
   'headers',
@@ -135,7 +143,7 @@ export function redactString(s: string): string {
 }
 
 type Obj = Record<string, unknown>;
-type St = { changed: boolean };
+type St = { changed: boolean; str?: (s: string) => string; txn?: boolean };
 
 function mark<V>(st: St, v: V): V {
   st.changed = true;
@@ -157,8 +165,15 @@ function hasAny(o: Obj, keys: readonly string[]): boolean {
 }
 
 /** Should `key: val` inside `obj` (reached via `selfKey`) be replaced wholesale? */
-function shouldRedact(key: string, val: unknown, obj: Obj, selfKey: string): boolean {
+function shouldRedact(
+  key: string,
+  val: unknown,
+  obj: Obj,
+  selfKey: string,
+  txn?: boolean
+): boolean {
   if (ALWAYS_KEYS.has(key)) return true;
+  if (txn && QUERY_KEYS.has(key)) return true;
   if (key === 'config') return isPlainObject(val) && hasAny(val, CONFIG_KEYS);
   if (key === 'request') return isPlainObject(val) && hasAny(val, XHR_REQUEST_KEYS);
   if (key === 'headers' || key === 'data') {
@@ -175,7 +190,10 @@ function scrubValue(
   selfKey: string,
   st: St
 ): unknown {
-  if (typeof v === 'string') return mask(st, redactString(v), v);
+  if (typeof v === 'string') {
+    const r = redactString(v);
+    return mask(st, st.str ? st.str(r) : r, v);
+  }
   if (v === null || typeof v !== 'object') return v;
   if (v instanceof Date) return v;
   if (v instanceof Error) {
@@ -190,7 +208,7 @@ function scrubValue(
     const out: Obj = {};
     for (const [k, val] of Object.entries(v)) {
       const key = k.toLowerCase();
-      out[k] = shouldRedact(key, val, v, selfKey)
+      out[k] = shouldRedact(key, val, v, selfKey, st.txn)
         ? mark(st, FILTERED)
         : scrubValue(val, depth + 1, ancestors, key, st);
     }
@@ -236,6 +254,7 @@ function scrubRequest(req: unknown, st: St): unknown {
   for (const k of ['url', 'query_string'] as const) {
     if (out[k] !== undefined) out[k] = scrubValue(out[k], 0, new WeakSet(), k, st);
   }
+  if (st.txn && out.query_string !== undefined) out.query_string = mark(st, FILTERED);
   if (out.cookies !== undefined) out.cookies = mark(st, FILTERED);
   return out;
 }
@@ -309,4 +328,112 @@ export function scrubBreadcrumb<T>(breadcrumb: T): T | null {
     guarded(out, field, st, (v) => scrubValue(v, 0, new WeakSet(), field, st));
   }
   return st.changed ? (out as unknown as T) : breadcrumb;
+}
+
+// ---- Transactions (#715) ---------------------------------------------------
+
+const EMAIL_LOCAL = /[A-Za-z0-9._%+-]/;
+const EMAIL_DOMAIN = /[A-Za-z0-9.-]/;
+const isWs = (c: number) => c === 32 || (c >= 9 && c <= 13);
+const isWord = (c: number) =>
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+
+/** Replace `local@domain.tld` with `[email]` (ASCII local part only). Linear. */
+export function redactEmails(s: string): string {
+  let at = s.indexOf('@');
+  if (at === -1) return s;
+  let out = '';
+  let last = 0;
+  while (at !== -1) {
+    let a = at;
+    while (a > last && EMAIL_LOCAL.test(s.charAt(a - 1))) a--;
+    let b = at + 1;
+    while (b < s.length && EMAIL_DOMAIN.test(s.charAt(b))) b++;
+    let e = b;
+    while (e > at + 1 && s.charCodeAt(e - 1) === 46) e--; // trailing dots
+    const domain = s.slice(at + 1, e);
+    if (a < at && domain.includes('.') && !domain.startsWith('.')) {
+      out += s.slice(last, a) + '[email]';
+      last = e;
+      b = e;
+    }
+    at = s.indexOf('@', Math.max(b, at + 1));
+  }
+  return out + s.slice(last);
+}
+
+/**
+ * Drop the query string / fragment of every `http(s)://` URL in `s`, and of `s`
+ * itself when it is an absolute path. One left-to-right pass: each character is
+ * visited a bounded number of times (no backtracking).
+ */
+function stripUrlQueries(s: string): string {
+  let out = '';
+  let last = 0;
+  const cut = (from: number): number => {
+    // from = index just after the scheme / the path start; returns end of the URL token.
+    let j = from;
+    while (j < s.length) {
+      const c = s.charCodeAt(j);
+      if (isWs(c)) return j;
+      if (c === 63 || c === 35) {
+        out += s.slice(last, j);
+        while (j < s.length && !isWs(s.charCodeAt(j))) j++;
+        last = j;
+        return j;
+      }
+      j++;
+    }
+    return j;
+  };
+  // URL schemes are case-insensitive (`HTTPS://`). Scan an ASCII-only
+  // lower-cased copy: A-Z -> a-z keeps every index identical to `s` (unlike
+  // toLowerCase on non-ASCII text), and cutting still happens on `s`.
+  const lower = s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  let i = 0;
+  if (s.charCodeAt(0) === 47) i = cut(1);
+  for (let h = lower.indexOf('http', i); h !== -1; h = lower.indexOf('http', i)) {
+    let p = h + 4;
+    if (lower.charAt(p) === 's') p++;
+    if (s.startsWith('://', p) && (h === 0 || !isWord(s.charCodeAt(h - 1)))) {
+      i = cut(p + 3);
+    } else {
+      i = h + 4;
+    }
+  }
+  return last === 0 ? s : out + s.slice(last);
+}
+
+function scrubTransactionString(s: string): string {
+  return redactEmails(stripUrlQueries(s));
+}
+
+/**
+ * `beforeSendTransaction`: the event scrub rules (tokens, headers, bearer/JWT)
+ * applied to the transaction name, tags, extra, contexts, request, breadcrumbs
+ * and every span (description, data, tags), plus URL query/fragment removal
+ * and email masking. Same identity / fail-closed rules as `scrubSentryEvent`:
+ * a field that cannot be scrubbed is deleted; an uncopyable transaction is dropped.
+ */
+export function scrubSentryTransaction<T>(event: T): T | null {
+  if (event === null || typeof event !== 'object') return event;
+  const st: St = { changed: false, str: scrubTransactionString, txn: true };
+  let out: Obj;
+  try {
+    out = { ...(event as unknown as Obj) };
+  } catch {
+    return null;
+  }
+  for (const field of [
+    'transaction',
+    'tags',
+    'extra',
+    'contexts',
+    'breadcrumbs',
+    'spans',
+  ] as const) {
+    guarded(out, field, st, (v) => scrubValue(v, 0, new WeakSet(), field, st));
+  }
+  guarded(out, 'request', st, (v) => scrubRequest(v, st));
+  return st.changed ? (out as unknown as T) : event;
 }

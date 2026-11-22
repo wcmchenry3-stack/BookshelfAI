@@ -9,6 +9,3 @@ android/
 
 # Jest coverage output
 coverage/
-
-# Vendored third-party code, kept byte-for-byte reviewable against upstream (#779)
-vendor/

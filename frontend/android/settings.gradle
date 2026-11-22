@@ -3,6 +3,8 @@ pluginManagement {
   // restricted-method enforcement. CI uses JDK 17. Fail fast with a clear
   // message instead of a 7-minute build that dies at configureCMakeDebug.
   // See https://github.com/wcmchenry3-stack/book_app/issues/178
+  // Hand edit: `expo prebuild` regenerates this file and drops this block;
+  // restore it after every prebuild (see docs/claude/android-ci.md).
   def jdkMajor = JavaVersion.current().majorVersion.toInteger()
   if (jdkMajor != 17 && jdkMajor != 21) {
     throw new GradleException(
@@ -13,7 +15,6 @@ pluginManagement {
       "See docs/claude/android-ci.md for details.\n"
     )
   }
-
 
   def reactNativeGradlePlugin = new File(
     providers.exec {

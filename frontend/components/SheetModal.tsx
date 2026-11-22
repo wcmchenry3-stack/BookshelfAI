@@ -5,8 +5,8 @@ import {
   Modal,
   Platform,
   StyleSheet,
-  Text,
   View,
+  type TextInstance,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -56,7 +56,7 @@ export default function SheetModal({
   const { theme } = useTheme();
   const { colors } = theme;
   const insets = useSafeAreaInsets();
-  const titleRef = useRef<Text>(null);
+  const titleRef = useRef<TextInstance>(null);
   const isIOS = Platform.OS === 'ios';
 
   useEffect(() => {

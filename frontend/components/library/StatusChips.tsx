@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View, type ScrollViewInstance } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { Chip } from '../ui/Chip';
@@ -15,7 +15,7 @@ interface StatusChipsProps {
 export function StatusChips({ activeTab, counts, onChange }: StatusChipsProps) {
   // Reads the `my-books` namespace (My Books only).
   const { t } = useTranslation('my-books');
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const slots = useRef<Partial<Record<Status, number>>>({});
   const revealed = useRef(false);
 

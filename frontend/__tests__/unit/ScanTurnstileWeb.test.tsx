@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ * @jest-environment <rootDir>/jest/jsdomEnvironment.js
  */
 import React from 'react';
 import { Platform } from 'react-native';

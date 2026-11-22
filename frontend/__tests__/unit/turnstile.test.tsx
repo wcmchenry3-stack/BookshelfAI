@@ -315,6 +315,15 @@ describe('TurnstileProvider (native)', () => {
     await expect(token).resolves.toBe('tok-1');
   });
 
+  it('the hidden WebView cannot take keyboard, D-pad or switch-access focus', async () => {
+    process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
+    process.env.EXPO_PUBLIC_TURNSTILE_BASE_URL = BASE;
+    await renderHook(() => useTurnstile(), { wrapper });
+    // A parent View's focusable={false} does not stop a native Android WebView
+    // child from taking focus, so the prop must sit on the WebView itself.
+    expect(webViewEl().props.focusable).toBe(false);
+  });
+
   it('ignores messages from any other origin (e.g. a frame)', async () => {
     jest.useFakeTimers();
     process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;

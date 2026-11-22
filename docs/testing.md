@@ -191,7 +191,7 @@ async def test_dedup_across_editions(db_session: AsyncSession):
 ## Frontend (Jest + Expo)
 
 **Location:** `frontend/__tests__/`
-**Config:** `frontend/package.json → jest` key (preset `jest-expo`, transform-ignore-patterns)
+**Config:** `frontend/jest.config.js` (two projects, see `docs/claude/testing.md`) (preset `jest-expo`, transform-ignore-patterns)
 **Setup:** `frontend/jest.setup.ts` (initializes i18n synchronously, configures RNTL with `concurrentRoot: false` to avoid waitFor races on CI)
 
 ### Structure
@@ -205,7 +205,7 @@ frontend/__tests__/
 
 ### Shared helpers (`__tests__/helpers/`)
 
-`package.json → jest.testPathIgnorePatterns` keeps this folder out of the test run. Use these before copying a mock block into a new test file (#816).
+`jest.config.js` `testPathIgnorePatterns` keeps this folder out of the test run. Use these before copying a mock block into a new test file (#816).
 
 | File | Exports | Use it for |
 |---|---|---|
@@ -364,6 +364,7 @@ DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e npm run e2e
 - *Scan upload on web fails.* `ScanJobContext` appends the photo's blob URL string to the form data, which browsers reject (`parameter 2 is not of type 'Blob'`), so no `POST /scan` is sent. The scan UI test is marked `test.fail(...)`: it passes as an expected failure now and turns red once the upload works, which is the cue to remove that line (with the upload fixed it passes as written).
 - *Accessibility.* A scenario tolerates a violation only through `KNOWN_VIOLATIONS` in `e2e/support/fixtures.ts`: one rule on the matching nodes, every other rule still runs, and the call fails when axe stops reporting it (so a fix has to remove the entry). Never add one without an issue. Today: book cards that are buttons containing buttons (`nested-interactive`), picker rows with `role="checkbox"` and no `aria-checked`, the wishlist cover placeholder's `aria-label` on a role-less div, the success banner's white-on-green contrast (3.29:1), and the scan spinner as an unnamed progressbar.
 - The development bundle's LogBox toast (`#error-toast`) covers the tab bar, so the fixtures hide it; it is not app UI.
+- The development export does not content-hash its chunks (every name ends in the MD5 of an empty string), so two lazily loaded chunks with the same basename overwrite each other in `dist/`. That is why `app.json` keeps expo-router's async routes off (#712; see `docs/claude/frontend.md` "File Routing"). The non-English locale chunks (`src/i18n/locales/<lang>/<ns>.json`) still collide in this build, and only one language's copy of each namespace survives. The suite reads English only, which is bundled, so it is not affected; production exports hash real contents and are not affected either.
 
 ## CI test jobs
 
@@ -443,7 +444,7 @@ Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` a
 ## Coverage targets
 
 - **Backend:** 98% line coverage of app code (`pytest --cov=. --cov-fail-under=98`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
-- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `test-frontend` job passes `coverage-threshold: 90` (#820), the lowest of the four Jest floors, because the caller input is a single number for an org workflow that does not document which metric it reads; every measured metric (96.34 / 91.97 / 93.69 / 97.74) clears it. Jest's `coverageThreshold` is the real per-metric gate and already fails the run on its own. Keep the CI input at or below the lowest Jest floor and never above what is measured.
+- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from `frontend/jest.config.js` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `test-frontend` job passes `coverage-threshold: 90` (#820), the lowest of the four Jest floors, because the caller input is a single number for an org workflow that does not document which metric it reads; every measured metric (96.34 / 91.97 / 93.69 / 97.74) clears it. Jest's `coverageThreshold` is the real per-metric gate and already fails the run on its own. Keep the CI input at or below the lowest Jest floor and never above what is measured.
   - **Ratchet:** the Jest `coverageThreshold` is the floor and it only goes up. Any PR that raises a metric by 1 point or more may bump that floor (rounded down to the whole percent). Never lower it without an owner decision.
 
 ## End-to-end
