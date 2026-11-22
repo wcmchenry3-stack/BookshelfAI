@@ -254,7 +254,7 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 | G4 | The camera original in the cache is never deleted; queued photos are not deleted on sign-out | `frontend/hooks/useScanCapture.ts` `handleCapture`, `AuthContext` |
 | G5 | No free-space check and no storage-full message | `frontend/` |
 | G6 | ~~Session log lines are unbounded in length~~ Fixed by #671/#758: 1,000-character lines, 100 KB attachment, bounded serialisation, redact-then-cut; known redaction limits are listed under "Logs and caches on the device" | `SessionLogger.ts` |
-| G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others; doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
+| G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others (5,000 per batch, 20 batches per run; the cap is covered by an integration test, #672); doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
 | G8 | ~~`scan_records` dominates the database and `docs/backups.md` sizes backups on the dump size; neither production size nor plan limit is recorded~~ Done by #673: plan and limit in `RENDER.md`, size measured, growth table re-run, 70% alert, backup cost checked | `docs/RENDER.md`, `docs/backups.md`, `scripts/db/` |
 | G9 | ~~Log and Sentry retention are not documented anywhere~~ Done by #673: Sentry 30 days, Render logs 14 days | `docs/RENDER.md` |
 

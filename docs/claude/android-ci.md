@@ -81,6 +81,20 @@ git add android/
 git commit -m "chore(android): regenerate prebuild after <reason>"
 ```
 
+A new native module usually changes nothing in `android/`: `settings.gradle` and
+`app/build.gradle` autolink at Gradle configuration time (`expo-autolinking-settings`,
+`autolinkLibrariesWithApp()`). expo-modules-autolinking finds direct dependencies and
+follows their non-optional peers recursively; list a native module directly anyway
+so `npx expo install` pins it to the SDK's bundled version. Check with `npx expo-modules-autolinking resolve -p android` (Expo
+modules) and `npx expo-modules-autolinking react-native-config --platform android`
+(other React Native libraries). Adding expo-image, expo-haptics, Reanimated,
+Worklets and gesture-handler (#901) needed no `android/` change (gesture-handler,
+Reanimated and Worklets were already linked as peers of `expo-router`; #901 moves
+gesture-handler 3.4.0 to 3.3.0 and Worklets 0.13.1 to 0.13.0, SDK 58's versions). Run from a Linux
+container, prebuild also re-encodes the `mipmap-*/ic_launcher*.webp` icons and adds
+`expo_system_ui_user_interface_style` to `values/strings.xml`; neither comes from
+the new dependency, so restore them (`git checkout -- android/app/src/main/res`).
+
 Always pass `--no-clean` and never `--clean`. From SDK 58 the Expo CLI cleans
 by default (`clean: !args['--no-clean']`): without `--no-clean`, prebuild
 deletes `android/` and recreates it from the template, which is what happened

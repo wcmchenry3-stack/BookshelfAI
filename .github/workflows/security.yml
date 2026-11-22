@@ -13,6 +13,8 @@ on:
       - '.github/workflows/security.yml'
       - '.github/actions/setup-backend/**'
       - '.github/actions/setup-frontend/**'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
       - '.zap/**'
   workflow_dispatch:
 
@@ -86,8 +88,16 @@ jobs:
       - uses: ./.github/actions/setup-frontend
         with:
           node-version: '22'
-      - name: npm audit
-        run: npm audit --audit-level=high --json > npm-audit-report.json || true
+      # Fails the job on any high or critical advisory (dev dependencies
+      # included). No ignore list, no `|| true`.
+      - name: npm audit (fail on high or critical)
+        run: npm audit --audit-level=high
+      # Runs even when the step above failed so the report is always uploaded.
+      # `--audit-level=none` makes npm exit 0 so this step never fails a second
+      # time; the gate above is the only step that decides pass or fail.
+      - name: npm audit (JSON report)
+        if: always()
+        run: npm audit --audit-level=none --json > npm-audit-report.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
