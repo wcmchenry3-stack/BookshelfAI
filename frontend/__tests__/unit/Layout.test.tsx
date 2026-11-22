@@ -1,5 +1,5 @@
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { render, within } from '@testing-library/react-native';
 import RootLayoutDefault from '../../app/_layout';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
@@ -163,6 +163,13 @@ describe('RootLayout (_layout.tsx)', () => {
     it('renders without crashing', async () => {
       const { getByTestId } = await render(<RootLayoutDefault />);
       expect(getByTestId('stack')).toBeTruthy();
+    });
+
+    it('renders the app inside the gesture handler root view (#901)', async () => {
+      const { getByTestId } = await render(<RootLayoutDefault />);
+      const root = getByTestId('gesture-root');
+      expect(root).toHaveStyle({ flex: 1 });
+      expect(within(root).getByTestId('stack')).toBeTruthy();
     });
 
     it('renders with system fonts instead of a blank screen when font loading fails (#660)', async () => {

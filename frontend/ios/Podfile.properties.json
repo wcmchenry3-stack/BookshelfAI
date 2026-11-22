@@ -3,5 +3,6 @@
   "EX_DEV_CLIENT_NETWORK_INSPECTOR": "true",
   "ios.deploymentTarget": "16.4",
   "expo.inlineModules.watchedDirectories": "[]",
-  "expo.inlineModules.xcodeProjectTargets": "{\"mainTarget\":\"BookShelfAI\",\"targets\":[]}"
+  "expo.inlineModules.xcodeProjectTargets": "{\"mainTarget\":\"BookShelfAI\",\"targets\":[]}",
+  "expo-image.disable-libdav1d": "false"
 }

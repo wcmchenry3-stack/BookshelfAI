@@ -4,7 +4,8 @@ import { Sentry } from '../lib/sentry';
 
 import '../src/i18n/i18n';
 
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
 import { NotoSerif_600SemiBold, NotoSerif_700Bold } from '@expo-google-fonts/noto-serif';
@@ -150,26 +151,34 @@ function RootLayout() {
     return <View />;
   }
 
+  // react-native-gesture-handler needs one GestureHandlerRootView at the root of
+  // the tree (#901). No gestures are attached yet.
   return (
-    <ErrorBoundary>
-      <ThemeProvider>
-        <BannerProvider>
-          <AuthProvider>
-            {/* One hidden Turnstile widget for every POST /scan (#740). */}
-            <TurnstileProvider>
-              <ScanJobProvider>
-                <FeedbackProvider>
-                  <InAppBanner />
-                  <InnerStack />
-                  <GlobalScanModals />
-                </FeedbackProvider>
-              </ScanJobProvider>
-            </TurnstileProvider>
-          </AuthProvider>
-        </BannerProvider>
-      </ThemeProvider>
-    </ErrorBoundary>
+    <GestureHandlerRootView style={styles.root} testID="gesture-root">
+      <ErrorBoundary>
+        <ThemeProvider>
+          <BannerProvider>
+            <AuthProvider>
+              {/* One hidden Turnstile widget for every POST /scan (#740). */}
+              <TurnstileProvider>
+                <ScanJobProvider>
+                  <FeedbackProvider>
+                    <InAppBanner />
+                    <InnerStack />
+                    <GlobalScanModals />
+                  </FeedbackProvider>
+                </ScanJobProvider>
+              </TurnstileProvider>
+            </AuthProvider>
+          </BannerProvider>
+        </ThemeProvider>
+      </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+});
 
 export default Sentry.wrap(RootLayout);
