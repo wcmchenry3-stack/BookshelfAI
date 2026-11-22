@@ -596,7 +596,7 @@ describe('the drain while a photo waits (#604)', () => {
       id: `t-${i}`,
       type: 'text',
       status: 'queued',
-      createdAt: 100 + i,
+      createdAt: Date.now() + i,
       query: `book ${i}`,
       retryCount: 0,
     };

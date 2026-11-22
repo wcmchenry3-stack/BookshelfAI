@@ -4,7 +4,7 @@ Every PR into `dev` shows about 40 checks. This page says what each one is for, 
 
 Source of truth is `.github/workflows/`. This page is a snapshot taken from `dev` at `9c0be9f` (full SHA `9c0be9fa4f460a7808cec4eddd7e504332f10f13`, committed 2026-10-30). If it disagrees with the workflow files, the workflow files win. For how the test layers fit together see [testing.md](testing.md); for the native build pipelines see [ios-ci.md](claude/ios-ci.md) and [android-ci.md](claude/android-ci.md); for the git workflow see [git.md](claude/git.md).
 
-PRs into `dev` are **squash-merged** (the branch must be up to date with `dev` before merging); releases (`dev` into `main`) are **merge commits**. Squash is allowed on `dev` only and merge commits on `main` only; two rulesets enforce the split (see [Branch protection](#branch-protection)). This replaces the earlier setup where squash was refused with HTTP 405 on 2026-10-31 (#858) and there was no race guard (#859); this change resolves both. The repo-level merge-button options in Settings, General must allow both squash and merge commits (rebase off); the rulesets decide which applies to which branch. Whether the rulesets are applied is **to confirm in GitHub settings**.
+PRs into `dev` are **squash-merged** (the branch does not need to be up to date with `dev`: owner decision #1039, accepted risk in [git.md](claude/git.md)); releases (`dev` into `main`) are **merge commits**. Squash is allowed on `dev` only and merge commits on `main` only; two rulesets enforce the split (see [Branch protection](#branch-protection)). This replaces the earlier setup where squash was refused with HTTP 405 on 2026-10-31 (#858). The race guard for #859 (strict status checks on `dev`) was later removed on purpose (#1039). The repo-level merge-button options in Settings, General must allow both squash and merge commits (rebase off); the rulesets decide which applies to which branch. Whether the rulesets are applied is **to confirm in GitHub settings**.
 
 ## Summary
 
@@ -184,7 +184,7 @@ None of these is defined under `.github/workflows/`, so their configuration is "
 
 `.github/rulesets/protect-dev.json` and `.github/rulesets/protect-main.json` are ruleset exports. GitHub does not read them from the repo; the owner imports each in Settings, Rules, Rulesets. Whether they have been imported, are `active`, and have not drifted is **to confirm in GitHub settings**.
 
-Both rulesets have enforcement `active`, no bypass actors, and the same rules except where noted: block deletion, block non-fast-forward (force) pushes, block creation; pull requests need 0 approving reviews on `dev` (owner decision — solo repo) and 1 approving review on `main`, last-push approval not required; and the same 29 required status contexts listed under [Recommended required checks](#recommended-required-checks) below (unchanged for `main`; `strict_required_status_checks_policy` differs, see below).
+Both rulesets have enforcement `active`, no bypass actors, and the same rules except where noted: block deletion, block non-fast-forward (force) pushes, block creation; pull requests need 0 approving reviews on `dev` (owner decision — solo repo) and 1 approving review on `main`, last-push approval not required; and the same 29 required status contexts listed under [Recommended required checks](#recommended-required-checks) below (unchanged for `main`; both rulesets now have `strict_required_status_checks_policy: false`, see below).
 
 | | `protect-dev.json` (`refs/heads/dev`) | `protect-main.json` (`refs/heads/main`) |
 | --- | --- | --- |
@@ -192,7 +192,7 @@ Both rulesets have enforcement `active`, no bypass actors, and the same rules ex
 | `require_code_owner_review` | no | yes |
 | Allowed merge methods | `squash` only | `merge` only (no squash, no rebase) |
 | `required_linear_history` | yes | no (it forbids merge commits) |
-| `strict_required_status_checks_policy` | `true` (each PR branch must be up to date with `dev` before it can merge; closes #859's two-PRs-pass-separately race without a merge queue) | `false` (see the note below) |
+| `strict_required_status_checks_policy` | `false` (owner decision #1039: a PR need not be up to date with `dev`; GitHub still blocks real conflicts; the #859 race is an accepted risk caught by post-merge `dev` CI) | `false` (see the note below) |
 
 The `main` release flow (merge commit from `dev`, then `sync-main-to-dev.yml` and release-please) is unchanged. Ruleset changes stay owner-applied.
 

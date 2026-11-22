@@ -384,6 +384,8 @@ export function useScanQueue({
               ? {
                   ...j,
                   status: 'queued' as const,
+                  queuedAt: j.status === 'queued' ? j.queuedAt : Date.now(),
+                  completedAt: undefined,
                   error: undefined,
                   failedAt: undefined,
                   retryCount: 0,

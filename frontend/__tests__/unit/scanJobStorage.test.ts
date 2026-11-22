@@ -5,8 +5,16 @@ import {
   clearJobs,
   sweepOrphanedScanFiles,
   deleteScanImage,
+  checkCaptureStorage,
 } from '../../lib/scanJobStorage';
-import { isPendingUpload, MAX_QUEUE_SIZE, type ScanJob } from '../../lib/scanJob';
+import {
+  ENFORCE_QUEUE_BYTE_CAP,
+  isPendingUpload,
+  LOW_FREE_SPACE_BYTES,
+  MAX_QUEUE_BYTES,
+  MAX_QUEUE_SIZE,
+  type ScanJob,
+} from '../../lib/scanJob';
 
 // Minimal in-memory stand-in for the expo-file-system Directory/File API.
 // `mockDirEntries` is the current contents of scan-queue/ (file names).
@@ -14,6 +22,8 @@ let mockDirExists = true;
 let mockDirEntries: string[] = [];
 const mockDeleted: string[] = [];
 const mockUndeletable = new Set<string>();
+let mockFreeSpace = 10 * 1024 * 1024 * 1024;
+const mockFileSizes: Record<string, number> = {};
 
 jest.mock('expo-file-system', () => {
   class MockFile {
@@ -23,6 +33,9 @@ jest.mock('expo-file-system', () => {
       this.uri = parts
         .map((p) => (typeof p === 'object' && p !== null && 'uri' in p ? (p as MockFile).uri : p))
         .join('/');
+    }
+    get size() {
+      return mockFileSizes[this.uri.split('/').pop() as string] ?? 0;
     }
     delete() {
       if (mockUndeletable.has(this.uri)) throw new Error('EPERM');
@@ -45,7 +58,16 @@ jest.mock('expo-file-system', () => {
       ];
     }
   }
-  return { File: MockFile, Directory: MockDirectory, Paths: { document: 'file:///docs' } };
+  return {
+    File: MockFile,
+    Directory: MockDirectory,
+    Paths: {
+      document: 'file:///docs',
+      get availableDiskSpace() {
+        return mockFreeSpace;
+      },
+    },
+  };
 });
 
 // Force web platform so we use the in-memory store (no AsyncStorage needed).
@@ -265,5 +287,77 @@ describe('queue cap helpers', () => {
     ['failed', false],
   ] as const)('isPendingUpload(%s) is %s', (status, expected) => {
     expect(isPendingUpload({ ...sampleJob, status })).toBe(expected);
+  });
+});
+
+describe('checkCaptureStorage (#670, G5)', () => {
+  const MB = 1024 * 1024;
+  beforeEach(() => {
+    Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+    mockDirExists = true;
+    mockDirEntries = ['1-0.jpg', '2-0.jpg'];
+    for (const k of Object.keys(mockFileSizes)) delete mockFileSizes[k];
+    mockFreeSpace = 10 * 1024 * MB;
+  });
+  afterEach(() => {
+    Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+    mockDirEntries = [];
+  });
+
+  it('uses the 100 MB and 50 MB budgets', () => {
+    expect(LOW_FREE_SPACE_BYTES).toBe(100 * MB);
+    expect(MAX_QUEUE_BYTES).toBe(50 * MB);
+  });
+
+  it('is ok with plenty of space and a small queue', () => {
+    mockFileSizes['1-0.jpg'] = 2 * MB;
+    expect(checkCaptureStorage()).toBe('ok');
+  });
+
+  it('refuses below the free-space threshold', () => {
+    mockFreeSpace = LOW_FREE_SPACE_BYTES - 1;
+    expect(checkCaptureStorage()).toBe('low_space');
+  });
+
+  it('allows exactly the free-space threshold', () => {
+    mockFreeSpace = LOW_FREE_SPACE_BYTES;
+    expect(checkCaptureStorage()).toBe('ok');
+  });
+
+  it('refuses once the queue folder holds 50 MB, summing every photo', () => {
+    mockFileSizes['1-0.jpg'] = 30 * MB;
+    mockFileSizes['2-0.jpg'] = 20 * MB;
+    expect(checkCaptureStorage({ enforceByteCap: true })).toBe('queue_full');
+    mockFileSizes['2-0.jpg'] = 20 * MB - 1;
+    expect(checkCaptureStorage({ enforceByteCap: true })).toBe('ok');
+  });
+
+  it('does not enforce the 50 MB cap by default (off until #668, decision #1037)', () => {
+    expect(ENFORCE_QUEUE_BYTE_CAP).toBe(false);
+    mockFileSizes['1-0.jpg'] = 80 * MB;
+    expect(checkCaptureStorage()).toBe('ok');
+  });
+
+  it('still refuses on low free space when the byte cap is off', () => {
+    mockFreeSpace = LOW_FREE_SPACE_BYTES - 1;
+    expect(checkCaptureStorage()).toBe('low_space');
+    expect(checkCaptureStorage({ enforceByteCap: true })).toBe('low_space');
+  });
+
+  it('is ok when the queue folder does not exist yet', () => {
+    mockDirExists = false;
+    expect(checkCaptureStorage({ enforceByteCap: true })).toBe('ok');
+  });
+
+  it('does not block a capture when the disk APIs throw', () => {
+    mockDirEntries = null as unknown as string[];
+    expect(checkCaptureStorage({ enforceByteCap: true })).toBe('ok');
+  });
+
+  it('skips both checks on web', () => {
+    Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+    mockFreeSpace = 0;
+    mockFileSizes['1-0.jpg'] = 100 * MB;
+    expect(checkCaptureStorage({ enforceByteCap: true })).toBe('ok');
   });
 });

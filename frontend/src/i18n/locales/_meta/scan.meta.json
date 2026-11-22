@@ -150,6 +150,16 @@
     "tone": "neutral",
     "characterLimit": 90
   },
+  "storageLow": {
+    "description": "Error banner when the phone has under 100 MB free and a scan photo cannot be saved; tells the user to free up space",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "queueStorageFull": {
+    "description": "Error banner when saved scan photos already use the 50 MB on-device budget; tells the user to send or remove some",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
   "pendingUploads": {
     "description": "Badge on the scan screen showing how many scans are waiting to upload; {{count}} is a number",
     "tone": "neutral",
@@ -297,6 +307,11 @@
   },
   "queueFailedNote": {
     "description": "Note under the failed-scans heading: failed scans stay on the phone for 7 days and are then removed automatically. Keep the number 7.",
+    "tone": "neutral",
+    "characterLimit": 64
+  },
+  "queueWaitingNote": {
+    "description": "Note under the waiting-scans heading: photos the server refused stay on the phone for 7 days and are then removed automatically. Keep the number 7.",
     "tone": "neutral",
     "characterLimit": 64
   },
