@@ -22,6 +22,12 @@
     "reading": "Lendo",
     "read": "Lidos"
   },
+  "rowStatus": {
+    "wishlisted": "Desejado",
+    "purchased": "Comprado",
+    "reading": "Lendo",
+    "read": "Lido"
+  },
   "status": {
     "wishlisted": "Desejos",
     "purchased": "Comprado",

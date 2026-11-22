@@ -22,6 +22,12 @@
     "reading": "पढ़ रहे",
     "read": "पढ़ी गई"
   },
+  "rowStatus": {
+    "wishlisted": "विशलिस्ट",
+    "purchased": "खरीदी गई",
+    "reading": "पढ़ रहे",
+    "read": "पढ़ी गई"
+  },
   "status": {
     "wishlisted": "विशलिस्टेड",
     "purchased": "खरीदी गई",

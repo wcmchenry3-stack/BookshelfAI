@@ -46,7 +46,7 @@ const WishlistRow = memo(function WishlistRow({
       // badge (#616) must be said here too.
       accessibilityLabel={t(item.unverified ? 'rowUnverifiedA11y' : 'rowA11y', {
         title: item.book.title,
-        status: t('statusTab.wishlisted', { ns: 'my-books' }),
+        status: t('rowStatus.wishlisted', { ns: 'my-books' }),
         author: item.book.author,
       })}
       accessibilityHint={t('rowHint')}

@@ -86,6 +86,24 @@ describe('en namespace content', () => {
     expect(data.statusTab?.read).toBeDefined();
   });
 
+  it('every locale has singular my-books:rowStatus keys alongside statusTab (#939)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.join(__dirname, '../../src/i18n/locales');
+    const keys = ['purchased', 'read', 'reading', 'wishlisted'];
+    const locales = fs
+      .readdirSync(dir)
+      .filter((d: string) => fs.existsSync(path.join(dir, d, 'my-books.json')));
+    expect(locales.length).toBe(13);
+    for (const l of locales) {
+      const data = JSON.parse(fs.readFileSync(path.join(dir, l, 'my-books.json'), 'utf8'));
+      expect(Object.keys(data.rowStatus ?? {}).sort()).toEqual(keys);
+    }
+    const es = JSON.parse(fs.readFileSync(path.join(dir, 'es', 'my-books.json'), 'utf8'));
+    expect(es.rowStatus.purchased).toBe('Comprado');
+    expect(es.rowStatus.read).toBe('Leído');
+  });
+
   it('no English key has __NEEDS_TRANSLATION__ as value', () => {
     const problematic: string[] = [];
 
