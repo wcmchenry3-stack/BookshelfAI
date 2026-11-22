@@ -6,7 +6,9 @@ the app does at import) and runs the checks that need no database, such as
 
 Prints ``OK`` and exits 0 when valid. Otherwise prints one line per problem,
 ``NAME: reason``, and exits 1. Only variable names and rules are printed,
-never values. Run it in the production Render shell before a release
+never values. Warn-only findings (a blank Google client ID in a hardened
+environment, #988) print as ``WARNING: <message>`` lines and never change the
+exit code. Run it in the production Render shell before a release
 (docs/deployment.md).
 """
 
@@ -92,6 +94,16 @@ def collect_problems() -> list[str]:
     return problems
 
 
+def collect_warnings() -> list[str]:
+    """Warn-only findings (never fail the check); empty if settings cannot load."""
+    try:
+        from app.core.config import Settings, google_client_id_warnings
+
+        return google_client_id_warnings(Settings())
+    except Exception:  # noqa: BLE001 - problems are reported by collect_problems
+        return []
+
+
 def _validation_problems(exc) -> list[str]:
     problems = []
     for err in exc.errors(include_input=False, include_url=False):
@@ -105,13 +117,16 @@ def _validation_problems(exc) -> list[str]:
 def main() -> int:
     _raw_values[:] = _collect_raw_values()
     problems = collect_problems()
+    warnings = collect_warnings()
     if not problems:
         print("OK")
-        return 0
-    print("Invalid configuration:")
-    for line in problems:
-        print(f"  {line}")
-    return 1
+    else:
+        print("Invalid configuration:")
+        for line in problems:
+            print(f"  {line}")
+    for message in warnings:
+        print(f"WARNING: {message}")
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

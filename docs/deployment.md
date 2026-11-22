@@ -62,6 +62,8 @@ printf %s "<client id>" | sha256sum | cut -c1-12
 
 If `token_aud` matches no slot, the Render service has the wrong (or no) value for that slot.
 
+At startup a hardened environment (staging, production) logs a warning, `GOOGLE_<slot>_CLIENT_ID is unset: ...`, for each blank slot, and `python -m app.core.config_check` prints it as a `WARNING:` line. These are warnings only: boot is not blocked and the check still exits 0. Development and test stay silent.
+
 Every scan limit and dial (default, bounds, setting, what the user sees, where it is counted) is listed in one place in [`scan-limits.md`](scan-limits.md); `python -m app.ai.settings list` shows them grouped by area with the current value, default and bounds.
 
 Scan dials (optional; defaults shown; change in the dashboard and restart, no release needed — out-of-range values fail at boot):
