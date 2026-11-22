@@ -353,9 +353,9 @@ describe('refusal follow-ups', () => {
 
   it('an enhanced-only switch-off still lets queued standard photos through', async () => {
     mockLoadJobs.mockResolvedValue([
-      queuedImageJob('q-enh', 1, 'file:///e.jpg', { enhanced: true }),
-      queuedImageJob('q-enh-2', 2, 'file:///e2.jpg', { enhanced: true }),
-      queuedImageJob('q-std', 3, 'file:///s.jpg'),
+      queuedImageJob('q-enh', Date.now() + 1, 'file:///e.jpg', { enhanced: true }),
+      queuedImageJob('q-enh-2', Date.now() + 2, 'file:///e2.jpg', { enhanced: true }),
+      queuedImageJob('q-std', Date.now() + 3, 'file:///s.jpg'),
     ]);
     mockPost.mockRejectedValueOnce(refusal(503, 'enhanced_scan_disabled')).mockResolvedValue(OK);
     const { result } = await setup();
@@ -378,9 +378,9 @@ describe('refusal follow-ups', () => {
     ['429 enhanced_throttled', refusal(429, 'enhanced_throttled', {}, { 'retry-after': '60' })],
   ])('%s still lets queued standard photos through', async (_name, err) => {
     mockLoadJobs.mockResolvedValue([
-      queuedImageJob('q-enh', 1, 'file:///e.jpg', { enhanced: true }),
-      queuedImageJob('q-enh-2', 2, 'file:///e2.jpg', { enhanced: true }),
-      queuedImageJob('q-std', 3, 'file:///s.jpg'),
+      queuedImageJob('q-enh', Date.now() + 1, 'file:///e.jpg', { enhanced: true }),
+      queuedImageJob('q-enh-2', Date.now() + 2, 'file:///e2.jpg', { enhanced: true }),
+      queuedImageJob('q-std', Date.now() + 3, 'file:///s.jpg'),
     ]);
     mockPost.mockRejectedValueOnce(err).mockResolvedValue(OK);
     const { result } = await setup();
@@ -403,13 +403,13 @@ describe('refusal follow-ups', () => {
     const { api } = jest.requireMock('../../lib/api') as { api: { get: jest.Mock } };
     api.get.mockResolvedValue({ data: [] });
     mockLoadJobs.mockResolvedValue([
-      queuedImageJob('q-img', 1, 'file:///q.jpg'),
-      queuedImageJob('q-img-2', 2, 'file:///q2.jpg'),
+      queuedImageJob('q-img', Date.now() + 1, 'file:///q.jpg'),
+      queuedImageJob('q-img-2', Date.now() + 2, 'file:///q2.jpg'),
       {
         id: 'q-text',
         type: 'text' as const,
         status: 'queued' as const,
-        createdAt: 3,
+        createdAt: Date.now() + 3,
         query: 'Dune',
         retryCount: 0,
       },

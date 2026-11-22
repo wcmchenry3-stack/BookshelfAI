@@ -58,6 +58,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
 }
 
 const originalOS = Platform.OS;
+const originalFetch = global.fetch;
 
 beforeEach(() => {
   process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = '1x00000000000000000000AA';
@@ -77,6 +78,10 @@ beforeEach(() => {
       Promise.resolve().then(() => callback(token));
     },
   });
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    blob: async () => new Blob(['jpeg'], { type: 'image/jpeg' }),
+  })) as unknown as typeof fetch;
   mockPost.mockResolvedValue({
     data: { books: [{ title: 'Dune', author: 'Herbert' }], enhanced_scans_remaining: null },
   });
@@ -84,6 +89,7 @@ beforeEach(() => {
 
 afterEach(() => {
   Object.defineProperty(Platform, 'OS', { configurable: true, get: () => originalOS });
+  global.fetch = originalFetch;
   delete process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY;
 });
 
@@ -91,8 +97,8 @@ it('sends the web widget’s token, a fresh one per scan', async () => {
   const { result } = await renderHook(() => useScanJobs(), { wrapper });
   await waitFor(() => expect(mockLoad).toHaveBeenCalledTimes(1));
   for (let i = 0; i < 2; i++) {
-    // On web the photo goes into the form as a Blob.
-    const photo = new Blob(['jpeg'], { type: 'image/jpeg' }) as unknown as string;
+    // On web the photo is a blob: URL, read into a Blob for the form (#796).
+    const photo = 'blob:http://localhost/photo';
     await act(async () => {
       await result.current.startScan('image', photo);
     });

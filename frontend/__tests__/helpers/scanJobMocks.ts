@@ -129,5 +129,5 @@ export function queuedImageJob(
 
 /** `q-<i>` / `file:///q<i>.jpg`: the numbered queued job used by the drain tests. */
 export function queuedJob(i: number, extra: Record<string, unknown> = {}) {
-  return queuedImageJob(`q-${i}`, i, `file:///q${i}.jpg`, extra);
+  return queuedImageJob(`q-${i}`, Date.now() + i, `file:///q${i}.jpg`, extra);
 }

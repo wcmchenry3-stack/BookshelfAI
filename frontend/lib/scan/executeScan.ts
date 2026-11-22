@@ -70,7 +70,12 @@ export async function executeScan(deps: ScanExecDeps, job: ScanJob): Promise<voi
 }
 
 /** One POST /scan form body; each one carries its own Turnstile token (#740). */
-function buildScanFormData(job: ScanJob, attempt: number, turnstileToken: string | null) {
+async function buildScanFormData(
+  job: ScanJob,
+  attempt: number,
+  turnstileToken: string | null,
+  signal: AbortSignal
+): Promise<FormData> {
   const formData = new FormData();
   if (job.enhanced) formData.append('enhanced', 'true');
   // The server accepts 1-6 (#603) and ignores it until that ships.
@@ -80,7 +85,19 @@ function buildScanFormData(job: ScanJob, attempt: number, turnstileToken: string
   // TURNSTILE_REQUIRED=false accepts.
   if (turnstileToken) formData.append(TURNSTILE_FORM_FIELD, turnstileToken);
   if (Platform.OS === 'web') {
-    formData.append('file', job.imageUri as unknown as Blob, 'scan.jpg');
+    // Browsers need a real Blob here, not the blob:/data: URL string (#796).
+    // A revoked or unreadable URL makes fetch reject: that propagates to
+    // runScan's catch and settles as the usual scan failure.
+    // Only blob:/data: URLs are read: anything else (a bare file name, a
+    // relative URL) would fetch a same-origin page and upload its body.
+    const uri = job.imageUri ?? '';
+    if (!uri.startsWith('blob:') && !uri.startsWith('data:')) {
+      throw new Error('scan photo is not a blob or data URL');
+    }
+    const res = await fetch(uri, { signal });
+    if (!res.ok) throw new Error('scan photo could not be read');
+    const blob = await res.blob();
+    formData.append('file', blob, 'scan.jpg');
   } else {
     formData.append('file', {
       uri: job.imageUri,
@@ -127,7 +144,17 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
         // Signed out while the token was being fetched: nothing is sent,
         // and the token is never used for the next account.
         if (signedOutSince() || signal.aborted) return null;
-        return api.post<ScanResponse>('/scan', buildScanFormData(job, attempt, turnstileToken), {
+        let body: FormData;
+        try {
+          body = await buildScanFormData(job, attempt, turnstileToken, signal);
+        } catch (readErr) {
+          // Aborted while the photo was being read: nothing is sent.
+          if (signal.aborted) return null;
+          throw readErr;
+        }
+        // Signed out or aborted during the read: still nothing is sent.
+        if (signedOutSince() || signal.aborted) return null;
+        return api.post<ScanResponse>('/scan', body, {
           signal,
           timeout: SCAN_UPLOAD_TIMEOUT_MS,
           transformRequest: [
