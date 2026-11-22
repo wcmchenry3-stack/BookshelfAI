@@ -144,6 +144,21 @@ the whole `git diff` afterwards and restore anything prebuild removed:
 | `SplashScreenLegacy`/`SplashScreenBackground` assets and `SplashScreen.storyboard` | Keep the committed ones. SDK 58 without the `expo-splash-screen` plugin points the storyboard at an image it does not create (follow-up #891) |
 | The `fmt` consteval patch at the end of the Podfile `post_install` | Hand-kept (not owned by a plugin); restore it. It is a no-op when the `fmt` header does not match |
 
+Adding a native dependency: Expo modules and React Native libraries are found by
+`use_expo_modules!` and autolinking in the Podfile, so the committed project
+normally does not need regenerating. Run the prebuild above only when the new
+package has a config plugin, keep only what that plugin writes, and get
+`Podfile.lock` from the `Podfile lock` workflow. For #901 (expo-image,
+expo-haptics, Reanimated, Worklets, gesture-handler) the only kept change was
+`expo-image.disable-libdav1d` in `Podfile.properties.json`, from expo-image's
+plugin. The rest of that prebuild was churn from the table above (Info.plist
+version literals and tab formatting, the 1024 icon re-encoded, `PrivacyInfo.xcprivacy`
+whitespace, `PRODUCT_NAME` quoting) and was restored. The workflow's `pod install`
+also reported `project.pbxproj` and `PrivacyInfo.xcprivacy` changes (privacy-manifest
+aggregation, as in #994); those are informational and deliberately not committed.
+#901 also moves gesture-handler 3.4.0 to 3.3.0 and Worklets 0.13.1 to 0.13.0 (they
+were already linked as peers of `expo-router`); Reanimated stays 4.7.1.
+
 `PrivacyInfo.xcprivacy` is generated from `app.json` `ios.privacyManifests`, so
 change the API reasons there, not in the file.
 
