@@ -3434,7 +3434,7 @@
     "list"
    ],
    "code": 0,
-   "out": "\n== Switches ==\nscan.standard.enabled = true  (no row; env/registry default)  [default true; bounds true or false]\nscan.enhanced.enabled = false  (stored value is INVALID; treated as disabled)  [default false; bounds true or false]\n\n== Providers and models ==\nscan.standard.provider = \"anthropic\"  (no row; env/registry default)  [default \"anthropic\"; bounds a provider in ALLOWED_MODELS]\nscan.standard.model = \"claude-haiku-5-5\"  (stored value is INVALID and ignored; env/registry default in use)  [default \"claude-haiku-5-5\"; bounds a model in the provider's allow-list]\nscan.enhanced.provider = \"anthropic\"  (no row; env/registry default)  [default \"anthropic\"; bounds a provider in ALLOWED_MODELS]\nscan.enhanced.model = \"claude-sonnet-5-5\"  (no row; env/registry default)  [default \"claude-sonnet-5-5\"; bounds a model in the provider's allow-list]\n\n== Enhanced scans ==\nscan.enhanced.zero_result_threshold = 3  (no row; env/registry default)  [default 3; bounds 0..20]\nscan.enhanced.zero_result_window_hours = 24  (no row; env/registry default)  [default 24; bounds 1..720]\nscan.enhanced.zero_result_action = \"charge\"  (no row; env/registry default)  [default \"charge\"; bounds charge or throttle]\n\n== Request and global limits ==\nscan.global_daily_limit = 5000  (stored value is INVALID and ignored; env/registry default in use)  [default 5000; bounds 1..1,000,000]\nscan.requests_per_user_daily = 100  (no row; env/registry default)  [default 100; bounds 1..10,000]\n\n== Uploads and images ==\nscan.max_image_pixels = 25000000  (updated 2026-10-22 09:30:05 UTC by will)  [default 40000000; bounds 1,000,000..100,000,000]\n\n== Allowances: Free ==\nquota.free.found_daily = 3  (no row; env/registry default)  [default 3; bounds 0..1,000]\nquota.free.no_match_daily = 11  (no row; env/registry default)  [default 11; bounds 0..1,000]\n\n== Allowances: Premium ==\nquota.premium.found_daily = 9  (no row; carried over from the retired quota.<tier>.daily row)  [default 7; bounds 0..1,000]\nquota.premium.no_match_daily = 13  (no row; env/registry default)  [default 13; bounds 0..1,000]\n\n== Spend breaker ==\nbreaker.free_daily_ceiling_micros = 2500000  (no row; env/registry default)  [default 2500000; bounds 0..1,000,000,000]\n\n== Scan records (repeat photos) ==\nscan_records.enabled = true  (no row; env/registry default)  [default true; bounds true or false]\nscan_records.retention_days = 30  (no row; env/registry default)  [default 30; bounds 1..30]\nscan_records.max_per_user = 500  (no row; env/registry default)  [default 500; bounds 1..10,000]\n",
+   "out": "\n== Switches ==\nscan.standard.enabled = true  (no row; env/registry default)  [default true; bounds true or false]\nscan.enhanced.enabled = false  (stored value is INVALID; treated as disabled)  [default false; bounds true or false]\n\n== Providers and models ==\nscan.standard.provider = \"anthropic\"  (no row; env/registry default)  [default \"anthropic\"; bounds a provider in ALLOWED_MODELS]\nscan.standard.model = \"claude-haiku-5-5\"  (updated 2026-10-22 09:30:05 UTC by seed)  [default \"claude-haiku-5-5\"; bounds a model in the provider's allow-list]\nscan.enhanced.provider = \"anthropic\"  (no row; env/registry default)  [default \"anthropic\"; bounds a provider in ALLOWED_MODELS]\nscan.enhanced.model = \"claude-sonnet-5-5\"  (no row; env/registry default)  [default \"claude-sonnet-5-5\"; bounds a model in the provider's allow-list]\n\n== Enhanced scans ==\nscan.enhanced.zero_result_threshold = 3  (no row; env/registry default)  [default 3; bounds 0..20]\nscan.enhanced.zero_result_window_hours = 24  (no row; env/registry default)  [default 24; bounds 1..720]\nscan.enhanced.zero_result_action = \"charge\"  (no row; env/registry default)  [default \"charge\"; bounds charge or throttle]\n\n== Request and global limits ==\nscan.global_daily_limit = 5000  (stored value is INVALID and ignored; env/registry default in use)  [default 5000; bounds 1..1,000,000]\nscan.requests_per_user_daily = 100  (no row; env/registry default)  [default 100; bounds 1..10,000]\n\n== Uploads and images ==\nscan.max_image_pixels = 25000000  (updated 2026-10-22 09:30:05 UTC by will)  [default 40000000; bounds 1,000,000..100,000,000]\n\n== Allowances: Free ==\nquota.free.found_daily = 3  (no row; env/registry default)  [default 3; bounds 0..1,000]\nquota.free.no_match_daily = 11  (no row; env/registry default)  [default 11; bounds 0..1,000]\n\n== Allowances: Premium ==\nquota.premium.found_daily = 9  (no row; carried over from the retired quota.<tier>.daily row)  [default 7; bounds 0..1,000]\nquota.premium.no_match_daily = 13  (no row; env/registry default)  [default 13; bounds 0..1,000]\n\n== Spend breaker ==\nbreaker.free_daily_ceiling_micros = 2500000  (no row; env/registry default)  [default 2500000; bounds 0..1,000,000,000]\n\n== Scan records (repeat photos) ==\nscan_records.enabled = true  (no row; env/registry default)  [default true; bounds true or false]\nscan_records.retention_days = 30  (no row; env/registry default)  [default 30; bounds 1..30]\nscan_records.max_per_user = 500  (no row; env/registry default)  [default 500; bounds 1..10,000]\n",
    "err": "",
    "logs": [
     [
@@ -3449,8 +3449,18 @@
     ],
     [
      "app.ai.settings",
+     "INFO",
+     "ai_settings: ignoring unknown key 'mystery.key'"
+    ],
+    [
+     "app.ai.settings",
      "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
+     "ai_settings: ignoring scan.global_daily_limit (must be between 1 and 1,000,000); using the default"
+    ],
+    [
+     "app.ai.settings",
+     "WARNING",
+     "ai_settings: invalid value for scan.enhanced.enabled (must be a JSON boolean (true or false)); treated as disabled"
     ],
     [
      "app.ai.settings",
@@ -3469,11 +3479,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ],
@@ -3486,31 +3491,6 @@
      "app.ai.settings",
      "WARNING",
      "ai_settings: invalid value for scan.enhanced.enabled (must be a JSON boolean (true or false)); treated as disabled"
-    ],
-    [
-     "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
-     "INFO",
-     "ai_settings: ignoring unknown key 'mystery.key'"
-    ],
-    [
-     "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.global_daily_limit (must be between 1 and 1,000,000); using the default"
-    ],
-    [
-     "app.ai.settings",
-     "WARNING",
-     "ai_settings: invalid value for scan.enhanced.enabled (must be a JSON boolean (true or false)); treated as disabled"
-    ],
-    [
-     "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
     ],
     [
      "app.ai.settings",
@@ -3537,7 +3517,15 @@
     ],
     [
      [
-      "ai_settings: ignoring invalid value for scan.standard.model"
+      "ai_settings: ignoring invalid value for scan.global_daily_limit"
+     ],
+     {
+      "level": "warning"
+     }
+    ],
+    [
+     [
+      "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
      ],
      {
       "level": "warning"
@@ -3561,14 +3549,6 @@
     ],
     [
      [
-      "ai_settings: ignoring invalid value for scan.standard.model"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
       "ai_settings: ignoring invalid value for scan.global_daily_limit"
      ],
      {
@@ -3578,38 +3558,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.global_daily_limit"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -3638,11 +3586,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ]
@@ -3659,14 +3602,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -3695,11 +3630,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ]
@@ -3716,14 +3646,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -3752,11 +3674,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ]
@@ -3773,14 +3690,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -3816,7 +3725,7 @@
     "scan.standard.model"
    ],
    "code": 0,
-   "out": "scan.standard.model = \"claude-haiku-5-5\"  (stored value is INVALID and ignored; env/registry default in use)\n",
+   "out": "scan.standard.model = \"claude-haiku-5-5\"  (updated 2026-10-22 09:30:05 UTC by seed)\n",
    "err": "",
    "logs": [
     [
@@ -3828,11 +3737,6 @@
      "app.ai.settings",
      "WARNING",
      "ai_settings: invalid value for scan.enhanced.enabled (must be a JSON boolean (true or false)); treated as disabled"
-    ],
-    [
-     "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
     ],
     [
      "app.ai.settings",
@@ -3852,14 +3756,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -3891,11 +3787,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ]
@@ -3912,14 +3803,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -3985,11 +3868,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ]
@@ -4006,14 +3884,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -4069,11 +3939,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ]
@@ -4090,14 +3955,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"
@@ -4127,11 +3984,6 @@
     ],
     [
      "app.ai.settings",
-     "WARNING",
-     "ai_settings: ignoring scan.standard.model (must be an allow-listed model: claude-haiku-5-5, claude-sonnet-5-5); using the default"
-    ],
-    [
-     "app.ai.settings",
      "INFO",
      "ai_settings: ignoring unknown key 'mystery.key'"
     ]
@@ -4148,14 +4000,6 @@
     [
      [
       "ai_settings: invalid value for scan.enhanced.enabled; treated as disabled"
-     ],
-     {
-      "level": "warning"
-     }
-    ],
-    [
-     [
-      "ai_settings: ignoring invalid value for scan.standard.model"
      ],
      {
       "level": "warning"

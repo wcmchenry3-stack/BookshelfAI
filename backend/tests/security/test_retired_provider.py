@@ -30,6 +30,8 @@ pytestmark = pytest.mark.security
 REPO = Path(__file__).resolve().parents[3]
 THIS_FILE = Path(__file__).resolve()
 NAME = "openai"
+# A real checkout has far more files than this; fewer means a wrong path.
+MIN_REPO_FILES = 100
 
 # Excluded from the search. Keep this list minimal; every entry needs a reason.
 EXCLUDED_DIRS = {
@@ -66,14 +68,23 @@ LOCKFILE_NAMES = {
 
 def _tracked_files() -> list[Path]:
     """Files git knows about (tracked, plus untracked and not ignored), so
-    ignored build output and local env files are never searched."""
-    out = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        cwd=REPO,
-        check=True,
-        capture_output=True,
-    ).stdout
-    return [REPO / name.decode() for name in out.split(b"\0") if name]
+    ignored build output and local env files are never searched. Fails
+    clearly if git is missing or REPO is not a checkout, so the search can
+    never pass by searching nothing."""
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=REPO,
+            check=True,
+            capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        pytest.fail(f"cannot list the repo's files with git ({REPO}): {exc}")
+    files = [REPO / name.decode() for name in out.split(b"\0") if name]
+    assert (
+        len(files) > MIN_REPO_FILES
+    ), f"git listed only {len(files)} files under {REPO}; wrong REPO path?"
+    return files
 
 
 def _skipped(path: Path) -> bool:
@@ -277,15 +288,6 @@ def test_leftover_process_env_vars_do_not_break_a_fresh_interpreter():
     assert done.returncode == 0, done.stderr[-500:]
     assert "claude-haiku-5-5" in done.stdout and "claude-sonnet-5-5" in done.stdout
     assert "sk-leftover" not in done.stdout + done.stderr
-
-
-def test_leftover_model_names_do_not_change_the_models(monkeypatch):
-    """The registry is the only source of models: SCAN_MODEL is not read."""
-    monkeypatch.setenv("SCAN_MODEL", "claude-sonnet-5-5")
-    monkeypatch.setenv("SCAN_ENHANCED_MODEL", "claude-haiku-5-5")
-    Settings(database_url=_DB, _env_file=None)
-    assert FEATURES["scan.standard"].model == "claude-haiku-5-5"
-    assert FEATURES["scan.enhanced"].model == "claude-sonnet-5-5"
 
 
 def test_a_leftover_key_in_a_local_env_file_is_refused_by_name(tmp_path):

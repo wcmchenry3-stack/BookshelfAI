@@ -159,12 +159,6 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_and_dispose())
     except AISettingValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        if args.command == "set" and args.key.endswith(".provider"):
-            print(
-                "hint: use `switch <feature> <provider>` to change a "
-                "provider and its model together",
-                file=sys.stderr,
-            )
         return 2
     except (SQLAlchemyError, OSError) as exc:
         print(

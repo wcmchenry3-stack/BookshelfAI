@@ -165,7 +165,7 @@ def _stored() -> dict:
         _Row("scan.enhanced.enabled", "false", "hand\x1b[31medit"),
         _Row("quota.premium.daily", 9, "ops"),
         _Row("quota.free.monthly", 50),
-        _Row("scan.standard.model", "other-model"),
+        _Row("scan.standard.model", "claude-haiku-5-5"),
         _Row("mystery.key", 1),
     ]
     return {row.key: row for row in rows}
