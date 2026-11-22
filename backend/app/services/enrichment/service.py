@@ -24,7 +24,11 @@ from app.services.enrichment.scoring import (
     records_agree,
 )
 from app.services.enrichment.text import _first_text, _provider_text
-from app.services.enrichment.titles import _listed_same_book, _split_title
+from app.services.enrichment.titles import (
+    _SUBTITLE,
+    _listed_same_book,
+    _split_title,
+)
 from app.services.google_books import GoogleBooksService
 from app.services.open_library import OpenLibraryService
 
@@ -55,7 +59,8 @@ TITLE_SEARCH_RESULTS = 5
 # three (waves x 2 x L without the fallback, waves x L when its ISBN record
 # fits or it has no ISBN). That is within ENRICHMENT_DEADLINE_S for L up to
 # about 2.2 s (3.3 s without the fallback, 6.6 s when one request per
-# provider is enough), not for every candidate at the timeout.
+# provider is enough), not for every candidate at the timeout. The fallback is
+# skipped when less than PROVIDER_CALL_TIMEOUT_S of the deadline is left.
 # The whole ``enrich`` call therefore stops at ENRICHMENT_DEADLINE_S:
 # candidates still running then come back as their unsigned reading and the
 # enrichment counts as incomplete. With the vision call's 45 s
@@ -63,6 +68,23 @@ TITLE_SEARCH_RESULTS = 5
 # timeout.
 PROVIDER_CALL_TIMEOUT_S = 8.0
 ENRICHMENT_DEADLINE_S = 20.0
+# The lowest score a record found by the main-title fallback (#1003) may
+# have: the titles agree once the provider's subtitle field is folded in. The
+# first search is by the full title, so a one-sided subtitle (score 2) is a
+# fair match there. The fallback searches a bare series or work name with the
+# same surname, which returns same-author siblings and omnibus editions
+# ("Dune" for "Dune: Messiah", "The Lord of the Rings" for "...: The Two
+# Towers"); those only score 2, and would be signed into the shared catalog
+# as the wrong work. "Washington" + "A Life" scores 7.
+FALLBACK_MIN_SCORE = 6
+# A main title shorter than this is not a useful search query.
+FALLBACK_MIN_TITLE_CHARS = 4
+# When the enrichment deadline (monotonic seconds) is set for the current
+# ``enrich`` call, the fallback is skipped with less than one
+# PROVIDER_CALL_TIMEOUT_S left, since the request could not finish in time.
+_DEADLINE_AT: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "enrichment_deadline_at", default=None
+)
 # What ``_lookup`` returns for a call that raised.
 _FAILED = object()
 
@@ -97,6 +119,24 @@ async def _lookup(call: Awaitable[object], source: str) -> object:
         logger.warning("%s error: %s", _SOURCE_NAMES[source], exc)
         _note_failure(source)
         return _FAILED
+
+
+def _fallback_query(title: str) -> str | None:
+    """The raw text before the subtitle separator, when the reading has a
+    subtitle, there is time left for one more request and the main title is a
+    useful query (#1003); else None."""
+    if not _split_title(title)[1]:
+        return None
+    head = _SUBTITLE.split(title, maxsplit=1)[0].strip()
+    if len(head) < FALLBACK_MIN_TITLE_CHARS or head.lower() in ("the", "a", "an"):
+        return None
+    deadline = _DEADLINE_AT.get()
+    if (
+        deadline is not None
+        and deadline - asyncio.get_running_loop().time() < PROVIDER_CALL_TIMEOUT_S
+    ):
+        return None
+    return head
 
 
 def _isbn_record(
@@ -152,9 +192,13 @@ class EnrichmentService:
         self.last_complete = False
         failures: list[str] = []
         token = _LOOKUP_FAILURES.set(failures)
+        deadline_token = _DEADLINE_AT.set(
+            asyncio.get_running_loop().time() + ENRICHMENT_DEADLINE_S
+        )
         try:
             enriched = await self._enrich_all(candidates, limit)
         finally:
+            _DEADLINE_AT.reset(deadline_token)
             _LOOKUP_FAILURES.reset(token)
         self.last_complete = not failures and len(enriched) == len(candidates[:limit])
         return enriched
@@ -335,22 +379,26 @@ class EnrichmentService:
         # The service already picked the best record; check it again here,
         # so nothing that does not fit the reading is ever used.
         best = found if isinstance(found, dict) and score(found) > 0 else None
-        main_title, subtitle = _split_title(candidate.title)
-        if best is None and subtitle and found is not _FAILED:
+        query = _fallback_query(candidate.title)
+        if best is None and query and found is not _FAILED:
             # The search answered but nothing fitted (#1003): a provider that
             # keeps the subtitle in its own field often misses the full
-            # title. Search once more by the main title; the scorer still
-            # decides. A failed lookup is not retried.
+            # title. Search once more by the main title; a failed lookup is
+            # not retried. The record must agree on the whole title.
             found = await _lookup(
                 provider.search(
-                    main_title,
+                    query,
                     reading_surname(candidate),
                     limit=TITLE_SEARCH_RESULTS,
                     score=score,
                 ),
                 source,
             )
-            best = found if isinstance(found, dict) and score(found) > 0 else None
+            best = (
+                found
+                if isinstance(found, dict) and score(found) >= FALLBACK_MIN_SCORE
+                else None
+            )
         if weak is None or best is None:
             return weak if best is None else best
         if score(weak) != score(best):
