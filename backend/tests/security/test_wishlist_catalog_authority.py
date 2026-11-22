@@ -31,6 +31,7 @@ from app.core import catalog_token
 from app.main import app
 from app.models.book import Book
 from app.models.edition import Edition
+from app.models.library_event import LibraryEvent
 from app.models.user import User
 from app.models.user_book import UserBook
 from app.schemas.book import EditionPreview, EnrichedBook
@@ -308,7 +309,10 @@ class TestExistingCatalogRows:
         )
         resp, db = wishlist(body, db=db)
         assert resp.status_code == 201
-        (user_book,) = [o for o in db.added if isinstance(o, UserBook)]
+        # Only the entry and its audit event (#684): no Book or Edition.
+        assert [type(o) for o in db.added] == [UserBook, LibraryEvent]
+        assert db.catalog_writes() == []
+        user_book = db.added[0]
         assert user_book.edition_id is None
 
 

@@ -27,7 +27,9 @@ previous release never reads or writes it.
 
 - RLS enabled, no policies (#677), like every table.
 - Grants: migration 0028's default privileges give ``bookshelf_app``
-  SELECT, INSERT, UPDATE, DELETE on new tables. ``UPDATE`` is revoked here:
+  SELECT, INSERT, UPDATE, DELETE on new tables; this migration also grants
+  SELECT, INSERT, DELETE and the sequence's USAGE explicitly, so it does not
+  depend on them (a different migrating role). ``UPDATE`` is revoked here:
   the log is append-only. ``DELETE`` stays, for the retention job only
   (``app/services/library_events_retention.py``). The ``ON DELETE SET NULL``
   of ``user_id`` still works for the app role: Postgres runs referential
@@ -107,6 +109,12 @@ def upgrade() -> None:
         DO $$
         BEGIN
             IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{_APP_ROLE}') THEN
+                -- Explicit, so the table works for the app even when the
+                -- migrating role has no 0028 default privileges.
+                GRANT SELECT, INSERT, DELETE ON public.library_events
+                    TO {_APP_ROLE};
+                GRANT USAGE ON SEQUENCE public.library_events_id_seq
+                    TO {_APP_ROLE};
                 REVOKE UPDATE ON public.library_events FROM {_APP_ROLE};
             END IF;
         END

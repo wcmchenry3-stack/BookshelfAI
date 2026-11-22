@@ -53,14 +53,20 @@ RAW_SQL_RE = re.compile(
 
 
 def _names_model(node: ast.AST) -> bool:
-    """``LibraryEvent``, ``x.LibraryEvent``, ``LibraryEvent.__table__`` or
-    the table name as a string."""
+    """``LibraryEvent``, ``x.LibraryEvent``, ``LibraryEvent.__table__``, the
+    table name as a string, or a call / subscript built from one."""
     if isinstance(node, ast.Name):
         return node.id == MODEL
     if isinstance(node, ast.Attribute):
         return node.attr == MODEL or _names_model(node.value)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value == TABLE
+    # ``sa.table("library_events")``, ``Table("library_events", ...)``.
+    if isinstance(node, ast.Call):
+        return any(_names_model(a) for a in node.args)
+    # ``metadata.tables["library_events"]``.
+    if isinstance(node, ast.Subscript):
+        return _names_model(node.slice) or _names_model(node.value)
     return False
 
 
@@ -191,6 +197,9 @@ def test_the_retention_job_is_the_one_delete():
         "db.execute(text('delete from public.library_events'))",
         "db.execute(text('DELETE FROM \"library_events\" WHERE id = 1'))",
         "stmt = update('library_events')",
+        "stmt = delete(sa.table('library_events'))",
+        "stmt = update(Table('library_events', metadata))",
+        "stmt = delete(Base.metadata.tables['library_events'])",
     ],
 )
 def test_scanner_catches_planted_writes(snippet):
@@ -203,6 +212,8 @@ def test_scanner_catches_planted_writes(snippet):
         "stmt = insert(LibraryEvent)",
         "stmt = select(LibraryEvent.id)",
         "stmt = delete(UserBook)",
+        "stmt = delete(metadata.tables['user_books'])",
+        "stmt = insert(sa.table('library_events'))",
         "x = 'ON DELETE SET NULL on library_events'",
     ],
 )

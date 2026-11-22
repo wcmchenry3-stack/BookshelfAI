@@ -47,16 +47,56 @@ def test_every_tracked_field_is_a_user_books_column():
     assert library_events.FREE_TEXT_FIELDS <= set(library_events.TRACKED_FIELDS)
 
 
+# user_books columns an event deliberately does not record (keys and
+# bookkeeping timestamps). A new column must be added to TRACKED_FIELDS
+# or here.
+UNTRACKED_COLUMNS = frozenset({"id", "user_id", "created_at", "updated_at"})
+# Text columns whose values are fixed codes, not something the user typed.
+STRUCTURED_STRINGS = frozenset({"status"})
+
+
+def _string_columns(columns) -> set[str]:
+    return {c.name for c in columns if c.type.python_type is str}
+
+
+def test_every_user_books_column_is_tracked_or_knowingly_untracked():
+    columns = set(UserBook.__table__.columns.keys())
+    tracked = set(library_events.TRACKED_FIELDS)
+    assert columns - tracked - UNTRACKED_COLUMNS == set(), (
+        "add the new user_books column to library_events.TRACKED_FIELDS "
+        "(and FREE_TEXT_FIELDS if the user types it) or to UNTRACKED_COLUMNS"
+    )
+
+
 def test_every_user_set_text_column_is_masked():
-    """Every free-text column of user_books is in FREE_TEXT_FIELDS: a new
-    String column must be either masked or knowingly structured."""
-    structured_strings = {"status"}
-    strings = {
-        c.name
-        for c in UserBook.__table__.columns
-        if c.type.python_type is str and c.name in library_events.TRACKED_FIELDS
-    }
-    assert strings - structured_strings == library_events.FREE_TEXT_FIELDS
+    """Every String column of user_books, tracked or not, is masked free
+    text, a known structured code or a known untracked column: a new one
+    fails here until it is classified."""
+    strings = _string_columns(UserBook.__table__.columns)
+    unclassified = (
+        strings
+        - library_events.FREE_TEXT_FIELDS
+        - STRUCTURED_STRINGS
+        - UNTRACKED_COLUMNS
+    )
+    assert unclassified == set(), (
+        f"classify {sorted(unclassified)}: add to library_events."
+        "FREE_TEXT_FIELDS (recorded only as 'changed') unless it is a code"
+    )
+    assert library_events.FREE_TEXT_FIELDS <= strings
+
+
+def test_the_text_column_check_catches_a_new_column():
+    import sqlalchemy as sa
+
+    columns = [*UserBook.__table__.columns, sa.Column("private_diary", sa.String)]
+    unclassified = (
+        _string_columns(columns)
+        - library_events.FREE_TEXT_FIELDS
+        - STRUCTURED_STRINGS
+        - UNTRACKED_COLUMNS
+    )
+    assert unclassified == {"private_diary"}
 
 
 def test_event_types_are_the_issue_list():
