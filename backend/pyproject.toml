@@ -56,6 +56,7 @@ ignore_names = [
   "scan_free_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
   "scan_premium_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
   "async_migration_database_url",  # read by alembic/env.py (vulture scans app/ only) (#696)
+  "email_reply_to",  # EMAIL_REPLY_TO (#678): read by the Resend sender, which lands with the account-deletion/export stories; remove then
   # --- Test seam ---
   "reset_cache",  # ai/settings.py cache reset, called from tests/ (vulture scans app/ only)
   # --- PENDING OWNER DECISION (#830): unread settings ---
