@@ -53,7 +53,7 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 ## Anthropic Claude (vision, #532)
 
-**Role:** the same book identification as OpenAI, behind a per-feature setting. OpenAI stays listed above and stays the default until the labelled eval (#536) and the OpenAI removal (#538). Production enablement waits on the data-handling answer (#549) and the owner actions in #542.
+**Role:** the same book identification as OpenAI, behind a per-feature setting. OpenAI stays listed above and stays the registry default until the OpenAI removal (#538). Both environments' `ai_settings` rows select `anthropic` (production since 2026-11-22, after the #549 decision); see [`RENDER.md`](RENDER.md#switching-scans-to-claude-538).
 
 **SDK:** official `anthropic` Python SDK, pinned in `backend/requirements.txt` (1.x, built on `httpx2`); `client.messages.create` only
 **Endpoint:** `https://api.anthropic.com`, pinned in the adapter. The only way to change it is the validated `AI_ANTHROPIC_BASE_URL` setting (#539, read once at boot into `settings.ai_anthropic_base_url`), which exists for the nightly load run's local fake provider; it accepts only `localhost` / `127.0.0.1` / `::1` in any environment, and in staging and production any value fails boot. With the override set, the SDK client does not follow redirects, so a local endpoint cannot bounce the API key and photo to another host
