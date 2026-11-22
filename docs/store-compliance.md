@@ -12,8 +12,9 @@ App Store Connect and Play Console checks. Where a store requirement changes oft
 says **verify against the current console** instead of quoting a number.
 
 Status key: **pass** (met, evidence cited) · **partial** (some of it met) · **fail**
-(not met) · **verify** (cannot be decided from the repo; owner checks the console).
-Every non-pass row links an issue.
+(not met) · **verify** (cannot be decided from the repo; owner checks the console) ·
+**n/a** (does not apply). Every **fail** and **partial** row links an issue; **verify**
+rows link one where an owner action exists.
 
 ## Summary of blockers
 
@@ -24,19 +25,22 @@ Every non-pass row links an issue.
 | Google sign-in offered without Sign in with Apple | Apple 4.8 | #693 (secrets #679) |
 | Release build signed with the debug keystore | Play | #893 |
 | iOS privacy manifest declares no collected data | Apple | #1001 |
-| Privacy policy omits Google sign-in, Sentry, AI usage records, deletion path | Both | #1015 |
+| Privacy policy omits Google sign-in, Sentry, AI usage records, deletion path, and wrongly claims a hashed password | Both | #1015 |
+| No disclosure of, or explicit permission for, sharing personal data with a third-party AI (5.1.2(i)) | Apple | #1023 |
+| No reviewer access path for the Google-only sign-in | Both | #1018 |
 
 ## Apple App Store
 
 | Item | Requirement | Status | Evidence | Issue |
 |---|---|---|---|---|
-| 4.8 Login services | An app that offers a third-party or social login (Google) must also offer an equivalent privacy-preserving option (Sign in with Apple, or a different option meeting the 4.8 criteria). Email and password is first-party, but the Google button triggers the rule. | **fail** | Google sign-in at `frontend/app/(auth)/login.tsx:3,37,117-127`; no Apple provider in `frontend/package.json`; backend only has `backend/app/auth/google.py` | #693 (secrets #679) |
+| 4.8 Login services | An app that offers a third-party or social login (Google) must also offer an equivalent privacy-preserving option (Sign in with Apple, or a different option meeting the 4.8 criteria). Google is the only production sign-in, so the rule applies. | **fail** | Google sign-in at `frontend/app/(auth)/login.tsx:3,37,117-127`; no Apple provider in `frontend/package.json`; backend only has `backend/app/auth/google.py` | #693 (secrets #679) |
 | 5.1.1(v) Account deletion | If the app lets users create an account, it must let them start deletion inside the app. | **fail** | No account-deletion endpoint in `backend/app/` (only `DELETE /user-books/{id}` at `backend/app/api/user_books.py:400`); no UI. The privacy policy tells users to email (`docs/privacy.html:36-37`), which does not satisfy 5.1.1(v) | #291 |
 | 5.1.1 Privacy policy link | Policy URL in App Store Connect metadata and reachable from inside the app. | **partial** | URL recorded as `https://wcmchenry3-stack.github.io/book_app/privacy.html` (`docs/claude/ios-appstore-submission.md:119,181`; repo has since been renamed, owner must confirm the Pages URL still resolves). No in-app link: no `privacy` string under `frontend/app`, `frontend/components`, `frontend/lib` | #1015 |
-| 5.1.1 Policy accuracy | Policy must name what is collected and who receives it. | **fail** | `docs/privacy.html:11-13,26` says only account and reading data, and no analytics; it does not mention Google sign-in data, Sentry crash reports, or AI usage records. It does disclose Anthropic and the 30-day scan retention (`:33-34`) | #1015 |
+| 5.1.1 Policy accuracy | Policy must name what is collected and who receives it. | **fail** | `docs/privacy.html:16-20,26` says only account and reading data, and no analytics. Line 18 claims "a hashed password", which is false (Google is the only sign-in and `User` has no password column). `display_name` and `avatar_url` are stored (`backend/app/models/user.py:30-31`) but not disclosed. It does not mention Google sign-in data, Sentry crash reports, or AI usage records. It does disclose Anthropic and the 30-day scan retention (`:33-34`) | #1015 |
 | Privacy nutrition label | Label in App Store Connect matches real collection. | **verify** | Proposed answers below, pending owner approval | #473 (store privacy answers doc) |
+| 5.1.2(i) Third-party AI disclosure | Since the Nov 2025 guideline update, an app must disclose where personal data is shared with a third-party AI and get explicit permission first. Scan photos are sent to Anthropic. | **fail** | Policy discloses Anthropic (`docs/privacy.html:33-34`) but there is no in-app disclosure or consent step before the first scan; no consent string under `frontend/app` | #1023 |
 | Privacy manifest: collected data | `NSPrivacyCollectedDataTypes` lists the data types the app (and its SDKs) collect. | **fail** | Empty: `frontend/app.json:51`, `frontend/ios/BookShelfAI/PrivacyInfo.xcprivacy:43-44`. The app collects email, name, user ID, photos, crash data | #1001 (in progress; not edited here) |
-| Privacy manifest: required-reason APIs | Every required-reason API category used by the app or a bundled SDK is declared with an approved reason. | **partial** | Four categories declared (FileTimestamp, UserDefaults, DiskSpace, SystemBootTime): `frontend/app.json:33-48`, mirrored in `PrivacyInfo.xcprivacy:5-37`. React Native, Expo and Sentry SDKs ship their own manifests; the app-level list was not diffed against the built archive. **Verify**: archive, then Xcode > Product > Archive > Generate Privacy Report and compare | #1016 |
+| Privacy manifest: required-reason APIs | Every required-reason API category used by the app or a bundled SDK is declared with an approved reason. | **partial** | Four categories declared (FileTimestamp, UserDefaults, DiskSpace, SystemBootTime): `frontend/app.json:33-48`, mirrored in `PrivacyInfo.xcprivacy:5-42`. React Native, Expo and Sentry SDKs ship their own manifests; the app-level list was not diffed against the built archive. **Verify**: archive, then in Xcode Organizer select the archive, then Generate Privacy Report, and compare | #1016 |
 | Privacy manifest: tracking | `NSPrivacyTracking` false and no tracking domains when nothing tracks. | **pass** | `app.json:52-53`, `PrivacyInfo.xcprivacy:45-48`; no ad or analytics SDK in `frontend/package.json` | None |
 | ATT (App Tracking Transparency) | Only needed if the app tracks (shares data with data brokers or ad networks, reads the IDFA). | **pass** | No ATT dependency, no `NSUserTrackingUsageDescription` in `frontend/ios/BookShelfAI/Info.plist`, no ad SDK; policy says no advertising identifiers (`docs/privacy.html:26`). Re-check whenever an analytics or ad SDK is added | None |
 | Purpose strings: camera | `NSCameraUsageDescription` present and specific. | **pass** | `frontend/ios/BookShelfAI/Info.plist:55-56`, from `frontend/app.json:74-77` | None |
@@ -44,11 +48,11 @@ Every non-pass row links an issue.
 | Purpose strings: photo library | Needed only if the app reads the photo library. | **pass** | No `expo-image-picker` or media-library dependency in `frontend/package.json`; scanning uses the camera only. If gallery upload is added, add `NSPhotoLibraryUsageDescription` and revisit the label | None |
 | Encryption export compliance | `ITSAppUsesNonExemptEncryption` set so builds are not held at "Missing Compliance". | **pass** | `false` at `frontend/app.json:20` and `Info.plist:42-43`. Valid only while the app uses HTTPS and OS crypto alone; owner confirms for the annual self-classification | None |
 | Support URL | Working support URL in App Store Connect metadata. | **fail** | No support page in the repo or docs. Only a contact email in the policy (`docs/privacy.html:39-40`) | #1018 |
-| Demo account for review | Reviewers need to sign in. Google sign-in cannot be used by review staff without a Google account, so an email and password account with sample data is needed. | **fail** | No demo account or review notes documented anywhere under `docs/` | #1018 |
+| Demo account for review | Reviewers need a working sign-in path with the shipped Google-only flow. | **fail** | No review access documented under `docs/`. The only non-Google login, `POST /auth/test-login` (`backend/app/main.py:477`), is registered only when not hardened and the server refuses to boot in staging or production with `TEST_AUTH_SECRET` set (`backend/app/core/config.py:460-468`), so it cannot be used for review. The only gate on production is the Google email allowlist (`ALLOWED_EMAILS`, `backend/app/api/auth.py:81`, `config.py:193`). A reviewer-access mechanism is a prerequisite: the realistic option is a dedicated Google test account whose email is on `ALLOWED_EMAILS` (if set) and whose credentials the owner shares in the review notes | #1018 |
 | Age rating | Questionnaire answered; policy-consistent rating. | **verify** | Not recorded. Content is user-supplied book metadata plus AI-generated text from photos, no user-to-user content. Owner completes the questionnaire; note "AI generated content" if the console asks | #1018 |
-| Sign-in without friction (5.1.1(iv), 4.0) | Do not force sign-in for features that do not need it. | **verify** | Not assessed here; owner confirms the review flow reaches core value after sign-in | None |
+| Sign-in without friction (5.1.1(v), 4.0) | Do not force sign-in for features that do not need it. | **verify** | Not assessed here; owner confirms the review flow reaches core value after sign-in | #1018 |
 | Data export (privacy best practice, not a store rule) | Users can get a copy of their data. | **fail** | Not built | #694 |
-| Web / PWA | Web build is outside store review. | n/a | | None |
+| Web / PWA | Web build is outside store review. | **n/a** | | None |
 
 ## Google Play
 
@@ -66,8 +70,8 @@ Every non-pass row links an issue.
 | Content rating | IARC questionnaire completed. | **verify** | Not recorded | #1018 |
 | Target audience and content | Not child-directed; Families policy does not apply. | **verify** | App is a general-audience book tracker; owner selects 13+ or 18+ per policy | #1018 |
 | Demo / review access | Review instructions and working credentials if sign-in is needed. | **fail** | Not documented | #1018 |
-| Encryption | n/a on Play (Data safety "encrypted in transit" answer: yes, HTTPS only) | pass | `frontend/ios/BookShelfAI/Info.plist` ATS blocks arbitrary loads (`NSAllowsArbitraryLoads` false) | None |
-| App integrity | Play Integrity usage is optional; relevant to Data safety (device identifiers). | **verify** | Attestation is wired on `/scan` but currently not required (`docs/security.md:25`). If enabled, Play Integrity tokens go to Google; mention in the answers | None |
+| Encryption in transit | Data safety "encrypted in transit" answer: yes, HTTPS only | **pass** | `frontend/ios/BookShelfAI/Info.plist` ATS blocks arbitrary loads (`NSAllowsArbitraryLoads` false) | None |
+| App integrity | Play Integrity usage is optional; relevant to Data safety (device identifiers). | **verify** | Attestation is wired on `/scan` but currently not required (`docs/security.md:25`). If enabled, Play Integrity tokens go to Google; mention in the answers | #1019 |
 
 ## Privacy label / Data safety answers
 
@@ -83,31 +87,39 @@ Facts the answers rest on:
 - Photos of shelves or covers go to our backend, which strips metadata, re-encodes, and
   sends the processed image to Anthropic. We keep only a fingerprint of the image and the
   list of books found, for 30 days (`docs/privacy.html:33-34`).
-- Sign-in is email plus password, or Google (email, name, Google ID verified by the backend).
+- Sign-in is Google only; the backend stores email, Google ID, `display_name` and `avatar_url` (`backend/app/models/user.py:28-31`). There is no password.
 - Frontend Sentry runs with `sendDefaultPii: false` and a scrubber
-  (`frontend/lib/sentry.ts:80`, `frontend/lib/sentryScrub.ts`); backend Sentry tags the user
-  by ID only (`docs/integrations.md:108`).
+  (`frontend/lib/sentry.ts:80`, `frontend/lib/sentryScrub.ts`), and device crash events
+  carry no user. Backend Sentry sets `user.id` (`backend/app/core/sentry_context.py:27-29`),
+  so backend diagnostics and performance data are linked to the user. In-app feedback goes
+  through `Sentry.captureFeedback` (`frontend/components/FeedbackWidget/useFeedbackSubmit.ts:79-91`).
 - `ai_usage` rows record per-user AI calls for cost control; deleting an account keeps the
   cost rows with the user detached (`backend/app/models/ai_usage.py:53`).
 - No analytics, advertising SDK, location, contacts, or advertising ID.
 
 | Data type | Collected | Linked to user | Used for tracking | Purpose | Shared with third party | Optional | Notes |
 |---|---|---|---|---|---|---|---|
-| Email address | Yes | Yes | No | App functionality, account management | No (Google only verifies its own token) | Required | Password stored hashed |
-| Name (Google sign-in) | Yes | Yes | No | App functionality | No | Optional, only if Google sign-in is used | Confirm whether the backend stores it; if not stored, answer No |
+| Email address | Yes | Yes | No | App functionality, account management | No (Google only verifies its own token) | Required | Google-verified email |
+| Name (Google `display_name`) | Yes | Yes | No | App functionality | No | Required by sign-in | Stored (`backend/app/models/user.py:30`) |
+| Profile picture URL (Google `avatar_url`) | Yes | Yes | No | App functionality | No | Required by sign-in | Stored (`user.py:31`); Apple "Photos or Videos" or "Other User Content", owner decides |
 | User ID (account ID, Google subject) | Yes | Yes | No | App functionality, fraud prevention | No | Required | Also sent to Sentry as an opaque ID |
-| Photos (shelf or cover scans) | Yes | Yes (request is authenticated) | No | App functionality | Yes, processed by Anthropic as a service provider | Optional (feature) | Not stored beyond a 30-day fingerprint; Apple: "Photos or Videos" collected; Play: "Photos" collected and shared (service-provider exemption may apply, owner decides) |
+| Photos (shelf or cover scans) | Yes | Declared Linked = No, matching the #1001 manifest (open owner question: #1024) | No | App functionality | Yes, processed by Anthropic as a service provider | Optional (feature) | Not stored beyond a 30-day fingerprint; Apple: "Photos or Videos" collected; Play: "Photos" collected and shared (service-provider exemption may apply, owner decides). The request is authenticated, so whether it counts as linked is the #1024 question |
 | Other user content (library, shelves, reading status, corrections) | Yes | Yes | No | App functionality | No | Required for core use | iOS "Other User Content"; Play "Other in-app content" |
-| Product interaction / usage (AI usage records) | Yes | Yes | No | App functionality, cost and abuse control | No | Required | Apple "Product Interaction" or "Other Usage Data" |
-| Crash logs and diagnostics | Yes | Not linked (scrubbed, ID only) | No | Analytics (diagnostics), app functionality | Yes, Sentry as a service provider | Required | Play: "Crash logs", "Diagnostics" |
+| Product interaction / usage (AI usage records) | Yes | Linked: Yes | No | App functionality, cost and abuse control | No | Required | Apple "Product Interaction" or "Other Usage Data" |
+| Crash data (device crash events) | Yes | Linked: No (no user on device events) | No | App functionality | Yes, Sentry as a service provider | Required | Play: "Crash logs" |
+| Performance data and other diagnostic data (backend Sentry) | Yes | Linked: Yes (`user.id` set) | No | App functionality | Yes, Sentry as a service provider | Required | Matches the #1001 manifest; Play: "Diagnostics" |
+| Customer support (in-app feedback via Sentry) | Yes, only when the user submits feedback | Linked: No | No | App functionality, customer support | Yes, Sentry as a service provider | Optional | `useFeedbackSubmit.ts:79-91` |
 | Device or other identifiers | No advertising ID. Device attestation tokens if enabled | No | No | Fraud prevention | Yes (Apple/Google attestation) | n/a | Revisit when attestation becomes required |
 | Location, contacts, health, financial, browsing, search history, audio | No | | | | | | Microphone permission is declared but unused; remove (#1017) so the answer stays No |
 
 Security answers (Play): data encrypted in transit: **Yes**; users can request deletion:
 **No until #291 and #1014 ship**; independent security review: **No**.
 
-Open owner decisions before submission: confirm whether Google name is stored; decide the
-Photos "shared" classification; approve final wording; reconcile with #549 and #473.
+Open owner decisions before submission: decide the Photos "linked" and "shared"
+classification (#1024); approve final wording; reconcile with #549 and #473.
+
+**Closed testing (verify in console):** new personal Play developer accounts have been
+required to run a closed test (about 12 testers for 14 days) before production access.
 
 ## Verifying the deletion flows (#291, #1014)
 
