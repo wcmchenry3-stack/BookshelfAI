@@ -198,8 +198,11 @@ always separate PRs. When in doubt, separate.
    section. A migration, AI or catalog change the section doesn't declare is a
    blocking finding.
 6. **Security review.** Run it if Phase 1 said so (`reviews.md`).
-7. **Bring the branch up to date.** Merge `origin/dev` into the branch (don't
-   rebase), then re-run the local checks.
+7. **Check against the latest `dev`.** Merge `origin/dev` into the branch (don't
+   rebase) if it has moved, then re-run the local checks. This catches
+   conflicts and clashes early. It is not a merge prerequisite: `dev` doesn't
+   require PRs to be up to date (#1039), so don't hold a green PR for it or
+   ask the owner to update branches before merging.
 8. **Mark the PR ready for review.**
    - BookshelfAI CI runs on drafts too, so CI results are already coming in
      during the loop. Treat red CI on the draft as review findings.
