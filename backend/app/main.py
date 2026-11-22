@@ -419,10 +419,10 @@ app.include_router(user_books_router)
 app.include_router(users_router)
 
 
-# @app.api_route instead of @app.get: slowapi's @limiter.limit wrapper
-# disrupts Starlette's implicit GET→HEAD routing, causing 405 for HEAD.
-# Uptime monitors (e.g. UptimeRobot free plan) send HEAD, so we register
-# both methods explicitly.
+# @app.api_route instead of @app.get (here and on /health/db): slowapi's
+# @limiter.limit wrapper disrupts Starlette's implicit GET→HEAD routing, causing
+# 405 for HEAD. Uptime monitors (e.g. UptimeRobot free plan) send HEAD, so both
+# routes register GET and HEAD explicitly.
 @app.api_route("/health", methods=["GET", "HEAD"])
 @limiter.limit(settings.rate_limit_health)
 async def health(request: Request) -> JSONResponse:
@@ -441,7 +441,7 @@ async def health(request: Request) -> JSONResponse:
 _HEALTH_DB_TIMEOUT_SECONDS = 5
 
 
-@app.get("/health/db")
+@app.api_route("/health/db", methods=["GET", "HEAD"])
 @limiter.limit(settings.rate_limit_health)
 async def health_db(request: Request) -> JSONResponse:
     """DB connectivity check, separate from the liveness probe above."""
