@@ -29,7 +29,7 @@ def _build_app():
     async def health() -> dict:
         return {"status": "ok"}
 
-    @app.get("/health/db")
+    @app.api_route("/health/db", methods=["GET", "HEAD"])
     async def health_db() -> dict:
         return {"status": "ok", "db": "ok"}
 
@@ -104,3 +104,16 @@ async def test_health_db_rejects_untrusted_host_while_health_still_allowed():
 
     assert health_response.status_code == 200
     assert health_db_response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_health_db_head_rejects_untrusted_host():
+    """HEAD /health/db is not exempt either: an untrusted Host gets 400 for HEAD
+    just as it does for GET, so the monitor must use the public hostname."""
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app()),
+        base_url="http://bookshelf-api-rxp3.onrender.com",
+    ) as client:
+        response = await client.head("/health/db")
+
+    assert response.status_code == 400

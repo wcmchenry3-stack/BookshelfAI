@@ -351,20 +351,33 @@ Services → **Sign in with Apple for Email Communication** (#679).
 
 ## Health checks
 
-**Depends on PR #448 (health-check split).** This section describes the
-post-#448 behavior; until #448 is merged and deployed, `/health` still
-touches the DB itself (no separate `/health/db` exists yet).
+Both endpoints accept `GET` and `HEAD` (uptime monitors such as UptimeRobot's free plan send `HEAD`). Other methods return `405`.
 
-- `GET /health` — liveness only, no DB touch. This is `healthCheckPath` in
+- `GET`/`HEAD /health` — liveness only, no DB touch. This is `healthCheckPath` in
   `render.yaml` and is exempt from both TrustedHost and the origin lockdown
   so Render's own prober can hit the origin directly; a DB outage must not restart-loop the service.
-- `GET /health/db` — `SELECT 1` against the database, bounded at a 5 second
+- `GET`/`HEAD /health/db` — `SELECT 1` against the database, bounded at a 5 second
   timeout so a stalled pooler yields a prompt response; returns `200` (ok) or
   `503` (unavailable/unconfigured); rate limited. It is **not**
   exempt from TrustedHost or the origin lockdown, so probe it only via the public hostname
   (`https://bookshelfapi.buffingchi.com/health/db`), never the Render origin.
-  Point an external uptime monitor at it every 5 minutes; on Supabase's free
-  plan this is also what stops the project from pausing due to inactivity.
+  On Supabase's free plan this is also what stops the project from pausing due to inactivity.
+
+| Path | Used by | Method | Interval | Alert |
+|---|---|---|---|---|
+| `/health` | Render `healthCheckPath`; CI `backend-health`; existing UptimeRobot liveness monitors | GET/HEAD | Render default / 5 min | — / owner email |
+| `/health/db` | UptimeRobot (prod `https://bookshelfapi.buffingchi.com/health/db`, dev `https://bookshelfapi-dev.buffingchi.com/health/db`) | HEAD, expect 2xx | 5 min | owner email, first failure |
+
+Monitors created: _pending (owner, see #562)_
+
+Why the monitor uses the public hostname: `/health/db` is not exempt from
+TrustedHost or the origin lockdown, so a request to the Render origin is
+rejected. The Cloudflare edge adds the origin header, and the public hostname
+is in `TRUSTED_HOSTS` (prod in `render.yaml`; dev is set in the dashboard, so
+check it there). Cloudflare Bot Fight Mode could block UptimeRobot; see #466.
+The rate limit (`rate_limit_health`, 60/min per IP) is far above a 5-minute
+poll. Both API services run on the `starter` plan (`render.yaml`), which does
+not sleep, so a 5-minute poll on dev has no cold-start or extra-cost issue.
 
 ## Deploys
 
@@ -583,5 +596,5 @@ would fail `/health` and restart-loop the API instead of degrading gracefully.
    `RENDER_PROD_WEB_SERVICE_ID`, merge a `dev` → `main` promotion PR, and
    watch `.github/workflows/deploy.yml` go green.
 6. Verify `curl https://bookshelfapi.buffingchi.com/health` and `/health/db`;
-   point an uptime monitor at `/health/db` (every 5 min, public hostname
-   only). Upgrade Supabase to Pro (daily backups) before store submission.
+   point an uptime monitor at `/health/db` (HEAD, every 5 min, public hostname
+   only; see [Health checks](#health-checks)). Upgrade Supabase to Pro (daily backups) before store submission.

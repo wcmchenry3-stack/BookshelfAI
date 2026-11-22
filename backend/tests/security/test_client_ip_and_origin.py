@@ -530,6 +530,11 @@ class TestOriginLockdown:
     def test_health_db_not_exempt(self, origin_secret, real_client):
         _assert_forbidden(real_client.get("/health/db"))
 
+    def test_health_db_head_not_exempt(self, origin_secret, real_client):
+        # HEAD has no body in the test client, so only the status is checked.
+        response = real_client.head("/health/db")
+        assert response.status_code == 403
+
     def test_disabled_when_secret_empty(self, monkeypatch, real_client):
         monkeypatch.setattr(settings, "origin_auth_secret", "")
         assert real_client.get("/openapi.json").status_code == 200
