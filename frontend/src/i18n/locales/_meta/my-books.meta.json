@@ -86,6 +86,26 @@
     "tone": "neutral",
     "characterLimit": 10
   },
+  "rowStatus.wishlisted": {
+    "description": "Singular status of one book on a library row meta line and its spoken label (wishlisted); the filter chip uses statusTab.wishlisted",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "rowStatus.purchased": {
+    "description": "Singular status of one book on a library row meta line and its spoken label (purchased); the filter chip uses statusTab.purchased",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "rowStatus.reading": {
+    "description": "Singular status of one book on a library row meta line and its spoken label (currently being read); the filter chip uses statusTab.reading",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "rowStatus.read": {
+    "description": "Singular status of one book on a library row meta line and its spoken label (finished); the filter chip uses statusTab.read",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
   "status.wishlisted": {
     "description": "Display badge label for wishlisted status",
     "tone": "neutral",

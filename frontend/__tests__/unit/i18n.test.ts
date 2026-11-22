@@ -102,6 +102,11 @@ describe('en namespace content', () => {
     const es = JSON.parse(fs.readFileSync(path.join(dir, 'es', 'my-books.json'), 'utf8'));
     expect(es.rowStatus.purchased).toBe('Comprado');
     expect(es.rowStatus.read).toBe('Leído');
+    for (const l of ['es', 'pt', 'fr-CA']) {
+      const data = JSON.parse(fs.readFileSync(path.join(dir, l, 'my-books.json'), 'utf8'));
+      expect(data.rowStatus.purchased).not.toBe(data.statusTab.purchased);
+      expect(data.rowStatus.read).not.toBe(data.statusTab.read);
+    }
   });
 
   it('no English key has __NEEDS_TRANSLATION__ as value', () => {
