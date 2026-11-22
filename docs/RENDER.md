@@ -335,26 +335,33 @@ steps:
 ## Switching scans to Claude (#538)
 
 Which AI provider a scan uses is an `ai_settings` row, not an env var or a
-deploy. Dev (`bookshelf-api-dev`) already runs on Claude. For production
-(`bookshelf-api`):
+deploy. Dev (`bookshelf-api-dev`) was switched first. Production
+(`bookshelf-api`) was switched on 2026-11-22 (recorded on #538), after the
+data-handling decision on #549 ("default retention, disclosed") and the privacy
+policy update (#997). To repeat it, or to switch back after a rollback:
 
-1. **Key first.** In the dashboard, set `ANTHROPIC_API_KEY` on `bookshelf-api`
-   (`sync: false`; use a production key, never dev's) and redeploy through
-   `deploy.yml` so the process reads it. Without it a switched feature answers
-   `503 scan_unavailable` (the user is refunded).
+1. **Key first.** In the dashboard, check that `ANTHROPIC_API_KEY` is set on
+   `bookshelf-api` (`sync: false`; a production key, never dev's). If you add
+   or change it, use the dashboard's "Save and deploy" so the running process
+   reads it; `deploy.yml` only runs on a push to `main`.
+   Without the key a switched feature answers `503 scan_unavailable` (the
+   user is refunded).
 2. **Check the current state** from the `bookshelf-api` Render shell:
-   `cd backend && python -m app.ai.settings list`. The "Providers and models"
+   `python -m app.ai.settings list` (the shell opens in `backend/`, the
+   service's `rootDir`). The "Providers and models"
    group should show `openai` / `gpt-4o-mini` and `gpt-4o`.
 3. **Switch both tiers.** Each command writes the provider and its registry
-   default model in one transaction (Haiku 5.5 standard, Sonnet 5.5 enhanced,
-   as dated IDs, decided in #547):
+   default model in one transaction (`claude-haiku-5-5` for standard,
+   `claude-sonnet-5-5` for enhanced, decided in #547; fixed IDs, since
+   Anthropic publishes no dated snapshot for them, #548):
    `python -m app.ai.settings switch scan.standard anthropic --by <you>`, then
    `python -m app.ai.settings switch scan.enhanced anthropic --by <you>`.
    Every process picks it up within 30 s (`AI_SETTINGS_CACHE_TTL_SECONDS`).
 4. **Smoke test.** Run one standard scan (and one enhanced scan with a Premium
    account, if one exists) in the production app. Confirm books come back, no
-   new Sentry errors, and that the newest `ai_usage` (ledger) rows show the
-   Claude model IDs (the ledger records the model, not the provider).
+   new Sentry errors, and that the newest `ai_usage` (ledger) rows show
+   `model` `claude-haiku-5-5` (or `claude-sonnet-5-5` for enhanced); the
+   ledger records the model, not the provider.
 5. **Rollback** is the same command with `openai`
    (`python -m app.ai.settings switch scan.standard openai --by <you>`). Keep
    `OPENAI_API_KEY` set until the OpenAI removal PR merges.
@@ -369,8 +376,8 @@ Every credential is `sync: false` in `render.yaml` and is pasted directly into
 the Render dashboard by the owner. Secrets never go in this repo, a PR, a
 chat message, or an MCP tool argument (including the Render MCP server —
 paste values by hand in the dashboard UI instead). This applies to the
-Supabase pooler URL, JWT keypair, Google OAuth credentials, the OpenAI and Anthropic keys,
-Turnstile, and Sentry DSNs.
+Supabase pooler URL, JWT keypair, Google OAuth credentials, the OpenAI and
+Anthropic keys, Turnstile, and Sentry DSNs.
 
 ## Environment values
 
