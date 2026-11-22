@@ -1,7 +1,7 @@
 /**
  * #1001: the iOS privacy manifest declares the data the app sends off the
  * device. Scan photos go to our server and on to the AI provider (Photos,
- * not linked: owner decision), the account is a Google sign-in (email, name,
+ * linked: decided in #1024), the account is a Google sign-in (email, name,
  * user ID), the library lives on our server (other user content), in-app
  * feedback and diagnostics go to Sentry, and per-user scan usage is recorded
  * (product interaction). Text searches leave the device in request URLs
@@ -31,7 +31,7 @@ const ANALYTICS = 'NSPrivacyCollectedDataTypePurposeAnalytics';
 
 /** [data type, linked to the user, purposes]. Tracking is false for all. */
 const EXPECTED: [string, boolean, string[]][] = [
-  [`${T}PhotosorVideos`, false, [APP_FUNCTIONALITY]],
+  [`${T}PhotosorVideos`, true, [APP_FUNCTIONALITY]],
   [`${T}EmailAddress`, true, [APP_FUNCTIONALITY]],
   [`${T}Name`, true, [APP_FUNCTIONALITY]],
   [`${T}UserID`, true, [APP_FUNCTIONALITY]],
@@ -126,12 +126,12 @@ const plist = parsePlist(
 const plistTypes = plist.NSPrivacyCollectedDataTypes as unknown as CollectedDataType[];
 
 describe('iOS privacy manifest', () => {
-  it('app.json declares scan photos as not linked, not tracking, for app functionality', () => {
+  it('app.json declares scan photos as linked, not tracking, for app functionality', () => {
     const photos = appJsonTypes.find((t) => t.NSPrivacyCollectedDataType === `${T}PhotosorVideos`);
 
     expect(photos).toEqual({
       NSPrivacyCollectedDataType: `${T}PhotosorVideos`,
-      NSPrivacyCollectedDataTypeLinked: false,
+      NSPrivacyCollectedDataTypeLinked: true,
       NSPrivacyCollectedDataTypeTracking: false,
       NSPrivacyCollectedDataTypePurposes: [APP_FUNCTIONALITY],
     });

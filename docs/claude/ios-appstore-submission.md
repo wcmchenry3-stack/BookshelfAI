@@ -172,7 +172,7 @@ or edit the entry by hand to match `app.json`; the test catches any mismatch.
 
 | Data type (manifest key `NSPrivacyCollectedDataType…`) | Linked to the user | Purposes | Where it comes from |
 |---|---|---|---|
-| Photos or Videos (`PhotosorVideos`) | No (owner decision, #1001) | App Functionality | Shelf / cover scan photos go to our server and on to the AI provider (Anthropic); the server keeps only a fingerprint and the books found |
+| Photos or Videos (`PhotosorVideos`) | Yes (decided in #1024: Linked = Yes) | App Functionality | Shelf / cover scan photos go to our server and on to the AI provider (Anthropic); the server keeps only a fingerprint and the books found. Linked because the upload is authenticated and `scan_records` stores the fingerprint and results keyed to the user for 30 days |
 | Email Address (`EmailAddress`) | Yes | App Functionality | Google sign-in; `users.email` |
 | Name (`Name`) | Yes | App Functionality | Google profile name; `users.display_name`. `users.avatar_url` (the Google `picture` claim) is a URL from Google's ID token, not a photo taken from the device: it is covered by Name / Other User Content, not Photos |
 | User ID (`UserID`) | Yes | App Functionality | Google account id (`users.google_id`) and our user id |
@@ -201,7 +201,7 @@ or edit the entry by hand to match `app.json`; the test catches any mismatch.
   because `device_keys.key_id` is stored with `user_id`.
 
 **Store answers.** Answer App Store Connect → App Privacy with the table above
-(Tracking No for every type). In Play Console → Data safety, map the same list:
+(Tracking No for every type; Photos or Videos: Linked **Yes**). In Play Console → Data safety, map the same list:
 Email address, Name and User IDs (Personal info); Photos (Photos and videos,
 processed ephemerally); App interactions, In-app search history and Other
 user-generated content (App activity); Crash logs and Diagnostics (App info and
