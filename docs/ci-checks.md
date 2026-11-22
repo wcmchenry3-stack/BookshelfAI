@@ -8,16 +8,17 @@ PRs into `dev` are **squash-merged** (the branch must be up to date with `dev` b
 
 ## Summary
 
-A PR into `dev` triggers **41 workflow jobs** in 10 workflow files: 26 in `ci.yml`, and 15 in 9 stand-alone workflows (`commitlint`, `design-token-check`, `gemini-policy`, `migration-guard`, `static-frontend`, `repo-hygiene` (2 jobs), `doc-reminder`, `e2e-web`, `security` (6 jobs)). Two of the 41 never run on a PR and always show as skipped (`external-links`, `OWASP ZAP Active Scan`). That leaves **39 jobs that report a result**, plus the external `Supabase Preview` row, which also shows as skipped. A PR into `main` skips `security.yml` (6 jobs) and `e2e-web` (1 job) because both only trigger on PRs into `dev`, so it triggers 34 jobs.
+A PR into `dev` triggers **42 workflow jobs** in 10 workflow files: 27 in `ci.yml`, and 15 in 9 stand-alone workflows (`commitlint`, `design-token-check`, `gemini-policy`, `migration-guard`, `static-frontend`, `repo-hygiene` (2 jobs), `doc-reminder`, `e2e-web`, `security` (6 jobs)). Two of the 42 never run on a PR and always show as skipped (`external-links`, `OWASP ZAP Active Scan`). That leaves **40 jobs that report a result**, plus the external `Supabase Preview` row, which also shows as skipped. A PR into `main` skips `security.yml` (6 jobs) and `e2e-web` (1 job) because both only trigger on PRs into `dev`, so it triggers 35 jobs.
 
 - **Required directly by the ruleset file: 28 contexts** (23 from `ci.yml`, 5 from stand-alone workflows). See [Branch protection](#branch-protection).
-- **Conditional: 10 jobs.**
+- **Conditional: 11 jobs.**
   - `js-bundle-check` and `android-bundle-check`: only when `detect-changes` reports a frontend path changed.
   - `ios-build-check` and `android-build-check`: only when it reports a native path changed, and never on draft PRs. `native-build-gate` always runs and stands in for them (and for the two bundle checks).
+  - `test-tools`: never on draft PRs (`if:` skips it while the PR is a draft).
   - `Generate Podfile.lock` (`podfile-lock.yml`, added after the snapshot in #713, so not in the counts above): only on PRs that touch the iOS pod inputs. Not required.
   - `e2e-web`: only on PRs into `dev` that touch `frontend/**`, `backend/**`, the workflow or the two setup actions.
   - The five `security.yml` PR jobs (`Bandit SAST`, `pip-audit SCA`, `npm audit SCA`, `Trivy filesystem scan`, `pytest -m security`): only on PRs into `dev` that touch `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `security.yml`, the two setup actions or `.zap/**`. A frontend-only PR runs none of them.
-- **Not required: 13 jobs** (41 − 28). Three of them are orchestration or gate-covered (`detect-changes`, and `ios-build-check`/`android-build-check`, which `native-build-gate` stands in for). The other **8 are advisory**: they run or are meant to run on PRs but are not in the ruleset file, so they cannot block a merge as the file stands: `commitlint`, `doc-reminder`, `e2e-web` and the five `security.yml` jobs. Two more (`external-links`, `OWASP ZAP Active Scan`) never run on a PR.
+- **Not required: 14 jobs** (42 − 28). Three of them are orchestration or gate-covered (`detect-changes`, and `ios-build-check`/`android-build-check`, which `native-build-gate` stands in for). The other **9 are advisory**: they run or are meant to run on PRs but are not in the ruleset file, so they cannot block a merge as the file stands: `commitlint`, `doc-reminder`, `e2e-web`, `test-tools` and the five `security.yml` jobs. Two more (`external-links`, `OWASP ZAP Active Scan`) never run on a PR.
 - **Fixed: `commitlint`** (#856). Until 2026-11-08, every run of `commitlint.yml` from run number 1 (2026-04-11) onwards ended `startup_failure`, so no check run was created. The cause: the org `called-commitlint.yml` gives its job `permissions: pull-requests: read`, the caller granted nothing, and the repo default token is read-only. A called workflow can never have more than its caller grants. `commitlint.yml` now grants `contents: read` and `pull-requests: read`, the same fix `release-please.yml` needed.
 - **Slowest checks** (run 41164807416): `ios-build-check` 15 min 35 s, `android-build-check` 7 min 5 s (both conditional); then `test-python` 2 min 32 s, `e2e-web` 1 min 54 s (conditional), `test-migrations` 1 min 49 s. Every other job finished in under 70 seconds. These are single samples; the same jobs varied by about ±40% across runs (for example `test-migrations` took 2 min 27 s on #852). On a native PR the chain `test-python` then `ios-build-check` makes the whole run take about 19 minutes.
 
@@ -34,7 +35,8 @@ A PR into `dev` triggers **41 workflow jobs** in 10 workflow files: 26 in `ci.ym
 
 ```text
 Tier 0 (no needs)
-  detect-changes, gate-main-source, secret-scan, lint-python, lint-frontend
+  detect-changes, gate-main-source, secret-scan, lint-python, lint-frontend,
+  test-tools
         |
         v   needs: lint-python, lint-frontend, secret-scan
 Tier 1  backend-health, expo-compat, local-path-check, sentry-check,
@@ -51,12 +53,12 @@ Tier 2  ios-build-check, android-build-check
 Gate    native-build-gate (if: always())
 ```
 
-- `gate-main-source` is Tier 0 but is not in the Tier 1 `needs:` list, so a failure there does not skip Tier 1.
+- `gate-main-source` and `test-tools` are Tier 0 but are not in the Tier 1 `needs:` list, so a failure there does not skip Tier 1.
 - If `lint-python`, `lint-frontend` or `secret-scan` fails, every Tier 1 and Tier 2 job is skipped (their `needs:` failed). Skipped counts as passing for required checks, but the failed lint job is itself required, so the merge stays blocked.
 - `podfile-lock-check` and `gradle-wrapper-check` have `if: github.event_name == 'pull_request'`, so they run on PRs only (see [Branch protection](#branch-protection)).
 - `backend-health` has `if: github.workflow != 'Deploy'` so a production outage cannot block the deploy that would fix it (the workflow is also called from `deploy.yml`).
 - **Stand-alone workflows** (`commitlint`, `design-token-check`, `gemini-policy`, `migration-guard`, `static-frontend`, `repo-hygiene`, `doc-reminder`, `e2e-web`, `security`) have no `needs:` and start immediately, in parallel with Tier 0.
-- **Draft PRs.** Only `ios-build-check` and `android-build-check` skip on drafts (`github.event.pull_request.draft != true`). Everything else, including `e2e-web` and the `security.yml` jobs, runs on drafts. `ready_for_review` is in the `ci.yml` trigger types, so marking a draft ready starts a new run that includes the native builds.
+- **Draft PRs.** Only `ios-build-check`, `android-build-check` and `test-tools` skip on drafts (`github.event.pull_request.draft != true`, or `!github.event.pull_request.draft` for `test-tools`). Everything else, including `e2e-web` and the `security.yml` jobs, runs on drafts. `ready_for_review` is in the `ci.yml` trigger types, so marking a draft ready starts a new run that includes the native builds.
 - **Concurrency.** `ci.yml`: group `ci-${{ github.workflow }}-${{ github.ref }}`, `cancel-in-progress` on every ref except `main`. `repo-hygiene` and `e2e-web` also cancel superseded runs. `static-frontend`, `migration-guard`, `security`, `doc-reminder` and the three org-template workflows set no `concurrency`. A re-push therefore shows an earlier cancelled `ci.yml` run on the old SHA.
 - **Timeouts.** `detect-changes`, `claude-policy`, `native-build-gate` and `migration-guard` set `timeout-minutes: 5`; `repo-hygiene` 10; `external-links` 15; `e2e-web` 25. No other job that runs on a PR sets one (GitHub's 360-minute default applies); of the non-PR workflows, `db-backup` (30), `db-restore-drill` (45), `perf-ai` (20) and `ai-eval` (90) do. Reusable-workflow timeouts are not visible from here.
 - **`continue-on-error`**: no workflow in the repo sets it.
@@ -77,7 +79,7 @@ Gate    native-build-gate (if: always())
 | Check | Purpose | Prevents | Workflow:job | Introduced | Gating | Time |
 | --- | --- | --- | --- | --- | --- | --- |
 | `test-python / Test Python (pytest)` | Backend pytest with coverage, `coverage-threshold: 98` passed by the caller. Runs the `security`-marked tests too (no marker filter in `pytest.ini`) | A backend regression or coverage drop | `ci.yml:test-python` (org `called-test-python.yml`) | 2026-03-22, f36db91 (#31) | Always, Tier 1, required (file) | 2m 32s |
-| `Test tools (pytest)` | Pytest for the asset recipes in `tools/assets/` (manifest, logo, icons; `gen_app_icons.py --check` fails if a shipped icon or splash drifts from its recipe). See [ASSETS.md](ASSETS.md) | A hand-edited generated asset, an asset with no provenance rule, a recipe change that moved pinned pixels | `ci.yml:test-tools` | 2026-11-21 | Skipped on drafts, not required (not yet in the ruleset file) | not measured |
+| `Test tools (pytest)` | Pytest for the asset recipes in `tools/assets/` (manifest, logo, icons; `gen_app_icons.py --check` fails if a shipped icon or splash drifts from its recipe). See [ASSETS.md](ASSETS.md) | A hand-edited generated asset, an asset with no provenance rule, a recipe change that moved pinned pixels | `ci.yml:test-tools` | 2026-11-21, d42cdd3 | **Conditional and advisory**: Tier 0, skipped on draft PRs (`if:`). Not in the ruleset file | not measured |
 | `test-frontend / Test frontend (jest/vitest)` | Jest with coverage; the caller passes `coverage-threshold: 90` (aligned in #820 with the lowest Jest floor; was 80), while the per-metric Jest floors in `frontend/jest.config.js` (statements 95, branches 90, functions 92, lines 97; measured 96.34 / 91.97 / 93.69 / 97.74) are the real gate and fail locally too | A frontend regression or coverage drop | `ci.yml:test-frontend` (org `called-test-frontend.yml`) | 2026-03-22, f36db91 (#31) | Always, Tier 1, required (file) | 52s |
 | `test-migrations` | On a Postgres 16 service: create the `bookshelf_app` role (migration 0028 needs it, #696), then `alembic upgrade head`, `alembic check`, `alembic downgrade -1`, then `alembic upgrade head` and `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder) | A migration that fails on Postgres, model drift from the migrations, a broken downgrade, and integration tests silently skipping | `ci.yml:test-migrations` | 2026-03-27, ac9ee90 (#49) | Always, Tier 1, required (file) | 1m 49s |
 | `e2e-web` | Playwright (Chromium) against the static web export, a real backend on a scratch Postgres 16, fake AI provider and catalog, axe WCAG checks. Uploads a report artifact on failure. Details in [testing.md](testing.md#web-e2e-playwright-470) | A user-visible web flow breaking while unit tests stay green | `e2e-web.yml:e2e-web` | 2026-10-30, 115a709 (#470) | **Conditional and advisory**: PRs into `dev` touching `frontend/**`, `backend/**`, `e2e-web.yml` or the two setup actions. Not in the ruleset file | 1m 54s |
@@ -196,7 +198,6 @@ The `main` release flow (merge commit from `dev`, then `sync-main-to-dev.yml` an
 **Things that only GitHub settings can confirm:**
 
 - whether the ruleset above (or any classic branch protection) is applied, and to which branches;
-<<<<<<< HEAD
 - merge methods enabled in Settings, General (must allow squash and merge commits, rebase off);
 - whether `main` requires 1 approving review as expected (dev requires 0);
 - whether any check outside the file (for example `Supabase Preview`) is required.
@@ -232,7 +233,7 @@ These are not decisions.
 - **Duplicated work.** `sast-python` and `Bandit SAST` run the same Bandit command. `cve-python` and `pip-audit SCA`, and `cve-frontend` and `npm audit SCA`, scan the same manifests. `pytest -m security` re-runs tests already inside `test-python`. Two ZAP workflows exist (`zap-scan.yml` and `security.yml:dast-zap`) with targets `SITE_URL` and `https://bookshelfapi.buffingchi.com`; whether they overlap is not clear from here.
 - **A check that can never fail on findings:** `npm audit SCA` ends with `|| true` and no later step reads the report. `gradle-wrapper-check`'s second step and `doc-reminder` are advisory by design. `external-links`, `OWASP ZAP Active Scan` and `Supabase Preview` always show as skipped on PRs, which adds three rows of noise to the checks list.
 - **Native builds are triggered broadly.** `native` is true whenever `frontend/package.json`, `frontend/package-lock.json` or `ci.yml` changes, so every dependency bump and every CI edit pays for a 15-minute iOS build.
-- **Drafts run almost everything.** Only the two native builds skip on drafts; `e2e-web` and the `security.yml` jobs also run on every push to a draft.
+- **Drafts run almost everything.** Only the two native builds and `test-tools` skip on drafts; `e2e-web` and the `security.yml` jobs also run on every push to a draft.
 - **`repo-hygiene` reports one failure at a time.** Its steps have no `if: !cancelled()`, so a file-length failure hides any later jscpd or lychee failure until the next push. Unlike the other stand-alone workflows it has no `branches:` filter, so it also runs on PRs into any other branch.
 - **Reusable workflows are in another repo and pinned to `@main`.** `provenance-coverage`, `feedback-token-lint`, `sentry-check`, `gate-main-source`, `commitlint` and the policy checks cannot be explained from here, and a change on the org's `main` changes these checks across all repos at once. A short header comment in each `called-*.yml`, or pinning to a SHA as `sync-main-to-dev.yml` does, would close both gaps.
 - **Stale statements elsewhere:** `android-bundle-check` has a comment that still mentions EAS Build.
