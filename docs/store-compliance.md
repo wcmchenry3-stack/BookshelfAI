@@ -103,7 +103,7 @@ Facts the answers rest on:
 | Name (Google `display_name`) | Yes | Yes | No | App functionality | No | Required by sign-in | Stored (`backend/app/models/user.py:30`) |
 | Profile picture URL (Google `avatar_url`) | Yes | Yes | No | App functionality | No | Required by sign-in | Stored (`user.py:31`); a URL to the Google profile photo, not an image we hold: covered by Apple "Other User Content" (declared Linked in the #1001 manifest), not "Photos or Videos" |
 | User ID (account ID, Google subject) | Yes | Yes | No | App functionality, fraud prevention | No | Required | Also sent to Sentry as an opaque ID |
-| Photos (shelf or cover scans) | Yes | Declared Linked = No, matching the #1001 manifest (open owner question: #1024) | No | App functionality | Yes, processed by Anthropic as a service provider | Optional (feature) | Not stored beyond a 30-day fingerprint; Apple: "Photos or Videos" collected; Play: "Photos" collected and shared (service-provider exemption may apply, owner decides). The request is authenticated, so whether it counts as linked is the #1024 question |
+| Photos (shelf or cover scans) | Yes | Yes (owner decision #1024: the upload is authenticated and `scan_records` keeps the result against the user for 30 days) | No | App functionality | Yes, processed by Anthropic as a service provider | Optional (feature) | Not stored beyond a 30-day fingerprint; Apple: "Photos or Videos" collected; Play: "Photos" collected and shared (service-provider exemption may apply, owner decides). |
 | Other user content (library, shelves, reading status, corrections) | Yes | Yes | No | App functionality | No | Required for core use | iOS "Other User Content"; Play "Other in-app content" |
 | Product interaction / usage (AI usage records) | Yes | Linked: Yes | No | App functionality, analytics (scan accuracy), cost and abuse control | No | Required | Apple "Product Interaction" (AppFunctionality + Analytics, as in the #1001 manifest) |
 | Search history (book search text) | Yes | No (device breadcrumbs carry no user; access logs carry no account ID) | No | App functionality | Yes, Sentry as a service provider (breadcrumbs) | Optional (feature) | `GET /books/search?q=` text reaches device Sentry breadcrumbs and API access logs; declared in the #1001 manifest until #1029 stops collecting it. Play: "In-app search history" |
@@ -116,8 +116,9 @@ Facts the answers rest on:
 Security answers (Play): data encrypted in transit: **Yes**; users can request deletion:
 **No until #291 and #1014 ship**; independent security review: **No**.
 
-Open owner decisions before submission: decide the Photos "linked" and "shared"
-classification (#1024); approve final wording; reconcile with #549 and #473.
+Open owner decisions before submission: whether Photos counts as "shared" with Anthropic
+on Play (service-provider exemption); approve final wording; reconcile with #549 and #473.
+Decided: Photos is linked to the user (#1024).
 
 **Closed testing (verify in console):** new personal Play developer accounts have been
 required to run a closed test (about 12 testers for 14 days) before production access.
@@ -142,4 +143,4 @@ web URL must work without the app installed and be reachable from the Data safet
 | P-5 | #1018 | Owner: store review package (support URL, review demo account, age and content ratings) |
 | P-6 | #1019 | Owner: confirm Play's current target API requirement against targetSdk 36 |
 | Review | #1023 | Ask for consent before sending scan photos to a third-party AI (Apple 5.1.2(i)) |
-| Review | #1024 | Decision needed: is Photos (and backend diagnostics) linked to the user? |
+| Review | #1024 | Decided: Photos is linked to the user (closed) |
