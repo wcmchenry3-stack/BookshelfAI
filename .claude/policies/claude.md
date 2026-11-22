@@ -101,6 +101,8 @@ concatenation or kept in non-code files (JSON, YAML, env), or SDK use in non-Pyt
 text match. The runtime `ALLOWED_MODELS` validation (settings load and registry build) is the real
 gate for model IDs; this check is a second line of defence.
 
+`frontend/scripts/translate.js` (#538) is dev tooling, not an app path: it runs on a developer's machine and calls the Messages API over plain HTTPS with `ANTHROPIC_API_KEY` and the approved `claude-sonnet-5-5`, with no SDK. The checker scans it (it is under `frontend/`), finds no SDK call (check 6 matches SDK calls only) and passes it. Any other raw-HTTP call to the API is outside what this checker sees: review it by hand.
+
 The budget check (8) covers `HTTPException`-style calls with a literal `detail`; `JSONResponse`,
 custom exception handlers and f-string or variable details are not seen. For `**request`
 splats, check 4 resolves the dict bound to the name in the same file (a dict literal, `dict(...)`,

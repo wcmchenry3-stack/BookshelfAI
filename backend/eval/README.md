@@ -6,7 +6,7 @@
 > self-review" if available; only then add the secrets. The code cannot
 > enforce this: without those rules anyone with write access could dispatch
 > an edited copy of `ai-eval.yml` from another branch and exfiltrate the
-> provider keys and the R2 credential.
+> provider key and the R2 credential.
 
 A repeatable, on-demand evaluation of one scan model on the owner's real,
 labelled shelf photos, used to pick the model per tier (default: Haiku 5.5 for
@@ -134,11 +134,6 @@ dimensions (`ai_scan/image_tokens.py`):
 
 - Claude: `ceil(width x height / 750)` image tokens (Anthropic's vision
   formula; their own downscaling only lowers it);
-- OpenAI high detail: fit within 2048 x 2048, shortest side to 768, 512 px
-  tiles; gpt-4o 85 + 170 per tile, gpt-4o-mini 2,833 + 5,667 per tile (a
-  1568 x 768 photo is 8 tiles, about 48,000 tokens on gpt-4o-mini). Where the
-  docs are unclear (a shortest side under 768) the larger of both readings
-  is used;
 
 plus 2,000 prompt tokens, all at the model's highest input rate, plus a full
 `max_tokens` reply at the output rate (so a larger `SCAN_MAX_TOKENS` raises
@@ -186,8 +181,8 @@ database, quota, breaker or ledger.
      secrets.
    - Required reviewers: the owner, so every run is approved; tick "Prevent
      self-review" if it is offered.
-   - Environment secrets: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` (keys for
-     the eval only, with a low spend limit set at the provider),
+   - Environment secrets: `ANTHROPIC_API_KEY` (a key for the eval only, with
+     a low spend limit set at the provider),
      `AI_EVAL_R2_ENDPOINT`, `AI_EVAL_R2_BUCKET`, `AI_EVAL_R2_ACCESS_KEY_ID`,
      `AI_EVAL_R2_SECRET_ACCESS_KEY`. Bucket and endpoint are secrets too, so
      GitHub masks them in any log.

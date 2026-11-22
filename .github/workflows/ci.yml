@@ -143,11 +143,6 @@ jobs:
     secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_BC_BOOKSHELF }}
 
-  openai-policy:
-    needs: [lint-python, lint-frontend, secret-scan]
-    uses: wcmchenry3-stack/.github/.github/workflows/called-openai-policy.yml@main
-    secrets: inherit
-
   # In-repo (not a called-* org workflow): the check lives in
   # scripts/policy/check_claude_policy.py and mirrors .claude/policies/claude.md.
   claude-policy:

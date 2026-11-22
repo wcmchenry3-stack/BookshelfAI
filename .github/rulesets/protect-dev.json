@@ -62,8 +62,6 @@
           { "context": "gate-main-source / Verify PR source is dev" },
           { "context": "backend-health / Backend Health" },
           { "context": "sentry-check / Sentry Check" },
-          { "context": "openai-policy / OpenAI API Policy Check" },
-          { "context": "openai-policy-check / OpenAI API Policy Check" },
           { "context": "gemini-policy-check / Gemini API Policy Check" },
           { "context": "provenance-coverage / Provenance Coverage" },
           { "context": "feedback-token-lint / Feedback Token Lint" },
