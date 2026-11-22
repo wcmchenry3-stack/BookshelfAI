@@ -136,6 +136,7 @@ the whole `git diff` afterwards and restore anything prebuild removed:
 | `ios/BookShelfAI.xcworkspace` (deleted, `pod install` recreates it) | `git checkout` it |
 | `SENTRY_ALLOW_FAILURE=true` and its comment in `ios/.xcode.env` | `git checkout` the file |
 | The Sentry fallback in the "Bundle React Native code and images" build phase | Keep it (see § Sentry bundling fallback) |
+| The `# @generated begin/end bookshelf-sentry-node-env` block in the "Upload Debug Symbols to Sentry" build phase | Plugin-owned (`plugins/withSentryDebugFilesNodeEnv.js`): prebuild re-inserts it, so it should be unchanged. If it is missing, the plugin is not registered before `@sentry/react-native/expo` in `app.json` (see § Known breakage — Sentry dSYM upload phase can't find Node) |
 | `project.pbxproj` CocoaPods integration (Pods groups, `[Expo] Configure project`, `[CP] Embed Pods Frameworks`, `OTHER_SWIFT_FLAGS`, `REACT_NATIVE_PATH`, `USE_HERMES`, ...) | These come from `pod install`, not prebuild. Start from the committed `project.pbxproj` and apply only what prebuild adds (new source files, build-phase script changes) |
 | `Info.plist` `RCTNewArchEnabled` and tab formatting | `pod install` writes them back; keep them |
 | `Info.plist` `CFBundleShortVersionString` / `CFBundleVersion` (prebuild writes the literal `app.json` `version` / `ios.buildNumber`) | Restore `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`. `sync-native-versions.yml` updates only those build settings in `project.pbxproj`, never Info.plist, so a literal goes stale after the next release (it shipped 1.0.0 that way until #713) |
@@ -165,6 +166,44 @@ exit 0 — and `main.jsbundle` is never created.
 A fallback in the build phase detects this and runs `react-native-xcode.sh`
 directly. The `ci_post_xcodebuild.sh` script also validates the bundle exists
 in the archive as a final safety net.
+
+### Known breakage — Sentry dSYM upload phase can't find Node (build 161, #717)
+
+Symptom (archive fails, one "Command PhaseScriptExecution failed" error in
+target BookShelfAI):
+
+```
+PhaseScriptExecution Upload Debug Symbols to Sentry .../Script-B2492F90A9634265A4081F5F.sh
+Script-B2492F90A9634265A4081F5F.sh: line 2: node: command not found
+/bin/sh: : No such file or directory
+```
+
+Cause: `@sentry/react-native`'s Expo plugin rewrites the "Upload Debug Symbols
+to Sentry" phase on every prebuild to
+``/bin/sh "`${NODE_BINARY:-node} --print "...sentry-xcode-debug-files.sh"`"``.
+Unlike "Bundle React Native code and images", that phase never sources
+`ios/.xcode.env` / `ios/.xcode.env.local`, so `NODE_BINARY` is unset, and
+Xcode Cloud has no `node` on PATH (`ci_post_clone.sh` installs Node under
+`~/.bookshelf-node/` and records it only in `.xcode.env.local`). The command
+substitution is empty and `/bin/sh ""` fails. Sentry 8.28 (SDK 58) added the
+quotes; before that (on `dev`) the unquoted `/bin/sh` read empty stdin and
+exited 0, so **dSYM upload was silently skipped**.
+
+Fix: the config plugin `frontend/plugins/withSentryDebugFilesNodeEnv.js`
+prepends a `# @generated begin/end bookshelf-sentry-node-env` block that
+sources `$SRCROOT/.xcode.env` and `$SRCROOT/.xcode.env.local` (as the bundle
+phase does) before Sentry's unchanged command. If Node still can't be found it
+prints `warning:` and exits 0 when `SENTRY_ALLOW_FAILURE=true` (set in
+`.xcode.env`), else `error:` and exit 1. It throws during prebuild if the
+Sentry phase is missing or no longer calls `sentry-xcode-debug-files.sh`.
+
+It must be listed **before** `@sentry/react-native/expo` in `app.json`
+`plugins`: for the same mod Expo runs the last-registered plugin's action
+first, so listing it earlier makes it run after Sentry's rewrite.
+`__tests__/unit/withSentryDebugFilesNodeEnv.test.js` checks the plugin, that
+the committed `project.pbxproj` phase equals the plugin output, the `app.json`
+order, and runs the phase under `/bin/sh` with no `node` on PATH. Don't
+hand-edit the phase; change the plugin and re-run prebuild (`--no-clean`).
 
 ## Xcode version rollovers
 
@@ -356,4 +395,6 @@ Don't add new `brew install` steps to Xcode Cloud scripts.
 | `frontend/ios/ci_scripts/select_app_env.sh` | Picks the backend per build: prod for `main`/tags, dev otherwise (#973) |
 | `frontend/ios/ci_scripts/check_xcode_compat.sh` | Fails fast when the Xcode major is too new for the Expo SDK (#708) |
 | `frontend/ios/ci_scripts/ci_post_xcodebuild.sh` | Post-build hook: validates main.jsbundle in archive |
+| `frontend/plugins/withPodDeploymentTargetFix.js` | Config plugin: Podfile resource-bundle deployment-target fix (Xcode 27) |
+| `frontend/plugins/withSentryDebugFilesNodeEnv.js` | Config plugin: loads `NODE_BINARY` before the Sentry dSYM upload phase (#717) |
 | `.github/workflows/podfile-lock.yml` | GitHub Actions (not Xcode Cloud): generates `Podfile.lock` on macOS and checks the committed one |

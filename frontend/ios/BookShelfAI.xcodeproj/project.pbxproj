@@ -318,7 +318,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"`${NODE_BINARY:-node} --print \"require('path').dirname(require.resolve('@sentry/react-native/package.json')) + '/scripts/sentry-xcode-debug-files.sh'\"`\"";
+			shellScript = "# @generated begin bookshelf-sentry-node-env (plugins/withSentryDebugFilesNodeEnv.js - DO NOT MODIFY)\n# Load NODE_BINARY like \"Bundle React Native code and images\" does.\nif [ -f \"$SRCROOT/.xcode.env\" ]; then . \"$SRCROOT/.xcode.env\"; fi\nif [ -f \"$SRCROOT/.xcode.env.local\" ]; then . \"$SRCROOT/.xcode.env.local\"; fi\nif [ -z \"$NODE_BINARY\" ] && ! command -v node >/dev/null 2>&1; then\n  if [ \"$SENTRY_ALLOW_FAILURE\" = true ]; then\n    echo \"warning: Sentry dSYM upload skipped: NODE_BINARY is unset and node is not on PATH (SENTRY_ALLOW_FAILURE=true)\"\n    exit 0\n  fi\n  echo \"error: Sentry dSYM upload: NODE_BINARY is unset and node is not on PATH. Set NODE_BINARY in ios/.xcode.env.local.\"\n  exit 1\nfi\n# @generated end bookshelf-sentry-node-env\n/bin/sh \"`${NODE_BINARY:-node} --print \"require('path').dirname(require.resolve('@sentry/react-native/package.json')) + '/scripts/sentry-xcode-debug-files.sh'\"`\"";
 		};
 		D35A116AD8F943B5D1843C5A /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
