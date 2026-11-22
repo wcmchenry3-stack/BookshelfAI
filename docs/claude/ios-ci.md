@@ -160,7 +160,18 @@ aggregation, as in #994); those are informational and deliberately not committed
 were already linked as peers of `expo-router`); Reanimated stays 4.7.1.
 
 `PrivacyInfo.xcprivacy` is generated from `app.json` `ios.privacyManifests`, so
-change the API reasons there, not in the file.
+change the API reasons and the collected data types there, not in the file, then
+regenerate it. A Linux prebuild writes the plist with 2-space indentation; re-indent it
+with tabs like the committed file so the diff shows only the real change.
+Prebuild merges into the committed plist and appends a new collected type at the
+end, so add new types at the end of the `app.json` list.
+Prebuild only appends missing types and adds purposes; it never removes a type or
+rewrites Linked or Tracking. To remove a type or change Linked/Tracking/purposes,
+delete that entry from `PrivacyInfo.xcprivacy` (or the whole file) before prebuild,
+or edit the entry by hand to match `app.json`; the test catches any mismatch.
+`__tests__/unit/IosPrivacyManifest.test.ts` fails if the two differ (#1001); the
+declared types and their store answers are listed in
+`docs/claude/ios-appstore-submission.md` (App Privacy declarations).
 
 ## JS bundle validation (GitHub Actions)
 
