@@ -349,7 +349,8 @@ policy update (#997). To repeat it, or to switch back after a rollback:
 2. **Check the current state** from the `bookshelf-api` Render shell:
    `python -m app.ai.settings list` (the shell opens in `backend/`, the
    service's `rootDir`). The "Providers and models"
-   group should show `openai` / `gpt-4o-mini` and `gpt-4o`.
+   group shows `openai` / `gpt-4o-mini` and `gpt-4o` before the switch, and
+   `anthropic` / `claude-haiku-5-5` and `claude-sonnet-5-5` after it.
 3. **Switch both tiers.** Each command writes the provider and its registry
    default model in one transaction (`claude-haiku-5-5` for standard,
    `claude-sonnet-5-5` for enhanced, decided in #547; fixed IDs, since
