@@ -8,5 +8,6 @@
   "requiresConnection": "この操作にはインターネット接続が必要です。",
   "offlineEditNotice": "オフラインです。ライブラリを編集するにはオンラインにしてください。",
   "unverified": "未確認",
-  "unverifiedA11y": "未確認：自分で追加した本（カタログにありません）"
+  "unverifiedA11y": "未確認：自分で追加した本（カタログにありません）",
+  "serviceUnavailable": "現在BookshelfAIに接続できません。しばらくしてからもう一度お試しください。"
 }

@@ -1,17 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../hooks/useTheme';
+import SheetModal from './SheetModal';
+import { Button } from './ui/Button';
 import { api } from '../lib/api';
 import {
   UNVERIFIED_LIMITS,
@@ -19,6 +12,7 @@ import {
   type UnverifiedDraft,
   type UnverifiedFailure,
 } from '../lib/unverified';
+import { fontFor } from '../theme/typography';
 
 const FAILURE_KEYS: Record<UnverifiedFailure, string> = {
   duplicate: 'addUnverified.duplicate',
@@ -125,160 +119,110 @@ export function AddUnverifiedBookSheet({
     {
       color: colors.onSurface,
       backgroundColor: colors.surfaceContainerHigh,
-      borderColor: hasError ? colors.error : colors.outline,
+      borderColor: hasError ? colors.error : colors.outlineField,
       fontSize: theme.typography.fontSizeBase,
     },
   ];
 
   return (
-    <Modal
+    <SheetModal
       visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onDismiss}
-      onDismiss={onHidden}
-      accessibilityViewIsModal
+      onDismiss={onDismiss}
+      onHidden={onHidden}
+      title={t('addUnverified.title')}
+      closeLabel={t('addUnverified.cancel')}
+      closeA11yLabel={t('addUnverified.closeA11y')}
+      footer={
+        <Button
+          label={t('addUnverified.save')}
+          onPress={save}
+          loading={saving}
+          accessibilityHint={t('addUnverified.saveHint')}
+        />
+      }
     >
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+        <Text style={{ color: colors.textSecondary, fontSize: theme.typography.fontSizeSM }}>
+          {t('addUnverified.intro')}
+        </Text>
+
+        <Text style={[styles.label, { color: colors.onSurface }]} nativeID="unverified-title">
+          {t('addUnverified.titleLabel')}
+        </Text>
+        <TextInput
+          testID="unverified-title-input"
+          style={inputStyle(!!titleError)}
+          value={title}
+          onChangeText={(v) => {
+            setTitle(v);
+            if (titleError) setTitleError('');
+          }}
+          maxLength={UNVERIFIED_LIMITS.title}
+          accessibilityLabel={t('addUnverified.titleLabel')}
+          accessibilityLabelledBy="unverified-title"
+          returnKeyType="next"
+        />
+        {titleError ? (
+          <Text style={[styles.fieldError, { color: colors.error }]} accessibilityRole="alert">
+            {titleError}
+          </Text>
+        ) : null}
+
+        <Text style={[styles.label, { color: colors.onSurface }]} nativeID="unverified-author">
+          {t('addUnverified.authorLabel')}
+        </Text>
+        <TextInput
+          testID="unverified-author-input"
+          style={inputStyle(!!authorError)}
+          value={author}
+          onChangeText={(v) => {
+            setAuthor(v);
+            if (authorError) setAuthorError('');
+          }}
+          maxLength={UNVERIFIED_LIMITS.author}
+          accessibilityLabel={t('addUnverified.authorLabel')}
+          accessibilityLabelledBy="unverified-author"
+          returnKeyType="next"
+        />
+        {authorError ? (
+          <Text style={[styles.fieldError, { color: colors.error }]} accessibilityRole="alert">
+            {authorError}
+          </Text>
+        ) : null}
+
+        <Text style={[styles.label, { color: colors.onSurface }]} nativeID="unverified-isbn">
+          {t('addUnverified.isbnLabel')}
+        </Text>
+        <TextInput
+          testID="unverified-isbn-input"
+          style={inputStyle(false)}
+          value={isbn}
+          onChangeText={setIsbn}
+          maxLength={UNVERIFIED_LIMITS.isbn}
+          keyboardType="numbers-and-punctuation"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          accessibilityLabel={t('addUnverified.isbnLabel')}
+          accessibilityLabelledBy="unverified-isbn"
+        />
+
+        {formError ? (
           <Text
-            style={[styles.heading, { color: colors.text, fontSize: theme.typography.fontSizeLG }]}
-            accessibilityRole="header"
+            style={[styles.formError, { color: colors.error }]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
           >
-            {t('addUnverified.title')}
+            {formError}
           </Text>
-          <Pressable
-            onPress={onDismiss}
-            accessibilityRole="button"
-            accessibilityLabel={t('addUnverified.closeA11y')}
-            style={styles.headerButton}
-            hitSlop={8}
-          >
-            <Text style={{ color: colors.primary, fontSize: theme.typography.fontSizeBase }}>
-              {t('addUnverified.cancel')}
-            </Text>
-          </Pressable>
-        </View>
-
-        <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-          <Text style={{ color: colors.textSecondary, fontSize: theme.typography.fontSizeSM }}>
-            {t('addUnverified.intro')}
-          </Text>
-
-          <Text style={[styles.label, { color: colors.onSurface }]} nativeID="unverified-title">
-            {t('addUnverified.titleLabel')}
-          </Text>
-          <TextInput
-            testID="unverified-title-input"
-            style={inputStyle(!!titleError)}
-            value={title}
-            onChangeText={(v) => {
-              setTitle(v);
-              if (titleError) setTitleError('');
-            }}
-            maxLength={UNVERIFIED_LIMITS.title}
-            accessibilityLabel={t('addUnverified.titleLabel')}
-            accessibilityLabelledBy="unverified-title"
-            returnKeyType="next"
-          />
-          {titleError ? (
-            <Text style={[styles.fieldError, { color: colors.error }]} accessibilityRole="alert">
-              {titleError}
-            </Text>
-          ) : null}
-
-          <Text style={[styles.label, { color: colors.onSurface }]} nativeID="unverified-author">
-            {t('addUnverified.authorLabel')}
-          </Text>
-          <TextInput
-            testID="unverified-author-input"
-            style={inputStyle(!!authorError)}
-            value={author}
-            onChangeText={(v) => {
-              setAuthor(v);
-              if (authorError) setAuthorError('');
-            }}
-            maxLength={UNVERIFIED_LIMITS.author}
-            accessibilityLabel={t('addUnverified.authorLabel')}
-            accessibilityLabelledBy="unverified-author"
-            returnKeyType="next"
-          />
-          {authorError ? (
-            <Text style={[styles.fieldError, { color: colors.error }]} accessibilityRole="alert">
-              {authorError}
-            </Text>
-          ) : null}
-
-          <Text style={[styles.label, { color: colors.onSurface }]} nativeID="unverified-isbn">
-            {t('addUnverified.isbnLabel')}
-          </Text>
-          <TextInput
-            testID="unverified-isbn-input"
-            style={inputStyle(false)}
-            value={isbn}
-            onChangeText={setIsbn}
-            maxLength={UNVERIFIED_LIMITS.isbn}
-            keyboardType="numbers-and-punctuation"
-            autoCapitalize="characters"
-            autoCorrect={false}
-            accessibilityLabel={t('addUnverified.isbnLabel')}
-            accessibilityLabelledBy="unverified-isbn"
-          />
-
-          {formError ? (
-            <Text
-              style={[styles.formError, { color: colors.error }]}
-              accessibilityRole="alert"
-              accessibilityLiveRegion="polite"
-            >
-              {formError}
-            </Text>
-          ) : null}
-        </ScrollView>
-
-        <View style={[styles.footer, { borderTopColor: colors.border }]}>
-          <Pressable
-            style={[styles.saveButton, { backgroundColor: colors.primary }, saving && styles.busy]}
-            onPress={save}
-            disabled={saving}
-            accessibilityRole="button"
-            accessibilityLabel={t('addUnverified.save')}
-            accessibilityHint={t('addUnverified.saveHint')}
-            accessibilityState={{ disabled: saving, busy: saving }}
-          >
-            {saving ? (
-              <ActivityIndicator color={colors.onPrimary} />
-            ) : (
-              <Text
-                style={[
-                  styles.saveText,
-                  { color: colors.onPrimary, fontSize: theme.typography.fontSizeBase },
-                ]}
-              >
-                {t('addUnverified.save')}
-              </Text>
-            )}
-          </Pressable>
-        </View>
-      </View>
-    </Modal>
+        ) : null}
+      </ScrollView>
+    </SheetModal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  heading: { fontWeight: '700' },
-  headerButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
   body: { padding: 16, gap: 8 },
-  label: { fontWeight: '600', marginTop: 8 },
+  label: { fontFamily: fontFor('600'), marginTop: 8 },
   input: {
     borderWidth: 1,
     borderRadius: 8,
@@ -287,15 +231,5 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   fieldError: { fontSize: 13 },
-  formError: { fontSize: 14, fontWeight: '600', marginTop: 8 },
-  footer: { padding: 16, borderTopWidth: StyleSheet.hairlineWidth },
-  saveButton: {
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 48,
-  },
-  busy: { opacity: 0.6 },
-  saveText: { fontWeight: '600' },
+  formError: { fontSize: 14, fontFamily: fontFor('600'), marginTop: 8 },
 });

@@ -219,7 +219,7 @@ class TestFailClosed:
         with (
             _loader(OSError("db down")),
             patch.object(StarletteUploadFile, "read", new=AsyncMock()) as read,
-            patch("app.api.scan._verify_turnstile", new=AsyncMock()) as turnstile,
+            patch("app.api._bot_check._verify_turnstile", new=AsyncMock()) as turnstile,
             patch.object(ai_settings.settings, "turnstile_required", True),
             patch("app.api.scan.sanitize_image") as sanitize,
         ):
@@ -1156,7 +1156,7 @@ class TestCLI:
     def test_every_key_has_an_area_and_bounds(self):
         assert ai_settings.OTHER_AREA not in {
             ai_settings.area_of(k) for k in ai_settings.KNOWN_KEYS
-        }, "give the new key an area in AREA_RULES (app/ai/settings.py)"
+        }, "give the new key an area in AREA_RULES (app/ai/settings/areas.py)"
         grouped = [k for keys in ai_settings.keys_by_area().values() for k in keys]
         assert sorted(grouped) == sorted(ai_settings.KNOWN_KEYS)
         for key, definition in ai_settings.DEFINITIONS.items():

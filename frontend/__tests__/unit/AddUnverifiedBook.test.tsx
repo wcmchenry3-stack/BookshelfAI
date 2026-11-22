@@ -35,6 +35,7 @@ jest.mock('../../hooks/useTheme', () => ({
         tertiaryFixed: '#ffdea8',
         onTertiaryFixed: '#271900',
       },
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeLG: 20, fontSizeSM: 14 },
     },
   }),

@@ -17,7 +17,13 @@ Authorization: Bearer <access_token>
 
 Access tokens are JWT RS256 with a **15-minute** lifetime (`JWT_ACCESS_TTL_MINUTES`, default 15, 1-60; `expires_in` in the token response is in seconds). On expiry, the client calls `/auth/refresh` with its refresh token to get a new pair (old refresh token is revoked in the process — see [architecture.md](architecture.md#auth-architecture)).
 
-Every access and refresh token carries the user's `token_version` as the `tv` claim, and every authenticated request compares it with `users.token_version`, read from the user row the request already loads (#689). `POST /auth/logout-all` bumps that version, so a token issued before the bump gets **401 `{"detail": "token_revoked"}`**, as does a token without `tv`. Clients sign out on `token_revoked` instead of refreshing. `JWT_EXPIRY_HOURS` (the old 24 h setting) is ignored, with a warning at boot.
+Every access and refresh token carries the user's `token_version` as the `tv` claim, and every authenticated request compares it with `users.token_version`, read from the user row the request already loads (#689). `POST /auth/logout-all` bumps that version, so a token issued before the bump gets **401 `{"detail": "token_revoked"}`**, as does a token whose `tv` is malformed. Clients sign out on `token_revoked` instead of refreshing.
+
+**Legacy tokens (release upgrade, #725):** tokens issued before #689 have no `tv`. So the release that ships #689 does not sign everyone out, a legacy access token gets **401 `{"detail": "token_outdated"}`** (not `token_revoked`), which the app treats as any other 401: it refreshes and retries. A legacy refresh token is read as `tv = 0` and is accepted only while the user's `token_version` is still 0 (no sign out of all devices since); it passes the usual `jti`, revoked and expiry checks and is rotated into a `tv`-bearing pair, so legacy tokens are gone after one refresh. Each accepted legacy refresh is logged at INFO (`refresh accepted legacy token without tv (user_id=...)`, no token values) so we can see the count reach zero. This window is temporary: #689 reached production and the dev API on **2026-10-27**, so no token without `tv` has been issued since, and legacy refresh tokens (`REFRESH_TOKEN_EXPIRY_DAYS` = 7) have all expired by **2026-11-03 04:00 UTC**; after that the path accepts nothing and can be removed (#735, on or after 2026-11-04). After removal a token without `tv` is rejected again.
+
+*Residual risk:* old app builds (pre-#689 client, which does not share one in-flight refresh) that fire several requests at once can each send `/auth/refresh` with the same single-use legacy refresh token. One wins; the others get a 401, and that client then signs the user out. The same race already exists for those builds on ordinary access-token expiry, so this is not a regression, and refresh-token reuse is deliberately not allowed.
+
+`JWT_EXPIRY_HOURS` (the old 24 h setting) is ignored, with a warning at boot.
 
 ### Error response format
 
@@ -31,7 +37,7 @@ Common status codes:
 | Code | Meaning | Typical causes |
 |---|---|---|
 | 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware) |
-| 401 | Unauthorized | missing / invalid / expired access token, invalid refresh token, session revoked by sign out of all devices (`token_revoked`) |
+| 401 | Unauthorized | missing / invalid / expired access token, access token issued before #689 (`token_outdated`, refresh and retry), invalid refresh token, session revoked by sign out of all devices (`token_revoked`), rotated refresh token replayed (`refresh_reused`) |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), and other per-endpoint conflicts |
@@ -40,7 +46,7 @@ Common status codes:
 | 402 | Payment Required | not returned by `/scan` since #582 (there is no monthly limit; older servers sent `scan_limit_reached` / `enhanced_limit_reached`) |
 | 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), the user's `/scan` requests for the day used up (`scan_requests_daily_limit`, #586), another scan still running (`scan_in_progress`), enhanced scans throttled after repeated empty enhanced scans (`enhanced_throttled`). `Retry-After` is listed in `Access-Control-Expose-Headers`, so browser clients can read it on cross-origin responses |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
-| 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity |
+| 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity, a database query ran longer than the statement timeout (`db_timeout`, any endpoint, with `Retry-After: 5`; #696) |
 
 ### Rate limits
 
@@ -51,8 +57,8 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all` |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
-| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*` |
-| `rate_limit_reads` | 120/min | `GET /user-books`, `GET /auth/me`, `GET /scan/usage` |
+| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences` |
+| `rate_limit_reads` | 120/min | `GET /user-books`, `GET /user-books/trash`, `GET /auth/me`, `GET /scan/usage` |
 | `rate_limit_health` | 60/min | `GET /health`, `GET /health/db` |
 
 429 responses are logged at WARN level.
@@ -102,7 +108,17 @@ curl -X POST https://bookshelfapi.buffingchi.com/auth/google \
 
 ### `POST /auth/refresh` — rotate refresh token + issue new access token
 
-Validates the refresh JWT, checks the `jti` exists + is not revoked and that its `tv` claim equals `users.token_version`, then **revokes the old `jti` and issues a new pair**. Refresh tokens are single-use.
+Validates the refresh JWT, checks the `jti` exists + is not revoked and that its `tv` claim equals `users.token_version`, then **revokes the old `jti` and issues a new pair**. Refresh tokens are single-use. A refresh token without `tv` (issued before #689) counts as `tv = 0` until the legacy path is removed (#725; it accepts nothing after 2026-11-03, removal in #735; see Legacy tokens above).
+
+**Families and reuse detection (#690).** Each sign-in starts a token *family*; every rotation's new token joins it, and the old row is marked rotated (`used_at`, `replaced_by_id`). When an already-rotated token is presented again:
+
+- **Concurrent duplicate** (the token was still live when this request arrived, and a parallel request with the same token rotated it first) whose twin's new token is still unused: `200` with a **fresh pair in the same family**, and the twin's new token is *displaced*. Both requests get a `200`, but only the pair minted last stays usable; presenting the other one later is reuse. Two requests with one token are either one client's double refresh or a thief racing the real client, and this way a thief who wins the race is caught at the next refresh of either side. If the twin's new token was already refreshed or displaced by a third request with the same token: reuse (`401 refresh_reused`, every session revoked), since one app never sends three. If it was logged out or deleted: plain `401` "Refresh token revoked or not found", no alert. The holder of the displaced pair keeps its access token until it expires (up to `JWT_ACCESS_TTL_MINUTES`, default 15); detection needs that holder to refresh.
+- **Retry within the grace window** (`REFRESH_REUSE_GRACE_SECONDS`, default **30 s**, 0-120, counted from the rotation), and the token it was rotated into has not been used or revoked: `200` with a **fresh pair in the same family**, and the earlier successor is *displaced*. The server stores no raw token, so it cannot hand back the same successor. This covers a response lost on the network or an app suspended mid-request. **One retry per token**: once its successor has been displaced, presenting the same token again is reuse.
+- **Displaced token** presented (at any time, no grace window): reuse. Its holder is not the holder of the pair that replaced it.
+- **Reuse** (outside the window, the successor has already been rotated or displaced, or the token itself was displaced): `401 {"detail": "refresh_reused"}`. Every refresh token of the user is revoked (the family's included), `users.token_version` is bumped so every access token gets `401 token_revoked`, and one Sentry warning is sent with the user id and family id only.
+- Within the window, if the successor was revoked by a logout or has been deleted, the session is over: plain `401`.
+
+Why 30 s: a retry follows a lost response within seconds, but a slow mobile request can take tens of seconds to time out first. A longer window does not weaken detection. A replay inside the window displaces the real client's successor, so the real client's next refresh (about 15 minutes later) is reuse and revokes the family. Because each token gets one retry and a displaced token is always reuse, two holders cannot take turns inside the window.
 
 **Auth:** none (the refresh token in the body is the credential)
 **Rate limit:** `rate_limit_auth`
@@ -117,7 +133,8 @@ Validates the refresh JWT, checks the `jti` exists + is not revoked and that its
 
 **Errors:**
 - `401` — token expired / invalid signature / wrong type / `jti` revoked or not found / user not found
-- `401` `token_revoked` — the token's `tv` is missing or older than `users.token_version` (a sign out of all devices happened after it was issued); the presented `jti` is revoked too
+- `401` `token_revoked` — the token's `tv` is malformed or older than `users.token_version` (a sign out of all devices happened after it was issued), or the token has no `tv` and `users.token_version` is no longer 0; the presented `jti` is revoked too
+- `401` `refresh_reused` — an already-rotated token presented again outside the grace rules (see above); every session of the user is revoked. The app signs out, as on any refresh `401`
 
 **Example:**
 ```bash
@@ -186,14 +203,58 @@ curl -X POST https://bookshelfapi.buffingchi.com/auth/logout-all \
   "email": "you@example.com",
   "display_name": "You",
   "avatar_url": "https://lh3.googleusercontent.com/...",
-  "created_at": "2026-03-15T12:00:00Z"
+  "created_at": "2026-03-15T12:00:00Z",
+  "default_tab": null
 }
 ```
+
+`default_tab` (#913) is the "Open on" screen: `"scan"`, `"wishlist"`, `"my-books"`, or `null` (never set; the app opens on Scan). Every existing user has `null`.
 
 **Example:**
 ```bash
 curl https://bookshelfapi.buffingchi.com/auth/me \
   -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+---
+
+## Users
+
+### `PATCH /users/me/preferences` — change the signed-in user's settings
+
+**Auth:** required (Bearer access token)
+**Rate limit:** `rate_limit_writes`
+**Source:** `backend/app/api/users.py:update_preferences`
+
+Changes only the caller's own row: the user comes from the access token, and the body cannot name another user. Only the fields sent change; `null` clears one.
+
+**Request:**
+```json
+{ "default_tab": "wishlist" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `default_tab` | `"scan"` \| `"wishlist"` \| `"my-books"` \| `null`, optional | the "Open on" screen (#913); `null` means Scan. Omitted: unchanged |
+
+**Response `200`:** the user's preferences after the change.
+```json
+{ "default_tab": "wishlist" }
+```
+
+**Errors:**
+| Status | `detail` | When |
+|---|---|---|
+| `401` | `Token expired`, `Invalid token`, `token_revoked`, ... | no, bad or revoked access token |
+| `422` | FastAPI validation list | `default_tab` not one of the allowed values (e.g. `"settings"`, `"Scan"`), any other field in the body (`user_id`, `tier`, ...), or a body that is not an object |
+| `429` | rate limited | over `rate_limit_writes` |
+
+**Example:**
+```bash
+curl -X PATCH https://bookshelfapi.buffingchi.com/users/me/preferences \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"default_tab": "my-books"}'
 ```
 
 ---
@@ -237,7 +298,7 @@ Multipart upload → optional Cloudflare Turnstile bot check → file validation
 
 **Request:** `multipart/form-data`
 - `file` (required) — image, max 5 MB, extensions `.jpg` / `.jpeg` / `.png` / `.webp` / `.heic` / `.heif`, `Content-Type` must start with `image/`, magic bytes must match the declared extension
-- `cf-turnstile-response` (required iff `TURNSTILE_SECRET_KEY` is set on the server) — Turnstile token from the client widget
+- `cf-turnstile-response` (required when `TURNSTILE_REQUIRED=true`, the default) — a fresh, single-use Turnstile token from the client's invisible widget, one per request (#740)
 - `enhanced` (optional, default `false`) — `true` re-scans with the stronger model. Premium only (#533); see the rules below
 - `attempt` (optional, integer 1–6, default `1`) — which try of this scan the request is (#603): `1` the first try, `2`–`6` the app's scheduled retries (#574). A missing or empty value means `1`. Anything else (not an integer, e.g. `x` or `1.5`, or out of range, e.g. `0` or `7`) is a `422` validation error like any other bad form field: it is rejected before the handler runs, so nothing is counted (not even the per-user daily request count, #586, or the 10/minute rate limit, which is applied by the handler's decorator), reserved or recorded. Parsing is Pydantic's lenient integer parsing, so `01`, `+3`, `1.0` and surrounding whitespace are accepted as integers. Purely informational: it is stored on every `ai_usage` row the request writes and in the `scan_record` log line, and never changes the quota, the charge, the cost, the model, the limits or the order of the checks
 
@@ -371,7 +432,7 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 
 Finds the `Book` by `open_library_work_id`, then `google_books_id`, and the `Edition` by the first edition's `isbn_13`; then inserts a `UserBook` with `status=wishlisted` and `wishlisted_at=now()`.
 
-**A book the user already has is refused with `409` (#587).** A library holds one entry per title (`uq_user_books_user_book`), so this endpoint no longer returns the existing entry: when the user already has an entry for the `Book`, for the same `open_library_work_id` or `google_books_id` (so the 409 agrees with what the scan showed), or an entry whose edition has the same ISBN as the posted first edition (ISBN-10 converted to ISBN-13, whichever `Book` it belongs to), nothing is written (not even a new catalog row) and `detail` says how they have it, with the same values and rules as `ownership` on scan results: `owned_same_edition` (same ISBN, or the same `edition_id`), `owned_other_edition` or `owned_edition_unknown`. Only the requesting user's library counts. Of two adds of the same book at once, the one that loses on `uq_user_books_user_book` gets the same 409.
+**A book the user already has is refused with `409` (#587).** A library holds one live entry per title (`uq_user_books_user_book_live`; an entry in the trash does not count, #683), so this endpoint no longer returns the existing entry: when the user already has an entry for the `Book`, for the same `open_library_work_id` or `google_books_id` (so the 409 agrees with what the scan showed), or an entry whose edition has the same ISBN as the posted first edition (ISBN-10 converted to ISBN-13, whichever `Book` it belongs to), nothing is written (not even a new catalog row) and `detail` says how they have it, with the same values and rules as `ownership` on scan results: `owned_same_edition` (same ISBN, or the same `edition_id`), `owned_other_edition` or `owned_edition_unknown`. Only the requesting user's library counts. Of two adds of the same book at once, the one that loses on `uq_user_books_user_book_live` gets the same 409. A book whose entry is in the trash (#683) is not owned: adding it creates a new entry, and the trashed one can then no longer be restored (`409 restore_conflict`).
 
 **Shared-catalog rule (#602).** `books` and `editions` are shared by every user, so they are written only from server-produced data. A missing `Book` / `Edition` is created only when `catalog_token` verifies: signed by this server for **this user**, not expired, current version (`v1`), and every catalog field in the body exactly as signed. Without a valid token (missing, malformed, expired, another user's, or any field changed) the request may only link the user to a `Book` that already exists (and to an existing `Edition` of that book); if no such `Book` exists it is refused with `422 catalog_token_invalid` and nothing is written. A book with neither `open_library_work_id` nor `google_books_id` is never added, token or not: `422 book_not_in_catalog`. A user book is never linked to an edition of a different book (it is then saved without an edition). Existing catalog rows are never changed by this endpoint, signed or not.
 
@@ -414,7 +475,7 @@ The `EnrichedBook` returned by `/scan` or `/books/search`, posted back as receiv
 ```
 
 **Errors:**
-- `422` — validation failure (`detail` is a list)
+- `422` — validation failure (`detail` is a list). `cover_url` must be a single URL (no whitespace, control or format characters) using `https`, with a host that is not `localhost` (or `*.localhost`), not an IP address in a private or reserved range, not a numeric spelling of an IP (`2130706433`, `0x7f.1`, `127.1`) and without a trailing dot; the host is never resolved (#747: the server does not fetch the cover, and a lookup would block the worker), and every refusal gives the same message
 - `422 catalog_token_invalid` — the book is not in the catalog yet and the body has no valid `catalog_token` (#602); nothing was written. The app shows its "couldn't save" message
 - `422 book_not_in_catalog` — the book has no `open_library_work_id` and no `google_books_id` (no provider matched it), so it can never be in the catalog (#602); nothing was written. The app shows the same "couldn't save" message
 - `409 owned_same_edition` / `409 owned_other_edition` / `409 owned_edition_unknown` — the user already has this book (#587, see above); nothing was written. The app treats it as "already in your library", not as a failure: no retry, no error report
@@ -460,7 +521,7 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 **Errors:**
 - `422` — validation failure (`detail` is a list; `loc` names the field, e.g. `["body", "isbn"]`), or an unknown field
 - `409 unverified_duplicate` — the user already has an unverified entry with the same title and author (casefolded, punctuation and spacing ignored; text that is only punctuation is compared as typed, so `!!!` and `???` differ) or the same ISBN; nothing was written. Other users' entries never count
-- `409 unverified_limit_reached` — the user already holds `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) unverified entries; nothing was written. Deleting one (`DELETE /user-books/{id}`) frees a place
+- `409 unverified_limit_reached` — the user already holds `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) unverified entries; nothing was written. Deleting one (`DELETE /user-books/{id}`) frees a place: entries in the trash do not count towards the cap or the duplicate check (#683)
 
 ---
 
@@ -473,7 +534,9 @@ Concurrent adds by one user are serialised (the user's `users` row is locked), s
 **Query params:**
 - `status` (optional) — filter by `wishlisted` / `purchased` / `reading` / `read`
 
-**Response `200`:** array of `UserBookRead`, ordered by `created_at DESC`, with `Book` + `editions` + optional `Edition` eager-loaded. Every row has `unverified` (#616): `false` for a catalog book; `true` for the user's own unverified entry, which is shaped as in `POST /wishlist/unverified` (`book` holds only its `id`, `title` and `author`; `unverified_isbn_13`). `PATCH` and `DELETE /user-books/{id}` work on both kinds; deleting an unverified entry also deletes its `user_custom_books` row. `POST /purchased` takes only catalog books (an unverified entry's `book.id` is `404`); use `PATCH` to change an unverified entry's status.
+**Response `200`:** array of `UserBookRead`, ordered by `created_at DESC`, with `Book` + `editions` + optional `Edition` eager-loaded. Every row has `unverified` (#616): `false` for a catalog book; `true` for the user's own unverified entry, which is shaped as in `POST /wishlist/unverified` (`book` holds only its `id`, `title` and `author`; `unverified_isbn_13`). `PATCH` and `DELETE /user-books/{id}` work on both kinds; deleting an unverified entry also moves its `user_custom_books` row to the trash. Entries in the trash (#683) are never listed here. `POST /purchased` takes only catalog books (an unverified entry's `book.id` is `404`); use `PATCH` to change an unverified entry's status.
+
+Since #682 every row also has `overrides` (`{"title", "author", "cover_url"}`, each the user's own value or `null`), and `book.title` / `book.author` / `book.cover_url` show the user's override when set. A row whose catalog book was merged into another (`books.merged_into_id`) shows the surviving book (its `id`, fields and editions). Both are additive: older clients that ignore `overrides` keep working.
 
 **Example:**
 ```bash
@@ -485,7 +548,7 @@ curl "https://bookshelfapi.buffingchi.com/user-books?status=reading" \
 
 ### `POST /purchased` — promote to purchased (or create directly)
 
-Transitions an existing `UserBook` to `status=purchased` with `purchased_at=now()`, OR creates a new `UserBook` in `purchased` status if the user didn't have one yet for this book. Optionally binds an edition via `edition_id` or by ISBN-13 lookup.
+Transitions an existing live `UserBook` to `status=purchased` with `purchased_at=now()`, OR creates a new `UserBook` in `purchased` status if the user didn't have one yet for this book. Optionally binds an edition via `edition_id` or by ISBN-13 lookup.
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -501,16 +564,23 @@ Transitions an existing `UserBook` to `status=purchased` with `purchased_at=now(
 ```
 Either `isbn_13` or `edition_id` may be provided (or neither). If `isbn_13` is provided and matches an existing `Edition` of the book, that edition is bound.
 
+**An `edition_id` must be an edition of `book_id` (#686).** The server checks `editions.book_id == book_id` before writing (shared helper `app/services/edition_check.py`); a client-sent pair is never trusted. `edition_id: null` skips the check. This is the only write that accepts an `edition_id`: `POST /wishlist` takes no `edition_id` (it links only an edition of the same book, see above) and `PATCH /user-books/{id}` cannot change the edition.
+
 **Response `201`:** the `UserBook` (same shape as `/wishlist` response).
 
 **Errors:**
 - `404` — `book_id` not found
+- `422 edition_book_mismatch` — `edition_id` is not an edition of `book_id` (another book's edition, or no such edition: both get the same answer). Nothing is written. The app does not send `edition_id` today, so it has no message for this code.
+
+A `book_id` whose catalog row was merged into another (#682, `books.merged_into_id`) adds or promotes the surviving book instead: no library entry is created on a merged row. An existing entry of the same work is promoted whichever row it is on (the survivor or one merged into it; the survivor's own entry first), so the user never gets a second entry of the work. An entry in the trash (#683) is never promoted: the book is added as a new live entry and the trashed one stays in the trash. `edition_id` must then be an edition of the surviving book (a merge moves editions there); one still on the merged row is `422 edition_book_mismatch`.
 
 ---
 
-### `PATCH /user-books/{user_book_id}` — update status / notes / rating
+### `PATCH /user-books/{user_book_id}` — update status / notes / rating / overrides
 
 Partial update. When `status` transitions, the corresponding timestamp column is set automatically if not already set (`purchased_at` / `started_at` / `finished_at`).
+
+**Overrides (#682).** `title_override`, `author_override` and `cover_url_override` are the user's own values for this library entry. They are stored on the user's `user_books` row only; the shared `books` row is never changed. Left out: unchanged. `null`: cleared, so the catalog value shows again ("reset to catalog"). A string: set. The response's `book.title` / `book.author` / `book.cover_url` show the override when set and the catalog value otherwise; `overrides` holds the user's values (`null` where the catalog value shows). Other fields in the body (`title`, `book`, `book_id`, ...) are ignored.
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -521,23 +591,30 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 {
   "status": "reading",
   "notes": "Deep first chapter",
-  "rating": 5
+  "rating": 5,
+  "title_override": "Dune (annotated edition)",
+  "cover_url_override": null
 }
 ```
 
 **Validation:**
 - `status`: one of `wishlisted` / `purchased` / `reading` / `read`
 - `rating`: 1..5
+- `title_override`, `author_override`: 1–500 characters after trimming, no control characters and no Unicode format characters (bidi controls such as U+202E, zero-width characters)
+- `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, with a host that is not `localhost` or an IP address in a private or reserved range. The host is not resolved: the server never fetches the override (only the owner's app shows it), so a DNS step would only block the server (`POST /wishlist`'s `cover_url` is checked the same way since #747)
 
 **Response `200`:** the updated `UserBookRead`.
 
 **Errors:**
-- `404` — `user_book_id` not found or belongs to another user
-- `422` — `rating` out of range
+- `404` — `user_book_id` not found, in the trash (#683) or belongs to another user
+- `422` — `rating` out of range, or an invalid override (too long, blank, control characters, an unsafe `cover_url_override`)
+- `422 overrides_not_supported` — overrides sent for an unverified entry (#616), which is already the user's own data and never has a cover; nothing is written
 
 ---
 
-### `DELETE /user-books/{user_book_id}` — remove book from library
+### `DELETE /user-books/{user_book_id}` — move book to the trash
+
+Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, for an unverified entry, so does its `user_custom_books` row). Nothing is deleted. The entry disappears from every library read and check (`GET /user-books`, `PATCH`, `POST /purchased`, `POST /wishlist`'s 409, the scan / search `ownership`, the unverified cap and duplicate check) and appears in `GET /user-books/trash`. `POST /user-books/{id}/restore` brings it back until it leaves the trash. **The trash keeps 30 days, one trashed copy per book (copies with your data are kept), and the newest 1,000 entries per user:** the daily cleanup purges an entry `TRASH_RETENTION_DAYS` (default 30) days after deletion. **Deleting a book that already has a trashed copy replaces older trashed copies that hold no data of yours** (no notes, rating, edition, overrides, status beyond wishlisted); copies with your data stay restorable for 30 days. In the same transaction, the `DELETE` hard-deletes the user's other, older trashed entries of the same book (for a catalog entry any row of the same work, merged rows included, #682; for an unverified entry the same title and author or ISBN, the duplicate check's key) that hold no user data, with their `user_custom_books` rows, so an add / delete loop cannot grow the database. The entry being deleted is always kept. As a backstop, a `DELETE` that leaves the user with more than `TRASH_MAX_ENTRIES_PER_USER` (default 1,000) trashed entries hard-deletes the oldest ones beyond it, so a mass delete of up to 1,000 distinct books stays fully restorable. Concurrent requests for one user are serialised (a second concurrent `DELETE` of the same entry gets `404`).
 
 **Auth:** required
 **Rate limit:** `rate_limit_writes`
@@ -546,7 +623,42 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 **Response `204`:** empty body.
 
 **Errors:**
-- `404` — not found or belongs to another user
+- `404` — not found, already in the trash, or belongs to another user. Deleting twice is a `404` the second time, not a second `204`
+- `422` — `user_book_id` is not a UUID
+
+---
+
+### `GET /user-books/trash` — list the trash
+
+The requesting user's deleted entries (#683), most recently deleted first (ties by `id`, highest first), at most `TRASH_MAX_ENTRIES_PER_USER` (default 1,000). The trash keeps 30 days, one trashed copy per book (deleting a book that already has a trashed copy replaces older trashed copies that hold no data of yours: no notes, rating, edition, overrides, status beyond wishlisted; copies with your data stay restorable for 30 days) and the newest 1,000 entries per user. Only this user's entries; another user's trash is never visible.
+
+**Auth:** required
+**Rate limit:** `rate_limit_reads`
+**Source:** `backend/app/api/user_books.py:list_trash`
+
+**Response `200`:** array of `TrashedUserBookRead`: the same per-row shape as `GET /user-books` (`UserBookRead`, including `unverified`, `overrides` and a merged book shown as its survivor), plus:
+- `deleted_at` — when the entry was deleted
+- `purge_after` — `deleted_at` + `TRASH_RETENTION_DAYS`. The daily cleanup deletes the entry for good at its first run after this time, so an entry can still be listed (and restored) for up to a day after `purge_after`
+
+---
+
+### `POST /user-books/{user_book_id}/restore` — restore from the trash
+
+Clears `deleted_at` on the entry (and on its `user_custom_books` row for an unverified entry). Status, dates, notes, rating, edition and overrides are exactly as they were when it was deleted. No request body.
+
+**Auth:** required
+**Rate limit:** `rate_limit_writes`
+**Source:** `backend/app/api/user_books.py:restore_user_book`
+
+**Response `200`:** the restored `UserBookRead`.
+
+**Errors** (nothing is written on any of them):
+- `404` — not found, not in the trash (a live entry), or belongs to another user
+- `409 restore_conflict` — the user has a live entry of the same book: the same work (any catalog row of a merged work counts, #682), typically because the book was added again after it was deleted. For an unverified entry: a live unverified entry with the same title and author or the same ISBN (the `unverified_duplicate` rule)
+- `409 unverified_limit_reached` — restoring this unverified entry would exceed `UNVERIFIED_BOOKS_PER_USER_MAX`
+- `422` — `user_book_id` is not a UUID
+
+An entry past `purge_after` that the cleanup has not purged yet can still be restored: the window is a minimum, and the purge is the only thing that ends it.
 
 ---
 
@@ -598,6 +710,8 @@ Never touches the database — always `200`. Render restarts a service on a fail
 
 5. Client: POST /auth/refresh {refresh_token}
    → {access_token (new), refresh_token (new, old revoked)}
+   (the old refresh token replayed within 30 s → a fresh pair; later →
+   401 refresh_reused and every session of the user is revoked)
 
 6. Client: retry GET /user-books with new access → 200
 

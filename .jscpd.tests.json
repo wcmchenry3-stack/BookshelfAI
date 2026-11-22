@@ -1,0 +1,19 @@
+{
+  "//": "Tests have their own budget (epic:refactor #820). Ignore entries: build output, locales, data and shared helpers.",
+  "path": ["backend/tests", "frontend/__tests__"],
+  "format": ["python", "typescript", "tsx"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/locales/**",
+    "**/*.json",
+    "**/__tests__/helpers/**"
+  ],
+  "minLines": 5,
+  "minTokens": 50,
+  "threshold": 7.0,
+  "reporters": ["console", "json"],
+  "output": "./jscpd-report/tests",
+  "gitignore": true,
+  "absolute": false
+}

@@ -8,5 +8,6 @@
   "requiresConnection": "פעולה זו דורשת חיבור לאינטרנט.",
   "offlineEditNotice": "אין חיבור לאינטרנט. התחבר כדי לערוך את הספרייה שלך.",
   "unverified": "לא מאומת",
-  "unverifiedA11y": "לא מאומת: נוסף על ידך, לא נמצא בקטלוג"
+  "unverifiedA11y": "לא מאומת: נוסף על ידך, לא נמצא בקטלוג",
+  "serviceUnavailable": "לא ניתן להתחבר ל-BookshelfAI כרגע. נסו שוב מאוחר יותר."
 }

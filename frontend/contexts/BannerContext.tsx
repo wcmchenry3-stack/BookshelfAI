@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useMemo, useState } from 'react';
 
-export interface BannerAction {
+interface BannerAction {
   label: string;
   onPress: () => void;
 }

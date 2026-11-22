@@ -16,13 +16,26 @@ from app.auth.identity import (
     resolve_and_commit_google_user,
 )
 from app.auth.jwt import (
+    LEGACY_TOKEN_VERSION,
     access_token_ttl_seconds,
     create_access_token,
     create_refresh_token,
     decode_token,
+    has_token_version_claim,
     token_version_claim,
 )
-from app.auth.sessions import revoke_all_sessions
+from app.auth.refresh_family import (
+    REFRESH_REUSED,
+    REFRESH_REVOKED_OR_NOT_FOUND,
+    Replay,
+    alert_reuse,
+    classify_replay,
+    family_of,
+    is_displaced,
+    is_rotated,
+    successor_row,
+)
+from app.auth.sessions import issue_session_tokens, revoke_all_sessions
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.limiter import limiter
@@ -93,16 +106,12 @@ async def google_auth(
         )
     logger.info("Signed-in user resolved (user_id=%s)", user.id)
 
-    access_token = create_access_token(str(user.id), user.email, user.token_version)
-    refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
-    expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
-    db.add(RefreshToken(jti=jti, user_id=user.id, expires_at=expires_at))
-    await db.commit()
+    tokens = await issue_session_tokens(db, user)
     logger.info("Auth successful (user_id=%s)", user.id)
     return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=access_token_ttl_seconds(),
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.expires_in,
     )
 
 
@@ -135,11 +144,19 @@ async def refresh(
 
     result = await db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
     stored = result.scalar_one_or_none()
-    if stored is None or stored.revoked_at is not None:
+    # A rotated row (#690: revoked_at and used_at set) goes on to reuse
+    # detection below; a row revoked any other way (logout, logout-all) is a
+    # plain 401.
+    if stored is None or (stored.revoked_at is not None and not is_rotated(stored)):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token revoked or not found",
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
         )
+    # Whether the token had already been rotated before this request: if it
+    # is rotated only once we hold the lock, a concurrent request with the
+    # same token did it while we waited (Replay.RACE), not a later replay.
+    # (Displacement also rotates a row; a displaced token is reuse anyway.)
+    seen_rotated = is_rotated(stored)
 
     # FOR UPDATE on the user row: a concurrent revoke_all_sessions bumps
     # token_version (taking this lock) before it revokes refresh rows, so it
@@ -160,7 +177,7 @@ async def refresh(
     # Re-read the refresh row now that we hold the user lock: a concurrent
     # refresh with the same token may have rotated it while we waited, and
     # the check above saw the pre-lock state. Lock order is user -> refresh
-    # row, the same as revoke_all_sessions.
+    # rows, the same as revoke_all_sessions.
     result = await db.execute(
         select(RefreshToken)
         .where(RefreshToken.jti == jti)
@@ -168,18 +185,32 @@ async def refresh(
         .execution_options(populate_existing=True)
     )
     stored = result.scalar_one_or_none()
-    if stored is None or stored.revoked_at is not None:
+    if stored is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token revoked or not found",
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
+        )
+    if is_rotated(stored):
+        return await _refresh_rotated_token(db, user, stored, payload, seen_rotated)
+    if stored.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
         )
 
     # A token_version bump revokes the user's refresh rows (sessions.py); the
     # tv claim also catches a refresh token minted by a refresh that raced
-    # the bump (#689). Missing tv (issued before #689) is revoked too.
-    if token_version_claim(payload) != user.token_version:
+    # the bump (#689). A token without tv was issued before #689 and is read
+    # as tv=0, so it works only while the user has never bumped (#725); it
+    # has passed the same jti, revoked_at and expiry checks above. A present
+    # but malformed tv is rejected.
+    # TODO(#735): remove the legacy branch on or after 2026-11-04 (see
+    # app/auth/jwt.py).
+    legacy = not has_token_version_claim(payload)
+    token_version = LEGACY_TOKEN_VERSION if legacy else token_version_claim(payload)
+    if token_version != user.token_version:
         logger.warning(
-            "Refresh rejected: token_version missing or stale (user_id=%s)",
+            "Refresh rejected: token_version stale (user_id=%s)",
             user.id,
         )
         stored.revoked_at = datetime.now(UTC)
@@ -188,18 +219,119 @@ async def refresh(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=TOKEN_REVOKED
         )
 
-    # Rotate: revoke old token, issue new one
-    stored.revoked_at = datetime.now(UTC)
+    if legacy:
+        logger.info("refresh accepted legacy token without tv (user_id=%s)", user.id)
+
+    # Rotate: mark the old row rotated and issue its successor (same family;
+    # a legacy row has no family and is its own, so its successor gets one).
+    # A legacy token (#725) is revoked without ``used_at``: it counts as
+    # plainly revoked, like rotations made before migration 0024, so a
+    # replay is the plain 401 (no grace retry, no reuse detection) and the
+    # tv=0 reading stays confined to this one check. The legacy path ends
+    # with #735.
+    now = datetime.now(UTC)
+    stored.revoked_at = now
+    if not legacy:
+        stored.used_at = now
+    tokens, successor = await _issue_successor(db, user, stored)
+    stored.replaced_by_id = successor.id
+    await db.commit()
+    return tokens
+
+
+async def _issue_successor(
+    db: AsyncSession, user: User, previous: RefreshToken
+) -> tuple[TokenResponse, RefreshToken]:
+    """Mint an access token and a refresh token in ``previous``'s family, and
+    add (and flush) the new refresh row, so rows can point at its id."""
     new_refresh, new_jti = create_refresh_token(str(user.id), user.token_version)
     expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expiry_days)
-    db.add(RefreshToken(jti=new_jti, user_id=user.id, expires_at=expires_at))
-    access_token = create_access_token(str(user.id), user.email, user.token_version)
-    await db.commit()
-    return TokenResponse(
-        access_token=access_token,
+    row = successor_row(previous, new_jti, expires_at)
+    db.add(row)
+    await db.flush()
+    tokens = TokenResponse(
+        access_token=create_access_token(str(user.id), user.email, user.token_version),
         refresh_token=new_refresh,
         expires_in=access_token_ttl_seconds(),
     )
+    return tokens, row
+
+
+async def _refresh_rotated_token(
+    db: AsyncSession,
+    user: User,
+    stored: RefreshToken,
+    payload: dict,
+    seen_rotated: bool,
+) -> TokenResponse:
+    """A token that /auth/refresh already rotated is presented again (#690).
+    Called with the user row and ``stored`` locked. See
+    app/auth/refresh_family.py for the four cases."""
+    if token_version_claim(payload) != user.token_version:
+        # Every session was already revoked (logout-all or an earlier reuse);
+        # nothing left to protect, so no second alert.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=TOKEN_REVOKED
+        )
+
+    # Lock order: user, the presented row, then its successor (as the
+    # rotation itself). A displaced token is reuse whatever its successor.
+    successor = None
+    if not is_displaced(stored) and stored.replaced_by_id is not None:
+        successor = await db.get(
+            RefreshToken,
+            stored.replaced_by_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+    now = datetime.now(UTC)
+    replay = classify_replay(
+        seen_rotated=seen_rotated,
+        displaced=is_displaced(stored),
+        used_at=stored.used_at,
+        successor=successor,
+        now=now,
+        grace_seconds=settings.refresh_reuse_grace_seconds,
+    )
+
+    if replay in (Replay.RETRY, Replay.RACE):
+        # RETRY: the client never got the successor. RACE: a concurrent
+        # request with this token got it, and it may be a thief's. Either
+        # way, issue a fresh pair in the same family and displace the
+        # successor: whoever presents it later trips REUSE. ``stored`` keeps
+        # pointing at the displaced row, so presenting ``stored`` again is
+        # REUSE too (one retry per rotated token).
+        tokens, replacement = await _issue_successor(db, user, stored)
+        successor.revoked_at = now
+        successor.used_at = now
+        successor.displaced_at = now
+        successor.replaced_by_id = replacement.id
+        await db.commit()
+        logger.info(
+            "Refresh %s; successor displaced (user_id=%s)",
+            (
+                "retried within the grace window"
+                if replay is Replay.RETRY
+                else "raced a concurrent refresh"
+            ),
+            user.id,
+        )
+        return tokens
+
+    if replay is Replay.ENDED:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=REFRESH_REVOKED_OR_NOT_FOUND,
+        )
+
+    # Replay.REUSE: someone else holds a copy of this token. Revoke every
+    # session the user has (the family's rows and, through the token_version
+    # bump, every access token and every other family's refresh tokens).
+    family_id = family_of(stored)
+    await revoke_all_sessions(db, user)
+    await db.commit()
+    alert_reuse(user.id, family_id)
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REFRESH_REUSED)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

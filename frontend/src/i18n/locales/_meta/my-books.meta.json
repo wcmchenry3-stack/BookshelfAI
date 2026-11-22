@@ -4,10 +4,62 @@
     "tone": "neutral",
     "characterLimit": 30
   },
-  "noBooksYet": {
-    "description": "Empty state message when the filtered book list is empty",
+  "emptyLibraryTitle": {
+    "description": "Title of the empty state when the library has no books at all",
+    "tone": "friendly"
+  },
+  "emptyLibraryBody": {
+    "description": "Body of the empty-library state, pointing to scanning",
+    "tone": "friendly"
+  },
+  "emptyLibraryAction": {
+    "description": "Button of the empty-library state; goes to the Scan tab",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "emptyFilter.wishlisted": {
+    "description": "Title when the 'wishlisted' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked wishlisted yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.purchased": {
+    "description": "Title when the 'purchased' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked purchased yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.reading": {
+    "description": "Title when the 'reading' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked reading yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilter.read": {
+    "description": "Title when the 'read' status chip has no books, a full sentence in the status's own wording (not built from the status label), e.g. 'Nothing marked read yet'. Mind noun case and grammar per language.",
+    "tone": "friendly"
+  },
+  "emptyFilterBody": {
+    "description": "Body of the empty status-filter state",
+    "tone": "friendly"
+  },
+  "emptyFilterAction": {
+    "description": "Button of the empty status-filter state; switches back to All",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "emptySearchTitle": {
+    "description": "Title when the search matches no book. {{query}} is what the user typed.",
     "tone": "friendly",
-    "characterLimit": 40
+    "placeholders": ["{{query}}"]
+  },
+  "emptySearchBody": {
+    "description": "Body of the no-search-match state",
+    "tone": "friendly"
+  },
+  "emptySearchAction": {
+    "description": "Button of the no-search-match state; clears the search field",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "loadErrorAction": {
+    "description": "Button of the failed-load state in My Books; reloads the list",
+    "tone": "neutral",
+    "characterLimit": 25
   },
   "statusTab.all": {
     "description": "Filter tab label showing all books regardless of status",
@@ -55,25 +107,50 @@
     "characterLimit": 10
   },
   "filterBy": {
-    "description": "Accessibility label for filter tab buttons, e.g. 'Filter by Reading'",
+    "description": "Accessibility label of a status chip, e.g. 'Filter by Reading, 2 books'. Plural: _one/_other (and locale categories). {{count}} is the chip count. {{label}} is the chip name.",
     "tone": "neutral",
-    "placeholders": ["{{label}}"],
-    "characterLimit": 30
+    "placeholders": ["{{label}}", "{{count}}"]
   },
   "bookCardA11y": {
-    "description": "Accessibility label for a book card row, combining title and status",
+    "description": "Accessibility label for a library row: title, translated status, then the author",
     "tone": "neutral",
-    "placeholders": ["{{title}}", "{{status}}"]
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
   },
   "bookCardUnverifiedA11y": {
-    "description": "Accessibility label for the card of an unverified book (one the user added themselves, #616): title, status, then that it is unverified",
+    "description": "Accessibility label for the row of an unverified book (one the user added themselves, #616): title, translated status, author, then that it is unverified",
     "tone": "neutral",
-    "placeholders": ["{{title}}", "{{status}}"]
+    "placeholders": ["{{title}}", "{{status}}", "{{author}}"]
   },
   "bookCardHint": {
     "description": "Accessibility hint for a book card — tells the user what tapping does",
     "tone": "informative",
     "characterLimit": 50
+  },
+  "moreOptionsA11y": {
+    "description": "Accessibility label of the ⋯ button at the end of a My Books row; opens that book's actions",
+    "tone": "neutral",
+    "placeholders": ["{{title}}"]
+  },
+  "actions.viewDetails": {
+    "description": "Row in the book actions sheet that opens the book detail sheet",
+    "tone": "action",
+    "characterLimit": 30
+  },
+  "actions.remove": {
+    "description": "Destructive row in the book actions sheet that moves the book to Trash",
+    "tone": "action",
+    "characterLimit": 35
+  },
+  "actions.close": {
+    "description": "Close button of the book actions sheet (visible and spoken)",
+    "tone": "neutral",
+    "characterLimit": 15
+  },
+  "rowMeta": {
+    "description": "Meta line of a library row: the status and the publication year, joined with a middle dot",
+    "tone": "neutral",
+    "placeholders": ["{{status}}", "{{year}}"],
+    "notes": "Keep the middle dot separator"
   },
   "markAs": {
     "description": "Button label to advance a book to the next reading status, e.g. 'Mark as Reading'",
@@ -123,24 +200,192 @@
     "characterLimit": 50
   },
   "searchPlaceholder": {
-    "description": "Placeholder text inside the library search bar",
+    "description": "Placeholder text inside the My Books search field (title or author)",
     "tone": "friendly",
     "characterLimit": 35
   },
   "searchA11y": {
-    "description": "Accessibility label for the library search input",
+    "description": "Accessibility label for the My Books search input",
     "tone": "neutral",
     "characterLimit": 30
   },
-  "sectionTitle": {
-    "description": "Heading above the book grid — 'My Library'",
+  "searchClearA11y": {
+    "description": "Accessibility label of the search field's clear button",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "screenTitle": {
+    "description": "Serif screen title of My Books",
     "tone": "neutral",
     "characterLimit": 20
   },
-  "bookCount": {
-    "description": "Subtitle below the section heading showing total volume count, e.g. '48 volumes in your collection.'",
+  "headerBooks": {
+    "description": "Header subtitle part: how many books are in the library. Plural: _one/_other (and locale categories). {{count}} is the number.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "headerReading": {
+    "description": "Header subtitle part: how many books are being read now, e.g. '2 reading now'. Left out when 0. Plural: _one/_other (and locale categories). {{count}} is the number.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "headerSubtitle": {
+    "description": "Header subtitle joining the two parts, e.g. '10 books · 2 reading now'",
+    "tone": "neutral",
+    "placeholders": ["{{books}}", "{{reading}}"]
+  },
+  "section.readingNow": {
+    "description": "Section label above the shelf of books being read now (shown uppercase)",
+    "tone": "neutral",
+    "characterLimit": 24
+  },
+  "section.allBooks": {
+    "description": "Section label above the full list of books (shown uppercase)",
+    "tone": "neutral",
+    "characterLimit": 24
+  },
+  "sort.sheetTitle": {
+    "description": "Title of the sort sheet, e.g. 'Sort by'",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "sort.buttonA11y": {
+    "description": "Accessibility label of the Sort icon button; {{label}} is the current sort option name (the sort.added/title/author text)",
+    "tone": "neutral",
+    "placeholders": ["{{label}}"]
+  },
+  "sort.added": {
+    "description": "Sort option and current-sort caption: newest additions first, e.g. 'Recently added'",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "sort.title": {
+    "description": "Sort option: alphabetical by title, e.g. 'Title A–Z'. Use the locale's own alphabet order wording.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "sort.author": {
+    "description": "Sort option: alphabetical by author, e.g. 'Author A–Z'. Use the locale's own alphabet order wording.",
+    "tone": "neutral",
+    "characterLimit": 25
+  },
+  "view.showGrid": {
+    "description": "Accessibility label of the My Books header button that switches the list to a grid of covers. Shown while the list is active; an action, e.g. 'Show as grid'.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "view.showList": {
+    "description": "Accessibility label of the My Books header button that switches the grid back to the list. Shown while the grid is active; an action, e.g. 'Show as list'.",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "shelfA11y": {
+    "description": "Accessibility label of the 'Reading now' shelf, announced as a list, e.g. 'Reading now, 2 books'. Plural: _one/_other (and locale categories). {{count}} is the number of books.",
+    "tone": "neutral",
+    "placeholders": ["{{count}}"]
+  },
+  "shelfItemA11y": {
+    "description": "Accessibility label of a book on the 'Reading now' shelf, e.g. 'Dune, by Frank Herbert'",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{author}}"]
+  },
+  "movedToTrash": {
+    "description": "Banner after a library entry is moved to the trash; says it can be restored within 30 days",
+    "tone": "neutral",
+    "characterLimit": 70
+  },
+  "viewTrash": {
+    "description": "Banner action button that opens the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "trash.title": {
+    "description": "Heading of the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "trash.back": {
+    "description": "Back button on the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 12
+  },
+  "trash.loading": {
+    "description": "Loading spinner message on the Trash screen",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "trash.intro": {
+    "description": "Info card text on the Trash screen: the 30-day rule",
+    "tone": "neutral"
+  },
+  "trash.emptyTitle": {
+    "description": "Empty state heading when the trash has no entries",
     "tone": "friendly",
-    "placeholders": ["{{count}}"],
-    "characterLimit": 50
+    "characterLimit": 30
+  },
+  "trash.emptyBody": {
+    "description": "Empty state explanation of the 30-day rule",
+    "tone": "friendly"
+  },
+  "trash.purgeIn": {
+    "description": "Days-left line on a trashed book row. Plural: _one/_other (and locale categories). {{count}} is the number of whole days until it is deleted for good.",
+    "tone": "neutral",
+    "characterLimit": 50,
+    "placeholders": ["{{count}}"]
+  },
+  "trash.purgeToday": {
+    "description": "Days-left line on a trashed book row when it is deleted for good today",
+    "tone": "neutral",
+    "characterLimit": 40
+  },
+  "trash.rowA11y": {
+    "description": "Screen-reader label of a Trash row: title, author, and the days-left line (when)",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{author}}", "{{when}}"]
+  },
+  "trash.rowUnverifiedA11y": {
+    "description": "Screen-reader label of a Trash row for a book the user added themselves: title, author, days left (when, may be empty) and that it is unverified",
+    "tone": "neutral",
+    "placeholders": ["{{title}}", "{{author}}", "{{when}}"]
+  },
+  "trash.restore": {
+    "description": "Button that restores a trashed book to the library",
+    "tone": "neutral",
+    "characterLimit": 16
+  },
+  "trash.restoreA11y": {
+    "description": "Screen-reader label for the Restore button; title is the book title",
+    "tone": "neutral"
+  },
+  "trash.restored": {
+    "description": "Banner after a book is restored; title is the book title",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "trash.restoreConflict": {
+    "description": "Error when restoring a book that already has a live library entry",
+    "tone": "neutral"
+  },
+  "trash.restoreNotFound": {
+    "description": "Error when the book is no longer in the trash; the list reloads",
+    "tone": "neutral"
+  },
+  "trash.restoreFailed": {
+    "description": "Generic error when restoring a book fails",
+    "tone": "neutral"
+  },
+  "trash.errorLoad": {
+    "description": "Error shown when the trash list cannot be loaded",
+    "tone": "neutral"
+  },
+  "trash.retry": {
+    "description": "Retry button after the trash list fails to load",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "trash.errorRefresh": {
+    "description": "Error banner when refreshing the trash list fails while entries are shown",
+    "tone": "neutral",
+    "characterLimit": 60
   }
 }

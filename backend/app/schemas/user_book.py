@@ -3,18 +3,36 @@ from __future__ import annotations
 import re
 import unicodedata
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.core.catalog_token import CATALOG_TOKEN_MAX_LENGTH
+from app.core.config import settings
 from app.core.url_validator import validate_safe_url
+from app.models.user_book import (
+    AUTHOR_OVERRIDE_MAX,
+    COVER_URL_OVERRIDE_MAX,
+    OVERRIDE_COLUMNS,
+    TITLE_OVERRIDE_MAX,
+)
 from app.models.user_custom_book import AUTHOR_MAX, TITLE_MAX
 from app.schemas.book import BookRead, EditionPreview, EditionRead
+from app.services.catalog import effective_book
 from app.services.enrichment import isbn_10_to_13
 
 BookStatus = Literal["wishlisted", "purchased", "reading", "read"]
+
+
+COVER_URL_INVALID = "cover_url must be an https URL with a public host"
 
 
 class WishlistRequest(BaseModel):
@@ -35,13 +53,41 @@ class WishlistRequest(BaseModel):
 
     @field_validator("cover_url", mode="before")
     @classmethod
-    def cover_url_must_be_safe(cls, v: str | None) -> str | None:
-        return validate_safe_url(v)
+    def cover_url_must_be_safe(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v  # None, or a wrong type the str field refuses
+        # No DNS lookup (#747): the server never fetches the cover (the app
+        # renders it), and ``getaddrinfo`` would block the event loop. One
+        # message for every reason, so validation reveals nothing about DNS.
+        try:
+            if _CONTROL.search(v) or _WHITESPACE.search(v) or _has_format_char(v):
+                raise ValueError("not a single URL")
+            return validate_safe_url(v, resolve=False)
+        except ValueError:
+            raise ValueError(COVER_URL_INVALID) from None
 
 
 # Control characters (C0, DEL, C1): never part of a title, author or ISBN;
 # NUL would also be refused by Postgres.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_WHITESPACE = re.compile(r"\s")
+
+
+def _has_format_char(v: str) -> bool:
+    """Unicode category Cf: bidi controls (U+202E) and zero-width
+    characters, which can make text display as something it is not."""
+    return any(unicodedata.category(c) == "Cf" for c in v)
+
+
+def clean_text(v: str) -> str:
+    """A user-typed title or author: stripped, never blank, no control
+    characters (#616, #682)."""
+    v = v.strip()
+    if not v:
+        raise ValueError("must not be blank")
+    if _CONTROL.search(v):
+        raise ValueError("must not contain control characters")
+    return v
 
 
 def _isbn_13_valid(value: str) -> bool:
@@ -73,7 +119,7 @@ def normalise_user_isbn(value: str) -> str:
         and (compact[9].isdigit() or compact[9] == "X")
         and _isbn_10_valid(compact)
     ):
-        return isbn_10_to_13(compact)  # type: ignore[return-value]
+        return isbn_10_to_13(compact)  # type: ignore[return-value] - None only for an invalid ISBN-10, checked above
     raise ValueError("isbn must be a valid ISBN-13 or ISBN-10")
 
 
@@ -115,12 +161,7 @@ class UnverifiedBookCreate(BaseModel):
     @field_validator("title", "author")
     @classmethod
     def text_must_be_clean(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("must not be blank")
-        if _CONTROL.search(v):
-            raise ValueError("must not contain control characters")
-        return v
+        return clean_text(v)
 
     @field_validator("isbn")
     @classmethod
@@ -131,7 +172,8 @@ class UnverifiedBookCreate(BaseModel):
 
 
 class UserBookCreate(BaseModel):
-    """Body for POST /wishlist — book already exists in DB."""
+    """Unused by any route today. A route that adopts it must call
+    ``require_edition_of_book`` (#686) before writing ``edition_id``."""
 
     book_id: uuid.UUID
     edition_id: uuid.UUID | None = None
@@ -146,11 +188,27 @@ class PurchasedCreate(BaseModel):
 
 
 class UserBookUpdate(BaseModel):
-    """Body for PATCH /user-books/{id}."""
+    """Body for PATCH /user-books/{id}.
+
+    ``title_override``, ``author_override`` and ``cover_url_override``
+    (#682) are the user's own values for this library entry, never written
+    to the shared catalog. Left out: unchanged. ``null``: cleared (back to
+    the catalog value). A string: set, after the same checks as the catalog
+    fields (length; no control characters; the cover through the SSRF-safe
+    URL check)."""
 
     status: BookStatus | None = None
     notes: str | None = Field(None, max_length=10000)
     rating: int | None = None
+    title_override: str | None = Field(
+        None, min_length=1, max_length=TITLE_OVERRIDE_MAX
+    )
+    author_override: str | None = Field(
+        None, min_length=1, max_length=AUTHOR_OVERRIDE_MAX
+    )
+    cover_url_override: str | None = Field(
+        None, min_length=1, max_length=COVER_URL_OVERRIDE_MAX
+    )
 
     @field_validator("rating")
     @classmethod
@@ -159,9 +217,74 @@ class UserBookUpdate(BaseModel):
             raise ValueError("rating must be between 1 and 5")
         return v
 
+    @field_validator("title_override", "author_override", mode="before")
+    @classmethod
+    def override_text_must_be_clean(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v  # None (clear) or a wrong type the str field refuses
+        # Before the length check, so the limit applies to the trimmed value.
+        v = clean_text(v)
+        if _has_format_char(v):
+            # Bidi controls and zero-width characters (#682): they can make
+            # an override display as something other than what is stored.
+            raise ValueError("must not contain format characters")
+        return v
 
-# The UserBookRead fields that are not read off the library row (#616).
-_UNVERIFIED_FIELDS = ("unverified", "unverified_isbn_13")
+    @field_validator("cover_url_override", mode="before")
+    @classmethod
+    def cover_url_override_must_be_safe(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v  # None (clear) or a wrong type the str field refuses
+        v = v.strip()
+        if len(v) > COVER_URL_OVERRIDE_MAX:
+            raise ValueError("cover_url_override is too long")
+        if _CONTROL.search(v) or _WHITESPACE.search(v) or _has_format_char(v):
+            # Never stored (Postgres refuses NUL) (#682).
+            raise ValueError("cover_url_override must be a single URL")
+        # No DNS lookup: the server never fetches the override (only the
+        # owner's app shows it), and resolving would block the event loop.
+        return validate_safe_url(v, resolve=False)
+
+    def override_changes(self) -> dict[str, str | None]:
+        """The override columns this request sets or clears (only the fields
+        it sent)."""
+        return {
+            column: getattr(self, column)
+            for column in OVERRIDE_COLUMNS.values()
+            if column in self.model_fields_set
+        }
+
+
+class UserBookOverrides(BaseModel):
+    """The user's own values for a library entry (#682), each null when the
+    catalog value is shown. ``book`` already carries the effective value; a
+    non-null field here means it is the user's and can be reset (PATCH with
+    the field set to null)."""
+
+    title: str | None = None
+    author: str | None = None
+    cover_url: str | None = None
+
+
+# The UserBookRead fields that are not read off the library row (#616,
+# #682); ``book`` is read off it but rebuilt for a catalog entry.
+_UNVERIFIED_FIELDS = ("unverified", "unverified_isbn_13", "overrides")
+
+
+def _catalog_book(data: object) -> object:
+    """``book`` for a catalog entry (#682): the row the read follows to
+    (the survivor of a merge, ``app/services/catalog.py``) with the user's
+    overrides in place of its title, author and cover. ``book`` itself is
+    never changed: the values are copied."""
+    book = effective_book(getattr(data, "book", None))
+    present = {
+        field: value
+        for field, column in OVERRIDE_COLUMNS.items()
+        if (value := getattr(data, column)) is not None
+    }
+    if book is None or (not present and book is getattr(data, "book", None)):
+        return book
+    return BookRead.model_validate(book).model_copy(update=present)
 
 
 class UserBookRead(BaseModel):
@@ -184,6 +307,10 @@ class UserBookRead(BaseModel):
     # editions) and ``unverified_isbn_13`` the ISBN the user typed, if any.
     unverified: bool = False
     unverified_isbn_13: str | None = None
+    # The user's own title / author / cover for this entry (#682); ``book``
+    # already shows them in place of the catalog values. All null for an
+    # unverified entry, which cannot have overrides.
+    overrides: UserBookOverrides = Field(default_factory=UserBookOverrides)
 
     model_config = {"from_attributes": True}
 
@@ -205,10 +332,15 @@ class UserBookRead(BaseModel):
         if getattr(data, "custom_book_id", None) is None:
             return {
                 **{name: getattr(data, name, None) for name in row_fields},
+                "book": _catalog_book(data),
                 "unverified": False,
                 "unverified_isbn_13": None,
+                "overrides": {
+                    field: getattr(data, column)
+                    for field, column in OVERRIDE_COLUMNS.items()
+                },
             }
-        custom = data.custom_book  # type: ignore[attr-defined]
+        custom = data.custom_book  # type: ignore[attr-defined] - custom_book is a relationship attribute set at load time
         return {
             **{name: getattr(data, name, None) for name in row_fields},
             "book": {
@@ -224,3 +356,17 @@ class UserBookRead(BaseModel):
             "unverified": True,
             "unverified_isbn_13": custom.isbn_13,
         }
+
+
+class TrashedUserBookRead(UserBookRead):
+    """Returned by GET /user-books/trash (#683): a library entry in the
+    trash, read exactly like a live one, plus when it was deleted and when
+    the daily cleanup may purge it (``deleted_at`` +
+    ``settings.trash_retention_days``)."""
+
+    deleted_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator] - mypy does not model computed_field over property
+    @property
+    def purge_after(self) -> datetime:
+        return self.deleted_at + timedelta(days=settings.trash_retention_days)

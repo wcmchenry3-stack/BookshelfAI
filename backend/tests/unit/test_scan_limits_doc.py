@@ -33,7 +33,7 @@ def _mentioned(name: str, text: str) -> bool:
 @pytest.mark.parametrize("key", ai_settings.KNOWN_KEYS)
 def test_every_registry_key_is_in_the_scan_limits_doc(key, doc_text):
     assert _mentioned(key, doc_text), (
-        f"ai_settings key {key!r} (app/ai/settings.py) is not in "
+        f"ai_settings key {key!r} (app/ai/settings/definitions.py) is not in "
         f"docs/scan-limits.md: {HOW_TO_FIX}"
     )
 

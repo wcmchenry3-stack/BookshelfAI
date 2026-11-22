@@ -37,8 +37,9 @@ never to make _unintended behaviour_ pass.
 - **Snapshots:** updating them (`-u`) without saying which snapshots changed
   and why each one did.
 - **Relaxed thresholds:** raising tolerances, timeouts or retry counts;
-  lowering coverage thresholds (backend `coverage-threshold: 80` in
-  `ci.yml`, or any frontend `coverageThreshold`); relaxing the accuracy
+  lowering coverage thresholds (backend `coverage-threshold: 98` and the
+  frontend `coverage-threshold: 90` in `ci.yml`, or any frontend Jest
+  `coverageThreshold`); relaxing the accuracy
   tests' thresholds (`backend/tests/accuracy/`).
 - **Making a security test pass by changing what it attacks:** editing a
   payload, an expected rejection, or a rate-limit count in
@@ -84,10 +85,12 @@ Write `None — only new tests added.` when no existing test was touched.
    invalid reason is a blocking finding; send it back to the implementer.
 4. **Scan limits matrix (#584).** If the PR changes how scans are counted,
    charged or refused, it must add or change rows in `backend/tests/limits/`.
-   That covers `backend/app/ai/quota.py`, `breaker.py`, the limit keys in
-   `settings.py`, and the refusals or outcome handling in
-   `backend/app/api/scan.py`. A PR that changes those rules without touching
-   the matrix is a blocking finding; send it back to the implementer. See
+   That covers `backend/app/ai/quota/`, `breaker.py`, the limit keys in
+   `backend/app/ai/settings/` (`constants.py` / `definitions.py`), and the refusals or outcome handling in
+   `backend/app/api/scan.py` and `backend/app/services/scan/` (the
+   reservation refusals and settle decisions are in `quota_steps.py`). A PR
+   that changes those rules without touching the matrix is a blocking
+   finding; send it back to the implementer. See
    `docs/claude/testing.md` ("Scan limits matrix").
 5. Post the audit result as part of the review-round comment.
 

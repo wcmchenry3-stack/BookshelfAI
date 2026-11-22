@@ -9,7 +9,7 @@ from app.services.token_cleanup import cleanup_expired_tokens
 
 
 def _make_db_mock(rowcount: int = 3):
-    """Return an AsyncMock that mimics AsyncSessionLocal as an async context manager."""
+    """Return an AsyncMock that mimics JobSessionLocal as an async context manager."""
     mock_result = MagicMock()
     mock_result.rowcount = rowcount
 
@@ -33,7 +33,7 @@ class TestCleanupExpiredTokens:
         mock_factory, mock_session, _mock_result = _make_db_mock(rowcount=5)
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 0),
             pytest.raises(asyncio.CancelledError),
@@ -55,7 +55,7 @@ class TestCleanupExpiredTokens:
         mock_factory, mock_session, _ = _make_db_mock()
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
             pytest.raises(asyncio.CancelledError),
@@ -92,7 +92,7 @@ class TestCleanupExpiredTokens:
         mock_session.execute = flaky_execute
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 0),
             caplog.at_level(logging.ERROR, logger="app.services.token_cleanup"),
@@ -114,7 +114,7 @@ class TestCleanupExpiredTokens:
         """asyncio.CancelledError must propagate so the lifespan can await the task."""
         mock_factory, _mock_session, _ = _make_db_mock()
 
-        with patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory), patch(
+        with patch("app.services.token_cleanup.JobSessionLocal", mock_factory), patch(
             "app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0
         ):
 
@@ -136,7 +136,7 @@ class TestAIQuotaPurge:
         purge = AsyncMock(return_value=2)
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", purge),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
@@ -159,7 +159,7 @@ class TestAIQuotaPurge:
         mock_factory, mock_session, _ = _make_db_mock()
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch(
                 "app.services.token_cleanup.purge_old_quota",
                 AsyncMock(side_effect=ValueError("db down")),
@@ -189,7 +189,7 @@ class TestAISpendPurge:
         purge = AsyncMock(return_value=1)
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
             patch(
                 "app.services.token_cleanup.rollup_and_purge",
@@ -217,7 +217,7 @@ class TestAISpendPurge:
         mock_factory, mock_session, _ = _make_db_mock()
 
         with (
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
             patch(
                 "app.services.token_cleanup.rollup_and_purge",
@@ -250,7 +250,7 @@ class TestTransientRetry:
     def _patches(quota, base_delay=0):
         mock_factory, mock_session, _ = _make_db_mock()
         patches = [
-            patch("app.services.token_cleanup.AsyncSessionLocal", mock_factory),
+            patch("app.services.token_cleanup.JobSessionLocal", mock_factory),
             patch("app.services.token_cleanup.purge_old_quota", quota),
             patch(
                 "app.services.token_cleanup.rollup_and_purge",
@@ -266,6 +266,10 @@ class TestTransientRetry:
             ),
             patch(
                 "app.services.token_cleanup.purge_old_scan_records",
+                AsyncMock(return_value=0),
+            ),
+            patch(
+                "app.services.token_cleanup.purge_trash",
                 AsyncMock(return_value=0),
             ),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
@@ -420,6 +424,53 @@ class TestTransientRetry:
         from app.services.token_cleanup import _is_transient
 
         assert _is_transient(exc) is True
+
+    @staticmethod
+    def _driver_error(sqlstate: str) -> Exception:
+        """A driver error as SQLAlchemy's asyncpg adapter raises it: the
+        SQLSTATE on ``sqlstate`` and ``pgcode``."""
+        err = Exception("driver")
+        err.sqlstate = err.pgcode = sqlstate
+        return err
+
+    @pytest.mark.parametrize("sqlstate", ["40P01", "40001"])
+    def test_deadlock_and_serialization_failure_are_transient(self, sqlstate) -> None:
+        """#690: the refresh-token purge can lose a deadlock to a replay;
+        Postgres rolls back one side, and a retry succeeds. A plain
+        DBAPIError (not OperationalError) with that SQLSTATE is retried,
+        directly or further down the cause chain."""
+        from sqlalchemy.exc import DBAPIError, IntegrityError
+
+        from app.services.token_cleanup import _is_transient
+
+        wrapped = DBAPIError("DELETE", {}, self._driver_error(sqlstate))
+        assert not isinstance(wrapped, IntegrityError)
+        assert _is_transient(wrapped) is True
+        assert _is_transient(self._driver_error(sqlstate)) is True
+        try:
+            try:
+                raise wrapped
+            except DBAPIError as inner:
+                raise RuntimeError("step failed") from inner
+        except RuntimeError as outer:
+            assert _is_transient(outer) is True
+
+    def test_asyncpg_deadlock_error_is_transient(self) -> None:
+        import asyncpg
+
+        from app.services.token_cleanup import _is_transient
+
+        assert _is_transient(asyncpg.exceptions.DeadlockDetectedError("x")) is True
+        assert _is_transient(asyncpg.exceptions.SerializationError("x")) is True
+
+    @pytest.mark.parametrize("sqlstate", ["23505", "42P01", "57014"])
+    def test_other_sqlstates_are_not_transient(self, sqlstate) -> None:
+        from sqlalchemy.exc import DBAPIError
+
+        from app.services.token_cleanup import _is_transient
+
+        assert _is_transient(DBAPIError("x", {}, self._driver_error(sqlstate))) is False
+        assert _is_transient(self._driver_error(sqlstate)) is False
 
     @pytest.mark.asyncio
     async def test_connection_reset_once_then_success_logs_no_error(

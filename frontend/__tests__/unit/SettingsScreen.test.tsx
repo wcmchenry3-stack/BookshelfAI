@@ -3,22 +3,31 @@ import { View } from 'react-native';
 import { render } from '@testing-library/react-native';
 
 import SettingsScreen from '../../app/(tabs)/settings';
+import { hasTopPadding, TEST_INSET_TOP } from '../helpers/insets';
 
+jest.mock('react-native-safe-area-context', () => require('../helpers/insets').safeAreaModule());
 jest.mock('../../hooks/useTheme', () => ({
   useTheme: () => ({
     theme: {
       colors: { background: '#fff', text: '#000' },
       spacing: { md: 16 },
+      typography: { fontSizeBase: 16, fontSizeXS: 12 },
     },
   }),
 }));
 
 const MockThemeToggleButton = ({ testID }: { testID?: string }) => <View testID={testID} />;
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ logout: jest.fn() }) }));
 jest.mock('../../components/ThemeToggleButton', () => ({
   ThemeToggleButton: () => <MockThemeToggleButton testID="theme-toggle-button" />,
 }));
 
 describe('SettingsScreen', () => {
+  it('pads the top by the safe-area inset (#936)', async () => {
+    const { getByText } = await render(<SettingsScreen />);
+    expect(hasTopPadding(getByText('Settings'), TEST_INSET_TOP)).toBe(true);
+  });
+
   it('renders the settings heading', async () => {
     const { getByText } = await render(<SettingsScreen />);
     expect(getByText('Settings')).toBeTruthy();

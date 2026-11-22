@@ -1,0 +1,75 @@
+import React from 'react';
+import { render, fireEvent, act } from '@testing-library/react-native';
+import { FeedbackProvider } from '../../components/FeedbackWidget/FeedbackContext';
+import SettingsScreen from '../../app/(tabs)/settings';
+import { Sentry } from '../../lib/sentry';
+
+jest.mock('../../lib/sentry', () => ({
+  Sentry: { getClient: jest.fn(), captureFeedback: jest.fn(), addBreadcrumb: jest.fn() },
+}));
+
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ logout: jest.fn() }) }));
+jest.mock('../../components/ThemeToggleButton', () => ({ ThemeToggleButton: () => null }));
+
+jest.mock('../../hooks/useTheme', () => ({
+  useTheme: () => ({
+    theme: {
+      colors: {
+        background: '#fff',
+        text: '#000',
+        textSecondary: '#555',
+        error: '#c00',
+        surface: '#ffffff',
+        inverseSurface: '#222',
+        inverseOnSurface: '#eee',
+        onSurface: '#1a1a1a',
+        onSurfaceVariant: '#666666',
+        onPrimary: '#ffffff',
+        primary: '#0f426f',
+        outline: '#cccccc',
+        surfaceContainerHigh: '#f5f5f5',
+        scrim: '#0000008c',
+      },
+      spacing: { md: 16 },
+      typography: {
+        fontFamilyBody: 'Inter_400Regular',
+        fontSizeLG: 20,
+        fontSizeBase: 16,
+        fontSizeSM: 14,
+        fontSizeXS: 12,
+      },
+    },
+  }),
+}));
+
+beforeEach(() => {
+  (Sentry.getClient as jest.Mock).mockReset().mockReturnValue({});
+  (Sentry.captureFeedback as jest.Mock).mockReset();
+});
+
+describe('feedback entry points', () => {
+  it('Settings "Send feedback" row opens the widget', async () => {
+    const { getByTestId, queryByLabelText, getByLabelText } = await render(
+      <FeedbackProvider>
+        <SettingsScreen />
+      </FeedbackProvider>
+    );
+    expect(queryByLabelText('Close')).toBeNull();
+    await fireEvent.press(getByTestId('settings-feedback'));
+    expect(getByLabelText('Close')).toBeTruthy();
+  });
+
+  it('shows the thanks banner after a submit from any entry point', async () => {
+    const { getByTestId, getByText, getByPlaceholderText, queryByTestId } = await render(
+      <FeedbackProvider>
+        <SettingsScreen />
+      </FeedbackProvider>
+    );
+    await fireEvent.press(getByTestId('settings-feedback'));
+    await fireEvent.changeText(getByPlaceholderText(/Describe what happened/), 'It broke');
+    await act(async () => {
+      await fireEvent.press(getByText('Submit'));
+    });
+    expect(queryByTestId('feedback-thanks-banner')).toBeTruthy();
+  });
+});

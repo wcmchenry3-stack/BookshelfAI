@@ -137,9 +137,47 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # jest-environment-jsdom must match the jest major. v30 under jest 29 and
+      # the RN jest preset fails with "Cannot redefine property: window" (closed
+      # PR #865). Bump together with jest on the Expo SDK upgrade.
+      - dependency-name: "jest-environment-jsdom"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # SDK-managed native module: Expo SDK 56 expects 13.16.1, and v14 fails
+      # expo-compat and typecheck (closed PR #864). Move it with the SDK.
+      - dependency-name: "react-native-webview"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # query-string is a devDependency pinned to the exact version expo-router
+      # resolves (#779), so QueryStringDecode.test.ts exercises the same parser
+      # the app ships. Any bump decouples the test from the app (closed PR
+      # #879). Bump only alongside expo-router's own query-string.
+      - dependency-name: "query-string"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
       # Expo SDK 56 compatibility matrix requires ~7.11.0 — block all bumps until
       # Expo explicitly supports a newer major.
       - dependency-name: "@sentry/react-native"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      # @sentry/browser and @sentry/core are devDependencies used only by
+      # __tests__/unit/sentryScrub.test.ts. They are pinned to the exact version
+      # @sentry/react-native bundles (#736) so the scrub test exercises the same
+      # Sentry the app ships, so every update type is ignored, matching the
+      # @sentry/react-native ignore above. Bump all three together when Expo
+      # allows a newer @sentry/react-native.
+      - dependency-name: "@sentry/browser"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "@sentry/core"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"

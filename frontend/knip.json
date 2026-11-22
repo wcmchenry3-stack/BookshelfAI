@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "__tests__/**/*.{ts,tsx}",
+    "plugins/*.js",
+    "scripts/*.js",
+    "components/*.web.tsx",
+    // Read at runtime via fs by scripts/translate.js (not imported), so knip sees no importer.
+    "src/i18n/glossary.ts"
+  ],
+  "project": ["**/*.{ts,tsx,js}", "!android/**", "!ios/**"],
+  // owner-approved #971 — peer-dep exceptions below are permanent tool constraints
+  // Every entry needs a written reason. Do not add one without it (see docs/testing.md).
+  "ignoreDependencies": [
+    // Peer dep of babel-preset-expo, loaded by Metro/Jest via babel.config.js, never imported.
+    "@babel/core",
+    // Peer dep of @testing-library/react-native, loaded by it at runtime, never imported.
+    "react-test-renderer",
+    // knip's Expo plugin expects it for every Expo config, but the app has no OTA updates (native builds via Xcode Cloud and Play Console), so it is never installed.
+    "expo-updates"
+  ]
+}

@@ -5,6 +5,16 @@
  * interceptor (401 → refresh → retry, and failure paths) without making
  * real HTTP calls.
  */
+import {
+  ACCESS_TOKEN_KEY,
+  api,
+  gateStoredSession,
+  REFRESH_TOKEN_KEY,
+  resumeStoredSession,
+  setAuthFailureCallback,
+  TOKEN_REVOKED,
+  waitForPendingRefresh,
+} from '../../lib/api';
 
 // The refresh-retry tests invoke api(original) which triggers the async
 // request interceptor chain (token lookup + Sentry breadcrumb) before
@@ -47,14 +57,6 @@ jest.mock('axios', () => {
     create: actual.create,
   };
 });
-
-import {
-  ACCESS_TOKEN_KEY,
-  api,
-  REFRESH_TOKEN_KEY,
-  setAuthFailureCallback,
-  TOKEN_REVOKED,
-} from '../../lib/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -231,6 +233,23 @@ describe('api response interceptor — revoked session', () => {
     await expect(runResponseErrorInterceptor(make401Error())).rejects.toBeDefined();
 
     expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockDeleteItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY);
+    expect(mockDeleteItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY);
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('signs out when the refresh is rejected as reused (401 refresh_reused, #690)', async () => {
+    mockGetItem.mockImplementation((key: string) =>
+      key === REFRESH_TOKEN_KEY ? Promise.resolve('replayed-refresh') : Promise.resolve(null)
+    );
+    mockAxiosPost.mockRejectedValue({
+      response: { status: 401, data: { detail: 'refresh_reused' } },
+    });
+
+    await expect(runResponseErrorInterceptor(make401Error())).rejects.toBeDefined();
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockSetItem).not.toHaveBeenCalled();
     expect(mockDeleteItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY);
     expect(mockDeleteItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY);
     expect(onAuthFailure).toHaveBeenCalledTimes(1);
@@ -457,5 +476,385 @@ describe('api response interceptor — concurrent 401s share one refresh', () =>
     expect(mockDeleteItem).toHaveBeenCalledWith(ACCESS_TOKEN_KEY);
     expect(mockDeleteItem).toHaveBeenCalledWith(REFRESH_TOKEN_KEY);
     expect(onAuthFailure).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Session gate (#722) ──────────────────────────────────────────────────────
+
+describe('api session gate (#722)', () => {
+  let store: Record<string, string | null>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setAuthFailureCallback(jest.fn());
+    store = { [ACCESS_TOKEN_KEY]: 'old-access', [REFRESH_TOKEN_KEY]: 'old-refresh' };
+    mockGetItem.mockImplementation((key: string) => Promise.resolve(store[key] ?? null));
+    mockSetItem.mockImplementation((key: string, value: string) => {
+      store[key] = value;
+      return Promise.resolve();
+    });
+    mockDeleteItem.mockImplementation((key: string) => {
+      store[key] = null;
+      return Promise.resolve();
+    });
+    mockAxiosPost.mockResolvedValue({
+      data: { access_token: 'new-access', refresh_token: 'new-refresh' },
+    });
+  });
+
+  afterEach(() => resumeStoredSession());
+
+  function authed401(url = '/user-books') {
+    return {
+      response: { status: 401 },
+      config: { url, headers: { Authorization: 'Bearer old-access' } },
+    };
+  }
+
+  it('holds a request until the install check settles, then sends no stale token', async () => {
+    let finishCheck!: (usable: boolean) => void;
+    gateStoredSession(new Promise<boolean>((r) => (finishCheck = r)));
+
+    let settled = false;
+    const pending = runRequestInterceptor({ headers: {} }).then((c: any) => {
+      settled = true;
+      return c;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(settled).toBe(false);
+    expect(mockGetItem).not.toHaveBeenCalled();
+
+    // The fresh-install wipe deletes the tokens, then the check passes.
+    store[ACCESS_TOKEN_KEY] = null;
+    store[REFRESH_TOKEN_KEY] = null;
+    finishCheck(true);
+
+    const config = await pending;
+    expect(config.headers.Authorization).toBeUndefined();
+  });
+
+  it('attaches the stored token when the check confirms it (upgrade / known install)', async () => {
+    gateStoredSession(Promise.resolve(true));
+
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBe('Bearer old-access');
+  });
+
+  it('never sends the stored token when the check fails', async () => {
+    gateStoredSession(Promise.resolve(false));
+
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBeUndefined();
+    expect(mockGetItem).not.toHaveBeenCalled();
+  });
+
+  it('treats a rejected check as failed', async () => {
+    gateStoredSession(Promise.reject(new Error('boom')));
+
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBeUndefined();
+  });
+
+  it('never refreshes on a 401 when the check fails', async () => {
+    gateStoredSession(Promise.resolve(false));
+    const err = authed401();
+
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockSetItem).not.toHaveBeenCalled();
+  });
+
+  it('attaches the token again once a login resumes the session', async () => {
+    gateStoredSession(Promise.resolve(false));
+    store[ACCESS_TOKEN_KEY] = 'fresh-login';
+
+    resumeStoredSession();
+    const config = await runRequestInterceptor({ headers: {} });
+
+    expect(config.headers.Authorization).toBe('Bearer fresh-login');
+  });
+
+  it.each(['/auth/google', '/auth/refresh'])('never refreshes for a 401 from %s', async (url) => {
+    const err = authed401(url);
+
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+  });
+
+  it('still refreshes a 401 from an ordinary endpoint', async () => {
+    const err = authed401();
+    (err.config as any).adapter = (config: any) =>
+      Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config });
+
+    await runResponseErrorInterceptor(err);
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+  });
+
+  function deferredRefresh() {
+    let resolve!: (v: object) => void;
+    let reject!: (e: unknown) => void;
+    mockAxiosPost.mockReturnValue(
+      new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+      })
+    );
+    return { resolve, reject };
+  }
+
+  function authed401WithAdapter() {
+    const adapter = jest.fn((config: any) =>
+      Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config })
+    );
+    const err = authed401();
+    (err.config as any).adapter = adapter;
+    return { err, adapter };
+  }
+
+  it('drops a refresh that settles after logout closed the gate', async () => {
+    const refresh = deferredRefresh();
+    const { err, adapter } = authed401WithAdapter();
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+
+    // logout(): tokens deleted, gate closed.
+    store[ACCESS_TOKEN_KEY] = null;
+    store[REFRESH_TOKEN_KEY] = null;
+    gateStoredSession(Promise.resolve(false));
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(store[ACCESS_TOKEN_KEY]).toBeNull();
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('drops a refresh that settles after a new login', async () => {
+    const refresh = deferredRefresh();
+    const { err, adapter } = authed401WithAdapter();
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    store[ACCESS_TOKEN_KEY] = 'new-login-access';
+    resumeStoredSession(); // login stored a new session
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(mockSetItem).not.toHaveBeenCalled();
+    expect(store[ACCESS_TOKEN_KEY]).toBe('new-login-access');
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('does not sign out a new session when an old refresh is rejected late', async () => {
+    const onAuthFailure = jest.fn();
+    setAuthFailureCallback(onAuthFailure);
+    const refresh = deferredRefresh();
+    const { err } = authed401WithAdapter();
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    store[ACCESS_TOKEN_KEY] = 'new-login-access';
+    resumeStoredSession();
+    refresh.reject({ response: { status: 401 } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('removes the tokens a refresh wrote when logout starts during its writes', async () => {
+    const refresh = deferredRefresh();
+    const { err, adapter } = authed401WithAdapter();
+    mockSetItem.mockImplementation(async (key: string, value: string) => {
+      store[key] = value;
+      if (key === ACCESS_TOKEN_KEY) {
+        // logout() runs between the two writes: gate closed, both deleted.
+        gateStoredSession(Promise.resolve(false));
+        store[ACCESS_TOKEN_KEY] = null;
+        store[REFRESH_TOKEN_KEY] = null;
+      }
+    });
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(store[ACCESS_TOKEN_KEY]).toBeNull();
+    expect(store[REFRESH_TOKEN_KEY]).toBeNull();
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('keeps a newer login when an old refresh finishes writing late', async () => {
+    const refresh = deferredRefresh();
+    const { err } = authed401WithAdapter();
+    mockSetItem.mockImplementation(async (key: string, value: string) => {
+      store[key] = value;
+      if (key === REFRESH_TOKEN_KEY && value === 'late-refresh') {
+        // A new login stores its tokens right after.
+        store[ACCESS_TOKEN_KEY] = 'login-access';
+        store[REFRESH_TOKEN_KEY] = 'login-refresh';
+        resumeStoredSession();
+      }
+    });
+
+    const pending = runResponseErrorInterceptor(err);
+    await new Promise((r) => setTimeout(r, 0));
+    refresh.resolve({ data: { access_token: 'late-access', refresh_token: 'late-refresh' } });
+
+    await expect(pending).rejects.toBe(err);
+    expect(store[ACCESS_TOKEN_KEY]).toBe('login-access');
+    expect(store[REFRESH_TOKEN_KEY]).toBe('login-refresh');
+  });
+
+  it.each([
+    '/auth/google/',
+    '/auth/google?x=1',
+    'auth/google',
+    `${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8001'}/auth/google`,
+    'https://api.example.com/auth/google#frag',
+  ])('never refreshes for a 401 from %s', async (url) => {
+    const err = authed401(url);
+
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+  });
+
+  it('never replays an old session request with a new session token', async () => {
+    const onAuthFailure = jest.fn();
+    setAuthFailureCallback(onAuthFailure);
+    // Sent in epoch N with the old token.
+    const config: any = await runRequestInterceptor({ url: '/scan', headers: {} });
+    expect(config.headers.Authorization).toBe('Bearer old-access');
+    const adapter = jest.fn((c: any) =>
+      Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config: c })
+    );
+    config.adapter = adapter;
+
+    // logout (N+1), then a fast login as another account (N+2).
+    gateStoredSession(Promise.resolve(false));
+    store[ACCESS_TOKEN_KEY] = 'other-user-access';
+    store[REFRESH_TOKEN_KEY] = 'other-user-refresh';
+    resumeStoredSession();
+
+    const err = { response: { status: 401 }, config };
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(adapter).not.toHaveBeenCalled();
+    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('never signs out a new session on a token_revoked 401 for an old session request', async () => {
+    const onAuthFailure = jest.fn();
+    setAuthFailureCallback(onAuthFailure);
+    const config: any = await runRequestInterceptor({ url: '/scan', headers: {} });
+    gateStoredSession(Promise.resolve(false));
+    store[ACCESS_TOKEN_KEY] = 'old-access'; // even if the stored token looks the same
+    resumeStoredSession();
+
+    const err = { response: { status: 401, data: { detail: TOKEN_REVOKED } }, config };
+    await expect(runResponseErrorInterceptor(err)).rejects.toBe(err);
+
+    expect(mockDeleteItem).not.toHaveBeenCalled();
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+
+  it('still retries a 401 for a request sent in the current session', async () => {
+    const config: any = await runRequestInterceptor({ url: '/scan', headers: {} });
+    const adapter = jest.fn((c: any) =>
+      Promise.resolve({
+        data: { auth: c.headers.Authorization },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: c,
+      })
+    );
+    config.adapter = adapter;
+
+    const response: any = await runResponseErrorInterceptor({ response: { status: 401 }, config });
+
+    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(response.data.auth).toBe('Bearer new-access');
+  });
+});
+
+// ─── waitForPendingRefresh (#723) ────────────────────────────────────────────
+
+describe('waitForPendingRefresh', () => {
+  let store: Record<string, string | null>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setAuthFailureCallback(jest.fn());
+    store = { [ACCESS_TOKEN_KEY]: 'old-access', [REFRESH_TOKEN_KEY]: 'old-refresh' };
+    mockGetItem.mockImplementation((key: string) => Promise.resolve(store[key] ?? null));
+    mockSetItem.mockImplementation((key: string, value: string) => {
+      store[key] = value;
+      return Promise.resolve();
+    });
+    mockDeleteItem.mockImplementation((key: string) => {
+      store[key] = null;
+      return Promise.resolve();
+    });
+  });
+
+  function startRefresh() {
+    let resolve!: (v: object) => void;
+    let reject!: (e: unknown) => void;
+    mockAxiosPost.mockReturnValue(
+      new Promise<object>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      })
+    );
+    const request = runResponseErrorInterceptor(
+      make401Error({
+        adapter: (config: object) => Promise.resolve({ data: {}, status: 200, config }),
+      })
+    ).catch(() => {});
+    return { resolve, reject, request };
+  }
+
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it('resolves immediately when nothing is in flight', async () => {
+    await expect(waitForPendingRefresh()).resolves.toBeUndefined();
+  });
+
+  it('stays pending during a refresh and resolves after the rotated token is stored', async () => {
+    const refresh = startRefresh();
+    await tick();
+    let settled = false;
+    const waiting = waitForPendingRefresh().then(() => {
+      settled = true;
+    });
+    await tick();
+    expect(settled).toBe(false);
+
+    refresh.resolve({ data: { access_token: 'new-access', refresh_token: 'new-refresh' } });
+    await waiting;
+    expect(store[REFRESH_TOKEN_KEY]).toBe('new-refresh');
+    await refresh.request;
+  });
+
+  it('resolves when the refresh is rejected', async () => {
+    const refresh = startRefresh();
+    await tick();
+    const waiting = waitForPendingRefresh();
+    refresh.reject({ response: { status: 500 } });
+    await expect(waiting).resolves.toBeUndefined();
+    await refresh.request;
   });
 });

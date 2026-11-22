@@ -1,6 +1,20 @@
 {
   "loading": "本を読み込み中…",
-  "noBooksYet": "まだ本がありません。",
+  "emptyLibraryTitle": "ライブラリはまだ空です",
+  "emptyLibraryBody": "バーコードや本棚をスキャンして、最初の本を追加しましょう。",
+  "emptyLibraryAction": "本をスキャン",
+  "emptyFilter": {
+    "wishlisted": "ウィッシュリストの本はまだありません",
+    "purchased": "購入済みの本はまだありません",
+    "reading": "読書中の本はまだありません",
+    "read": "読了した本はまだありません"
+  },
+  "emptyFilterBody": "本のステータスを変更すると、ここに表示されます。",
+  "emptyFilterAction": "すべての本を表示",
+  "emptySearchTitle": "「{{query}}」に一致する本はありません",
+  "emptySearchBody": "つづりを確認するか、別のタイトルや著者でお試しください。",
+  "emptySearchAction": "検索をクリア",
+  "loadErrorAction": "もう一度試す",
   "statusTab": {
     "all": "すべて",
     "wishlisted": "ウィッシュリスト",
@@ -14,10 +28,17 @@
     "reading": "読書中",
     "read": "読了"
   },
-  "filterBy": "{{label}}で絞り込む",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — 未確認",
+  "filterBy_other": "{{label}}で絞り込む、{{count}}冊",
+  "bookCardA11y": "{{title}} — {{status}}、著者 {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}、著者 {{author}} — 未確認",
   "bookCardHint": "タップして詳細とオプションを見る",
+  "moreOptionsA11y": "{{title}}のその他のオプション",
+  "actions": {
+    "viewDetails": "詳細を見る",
+    "remove": "ライブラリから削除",
+    "close": "閉じる"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "{{status}}にする",
   "markAsA11y": "{{status}}にする",
   "removeFromList": "リストから削除",
@@ -27,10 +48,51 @@
   "errorLoadBooks": "本を読み込めませんでした。",
   "errorUpdateStatus": "ステータスを更新できませんでした。",
   "errorRemoveBook": "本を削除できませんでした。",
-  "searchPlaceholder": "ライブラリを検索...",
-  "searchA11y": "ライブラリを検索",
-  "sectionTitle": "マイライブラリ",
-  "bookCount": "コレクション内の本：{{count}}冊",
-  "heroSubtitle": "あなたの読書生活を一箇所で",
-  "archiveSummary": "冊を記録中"
+  "searchPlaceholder": "タイトルまたは著者",
+  "searchA11y": "本を検索",
+  "searchClearA11y": "検索をクリア",
+  "screenTitle": "マイブック",
+  "headerBooks_other": "{{count}}冊",
+  "headerReading_other": "{{count}}冊を読書中",
+  "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "読書中",
+    "allBooks": "すべての本"
+  },
+  "sort": {
+    "sheetTitle": "並べ替え",
+    "buttonA11y": "並べ替え、現在: {{label}}",
+    "added": "追加日(新しい順)",
+    "title": "タイトル順",
+    "author": "著者順"
+  },
+  "view": {
+    "showGrid": "グリッド表示にする",
+    "showList": "リスト表示にする"
+  },
+  "shelfA11y_other": "読書中、{{count}}冊",
+  "shelfItemA11y": "{{title}}、{{author}}著",
+  "movedToTrash": "ゴミ箱に移動しました。30日以内なら元に戻せます。",
+  "viewTrash": "ゴミ箱を見る",
+  "trash": {
+    "title": "ゴミ箱",
+    "back": "戻る",
+    "loading": "ゴミ箱を読み込み中…",
+    "intro": "削除した本は30日間ここに残り、その後完全に削除されます。",
+    "emptyTitle": "ゴミ箱は空です",
+    "emptyBody": "ライブラリから削除した本は30日間ここに表示され、それまで元に戻せます。",
+    "purgeIn_other": "{{count}}日後に完全に削除されます",
+    "purgeToday": "今日、完全に削除されます",
+    "rowA11y": "{{title}}、{{author}}。{{when}}",
+    "rowUnverifiedA11y": "{{title}}、{{author}}。{{when}}。未確認",
+    "restore": "元に戻す",
+    "restoreA11y": "{{title}}を元に戻す",
+    "restored": "{{title}}をライブラリに戻しました。",
+    "restoreConflict": "この本はすでにライブラリにあります。",
+    "restoreNotFound": "この本はもうゴミ箱にありません。",
+    "restoreFailed": "この本を元に戻せませんでした。もう一度お試しください。",
+    "errorLoad": "ゴミ箱を読み込めませんでした。",
+    "retry": "再試行",
+    "errorRefresh": "ゴミ箱を更新できませんでした。"
+  }
 }

@@ -16,6 +16,7 @@ from app.ai.models_allowlist import (
     MAX_TOKENS_BOUNDS,
     TIMEOUT_S_BOUNDS,
 )
+from app.core.db_url import to_async_url
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
 # asyncpg's server-side prepared statements, which asyncpg uses by default. It
@@ -66,7 +67,9 @@ class _BlankGuardSource(PydanticBaseSettingsSource):
         self._init_kwargs = dict(getattr(init_settings, "init_kwargs", {}) or {})
         self._env_files = env_files
 
-    def get_field_value(self, field, field_name):  # pragma: no cover - unused
+    # Abstract hook required by PydanticBaseSettingsSource. Never called
+    # directly: pydantic resolves fields via __call__.
+    def get_field_value(self, field, field_name):
         return None, field_name, False
 
     @staticmethod
@@ -150,13 +153,18 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
+    # Owner DSN for Alembic only (#696); empty = DATABASE_URL (local dev, CI).
+    migration_database_url: str = ""
     # Bounded async pool per instance. Render zero-downtime deploys run 2
-    # instances concurrently during a deploy, plus a one-off `alembic upgrade
-    # head` connection: 2 * (db_pool_size + db_max_overflow) + 1 must stay
-    # under the small Supabase session pooler's 15-client cap.
-    # 2 * (3 + 2) + 1 = 11 <= 15.
+    # instances concurrently, plus a one-off `alembic upgrade head`
+    # connection: 2 * (db_pool_size + db_max_overflow) + 1 must stay under
+    # the small Supabase session pooler's 15-client cap (2 * (3 + 2) + 1 = 11).
     db_pool_size: int = 3
     db_max_overflow: int = 2
+    # statement_timeout in ms (#696): a longer request query is cancelled (503).
+    # The daily purge jobs (JobSessionLocal) use the job value. 0 disables.
+    statement_timeout_ms: int = 5000
+    statement_timeout_job_ms: int = 60000
 
     # Auth
     google_client_id: str = ""
@@ -176,6 +184,12 @@ class Settings(BaseSettings):
     # later release.
     jwt_expiry_hours: str | None = None
     refresh_token_expiry_days: int = 7
+    # Refresh-token reuse detection (#690): a rotated refresh token presented
+    # again within this many seconds of its rotation is a client retry (the
+    # response was lost) and gets a fresh pair that replaces the successor;
+    # later, it is reuse and signs the user out everywhere. 0 = every later
+    # replay is reuse (concurrent duplicates still get a replacement).
+    refresh_reuse_grace_seconds: int = Field(default=30, ge=0, le=120)
     allowed_emails: str = ""
 
     # External APIs
@@ -214,7 +228,7 @@ class Settings(BaseSettings):
     # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
     # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
     # boot, and after that the DB row is the source of truth (change it with
-    # `python -m app.ai.settings set ...`, see app/ai/settings.py). They are
+    # `python -m app.ai.settings set ...`, see app/ai/settings/). They are
     # also the fallback when a row is missing. A disabled scan is rejected
     # before the image is processed, Turnstile is called or the provider is
     # contacted (the framework has already received the multipart body);
@@ -281,6 +295,22 @@ class Settings(BaseSettings):
     turnstile_secret_key: str = ""
     turnstile_required: bool = True
 
+    # Device attestation (#753) — Apple App Attest and Android Play Integrity.
+    # attestation_required=true: every /scan from a native client must carry a
+    # valid assertion/token; Turnstile is still accepted as a fallback for web.
+    # Set ATTESTATION_REQUIRED=false (the default) until native clients ship.
+    attestation_required: bool = False
+    # HMAC secret for stateless nonces (generate: openssl rand -hex 32).
+    # Required when any attestation endpoint is called.
+    attestation_nonce_secret: str = ""
+    # <TEAM_ID>.<BUNDLE_ID> — required to verify iOS App Attest certificates.
+    attestation_apple_app_id: str = ""
+    # Android package name, e.g. "com.example.app" — required for Play Integrity.
+    attestation_android_package_name: str = ""
+    # Google service-account JSON for calling the Play Integrity API.
+    # Store the entire JSON value in a single env var.
+    attestation_google_credentials_json: str = ""
+
     # ClamAV antivirus — optional malware scan on uploaded images.
     # Requires a running ClamAV daemon (clamd) and pyclamd installed.
     # Set CLAMAV_ENABLED=true when the Render instance has sufficient RAM (~300 MB).
@@ -319,6 +349,26 @@ class Settings(BaseSettings):
     # (UNVERIFIED_BOOKS_PER_USER_MAX); at the cap, POST /wishlist/unverified
     # answers 409 unverified_limit_reached.
     unverified_books_per_user_max: int = Field(default=200, ge=1, le=10_000)
+    # Trash window for deleted library entries (#683): DELETE /user-books/{id}
+    # moves an entry to the trash, it can be restored until the daily cleanup
+    # purges it, which happens once it was trashed more than this many days
+    # ago. 30 days is the owner's decision (2026-10-26). Env-overridable
+    # (TRASH_RETENTION_DAYS).
+    trash_retention_days: int = Field(default=30, ge=1, le=365)
+    # The most entries one user's trash holds (#683), a backstop: DELETE
+    # already replaces older trashed copies of the same book that hold no
+    # user data (trash.evict_same_book), so an add / delete loop never grows
+    # the trash; copies with the user's data are kept, and this cap is the
+    # only thing that removes them before the trash window ends. Past this
+    # many entries a delete hard-deletes that user's oldest trashed entries,
+    # whatever they hold. 1,000 keeps a mass delete of up to 1,000 distinct
+    # books fully recoverable for the trash window (owner decision,
+    # 2026-10-28). A trashed user_books row is at most ~13 KB (10,000
+    # characters of notes plus overrides of 500 / 500 / 2,048, measured with
+    # pg_column_size), up to ~25 KB with multibyte notes: ~13-25 MB per user
+    # worst case at the default, ~65-125 MB at the maximum of 5,000.
+    # Env-overridable (TRASH_MAX_ENTRIES_PER_USER).
+    trash_max_entries_per_user: int = Field(default=1000, ge=100, le=5000)
     # Allowlist of Host header values accepted when settings.is_hardened is True
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]
@@ -455,18 +505,19 @@ class Settings(BaseSettings):
             self.trusted_proxy_mode = "cloudflare" if self.is_hardened else "none"
         return self
 
-    @field_validator("database_url")
+    @field_validator("database_url", "migration_database_url")
     @classmethod
-    def reject_transaction_pooler_port(cls, v: str) -> str:
+    def reject_transaction_pooler_port(cls, v: str, info) -> str:
         # Value-free messages: urllib's own text echoes parts of the URL (a
         # password, for a malformed one), and boot logs must never carry it.
+        name = info.field_name.upper()
         try:
             port = urlsplit(v).port
         except ValueError:
-            raise ValueError("DATABASE_URL is not a valid URL") from None
+            raise ValueError(f"{name} is not a valid URL") from None
         if port == _SUPABASE_TRANSACTION_POOLER_PORT:
             raise ValueError(
-                f"DATABASE_URL uses port {_SUPABASE_TRANSACTION_POOLER_PORT} "
+                f"{name} uses port {_SUPABASE_TRANSACTION_POOLER_PORT} "
                 "(Supabase's transaction pooler), which breaks asyncpg's "
                 "server-side prepared statements. Use the session pooler on "
                 "port 5432 instead."
@@ -510,13 +561,12 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
-        # Normalize any postgres:// or postgresql:// scheme to postgresql+asyncpg://
-        # and sqlite:// to sqlite+aiosqlite:// (used by schema-check CI with SQLite)
-        import re
+        return to_async_url(self.database_url)
 
-        url = re.sub(r"^postgres(ql)?://", "postgresql+asyncpg://", self.database_url)
-        url = re.sub(r"^sqlite:///", "sqlite+aiosqlite:///", url)
-        return url
+    @property
+    def async_migration_database_url(self) -> str:
+        """Alembic's DSN: MIGRATION_DATABASE_URL if non-blank, else DATABASE_URL."""
+        return to_async_url(self.migration_database_url.strip() or self.database_url)
 
     @property
     def google_client_ids(self) -> list[str]:

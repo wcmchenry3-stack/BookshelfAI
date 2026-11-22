@@ -99,7 +99,7 @@ class EnrichedBook(BaseModel):
     # saved in a scan record before #631).
     candidate_index: int | None = Field(None, ge=0)
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[prop-decorator] - mypy does not model pydantic computed_field over property
     @property
     def in_library(self) -> bool:
         """Whether the user already has this book (#585): the same value as

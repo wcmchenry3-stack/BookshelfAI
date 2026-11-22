@@ -14,13 +14,21 @@ content (and no refusal), content that is not JSON, JSON that is not a
 ``{"books": [...]}`` object (a bare list is still accepted, as before), a
 non-empty list in which every item is structurally broken (not an object, a
 title or author missing or not a string, or a confidence that is not a
-number), or an unexpected ``finish_reason`` (anything but ``stop``,
-``length`` or ``content_filter``; a missing one is judged on the content
-alone). Otherwise the reply is ``ok`` with its well-formed items, kept as
-before #572: an empty author (or title) is still a candidate (a title-only
-lookup). A genuine ``{"books": []}`` is ``ok`` with no candidates. A
-``length`` reply stays ``truncated`` here; with no books the gateway reports
-it as ``malformed``.
+number, or a title or author over 500 characters, #754), or an unexpected
+``finish_reason`` (anything but ``stop``, ``length`` or ``content_filter``; a
+missing one is judged on the content alone). Otherwise the reply is ``ok``
+with its well-formed items, kept as before #572: an empty author is still a
+candidate (a title-only lookup). Since #746 a candidate with an empty or
+whitespace title is dropped (it is schema-valid, so it is not "broken" and a
+reply of only such items is ``ok`` with no books), and an ISBN that is not a
+string or fails its check digit becomes None while the book is kept (the
+model can invent ISBNs). Since #754 a confidence is clamped to 0-1 (NaN
+becomes 0.5; an integer too large for a float clamps to 1 or 0), as in the
+Claude adapter. Unlike Claude, which gives 0.5 for any string, a numeric
+string ("1.5", " 0.9 ") parses and clamps here, and null, a list, an object or
+a non-numeric string is broken (kept from #572). A genuine
+``{"books": []}`` is ``ok`` with no candidates. A ``length`` reply stays
+``truncated`` here; with no books the gateway reports it as ``malformed``.
 """
 
 import base64
@@ -30,6 +38,14 @@ import logging
 
 import httpx
 
+from app.ai.providers._common import (
+    clamp_confidence,
+    clean_isbn_10,
+    clean_isbn_13,
+    collect_candidates,
+    has_broken_text,
+    token_count,
+)
 from app.ai.providers.base import (
     ProviderOutcome,
     ProviderResult,
@@ -57,12 +73,12 @@ For each book return:
 - title: string
 - author: string
 - confidence: float between 0 and 1 (how sure you are of this identification)
-- isbn_13: string or null (any valid 13-digit ISBN for this book — any edition is fine)
-- isbn_10: string or null (any valid 10-digit ISBN for this book — any edition is fine)
+- isbn_13: string or null (only if a 13-digit ISBN is printed and legible in the photo)
+- isbn_10: string or null (only if a 10-digit ISBN is printed and legible in the photo)
 
-Provide at least one ISBN whenever you can identify the book, even if you are not certain which specific edition is shown. The ISBN will only be used as a search hint.
+Give an ISBN only when you can read it on that book in the photo; otherwise use null (most photos show no ISBN). Never guess or recall an ISBN from memory: the book is looked up by its title and author.
 Return ONLY a JSON object of the form {{"books": [...]}}. Return {{"books": []}} if no book is readable. Example:
-{{"books":[{{"title":"Dune","author":"Frank Herbert","confidence":0.97,"isbn_13":"9780441013593","isbn_10":null}}]}}"""
+{{"books":[{{"title":"Dune","author":"Frank Herbert","confidence":0.97,"isbn_13":null,"isbn_10":null}}]}}"""
 
 
 def _message_content(body: object) -> tuple[str | None, str | None]:
@@ -72,7 +88,7 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     carries no text (e.g. the model declined and returned a refusal instead).
     """
     try:
-        choice = body["choices"][0]  # type: ignore[index]
+        choice = body["choices"][0]  # type: ignore[index] - body is untyped JSON; a bad shape is caught below
         finish_reason = choice.get("finish_reason")
         content = choice["message"].get("content")
     except (KeyError, IndexError, TypeError, AttributeError):
@@ -80,18 +96,6 @@ def _message_content(body: object) -> tuple[str | None, str | None]:
     if not isinstance(content, str):
         return None, finish_reason if isinstance(finish_reason, str) else None
     return content, finish_reason
-
-
-# The ledger's token columns are Postgres INTEGER.
-MAX_TOKEN_COUNT = 2_147_483_647
-
-
-def _token_count(value: object) -> int:
-    """A token count from the usage block: an int clamped to
-    ``[0, MAX_TOKEN_COUNT]``; anything else is 0."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return min(max(value, 0), MAX_TOKEN_COUNT)
 
 
 def _usage(body: object) -> tuple[int, int, int]:
@@ -105,11 +109,11 @@ def _usage(body: object) -> tuple[int, int, int]:
     usage = body.get("usage") if isinstance(body, dict) else None
     if not isinstance(usage, dict):
         return 0, 0, 0
-    prompt = _token_count(usage.get("prompt_tokens"))
-    output = _token_count(usage.get("completion_tokens"))
+    prompt = token_count(usage.get("prompt_tokens"))
+    output = token_count(usage.get("completion_tokens"))
     details = usage.get("prompt_tokens_details")
     cached = (
-        _token_count(details.get("cached_tokens")) if isinstance(details, dict) else 0
+        token_count(details.get("cached_tokens")) if isinstance(details, dict) else 0
     )
     cached = min(cached, prompt)
     return prompt - cached, output, cached
@@ -117,7 +121,7 @@ def _usage(body: object) -> tuple[int, int, int]:
 
 def _has_refusal(body: object) -> bool:
     try:
-        refusal = body["choices"][0]["message"].get("refusal")  # type: ignore[index]
+        refusal = body["choices"][0]["message"].get("refusal")  # type: ignore[index] - body is untyped JSON; a bad shape means no refusal
     except (KeyError, IndexError, TypeError, AttributeError):
         return False
     return isinstance(refusal, str) and bool(refusal)
@@ -154,26 +158,53 @@ def _log_unparseable(kind: str, content: str, finish_reason: str | None) -> None
     )
 
 
-def _candidate(item: object) -> BookCandidate | None:
-    """The candidate for one item, or None when the item is structurally
-    broken (#572): not an object, a title or author missing or not a string
-    (a ``null`` author used to crash the de-duplication), or a confidence
-    that is not a number. Strings are kept as they are, empty ones too."""
-    if not isinstance(item, dict):
-        return None
-    title, author = item.get("title"), item.get("author")
-    if not isinstance(title, str) or not isinstance(author, str):
-        return None
+def _is_broken(item: object) -> bool:
+    """An item that breaks the requested structure (#572): not an object, a
+    title or author missing or not a string (a ``null`` author used to crash
+    the de-duplication), or a confidence that is not a number. An empty title
+    or author is not broken: the item is schema-valid."""
+    # Same title/author rule as the Claude adapter (#754): over-long text is
+    # broken.
+    if has_broken_text(item):
+        return True
     try:
-        confidence = float(item.get("confidence", 0.5))
+        float(item.get("confidence", 0.5))
+    except OverflowError:
+        pass  # an integer too large for a float: clamped, not broken
     except (TypeError, ValueError):
+        return True
+    return False
+
+
+def _confidence(value: object) -> float:
+    """The confidence clamped to 0-1, as the Claude adapter does (#754): NaN
+    and a boolean become 0.5, infinity clamps to 0 or 1. (A non-number such as
+    ``"high"`` is broken here, see :func:`_is_broken`, a rule kept from #572;
+    the Claude adapter defaults it to 0.5. The difference is intentional
+    until #795 decides.)"""
+    if isinstance(value, int):
+        # A bool or an int (exact compare: float() overflows past ~1e308).
+        return clamp_confidence(value)
+    number = float(value)  # type: ignore[arg-type] - already checked by _is_broken
+    return clamp_confidence(number)
+
+
+def _candidate(item: object) -> BookCandidate | None:
+    """The candidate for one item, or None when the item is broken (see
+    :func:`_is_broken`) or has an empty or whitespace title (#746: dropped,
+    not broken). An empty author is kept (a title-only lookup). An ISBN that
+    is not a valid string becomes None; the book is kept."""
+    if _is_broken(item) or not isinstance(item, dict):
+        return None
+    title = item["title"]
+    if not title.strip():
         return None
     return BookCandidate(
         title=title,
-        author=author,
-        confidence=confidence,
-        isbn_13=item.get("isbn_13"),
-        isbn_10=item.get("isbn_10"),
+        author=item["author"],
+        confidence=_confidence(item.get("confidence", 0.5)),
+        isbn_13=clean_isbn_13(item.get("isbn_13")),
+        isbn_10=clean_isbn_10(item.get("isbn_10")),
     )
 
 
@@ -274,19 +305,13 @@ class OpenAIVisionProvider:
             outcome=outcome,
         )
 
-    def _parse(
-        self, content: str | None, finish_reason: str | None, max_books: int
-    ) -> list[BookCandidate]:
-        """The candidates in the model's reply (empty when malformed)."""
-        return self._parse_reply(content, finish_reason, max_books) or []
-
     def _parse_reply(
         self, content: str | None, finish_reason: str | None, max_books: int
     ) -> list[BookCandidate] | None:
         """The candidates in the model's reply, or None when the reply is
         malformed (#572): no content, not JSON, the wrong shape, or a
         non-empty list in which every item is structurally broken (see
-        :func:`_candidate`)."""
+        :func:`_is_broken`)."""
         if content is None:
             # No text to parse (an unexpected body). The response itself is
             # not logged.
@@ -309,21 +334,14 @@ class OpenAIVisionProvider:
             _log_unparseable("unexpected JSON shape", content, finish_reason)
             return None
 
-        candidates: list[BookCandidate] = []
-        seen: set[tuple[str, str]] = set()
-        broken = 0
-        for item in items:
-            if len(candidates) >= max_books:
-                break
-            candidate = _candidate(item)
-            if candidate is None:
-                broken += 1
-                continue
-            key = _dedupe_key(candidate)
-            if key in seen:
-                continue
-            seen.add(key)
-            candidates.append(candidate)
+        # A candidate that is None is schema-valid but dropped (empty title).
+        candidates, broken = collect_candidates(
+            items,
+            max_books,
+            is_broken=_is_broken,
+            to_candidate=_candidate,
+            dedupe_key=_dedupe_key,
+        )
 
         if items and broken == len(items):
             # A list none of whose items has the requested structure: not a

@@ -20,6 +20,10 @@ Refusals (nothing written):
 - :class:`UnverifiedLimitError` — the user already holds
   ``settings.unverified_books_per_user_max`` unverified entries.
 
+Only live entries count for both: an entry in the trash (#683) is neither a
+duplicate nor counted towards the cap. Restoring one from the trash runs the
+same checks (``POST /user-books/{id}/restore``).
+
 The check and the insert run with the user's ``users`` row locked
 (``SELECT ... FOR NO KEY UPDATE``), so concurrent requests from one user
 are serialised and can neither exceed the cap nor add the same book twice.
@@ -66,36 +70,65 @@ def _key(title: str, author: str) -> tuple[str, str]:
     return _part(title), _part(author)
 
 
+def same_book(row, title: str, author: str, isbn: str | None) -> bool:
+    """Whether ``row`` (anything with ``title``, ``author`` and ``isbn_13``)
+    is the same unverified book as ``title`` / ``author`` / ``isbn``: the
+    same normalised title and author, or the same ISBN-13. The duplicate
+    check here and the trash's same-book eviction (#683) both use it."""
+    return _key(row.title, row.author) == _key(title, author) or (
+        isbn is not None and row.isbn_13 == isbn
+    )
+
+
+async def lock_user(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Serialise this user's unverified adds and restores (#683): the cap
+    and the duplicate check read the user's entries, and two concurrent
+    requests must not both pass."""
+    await db.execute(
+        select(User.id).where(User.id == user_id).with_for_update(key_share=True)
+    )
+
+
+async def refuse_if_cannot_hold(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    title: str,
+    author: str,
+    isbn: str | None,
+) -> None:
+    """:class:`UnverifiedDuplicateError` or :class:`UnverifiedLimitError`
+    if the user cannot hold one more unverified entry with this title,
+    author and ISBN. Only live entries count: an entry in the trash (#683)
+    neither blocks a duplicate nor counts towards the cap. Call with the
+    user locked (:func:`lock_user`). Writes nothing."""
+    result = await db.execute(
+        select(
+            UserCustomBook.title, UserCustomBook.author, UserCustomBook.isbn_13
+        ).where(UserCustomBook.user_id == user_id, UserCustomBook.live())
+    )
+    existing = result.all()
+
+    if any(same_book(row, title, author, isbn) for row in existing):
+        raise UnverifiedDuplicateError
+    if len(existing) >= settings.unverified_books_per_user_max:
+        raise UnverifiedLimitError
+
+
 class UnverifiedBookService:
     async def add(
         self, db: AsyncSession, user_id: uuid.UUID, req: UnverifiedBookCreate
     ) -> UserBook:
-        # Serialise this user's adds: the cap and the duplicate check below
-        # read the user's entries, and two concurrent adds must not both pass.
-        await db.execute(
-            select(User.id).where(User.id == user_id).with_for_update(key_share=True)
-        )
-
-        result = await db.execute(
-            select(
-                UserCustomBook.title, UserCustomBook.author, UserCustomBook.isbn_13
-            ).where(UserCustomBook.user_id == user_id)
-        )
-        existing = result.all()
-
-        key = _key(req.title, req.author)
-        if any(
-            _key(row.title, row.author) == key
-            or (req.isbn is not None and row.isbn_13 == req.isbn)
-            for row in existing
-        ):
+        await lock_user(db, user_id)
+        try:
+            await refuse_if_cannot_hold(db, user_id, req.title, req.author, req.isbn)
+        except UnverifiedDuplicateError:
             await db.rollback()
             logger.info("unverified: duplicate of the user's own entry")
-            raise UnverifiedDuplicateError
-        if len(existing) >= settings.unverified_books_per_user_max:
+            raise
+        except UnverifiedLimitError:
             await db.rollback()
             logger.info("unverified: per-user cap reached")
-            raise UnverifiedLimitError
+            raise
 
         custom = UserCustomBook(
             user_id=user_id, title=req.title, author=req.author, isbn_13=req.isbn

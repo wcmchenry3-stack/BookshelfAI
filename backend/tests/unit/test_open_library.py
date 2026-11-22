@@ -35,19 +35,19 @@ def _mock_client(json_data: dict):
 
 class TestSearch:
     async def test_returns_first_doc_when_found(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_client({"docs": [WORK_DOC]})
             result = await service.search("Dune", "Frank Herbert")
         assert result == WORK_DOC
 
     async def test_returns_none_when_no_docs(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_client({"docs": []})
             result = await service.search("Unknown Book", "Unknown Author")
         assert result is None
 
     async def test_returns_none_when_docs_key_missing(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_client({})
             result = await service.search("Dune", "Frank Herbert")
         assert result is None
@@ -55,13 +55,13 @@ class TestSearch:
 
 class TestSearchByIsbn:
     async def test_returns_first_doc_when_found(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_client({"docs": [WORK_DOC]})
             result = await service.search_by_isbn("9780441013593")
         assert result == WORK_DOC
 
     async def test_returns_none_when_not_found(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_client({"docs": []})
             result = await service.search_by_isbn("0000000000000")
         assert result is None
@@ -107,25 +107,25 @@ class TestSearchErrorPaths:
     """Verify that HTTP errors propagate from OpenLibraryService.search."""
 
     async def test_raises_on_http_403_forbidden(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(_mock_status_error(403))
             with pytest.raises(httpx.HTTPStatusError):
                 await service.search("Dune", "Frank Herbert")
 
     async def test_raises_on_http_429_rate_limited(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(_mock_status_error(429))
             with pytest.raises(httpx.HTTPStatusError):
                 await service.search("Dune", "Frank Herbert")
 
     async def test_raises_on_http_500_server_error(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(_mock_status_error(500))
             with pytest.raises(httpx.HTTPStatusError):
                 await service.search("Dune", "Frank Herbert")
 
     async def test_raises_on_timeout(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(
                 httpx.TimeoutException("timed out")
             )
@@ -133,7 +133,7 @@ class TestSearchErrorPaths:
                 await service.search("Dune", "Frank Herbert")
 
     async def test_raises_on_connection_error(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(
                 httpx.ConnectError("connection refused")
             )
@@ -145,19 +145,19 @@ class TestSearchByIsbnErrorPaths:
     """Verify that HTTP errors propagate from OpenLibraryService.search_by_isbn."""
 
     async def test_raises_on_http_500_server_error(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(_mock_status_error(500))
             with pytest.raises(httpx.HTTPStatusError):
                 await service.search_by_isbn("9780441013593")
 
     async def test_raises_on_http_429_rate_limited(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(_mock_status_error(429))
             with pytest.raises(httpx.HTTPStatusError):
                 await service.search_by_isbn("9780441013593")
 
     async def test_raises_on_timeout(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(
                 httpx.TimeoutException("timed out")
             )
@@ -165,7 +165,7 @@ class TestSearchByIsbnErrorPaths:
                 await service.search_by_isbn("9780441013593")
 
     async def test_raises_on_connection_error(self, service):
-        with patch("app.services.open_library.httpx.AsyncClient") as mock_cls:
+        with patch("app.services._lookup_http.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_error_client(
                 httpx.ConnectError("connection refused")
             )

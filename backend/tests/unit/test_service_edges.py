@@ -27,7 +27,7 @@ def _client(json_data):
 class TestSearchByIsbn:
     async def test_queries_by_isbn_and_returns_the_first_volume(self):
         client = _client({"items": [{"id": "a"}, {"id": "b"}]})
-        with patch("app.services.google_books.httpx.AsyncClient", return_value=client):
+        with patch("app.services._lookup_http.httpx.AsyncClient", return_value=client):
             volume = await GoogleBooksService().search_by_isbn("9780441013593")
         assert volume == {"id": "a"}
         params = client.get.await_args.kwargs["params"]
@@ -36,14 +36,14 @@ class TestSearchByIsbn:
 
     async def test_unknown_isbn_gives_none(self):
         with patch(
-            "app.services.google_books.httpx.AsyncClient", return_value=_client({})
+            "app.services._lookup_http.httpx.AsyncClient", return_value=_client({})
         ):
             assert await GoogleBooksService().search_by_isbn("0") is None
 
     async def test_api_key_is_sent_only_when_configured(self):
         client = _client({})
         with (
-            patch("app.services.google_books.httpx.AsyncClient", return_value=client),
+            patch("app.services._lookup_http.httpx.AsyncClient", return_value=client),
             patch("app.services.google_books.settings.google_books_api_key", "k-123"),
         ):
             await GoogleBooksService().search_by_isbn("1")
@@ -51,7 +51,7 @@ class TestSearchByIsbn:
 
         client = _client({})
         with (
-            patch("app.services.google_books.httpx.AsyncClient", return_value=client),
+            patch("app.services._lookup_http.httpx.AsyncClient", return_value=client),
             patch("app.services.google_books.settings.google_books_api_key", ""),
         ):
             await GoogleBooksService().search_by_isbn("1")
@@ -139,6 +139,7 @@ class TestCleanupIsolation:
         "purge_old_spend",
         "purge_old_zero_results",
         "purge_old_scan_records",
+        "purge_trash",
     ]
 
     @staticmethod
@@ -177,14 +178,14 @@ class TestCleanupIsolation:
         patches.append(
             patch.object(
                 token_cleanup,
-                "AsyncSessionLocal",
+                "JobSessionLocal",
                 self._factory(AsyncMock(side_effect=RuntimeError("tokens"))),
             )
         )
         await self._run_once(patches, caplog)
         for name, mock in mocks.items():
             assert mock.await_count == 1, name
-        # five purges plus the refresh-token delete each logged their failure.
+        # the purges plus the refresh-token delete each logged their failure.
         assert caplog.text.count("error during cleanup run") == len(self.PURGES) + 1
 
     async def test_refresh_token_failure_alone_is_logged_not_raised(self, caplog):
@@ -203,7 +204,7 @@ class TestCleanupIsolation:
             token_cleanup, "rollup_and_purge", AsyncMock(return_value=(0, 0))
         )
         patches.append(
-            patch.object(token_cleanup, "AsyncSessionLocal", self._factory(execute))
+            patch.object(token_cleanup, "JobSessionLocal", self._factory(execute))
         )
         await self._run_once(patches, caplog)
         assert caplog.text.count("error during cleanup run") == 1

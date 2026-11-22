@@ -8,6 +8,7 @@ behaviour is in tests/integration/test_scan_records_db.py."""
 import asyncio
 import hashlib
 import io
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -295,15 +296,18 @@ class TestEnrichmentCompleteness:
         assert service.last_complete is False
 
     async def test_concurrent_calls_do_not_share_failures(self, service):
+        # A valid ISBN-13 (#743: one with a bad check digit is not looked up).
+        bad_isbn = "9780000000002"
+
         async def search(isbn):
             await asyncio.sleep(0)
-            if isbn == "bad":
+            if isbn == bad_isbn:
                 raise ConnectionError("down")
 
         service.gb.search_by_isbn = AsyncMock(side_effect=search)
         good = EnrichmentService()
         good.ol, good.gb = service.ol, service.gb
-        bad_candidate = BookCandidate("X", "Y", 0.5, isbn_13="bad")
+        bad_candidate = BookCandidate("X", "Y", 0.5, isbn_13=bad_isbn)
         await asyncio.gather(
             service.enrich([bad_candidate], limit=15), good.enrich([DUNE], limit=15)
         )
@@ -346,7 +350,7 @@ async def _one_cleanup_run(factory, purge):
     from app.services.token_cleanup import cleanup_expired_tokens
 
     with (
-        patch("app.services.token_cleanup.AsyncSessionLocal", factory),
+        patch("app.services.token_cleanup.JobSessionLocal", factory),
         patch("app.services.token_cleanup.purge_old_quota", AsyncMock()),
         patch(
             "app.services.token_cleanup.rollup_and_purge",
@@ -546,6 +550,42 @@ class TestNewPhoto:
         assert [b["title"] for b in row["enrichment"]] == ["Dune"]
         # The normal path charged one unit.
         assert store.count() == 1
+
+    def test_out_of_range_openai_confidence_still_saves_the_record(
+        self, client, store, records, provider
+    ):
+        """#754: the real OpenAI adapter (HTTP mocked, the gateway's provider
+        class swapped for it) clamps confidence 1.5 to 1.0, so the record is
+        valid and saved."""
+        from app.ai.providers.openai_vision import OpenAIVisionProvider
+
+        book = {"title": "Dune", "author": "Frank Herbert", "confidence": 1.5}
+        reply = {
+            "choices": [
+                {
+                    "message": {"content": json.dumps({"books": [book]})},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        http_resp = MagicMock()
+        http_resp.raise_for_status = MagicMock()
+        http_resp.json.return_value = reply
+        http = MagicMock()
+        http.post = AsyncMock(return_value=http_resp)
+        http.__aenter__ = AsyncMock(return_value=http)
+        http.__aexit__ = AsyncMock(return_value=False)
+        real = OpenAIVisionProvider(FEATURES["scan.standard"])
+        provider.identify.side_effect = real.identify
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=http
+        ):
+            resp = _post(client)
+        assert resp.status_code == 200
+        row = records.only()
+        assert row["ai_done"]
+        assert [c["confidence"] for c in row["candidates"]] == [1.0]
 
     def test_fingerprint_is_of_the_normalised_bytes(
         self, client, store, records, provider

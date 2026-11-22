@@ -389,3 +389,107 @@ class TestMissingContent:
         assert candidates == []
         assert "no message content" in caplog.text
         assert _REFUSAL_TEXT not in caplog.text
+
+
+class TestIsbnAndTitleValidation:
+    """#746: invented ISBNs are dropped (the book is kept); empty titles are
+    dropped; empty authors are kept."""
+
+    @staticmethod
+    async def _identify(identifier, items):
+        mock_resp = _make_mock_response(json.dumps({"books": items}))
+        with patch(
+            "app.ai.providers.openai_vision.httpx.AsyncClient"
+        ) as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+            return await identifier.identify(IMAGE_BYTES)
+
+    @staticmethod
+    def _item(**over):
+        item = {
+            "title": "A Book",
+            "author": "An Author",
+            "confidence": 0.9,
+            "isbn_13": None,
+            "isbn_10": None,
+        }
+        item.update(over)
+        return item
+
+    async def test_invented_isbns_become_none_and_book_is_kept(self, identifier):
+        result = await self._identify(
+            identifier,
+            [self._item(isbn_13="9780786412345", isbn_10="0441013598")]
+            + [self._item(title="B", isbn_13="9780817354368")],
+        )
+        assert result.outcome == "ok"
+        assert [c.title for c in result.candidates] == ["A Book", "B"]
+        assert all(c.isbn_13 is None and c.isbn_10 is None for c in result.candidates)
+
+    async def test_a_dropped_item_does_not_use_up_the_book_cap(self, identifier):
+        with patch("app.ai.providers.openai_vision.settings.scan_max_books", 1):
+            result = await self._identify(
+                identifier, [self._item(title=""), self._item(title="Dune")]
+            )
+        assert [c.title for c in result.candidates] == ["Dune"]
+
+    async def test_separated_valid_isbns_are_cleaned(self, identifier):
+        result = await self._identify(
+            identifier,
+            [self._item(isbn_13="978-0-441-01359-3", isbn_10="0 441 01359 7")],
+        )
+        assert result.candidates[0].isbn_13 == "9780441013593"
+        assert result.candidates[0].isbn_10 == "0441013597"
+
+    async def test_arabic_indic_digits_become_none(self, identifier):
+        result = await self._identify(
+            identifier, [self._item(isbn_13="٩٧٨٠٤٤١٠١٣٥٩٣", isbn_10="٠٤٤١٠١٣٥٩٧")]
+        )
+        assert len(result.candidates) == 1
+        assert result.candidates[0].isbn_13 is None
+        assert result.candidates[0].isbn_10 is None
+
+    async def test_non_string_isbns_become_none(self, identifier):
+        result = await self._identify(
+            identifier, [self._item(isbn_13=9780441013593, isbn_10=["0441013597"])]
+        )
+        assert len(result.candidates) == 1
+        assert result.candidates[0].isbn_13 is None
+        assert result.candidates[0].isbn_10 is None
+
+    async def test_x_accepted_as_last_isbn_10_character(self, identifier):
+        result = await self._identify(identifier, [self._item(isbn_10="080442957X")])
+        assert result.candidates[0].isbn_10 == "080442957X"
+
+    @pytest.mark.parametrize("title", ["", "   ", "\n\t"])
+    async def test_empty_title_is_dropped(self, identifier, title):
+        result = await self._identify(
+            identifier, [self._item(title=title), self._item(title="Kept")]
+        )
+        assert result.outcome == "ok"
+        assert [c.title for c in result.candidates] == ["Kept"]
+
+    @pytest.mark.parametrize("author", ["", "   "])
+    async def test_empty_author_is_kept(self, identifier, author):
+        result = await self._identify(identifier, [self._item(author=author)])
+        assert result.outcome == "ok"
+        assert [c.title for c in result.candidates] == ["A Book"]
+
+    async def test_only_empty_titles_is_ok_not_malformed(self, identifier):
+        result = await self._identify(
+            identifier, [self._item(title=""), self._item(title="  ")]
+        )
+        assert result.outcome == "ok"
+        assert result.candidates == []
+
+    async def test_empty_title_plus_broken_item_is_still_ok(self, identifier):
+        # One broken item and one dropped one: not every item is broken.
+        result = await self._identify(
+            identifier, [self._item(title=""), {"title_typo": "x"}]
+        )
+        assert result.outcome == "ok"
+        assert result.candidates == []

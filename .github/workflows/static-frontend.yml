@@ -1,0 +1,25 @@
+name: Static Frontend Checks
+
+on:
+  pull_request:
+    branches: [main, dev]
+    # No paths filter: the job must always report, so it can be a required check.
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  static-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-frontend
+      - name: Unused files, exports and dependencies (knip)
+        run: npm run knip

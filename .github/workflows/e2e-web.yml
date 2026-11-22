@@ -1,0 +1,104 @@
+name: E2E Web
+
+# Playwright suite against the static web export (#470). Not a required check:
+# it runs on pull requests to dev that touch the frontend, the backend or this
+# workflow, and on demand. No real AI provider or public book catalog is ever
+# called: the backend talks to a fake server (frontend/e2e/stack/). See
+# docs/testing.md "Web e2e (Playwright, #470)".
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - '.github/workflows/e2e-web.yml'
+      - '.github/actions/setup-backend/**'
+      - '.github/actions/setup-frontend/**'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-web-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/e2e
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-backend
+        with:
+          # Installed by the "Install backend dependencies" step below, in its original place.
+          requirements: ''
+      - uses: ./.github/actions/setup-frontend
+        with:
+          # Installed by the "Install frontend dependencies" step below, in its original place.
+          install: 'false'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      # Migration 0028 (#696) grants to the least-privilege app role and stops
+      # if it is missing; in prod the owner creates it by hand. Throwaway DB only.
+      - name: Create the bookshelf_app role
+        run: >-
+          psql "postgresql://test:test@localhost:5432/e2e" -v ON_ERROR_STOP=1
+          -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bookshelf_app') THEN CREATE ROLE bookshelf_app LOGIN PASSWORD 'test'; END IF; END \$\$;"
+
+      - name: Migrate the database
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the web export
+        # A development bundle: only it shows the dev "Test Login" button.
+        working-directory: frontend
+        run: npm run e2e:build
+
+      - name: Run the e2e suite
+        # playwright.config.ts starts the backend (e2e/stack/run_backend.py:
+        # TEST_AUTH_SECRET on, fake AI provider and catalog, TURNSTILE_REQUIRED
+        # =false) and serves dist/.
+        working-directory: frontend
+        run: npx playwright test
+
+      - name: Upload the report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-web-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

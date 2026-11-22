@@ -1,6 +1,20 @@
 {
   "loading": "Chargement des livres…",
-  "noBooksYet": "Aucun livre ici.",
+  "emptyLibraryTitle": "Votre bibliothèque est vide",
+  "emptyLibraryBody": "Numérisez un code-barres ou une étagère pour ajouter vos premiers livres.",
+  "emptyLibraryAction": "Numériser des livres",
+  "emptyFilter": {
+    "wishlisted": "Aucun livre en souhaits pour l’instant",
+    "purchased": "Aucun livre acheté pour l’instant",
+    "reading": "Aucun livre en lecture pour l’instant",
+    "read": "Aucun livre lu pour l’instant"
+  },
+  "emptyFilterBody": "Changez le statut d’un livre et il apparaîtra ici.",
+  "emptyFilterAction": "Afficher tous les livres",
+  "emptySearchTitle": "Aucun livre ne correspond à « {{query}} »",
+  "emptySearchBody": "Vérifiez l’orthographe ou essayez un autre titre ou auteur.",
+  "emptySearchAction": "Effacer la recherche",
+  "loadErrorAction": "Réessayer",
   "statusTab": {
     "all": "Tous",
     "wishlisted": "Souhaits",
@@ -14,10 +28,18 @@
     "reading": "En lecture",
     "read": "Lu"
   },
-  "filterBy": "Filtrer par {{label}}",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — Non vérifié",
+  "filterBy_one": "Filtrer par {{label}}, {{count}} livre",
+  "filterBy_other": "Filtrer par {{label}}, {{count}} livres",
+  "bookCardA11y": "{{title}} — {{status}}, de {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, de {{author}} — Non vérifié",
   "bookCardHint": "Touchez pour détails et options",
+  "moreOptionsA11y": "Autres options pour {{title}}",
+  "actions": {
+    "viewDetails": "Voir les détails",
+    "remove": "Retirer de la bibliothèque",
+    "close": "Fermer"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "Marquer comme {{status}}",
   "markAsA11y": "Marquer comme {{status}}",
   "removeFromList": "Retirer de la liste",
@@ -27,10 +49,55 @@
   "errorLoadBooks": "Impossible de charger les livres.",
   "errorUpdateStatus": "Impossible de mettre à jour le statut.",
   "errorRemoveBook": "Impossible de supprimer le livre.",
-  "searchPlaceholder": "Rechercher dans la bibliothèque...",
-  "searchA11y": "Chercher dans la bibliothèque",
-  "sectionTitle": "Ma bibliothèque",
-  "bookCount": "{{count}} volumes dans votre collection.",
-  "heroSubtitle": "Toute ta vie de lecture ici",
-  "archiveSummary": "livres suivis"
+  "searchPlaceholder": "Titre ou auteur",
+  "searchA11y": "Rechercher dans vos livres",
+  "searchClearA11y": "Effacer la recherche",
+  "screenTitle": "Mes livres",
+  "headerBooks_one": "{{count}} livre",
+  "headerBooks_other": "{{count}} livres",
+  "headerReading_one": "{{count}} en lecture",
+  "headerReading_other": "{{count}} en lecture",
+  "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "En cours de lecture",
+    "allBooks": "Tous les livres"
+  },
+  "sort": {
+    "sheetTitle": "Trier par",
+    "buttonA11y": "Trier, actuellement {{label}}",
+    "added": "Ajoutés récemment",
+    "title": "Titre A–Z",
+    "author": "Auteur A–Z"
+  },
+  "view": {
+    "showGrid": "Afficher en grille",
+    "showList": "Afficher en liste"
+  },
+  "shelfA11y_one": "En cours de lecture, {{count}} livre",
+  "shelfA11y_other": "En cours de lecture, {{count}} livres",
+  "shelfItemA11y": "{{title}}, de {{author}}",
+  "movedToTrash": "Déplacé dans la corbeille. Vous pouvez le restaurer pendant 30 jours.",
+  "viewTrash": "Voir la corbeille",
+  "trash": {
+    "title": "Corbeille",
+    "back": "Retour",
+    "loading": "Chargement de la corbeille…",
+    "intro": "Les livres retirés restent ici 30 jours, puis sont effacés définitivement.",
+    "emptyTitle": "La corbeille est vide",
+    "emptyBody": "Les livres que vous retirez de votre bibliothèque apparaissent ici pendant 30 jours. Vous pouvez les restaurer jusque-là.",
+    "purgeIn_one": "Effacé définitivement dans {{count}} jour",
+    "purgeIn_other": "Effacé définitivement dans {{count}} jours",
+    "purgeToday": "Effacé définitivement aujourd'hui",
+    "rowA11y": "{{title}}, {{author}}. {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}. {{when}}. Non vérifié",
+    "restore": "Restaurer",
+    "restoreA11y": "Restaurer {{title}}",
+    "restored": "{{title}} a été restauré dans votre bibliothèque.",
+    "restoreConflict": "Ce livre est déjà dans votre bibliothèque.",
+    "restoreNotFound": "Ce livre n'est plus dans la corbeille.",
+    "restoreFailed": "Impossible de restaurer ce livre. Réessayez.",
+    "errorLoad": "Impossible de charger la corbeille.",
+    "retry": "Réessayer",
+    "errorRefresh": "Impossible d'actualiser la corbeille."
+  }
 }

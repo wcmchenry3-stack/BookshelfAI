@@ -105,5 +105,7 @@
   "notSavedOnlyMessage": "{{notSaved}}冊は未保存です。",
   "ownedNotSavedRetryMessage": "{{owned}}冊はライブラリにあり、{{failed}}冊は保存できませんでした。追加で再試行。",
   "addItYourself": "自分で追加",
-  "unverifiedSavedMessage": "{{title}}を「未確認」としてウィッシュリストに追加しました。"
+  "unverifiedSavedMessage": "{{title}}を「未確認」としてウィッシュリストに追加しました。",
+  "scanInProgress": "本を読み取り、一致する情報を探しています…",
+  "searchInProgress": "検索中…"
 }

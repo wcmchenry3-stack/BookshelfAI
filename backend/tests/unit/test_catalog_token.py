@@ -65,14 +65,16 @@ class TestRoundTrip:
         book = _book()
         token = catalog_token.sign(book, ALICE, NOW)
         assert catalog_token.check(token, book, ALICE, NOW) == catalog_token.OK
-        assert catalog_token.verify(token, book, ALICE, NOW)
+        assert catalog_token.check(token, book, ALICE, NOW) == catalog_token.OK
 
     def test_verifies_the_posted_back_request(self):
         """The JSON round trip (EnrichedBook -> app -> WishlistRequest)
         keeps the canonical form."""
         book = catalog_token.sign_books([_book()], ALICE, NOW)[0]
         req = _as_request(book)
-        assert catalog_token.verify(req.catalog_token, req, ALICE, NOW)
+        assert (
+            catalog_token.check(req.catalog_token, req, ALICE, NOW) == catalog_token.OK
+        )
 
     def test_token_is_opaque_and_bounded(self):
         token = catalog_token.sign(_book(), ALICE, NOW)
@@ -91,7 +93,7 @@ class TestRoundTrip:
     def test_book_without_editions_or_subjects(self):
         book = _book(editions=[], subjects=[], description=None, cover_url=None)
         token = catalog_token.sign(book, ALICE, NOW)
-        assert catalog_token.verify(token, book, ALICE, NOW)
+        assert catalog_token.check(token, book, ALICE, NOW) == catalog_token.OK
 
 
 _CHANGES = [
@@ -126,7 +128,10 @@ class TestAnyChangeInvalidates:
     def test_book_field(self, field, value):
         book = _book()
         token = catalog_token.sign(book, ALICE, NOW)
-        assert not catalog_token.verify(token, _book(**{field: value}), ALICE, NOW)
+        assert (
+            catalog_token.check(token, _book(**{field: value}), ALICE, NOW)
+            == catalog_token.MISMATCH
+        )
 
     @pytest.mark.parametrize("field,value", _EDITION_CHANGES)
     def test_edition_field(self, field, value):
@@ -160,7 +165,7 @@ class TestRejected:
         book = _book()
         token = catalog_token.sign(book, ALICE, NOW)
         still = NOW + catalog_token.CATALOG_TOKEN_TTL
-        assert catalog_token.verify(token, book, ALICE, still)
+        assert catalog_token.check(token, book, ALICE, still) == catalog_token.OK
         after = NOW + catalog_token.CATALOG_TOKEN_TTL + timedelta(days=1)
         assert catalog_token.check(token, book, ALICE, after) == catalog_token.EXPIRED
 
@@ -236,15 +241,17 @@ class TestKey:
             catalog_token, "_settings", lambda: _cfg(jwt_private_key="key-one")
         ):
             token = catalog_token.sign(book, ALICE, NOW)
-            assert catalog_token.verify(token, book, ALICE, NOW)
+            assert catalog_token.check(token, book, ALICE, NOW) == catalog_token.OK
         with patch.object(
             catalog_token, "_settings", lambda: _cfg(jwt_private_key="key-one")
         ):
-            assert catalog_token.verify(token, book, ALICE, NOW)
+            assert catalog_token.check(token, book, ALICE, NOW) == catalog_token.OK
         with patch.object(
             catalog_token, "_settings", lambda: _cfg(jwt_private_key="key-two")
         ):
-            assert not catalog_token.verify(token, book, ALICE, NOW)
+            assert (
+                catalog_token.check(token, book, ALICE, NOW) == catalog_token.MISMATCH
+            )
 
     def test_dev_uses_the_dev_key_without_a_secret(self):
         cfg = _cfg(environment="development", jwt_private_key="")
@@ -302,7 +309,7 @@ class TestFailClosed:
         token = catalog_token.sign(book, ALICE, NOW)  # dev key, test env
         with patch.object(catalog_token, "_settings", lambda: cfg):
             with pytest.raises(catalog_token.CatalogTokenConfigError):
-                catalog_token.verify(token, book, ALICE, NOW)
+                catalog_token.check(token, book, ALICE, NOW)
             # A response is never failed: the book just has no token.
             (signed,) = catalog_token.sign_books([_book()], ALICE, NOW)
         assert signed.catalog_token is None
@@ -320,7 +327,10 @@ class TestSignBooks:
         out = catalog_token.sign_books(books, ALICE, NOW)
         assert out is books
         for book in books:
-            assert catalog_token.verify(book.catalog_token, book, ALICE, NOW)
+            assert (
+                catalog_token.check(book.catalog_token, book, ALICE, NOW)
+                == catalog_token.OK
+            )
 
     def test_an_unsignable_book_gets_no_token(self):
         bad = MagicMock()  # not JSON-serialisable
@@ -348,7 +358,10 @@ class TestNoProviderIdIsNeverSigned:
         good = _book()
         catalog_token.sign_books([bare, good], ALICE, NOW)
         assert bare.catalog_token is None
-        assert catalog_token.verify(good.catalog_token, good, ALICE, NOW)
+        assert (
+            catalog_token.check(good.catalog_token, good, ALICE, NOW)
+            == catalog_token.OK
+        )
 
     @pytest.mark.parametrize(
         "ids",
@@ -360,7 +373,10 @@ class TestNoProviderIdIsNeverSigned:
     )
     def test_one_provider_id_is_enough(self, ids):
         (book,) = catalog_token.sign_books([_book(**ids)], ALICE, NOW)
-        assert catalog_token.verify(book.catalog_token, book, ALICE, NOW)
+        assert (
+            catalog_token.check(book.catalog_token, book, ALICE, NOW)
+            == catalog_token.OK
+        )
 
 
 class TestStrictDecoding:
@@ -373,7 +389,7 @@ class TestStrictDecoding:
     def test_injected_character_is_malformed(self, junk, part):
         book = _book()
         token = catalog_token.sign(book, ALICE, NOW)
-        assert catalog_token.verify(token, book, ALICE, NOW)
+        assert catalog_token.check(token, book, ALICE, NOW) == catalog_token.OK
         pieces = token.split(".")
         pieces[part] = pieces[part][:4] + junk + pieces[part][4:]
         assert (

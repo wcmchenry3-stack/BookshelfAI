@@ -513,12 +513,21 @@ class TestScanRecordsUsage:
     async def test_anyio_cancelled_scan_records_an_error_row(
         self, store, provider, rows
     ):
+        # Cancel from inside the provider call, not on a wall-clock
+        # deadline: a fixed 0.2s raced the pre-provider steps (upload checks,
+        # threaded normalise) on a loaded runner and cancelled before the
+        # reservation, so no row was written. 30s is only a hang guard.
+        reached = []
+
         async def hung(_image):
+            reached.append(True)
+            scope.cancel()
             await anyio.sleep(5)
 
         provider.return_value.identify = hung
-        with anyio.move_on_after(0.2) as scope:
+        with anyio.move_on_after(30) as scope:
             await _call_scan()
+        assert reached == [True]
         assert scope.cancelled_caught
         assert _one(rows)["status"] == "error"
         assert store.leases == {}
@@ -660,12 +669,14 @@ class TestCleanupTask:
     async def _run_once(self, **patches):
         """One cleanup run; returns the session the refresh-token delete used."""
         session = AsyncMock()
+        # A Result is synchronous (SQLAlchemy): .scalars().all() on it.
+        session.execute = AsyncMock(return_value=MagicMock())
         factory = MagicMock()
         factory.return_value.__aenter__ = AsyncMock(return_value=session)
         factory.return_value.__aexit__ = AsyncMock(return_value=False)
         sleeps = AsyncMock(side_effect=[None, _Stop()])
         with (
-            patch.object(token_cleanup, "AsyncSessionLocal", factory),
+            patch.object(token_cleanup, "JobSessionLocal", factory),
             patch.object(token_cleanup, "purge_old_quota", AsyncMock(return_value=0)),
             patch.object(token_cleanup, "purge_old_spend", AsyncMock(return_value=0)),
             patch.object(
@@ -674,6 +685,7 @@ class TestCleanupTask:
             patch.object(
                 token_cleanup, "purge_old_scan_records", AsyncMock(return_value=0)
             ),
+            patch.object(token_cleanup, "purge_trash", AsyncMock(return_value=0)),
             patch.object(token_cleanup.asyncio, "sleep", sleeps),
             patch.multiple(token_cleanup, **patches),
             pytest.raises(_Stop),
@@ -692,6 +704,6 @@ class TestCleanupTask:
         rollup = AsyncMock(side_effect=ValueError("db down"))
         session = await self._run_once(rollup_and_purge=rollup)
         assert "error during cleanup run (ai usage)" in caplog.text
-        # The refresh-token delete still ran afterwards.
+        # The refresh-token purge still ran afterwards.
         session.execute.assert_awaited_once()
         session.commit.assert_awaited_once()

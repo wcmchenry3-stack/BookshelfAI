@@ -8,7 +8,9 @@ verifier and AI provider are faked at their boundaries, and JWTs are real
 
 Flows covered today: Google sign-in, refresh, logout, sign out of all
 devices (logout-all) and the revoked-token rejections after it (#689),
-library add (wishlist) and delete, a scan, the allowlist-reject path, and a
+refresh-token reuse detection and its Sentry alert (#690),
+library add (wishlist), delete (to the trash), the trash list and restore
+(#683), a scan, the allowlist-reject path, and a
 server error. Account
 deletion does not exist yet: the story that adds it must drive its flow inside
 ``capture()`` here (see ``tests/_log_hygiene.py``).
@@ -20,7 +22,7 @@ import io
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -110,6 +112,10 @@ class FakeDb:
             result.scalar_one_or_none.return_value = self.book
         elif entity is UserBook:
             result.scalar_one_or_none.return_value = self.user_book
+            result.scalar_one.return_value = self.user_book
+            result.scalars.return_value.all.return_value = (
+                [self.user_book] if self.user_book else []
+            )
         return result
 
     async def get(self, model, pk, **_options):
@@ -244,6 +250,36 @@ class TestAuthFlows:
             assert again.json()["detail"] == "token_revoked"
         _clean(cap, tokens=[access, refresh])
 
+    def test_refresh_token_reuse(self, db):
+        """#690: a rotated refresh token replayed after the grace window
+        revokes every session and sends a Sentry warning; neither the log nor
+        the event carries a token, jti, email or Google sub."""
+        client = TestClient(app)
+        with lh.capture() as cap:
+            tokens = _sign_in(client).json()
+            access, refresh = tokens["access_token"], tokens["refresh_token"]
+            rotated = client.post("/auth/refresh", json={"refresh_token": refresh})
+            assert rotated.status_code == 200, rotated.text
+            # Rotated longer ago than the grace window.
+            old = db.tokens[0]
+            old.used_at -= timedelta(seconds=settings.refresh_reuse_grace_seconds + 1)
+            reused = client.post("/auth/refresh", json={"refresh_token": refresh})
+            assert reused.status_code == 401
+            assert reused.json()["detail"] == "refresh_reused"
+        alerts = [p for p in cap.sentry_payloads if p.get("level") == "warning"]
+        assert len(alerts) == 1
+        assert any("reuse detected" in t for t in cap.log_texts)
+        _clean(
+            cap,
+            tokens=[
+                access,
+                refresh,
+                rotated.json()["access_token"],
+                rotated.json()["refresh_token"],
+                *(t.jti for t in db.tokens),
+            ],
+        )
+
     def test_failed_sign_in_and_bad_tokens(self, db):
         client = TestClient(app)
         with lh.capture() as cap:
@@ -317,6 +353,49 @@ class TestLibraryFlows:
             assert added.status_code == 201, added.text
             deleted = client.delete(f"/user-books/{added.json()['id']}", headers=auth)
             assert deleted.status_code == 204, deleted.text
+        _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
+
+    def test_delete_trash_and_restore(self, db):
+        """#683: moving an entry to the trash, listing the trash and
+        restoring it log no token or email."""
+        client = TestClient(app)
+        db.book = Book(
+            id=uuid.uuid4(),
+            open_library_work_id=WORK,
+            title="Dune",
+            author="Frank Herbert",
+            language="en",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        with lh.capture() as cap:
+            tokens = _sign_in(client).json()
+            auth = {"Authorization": f"Bearer {tokens['access_token']}"}
+            with patch(
+                "app.services.wishlist.WishlistService._find_or_create_edition",
+                AsyncMock(return_value=None),
+            ):
+                added = client.post(
+                    "/wishlist",
+                    headers=auth,
+                    json={
+                        "open_library_work_id": WORK,
+                        "title": "Dune",
+                        "author": "Frank Herbert",
+                        "editions": [],
+                    },
+                )
+            assert added.status_code == 201, added.text
+            entry = added.json()["id"]
+            deleted = client.delete(f"/user-books/{entry}", headers=auth)
+            assert deleted.status_code == 204, deleted.text
+            assert db.user_book.deleted_at is not None
+            listed = client.get("/user-books/trash", headers=auth)
+            assert listed.status_code == 200, listed.text
+            assert [e["id"] for e in listed.json()] == [entry]
+            restored = client.post(f"/user-books/{entry}/restore", headers=auth)
+            assert restored.status_code == 200, restored.text
+            assert db.user_book.deleted_at is None
         _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
 
     def test_server_error_reaches_sentry_without_pii(self, db):

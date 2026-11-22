@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -7,17 +6,17 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
-    ForeignKey,
     Index,
     String,
     UniqueConstraint,
     false,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.models._mixins import IdMixin, UserOwnedMixin
 
 # JSONB on Postgres, plain JSON elsewhere so the model still loads on SQLite.
 # ``none_as_null`` makes Python ``None`` a SQL NULL (the default would store
@@ -25,7 +24,7 @@ from app.core.database import Base
 _JSON = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
 
 
-class ScanRecord(Base):
+class ScanRecord(IdMixin, UserOwnedMixin, Base):
     """One scan record per (user, photo fingerprint) (#585, decision #573).
 
     Written and read by ``app.ai.scan_records`` only. ``fingerprint`` is the
@@ -67,14 +66,6 @@ class ScanRecord(Base):
         Index("ix_scan_records_created_at", "created_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     # SHA-256 hex of the normalised JPEG bytes.
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     # The gateway feature (scan.standard / scan.enhanced), the user's tier and

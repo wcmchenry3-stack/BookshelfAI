@@ -83,8 +83,14 @@ class TestEnrich:
 
     async def test_respects_custom_limit(self, service):
         # The title shown is the provider's (#602): one record per candidate.
+        # The record names the reading's author, so it fits the reading
+        # (#743: a record by another author is never used).
         service.ol.search = AsyncMock(
-            side_effect=lambda title, _author: {**OL_DOC, "title": title}
+            side_effect=lambda title, _author, **_: {
+                **OL_DOC,
+                "title": title,
+                "author_name": ["Author"],
+            }
         )
         service.gb.search = AsyncMock(return_value=GB_VOLUME)
 
@@ -95,6 +101,8 @@ class TestEnrich:
         results = await service.enrich(candidates, limit=15)
 
         assert [r.title for r in results] == [f"Book {i}" for i in range(12)]
+        assert all(r.open_library_work_id == "OL45804W" for r in results)
+        assert service.last_complete is True
 
     async def test_skips_failed_candidates(self, service):
         # When both APIs fail, the service logs warnings and continues with None values,

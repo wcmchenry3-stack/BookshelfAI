@@ -6,12 +6,14 @@ import type { EnrichedBook } from '../../components/BookCandidatePicker';
 import type { ScanJobContextValue } from '../../contexts/ScanJobContext';
 import { IOS_DISMISS_FALLBACK_MS } from '../../hooks/useModalHandoff';
 import { useScanJobs } from '../../hooks/useScanJobs';
+import RootLayout from '../../app/_layout';
 
 // #616 review fixes, through the real root layout (real provider, picker and
 // sheet): "Add it yourself" must not discard the scan's other candidates, a
 // mixed add outcome must keep the refused book reachable, and the picker and
 // the form must never be presented at the same moment.
 
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 jest.mock('../../lib/sentry', () => ({
   Sentry: {
     wrap: (c: unknown) => c,
@@ -49,8 +51,10 @@ jest.mock('expo-crypto', () => ({ randomUUID: () => 'uuid' }));
 jest.mock('expo-router', () => {
   const { View } = require('react-native');
   const MockStack = ({ children }: { children?: React.ReactNode }) => <View>{children}</View>;
-  MockStack.Screen = () => null;
-  return { Stack: MockStack };
+  MockStack.Screen = function MockScreen() {
+    return null;
+  };
+  return { Stack: MockStack, usePathname: () => '/', useSegments: () => [] };
 });
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
 jest.mock('expo-font', () => ({ useFonts: jest.fn(() => [true]) }));
@@ -69,6 +73,7 @@ jest.mock('../../hooks/useTheme', () => ({
     theme: {
       isDark: false,
       colors: new Proxy({}, { get: () => '#123456' }),
+      radius: { button: 12 },
       typography: { fontSizeBase: 16, fontSizeSM: 14, fontSizeLG: 20, fontSizeXS: 12 },
     },
   }),
@@ -119,17 +124,16 @@ jest.mock('../../components/AddUnverifiedBookSheet', () => {
   };
 });
 
-// The layout renders <FeedbackButton /> inside the real ScanJobProvider: use
+// The layout renders <FeedbackProvider> inside the real ScanJobProvider: use
 // it as the probe that hands the test the live context.
 let ctx: ScanJobContextValue;
-jest.mock('../../components/FeedbackWidget/FeedbackButton', () => ({
-  FeedbackButton: () => {
+jest.mock('../../components/FeedbackWidget/FeedbackContext', () => ({
+  FeedbackProvider: ({ children }: { children: React.ReactNode }) => {
     ctx = jest.requireActual('../../hooks/useScanJobs').useScanJobs();
-    return null;
+    return <>{children}</>;
   },
+  useFeedback: () => ({ openFeedback: () => {} }),
 }));
-
-import RootLayout from '../../app/_layout';
 
 void useScanJobs;
 

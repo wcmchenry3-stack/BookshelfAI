@@ -30,7 +30,16 @@ def _has_real_db() -> bool:
 
 
 def pytest_collection_modifyitems(config, items):
-    """Auto-skip integration tests when no real database is available."""
+    """Auto-skip integration tests when no real database is available.
+
+    With REQUIRE_DB_TESTS=1 (set by CI's test-migrations job) a missing real
+    database aborts the run instead, so a mass skip can never pass (#760).
+    """
+    from tests import _db_guard
+
+    error = _db_guard.missing_db_error()
+    if error:
+        raise pytest.UsageError(error)
     if _has_real_db():
         return
     skip_marker = pytest.mark.skip(reason="No real DATABASE_URL configured")

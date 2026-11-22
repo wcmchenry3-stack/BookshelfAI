@@ -1,4 +1,5 @@
 {
+  "_global_skip": "^\\.claude/|node_modules/|(^|/)dist/|(^|/)build/|(^|/)\\.cache/|(^|/)coverage/|__snapshots__|\\.min\\.(css|js)$|\\.mdx?$",
   "openai": {
     "detect": "from openai|import openai|openai\\.com|OpenAI\\(|client\\.chat\\.completions|client\\.completions\\.create|OPENAI_API_KEY",
     "skip": "^\\.env"

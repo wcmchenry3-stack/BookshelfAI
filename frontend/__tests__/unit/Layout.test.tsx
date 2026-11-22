@@ -1,5 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
+import RootLayoutDefault from '../../app/_layout';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,7 @@ jest.mock('expo-router', () => {
   const MockStack = ({ children }: { children?: React.ReactNode }) => (
     <View testID="stack">{children}</View>
   );
-  MockStack.Screen = (props: unknown) => {
+  MockStack.Screen = function MockScreen(props: unknown) {
     mockScreens.push(props as { name: string; options?: Record<string, unknown> });
     return null;
   };
@@ -129,8 +130,6 @@ jest.mock('@expo-google-fonts/inter', () => ({
 
 // ─── Import after mocks ─────────────────────────────────────────────────────
 
-import RootLayoutDefault from '../../app/_layout';
-
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('RootLayout (_layout.tsx)', () => {
@@ -154,11 +153,11 @@ describe('RootLayout (_layout.tsx)', () => {
   });
 
   describe('rendering', () => {
-    it('keeps the scan queue header opaque so the list is not under the dark-mode header (#605)', async () => {
+    it('has no scan queue header, so the list cannot sit under one (#605, #936)', async () => {
       mockScreens.length = 0;
       await render(<RootLayoutDefault />);
       const queue = mockScreens.find((s) => s.name === 'scan-queue');
-      expect(queue?.options?.headerTransparent).toBe(false);
+      expect(queue?.options?.headerShown).toBe(false);
     });
 
     it('renders without crashing', async () => {

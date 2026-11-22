@@ -1,31 +1,56 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  Image,
-  Modal,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
-import { useOnlineOnly } from '../../hooks/useOnlineOnly';
-import { UnverifiedBadge } from '../../components/UnverifiedBadge';
-import { useTheme } from '../../hooks/useTheme';
-import { api } from '../../lib/api';
-
-type Status = 'all' | 'wishlisted' | 'purchased' | 'reading' | 'read';
+import { BookDetailSheet } from '../../components/library/BookDetailSheet';
+import { BookActionsSheet } from '../../components/library/BookActionsSheet';
+import { filterBooks } from '../../components/library/filterBooks';
+import { BookGridCell } from '../../components/library/BookGridCell';
+import { LibraryRow } from '../../components/library/LibraryRow';
+import {
+  LIBRARY_GRID_PROPS,
+  LIBRARY_LIST_PROPS,
+  libraryRefreshControl,
+} from '../../components/library/libraryList';
+import { LibraryScreen } from '../../components/library/LibraryScreen';
+import { MyBooksHeader } from '../../components/library/MyBooksHeader';
+import { ReadingNowShelf } from '../../components/library/ReadingNowShelf';
+import { SortSheet } from '../../components/library/SortSheet';
+import { StatusChips } from '../../components/library/StatusChips';
+import { useLibraryAccent } from '../../components/library/useLibraryAccent';
+import {
+  DEFAULT_SORT,
+  NEXT_STATUS,
+  SCREEN_PADDING,
+  GRID_COLUMN_GAP,
+  SORT_KEYS,
+  bookA11yLabel,
+  countByStatus,
+  filterByStatus,
+  gridCellWidth,
+  gridColumns,
+  sortBooks,
+  type SortKey,
+  type Status,
+} from '../../components/library/libraryShared';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { IconButton } from '../../components/ui/IconButton';
+import { AppText } from '../../components/ui/AppText';
+import { SearchField } from '../../components/ui/SearchField';
+import { SectionLabel } from '../../components/ui/SectionLabel';
+import { useModalHandoff } from '../../hooks/useModalHandoff';
+import { useLibraryBooks } from '../../hooks/useLibraryBooks';
+import { useLibraryMutations } from '../../hooks/useLibraryMutations';
+import {
+  loadLibrarySort,
+  loadLibraryView,
+  saveLibrarySort,
+  saveLibraryView,
+  type LibraryView,
+} from '../../lib/libraryPrefs';
 
 interface UserBook {
   id: string;
@@ -52,671 +77,330 @@ interface UserBook {
   } | null;
 }
 
-const STATUS_TAB_KEYS: Status[] = ['all', 'wishlisted', 'purchased', 'reading', 'read'];
+interface MyBookRowProps {
+  item: UserBook;
+  onOpen: (item: UserBook) => void;
+  onMore: (item: UserBook) => void;
+}
 
-const NEXT_STATUS: Record<string, string> = {
-  wishlisted: 'purchased',
-  purchased: 'reading',
-  reading: 'read',
-};
-
-const SCREEN_PADDING = 16;
+/** One My Books row. Memoised; the callbacks are stable, so only a changed item re-renders it. */
+const MyBookRow = memo(function MyBookRow({ item, onOpen, onMore }: MyBookRowProps) {
+  const { t } = useTranslation('my-books');
+  return (
+    <LibraryRow
+      item={item}
+      onPress={() => onOpen(item)}
+      // This labels the row's tap target (the text is inert), so the Unverified
+      // badge (#616) must be said here, and the status must be the translated one.
+      accessibilityLabel={bookA11yLabel(t, item)}
+      accessibilityHint={t('bookCardHint')}
+      trailing={
+        <IconButton
+          icon="more-vert"
+          accessibilityLabel={t('moreOptionsA11y', { title: item.book.title })}
+          onPress={() => onMore(item)}
+          testID={`book-more-${item.id}`}
+        />
+      }
+    />
+  );
+});
 
 export default function MyBooksScreen() {
-  const { theme } = useTheme();
-  const { t } = useTranslation('my-books');
-  const insets = useSafeAreaInsets();
-  // Transparent header only in dark mode — push content below the floating header.
-  // Standard nav bar height: 44px (iOS) / 56px (Android) + safe-area top inset.
-  const headerHeight = Platform.OS === 'android' ? 56 : insets.top + 44;
-  const topPad = theme.isDark ? headerHeight : 0;
-  // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
-  const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
-  const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
-  const [books, setBooks] = useState<UserBook[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const { t, i18n } = useTranslation('my-books');
+  const router = useRouter();
+  const { activeColor } = useLibraryAccent();
+  const { books, setBooks, loading, loadError, refreshing, setRefreshing, reload, invalidate } =
+    useLibraryBooks<UserBook>();
   const [activeTab, setActiveTab] = useState<Status>('all');
   const [selected, setSelected] = useState<UserBook | null>(null);
+  // The book whose ⋯ menu is open.
+  const [actionsFor, setActionsFor] = useState<UserBook | null>(null);
+  // iOS cannot present a sheet while another is still dismissing: the detail sheet
+  // waits for the menu to finish dismissing (see useModalHandoff).
+  const menuGate = useModalHandoff(actionsFor !== null);
   const [query, setQuery] = useState('');
-  // Rows with a request in flight. The server is the source of truth, so the
-  // list only changes once a request succeeds; this just blocks double-taps.
-  // `mutatingRef` is the actual guard — it's checked-and-set synchronously, so
-  // two presses handled before a re-render can't both slip through the way
-  // they could reading `mutatingIds` state directly. `mutatingIds` just drives
-  // the disabled/opacity styling.
-  const mutatingRef = useRef<Set<string>>(new Set());
-  const [mutatingIds, setMutatingIds] = useState<ReadonlySet<string>>(new Set());
-  const { isConnected, requireOnline } = useOnlineOnly();
-
-  /** Atomically claims `id` for a mutation. Returns false if one is already in flight. */
-  function beginMutating(id: string): boolean {
-    if (mutatingRef.current.has(id)) return false;
-    mutatingRef.current.add(id);
-    setMutatingIds(new Set(mutatingRef.current));
-    return true;
-  }
-
-  function endMutating(id: string) {
-    mutatingRef.current.delete(id);
-    setMutatingIds(new Set(mutatingRef.current));
-  }
-
-  // Read inside the async mutation handlers below, so a tab switch while a
-  // request is in flight is picked up instead of applying a stale tab's rule
-  // to whatever list is on screen by the time the server responds.
-  const activeTabRef = useRef(activeTab);
+  const [sortKey, setSortKey] = useState<SortKey>(DEFAULT_SORT);
+  const [sortOpen, setSortOpen] = useState(false);
+  // A choice made before the saved one has loaded must win over it.
+  const sortTouched = useRef(false);
   useEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
+    void loadLibrarySort(SORT_KEYS).then((saved) => {
+      if (saved && !sortTouched.current) setSortKey(saved);
+    });
+  }, []);
+  const [view, setView] = useState<LibraryView>('list');
+  const viewTouched = useRef(false);
+  useEffect(() => {
+    void loadLibraryView().then((saved) => {
+      if (saved && !viewTouched.current) setView(saved);
+    });
+  }, []);
+  const toggleView = useCallback(() => {
+    viewTouched.current = true;
+    const next: LibraryView = view === 'grid' ? 'list' : 'grid';
+    setView(next);
+    void saveLibraryView(next);
+  }, [view]);
+  const { width } = useWindowDimensions();
+  const columns = gridColumns(width);
+  const cellWidth = gridCellWidth(width, columns);
+  const chooseSort = useCallback((key: SortKey) => {
+    sortTouched.current = true;
+    setSortKey(key);
+    setSortOpen(false);
+    void saveLibrarySort(key);
+  }, []);
 
-  async function fetchBooks(tab: Status = activeTab) {
-    try {
-      const params = tab !== 'all' ? { status: tab } : {};
-      const { data } = await api.get<UserBook[]>('/user-books', { params });
-      setBooks(data.filter((b) => b.book != null));
-    } catch {
-      Alert.alert(t('errorTitle', { ns: 'common' }), t('errorLoadBooks'));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      fetchBooks(activeTab);
-    }, [activeTab])
-  );
-
-  function handleTabChange(tab: Status) {
-    setActiveTab(tab);
-    setQuery('');
-    setLoading(true);
-    fetchBooks(tab);
-  }
-
-  async function handleAdvanceStatus(item: UserBook) {
-    const next = NEXT_STATUS[item.status];
-    if (!next || !requireOnline() || !beginMutating(item.id)) return;
-    try {
-      const { data } = await api.patch<UserBook>(`/user-books/${item.id}`, { status: next });
-      // Only after the server confirms, and against whatever tab is current —
-      // not the tab that was active when the button was pressed, which the
-      // user may have since left (fetchBooks would have already replaced
-      // `books` with that tab's data).
-      // Keep (and update) the row when it still belongs to the current tab —
-      // "all", or the tab for its new status, whose GET may already have
-      // returned it if the user switched there while the PATCH was in flight.
-      setBooks((prev) => {
-        if (!prev.some((b) => b.id === item.id)) return prev;
-        const tab = activeTabRef.current;
-        return tab === 'all' || tab === data.status
-          ? prev.map((b) => (b.id === item.id ? { ...b, ...data } : b))
-          : prev.filter((b) => b.id !== item.id);
-      });
+  const { isConnected, mutatingIds, advanceStatus, removeBook } = useLibraryMutations<UserBook>({
+    namespace: 'my-books',
+    nextStatus: (item) => NEXT_STATUS[item.status],
+    onAdvanced: (item, data) => {
+      // Only after the server confirms. The chip filter is derived from `books`,
+      // so a row that moved to another status just leaves the filtered view.
+      invalidate();
+      setBooks((prev) => prev.map((b) => (b.id === item.id ? { ...b, ...data } : b)));
       setSelected(null);
-    } catch {
-      Alert.alert(t('errorTitle', { ns: 'common' }), t('errorUpdateStatus'));
-    } finally {
-      endMutating(item.id);
-    }
-  }
-
-  async function handleRemove(item: UserBook) {
-    if (!requireOnline() || !beginMutating(item.id)) return;
-    try {
-      await api.delete(`/user-books/${item.id}`);
+      setActionsFor(null);
+    },
+    onRemoved: (item) => {
+      invalidate();
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
       setSelected(null);
-    } catch {
-      Alert.alert(t('errorTitle', { ns: 'common' }), t('errorRemoveBook'));
-    } finally {
-      endMutating(item.id);
-    }
-  }
+      setActionsFor(null);
+    },
+  });
 
-  const filteredBooks = useMemo(() => {
-    if (!query.trim()) return books;
-    const q = query.toLowerCase();
-    return books.filter(
-      (b) => b.book.title.toLowerCase().includes(q) || b.book.author.toLowerCase().includes(q)
-    );
-  }, [books, query]);
+  const counts = useMemo(() => countByStatus(books), [books]);
+  const filteredBooks = useMemo(
+    () => filterBooks(filterByStatus(books, activeTab), query),
+    [books, activeTab, query]
+  );
+  const collator = useMemo(() => new Intl.Collator(i18n.language), [i18n.language]);
+  const sortedBooks = useMemo(
+    () => sortBooks(filteredBooks, sortKey, collator),
+    [filteredBooks, sortKey, collator]
+  );
+  const readingBooks = useMemo(() => filterByStatus(books, 'reading'), [books]);
 
   const sheetActionsDisabled = !isConnected || (selected != null && mutatingIds.has(selected.id));
+  const menuActionsDisabled =
+    !isConnected || (actionsFor != null && mutatingIds.has(actionsFor.id));
+
+  const openDetail = useCallback((item: UserBook) => setSelected(item), []);
+  const openMenu = useCallback((item: UserBook) => {
+    // A detail request left over from an earlier menu must never pop up later.
+    setSelected(null);
+    setActionsFor(item);
+  }, []);
+  const renderItem = useCallback(
+    ({ item }: { item: UserBook }) => (
+      <MyBookRow item={item} onOpen={openDetail} onMore={openMenu} />
+    ),
+    [openDetail, openMenu]
+  );
+
+  const renderGridItem = useCallback(
+    ({ item }: { item: UserBook }) => (
+      <BookGridCell item={item} onOpen={openDetail} cellWidth={cellWidth} />
+    ),
+    [openDetail, cellWidth]
+  );
+
+  function viewDetailsFromMenu(item: UserBook) {
+    setSelected(item);
+    setActionsFor(null);
+  }
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <LibraryScreen>
         <LoadingSpinner message={t('loading')} />
-      </View>
+      </LibraryScreen>
     );
   }
 
-  const listHeader = (
-    <View style={styles.listHeader}>
-      <Text
-        style={[
-          styles.heroTitle,
-          {
-            color: theme.colors.text,
-            fontFamily: theme.typography.fontFamilyHeadline,
-            fontSize: theme.typography.fontSizeH1,
-          },
-        ]}
-      >
-        {t('sectionTitle')}
-      </Text>
-      <Text
-        style={[
-          styles.heroSubtitle,
-          { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-        ]}
-      >
-        {t('heroSubtitle')}
-      </Text>
+  const hasBooks = books.length > 0;
+  const trimmedQuery = query.trim();
+  const clearSearch = () => setQuery('');
+  const showAll = () => setActiveTab('all');
 
-      {/* Archive summary card */}
-      <View style={[styles.summaryCard, { backgroundColor: theme.colors.surfaceContainerHigh }]}>
-        <View style={[styles.summaryAccent, { backgroundColor: activeColor }]} />
-        <Text style={[styles.summaryCount, { color: theme.colors.text }]}>{books.length}</Text>
-        <Text
-          style={[
-            styles.summaryLabel,
-            { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-          ]}
-        >
-          {t('archiveSummary')}
-        </Text>
-      </View>
+  // The three empty states (#930); the search field and chips stay above the first two.
+  let empty: React.ReactElement;
+  if (!hasBooks && loadError) {
+    // A failed load is not an empty library: say so and offer a retry.
+    empty = (
+      <EmptyState
+        testID="my-books-load-error"
+        title={t('errorLoadBooks')}
+        primaryAction={{
+          label: t('loadErrorAction'),
+          onPress: () => void reload(),
+          testID: 'empty-retry',
+        }}
+        style={styles.empty}
+      />
+    );
+  } else if (!hasBooks) {
+    empty = (
+      <EmptyState
+        testID="my-books-empty-library"
+        title={t('emptyLibraryTitle')}
+        body={t('emptyLibraryBody')}
+        primaryAction={{
+          label: t('emptyLibraryAction'),
+          onPress: () => router.push('/scan?mode=camera'),
+          testID: 'empty-scan-books',
+        }}
+        style={styles.empty}
+      />
+    );
+  } else if (trimmedQuery) {
+    empty = (
+      <EmptyState
+        testID="my-books-empty-search"
+        title={t('emptySearchTitle', { query: trimmedQuery })}
+        body={t('emptySearchBody')}
+        primaryAction={{
+          label: t('emptySearchAction'),
+          onPress: clearSearch,
+          testID: 'empty-clear-search',
+        }}
+        style={styles.empty}
+      />
+    );
+  } else {
+    empty = (
+      <EmptyState
+        testID="my-books-empty-filter"
+        title={t(`emptyFilter.${activeTab}`)}
+        body={t('emptyFilterBody')}
+        primaryAction={{
+          label: t('emptyFilterAction'),
+          onPress: showAll,
+          testID: 'empty-show-all',
+        }}
+        style={styles.empty}
+      />
+    );
+  }
+
+  // The shelf only shows on the unfiltered, unsearched list (owner decision, #933).
+  // The grid has no shelf (#934).
+  const isGrid = view === 'grid';
+  const showShelf = !isGrid && activeTab === 'all' && !trimmedQuery && readingBooks.length > 0;
+
+  const listHeader = (
+    <View>
+      <MyBooksHeader
+        total={books.length}
+        reading={counts.reading}
+        trailing={
+          hasBooks ? (
+            <>
+              <IconButton
+                icon={isGrid ? 'view-list' : 'grid-view'}
+                color="onSurface"
+                accessibilityLabel={t(isGrid ? 'view.showList' : 'view.showGrid')}
+                onPress={toggleView}
+                testID="my-books-view-toggle"
+              />
+              <IconButton
+                icon="swap-vert"
+                color="onSurface"
+                accessibilityLabel={t('sort.buttonA11y', { label: t(`sort.${sortKey}`) })}
+                onPress={() => setSortOpen(true)}
+                testID="my-books-sort"
+              />
+            </>
+          ) : null
+        }
+      />
+      {hasBooks ? (
+        <>
+          <SearchField
+            value={query}
+            onChangeText={setQuery}
+            placeholder={t('searchPlaceholder')}
+            accessibilityLabel={t('searchA11y')}
+            clearAccessibilityLabel={t('searchClearA11y')}
+            testID="my-books-search"
+            style={styles.search}
+          />
+          <StatusChips activeTab={activeTab} counts={counts} onChange={setActiveTab} />
+          {showShelf ? <ReadingNowShelf books={readingBooks} onOpen={openDetail} /> : null}
+          {sortedBooks.length > 0 ? (
+            <View style={styles.allBooks}>
+              <SectionLabel>{t('section.allBooks')}</SectionLabel>
+              <AppText variant="meta" color="onSurfaceVariant" testID="my-books-sort-label">
+                {t(`sort.${sortKey}`)}
+              </AppText>
+            </View>
+          ) : null}
+        </>
+      ) : null}
     </View>
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Search bar — paddingTop offsets for transparent floating header in dark mode */}
-      <View style={[styles.searchRow, { paddingTop: 12 + topPad }]}>
-        <View
-          style={[styles.searchWrap, { backgroundColor: theme.colors.surfaceContainerHighest }]}
-        >
-          <MaterialIcons
-            name="search"
-            size={20}
-            color={theme.colors.outline}
-            style={styles.searchIcon}
-          />
-          <TextInput
-            style={[
-              styles.searchInput,
-              { color: theme.colors.onSurface, fontSize: theme.typography.fontSizeBase },
-            ]}
-            value={query}
-            onChangeText={setQuery}
-            placeholder={t('searchPlaceholder')}
-            placeholderTextColor={theme.colors.outline}
-            returnKeyType="search"
-            accessibilityLabel={t('searchA11y')}
-          />
-        </View>
-      </View>
-
-      {/* Filter tabs */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabsContainer}
-      >
-        <View style={[styles.tabsTrack, { backgroundColor: theme.colors.surfaceContainerLow }]}>
-          {STATUS_TAB_KEYS.map((key) => {
-            const active = activeTab === key;
-            const label = t(`statusTab.${key}`);
-            return (
-              <Pressable
-                key={key}
-                style={[styles.tab, active && { backgroundColor: activeColor }]}
-                onPress={() => handleTabChange(key)}
-                accessibilityRole="button"
-                accessibilityLabel={t('filterBy', { label })}
-                accessibilityState={{ selected: active }}
-              >
-                <Text
-                  style={[
-                    styles.tabText,
-                    {
-                      color: active ? onActiveColor : theme.colors.secondary,
-                      fontSize: theme.typography.fontSizeSM,
-                    },
-                  ]}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </ScrollView>
-
+    <LibraryScreen>
       {!isConnected && <OfflineNotice />}
 
-      {/* Bento list */}
-      {filteredBooks.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text
-            style={[
-              styles.emptyText,
-              { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeBase },
-            ]}
-          >
-            {t('noBooksYet')}
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredBooks}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          ListHeaderComponent={listHeader}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                fetchBooks();
-              }}
-              tintColor={activeColor}
-            />
-          }
-          renderItem={({ item }) => {
-            const nextStatus = NEXT_STATUS[item.status];
-            const actionsDisabled = !isConnected || mutatingIds.has(item.id);
-            return (
-              <Pressable
-                style={[
-                  styles.card,
-                  {
-                    backgroundColor: theme.colors.surfaceContainerLow,
-                    borderLeftColor: activeColor,
-                  },
-                ]}
-                onPress={() => setSelected(item)}
-                accessibilityRole="button"
-                // This label replaces the card's children for a screen reader,
-                // so the Unverified badge (#616) must be said here.
-                accessibilityLabel={t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', {
-                  title: item.book.title,
-                  status: item.status,
-                })}
-                accessibilityHint={t('bookCardHint')}
-              >
-                {/* Cover */}
-                {item.book.cover_url ? (
-                  <Image
-                    source={{ uri: item.book.cover_url }}
-                    style={styles.cover}
-                    resizeMode="cover"
-                    accessibilityLabel={t('coverAlt', { ns: 'common', title: item.book.title })}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.cover,
-                      styles.coverPlaceholder,
-                      { backgroundColor: theme.colors.border },
-                    ]}
-                    accessibilityLabel={t('noCoverAvailable', { ns: 'common' })}
-                  />
-                )}
+      {/* One list for every state, so the header scrolls with the rows and pull to refresh always works. */}
+      <FlatList
+        // FlatList throws if numColumns changes under the same key.
+        key={isGrid ? `grid-${columns}` : 'list'}
+        data={sortedBooks}
+        {...(isGrid ? LIBRARY_GRID_PROPS : LIBRARY_LIST_PROPS)}
+        numColumns={isGrid ? columns : 1}
+        columnWrapperStyle={isGrid ? styles.gridRow : undefined}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.list}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={empty}
+        refreshControl={libraryRefreshControl(refreshing, setRefreshing, reload, activeColor)}
+        renderItem={isGrid ? renderGridItem : renderItem}
+      />
 
-                {/* Content */}
-                <View style={styles.content}>
-                  <Text
-                    style={[
-                      styles.categoryLabel,
-                      { color: activeColor, fontSize: theme.typography.fontSizeXS },
-                    ]}
-                  >
-                    {t(`status.${item.status}`)}
-                  </Text>
+      <SortSheet
+        visible={sortOpen}
+        value={sortKey}
+        onSelect={chooseSort}
+        onClose={() => setSortOpen(false)}
+      />
 
-                  <Text
-                    style={[
-                      styles.bookTitle,
-                      { color: theme.colors.text, fontSize: theme.typography.fontSizeBase },
-                    ]}
-                    numberOfLines={2}
-                  >
-                    {item.book.title}
-                  </Text>
+      <BookActionsSheet
+        selected={actionsFor}
+        actionsDisabled={menuActionsDisabled}
+        onClose={() => setActionsFor(null)}
+        onHidden={menuGate.notifyDismissed}
+        onAdvance={advanceStatus}
+        onViewDetails={viewDetailsFromMenu}
+        onRemove={removeBook}
+      />
 
-                  <Text
-                    style={[
-                      styles.bookAuthor,
-                      { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {item.book.author}
-                  </Text>
-                  {item.unverified ? <UnverifiedBadge /> : null}
-
-                  {item.edition?.publish_year ? (
-                    <Text
-                      style={[
-                        styles.bookYear,
-                        {
-                          color: theme.colors.textSecondary,
-                          fontSize: theme.typography.fontSizeXS,
-                        },
-                      ]}
-                    >
-                      {item.edition.publish_year}
-                    </Text>
-                  ) : null}
-
-                  <View style={styles.actions}>
-                    {nextStatus && (
-                      <Pressable
-                        style={[
-                          styles.actionButton,
-                          { backgroundColor: activeColor },
-                          actionsDisabled && styles.actionDisabled,
-                        ]}
-                        onPress={() => handleAdvanceStatus(item)}
-                        disabled={actionsDisabled}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('markAsA11y', {
-                          status: t(`status.${nextStatus}`),
-                        })}
-                        accessibilityState={{ disabled: actionsDisabled }}
-                      >
-                        <Text
-                          style={[
-                            styles.actionText,
-                            { fontSize: theme.typography.fontSizeXS, color: onActiveColor },
-                          ]}
-                        >
-                          {t('markAs', { status: t(`status.${nextStatus}`) })}
-                        </Text>
-                      </Pressable>
-                    )}
-                    <Pressable
-                      style={[
-                        styles.actionButton,
-                        { backgroundColor: theme.colors.secondaryContainer },
-                        actionsDisabled && styles.actionDisabled,
-                      ]}
-                      onPress={() => handleRemove(item)}
-                      disabled={actionsDisabled}
-                      accessibilityRole="button"
-                      accessibilityLabel={t('removeBookA11y', { title: item.book.title })}
-                      accessibilityState={{ disabled: actionsDisabled }}
-                    >
-                      <Text
-                        style={[
-                          styles.actionText,
-                          {
-                            color: theme.colors.onSecondaryContainer,
-                            fontSize: theme.typography.fontSizeXS,
-                          },
-                        ]}
-                      >
-                        {t('removeFromList')}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </Pressable>
-            );
-          }}
-        />
-      )}
-
-      {/* Detail sheet — full book info, advance status, remove */}
-      <Modal
-        visible={!!selected}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setSelected(null)}
-        accessibilityViewIsModal
-      >
-        {selected && (
-          <View style={[styles.sheet, { backgroundColor: theme.colors.surface }]}>
-            <View style={[styles.sheetHeader, { borderBottomColor: theme.colors.border }]}>
-              <Text
-                style={[
-                  styles.sheetTitle,
-                  { color: theme.colors.text, fontSize: theme.typography.fontSizeLG },
-                ]}
-                accessibilityRole="header"
-                numberOfLines={2}
-              >
-                {selected.book.title}
-              </Text>
-              <Pressable
-                onPress={() => setSelected(null)}
-                accessibilityRole="button"
-                accessibilityLabel={t('closeDetail')}
-                style={styles.closeButton}
-                hitSlop={8}
-              >
-                <Text style={{ color: activeColor, fontSize: theme.typography.fontSizeBase }}>
-                  {t('close', { ns: 'common' })}
-                </Text>
-              </Pressable>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.sheetContent}>
-              {selected.book.cover_url && (
-                <Image
-                  source={{ uri: selected.book.cover_url }}
-                  style={styles.sheetCover}
-                  accessibilityLabel={t('coverAlt', { ns: 'common', title: selected.book.title })}
-                />
-              )}
-              <Text
-                style={[
-                  styles.sheetAuthor,
-                  { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeBase },
-                ]}
-              >
-                {selected.book.author}
-              </Text>
-              {selected.unverified ? <UnverifiedBadge /> : null}
-              {selected.book.description && (
-                <Text
-                  style={[
-                    styles.sheetDescription,
-                    { color: theme.colors.text, fontSize: theme.typography.fontSizeSM },
-                  ]}
-                >
-                  {selected.book.description}
-                </Text>
-              )}
-              {selected.edition?.page_count && (
-                <Text
-                  style={[
-                    { color: theme.colors.textSecondary, fontSize: theme.typography.fontSizeSM },
-                  ]}
-                >
-                  {t('pages', { count: selected.edition.page_count })}
-                </Text>
-              )}
-
-              {NEXT_STATUS[selected.status] && (
-                <Pressable
-                  style={[
-                    styles.sheetButton,
-                    { backgroundColor: activeColor },
-                    sheetActionsDisabled && styles.actionDisabled,
-                  ]}
-                  onPress={() => handleAdvanceStatus(selected)}
-                  disabled={sheetActionsDisabled}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('markAsA11y', {
-                    status: t(`status.${NEXT_STATUS[selected.status]}`),
-                  })}
-                  accessibilityState={{ disabled: sheetActionsDisabled }}
-                >
-                  <Text
-                    style={[
-                      styles.sheetButtonText,
-                      { fontSize: theme.typography.fontSizeBase, color: onActiveColor },
-                    ]}
-                  >
-                    {t('markAs', { status: t(`status.${NEXT_STATUS[selected.status]}`) })}
-                  </Text>
-                </Pressable>
-              )}
-
-              <Pressable
-                style={[
-                  styles.sheetButton,
-                  { backgroundColor: theme.colors.surfaceContainerHigh },
-                  sheetActionsDisabled && styles.actionDisabled,
-                ]}
-                onPress={() => handleRemove(selected)}
-                disabled={sheetActionsDisabled}
-                accessibilityRole="button"
-                accessibilityLabel={t('removeBookA11y', { title: selected.book.title })}
-                accessibilityState={{ disabled: sheetActionsDisabled }}
-              >
-                <Text
-                  style={[
-                    styles.sheetButtonText,
-                    {
-                      color: theme.colors.onSurfaceVariant,
-                      fontSize: theme.typography.fontSizeBase,
-                    },
-                  ]}
-                >
-                  {t('removeFromList')}
-                </Text>
-              </Pressable>
-            </ScrollView>
-          </View>
-        )}
-      </Modal>
-    </View>
+      <BookDetailSheet
+        selected={menuGate.clear ? selected : null}
+        actionsDisabled={sheetActionsDisabled}
+        onClose={() => setSelected(null)}
+        onAdvance={advanceStatus}
+        onRemove={removeBook}
+      />
+    </LibraryScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-
-  // Search
-  searchRow: { paddingHorizontal: SCREEN_PADDING, paddingBottom: 4 },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 48,
-  },
-  searchIcon: { marginRight: 8 },
-  searchInput: { flex: 1, height: '100%' },
-
-  // Filter tabs
-  tabsContainer: { paddingHorizontal: SCREEN_PADDING, paddingVertical: 8 },
-  tabsTrack: {
-    flexDirection: 'row',
-    borderRadius: 12,
-    padding: 4,
-    gap: 2,
-  },
-  tab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
-    minHeight: 36,
-    justifyContent: 'center',
-  },
-  tabText: { fontWeight: '600' },
-
-  // Bento list
-  list: { paddingHorizontal: SCREEN_PADDING, paddingBottom: 32, gap: 12 },
-
-  // Hero + summary
-  listHeader: { marginBottom: 8, gap: 6 },
-  heroTitle: {
-    fontWeight: '700',
-    lineHeight: 48,
-    letterSpacing: -0.5,
-  },
-  heroSubtitle: { lineHeight: 20, marginBottom: 4 },
-  summaryCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
-    overflow: 'hidden',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 12,
-    marginTop: 4,
-  },
-  summaryAccent: { width: 3, height: 32, borderRadius: 2 },
-  summaryCount: { fontSize: 28, fontWeight: '700', lineHeight: 32 },
-  summaryLabel: { flex: 1, lineHeight: 18 },
-
-  // Bento card
-  card: {
-    flexDirection: 'row',
-    borderRadius: 12,
-    overflow: 'hidden',
-    minHeight: 120,
-    borderLeftWidth: 4,
-  },
-  cover: { width: 110, alignSelf: 'stretch' },
-  coverPlaceholder: { opacity: 0.4 },
-  content: { flex: 1, padding: 12, gap: 4 },
-  categoryLabel: {
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  bookTitle: { fontWeight: '600', lineHeight: 22 },
-  bookAuthor: { lineHeight: 18 },
-  bookYear: { lineHeight: 16 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
-  actionButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    minHeight: 32,
-    justifyContent: 'center',
-  },
-  actionText: { fontWeight: '600' },
-  actionDisabled: { opacity: 0.5 },
-
-  // Empty
-  emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  emptyText: { textAlign: 'center' },
-
-  // Detail sheet
-  sheet: { flex: 1 },
-  sheetHeader: {
+  list: { paddingBottom: 32 },
+  search: { marginHorizontal: SCREEN_PADDING, marginTop: 12 },
+  empty: { paddingTop: 48 },
+  gridRow: { gap: GRID_COLUMN_GAP, paddingHorizontal: SCREEN_PADDING },
+  allBooks: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: SCREEN_PADDING,
+    paddingTop: 28,
+    paddingBottom: 4,
   },
-  sheetTitle: { fontWeight: '700', flex: 1, marginRight: 8 },
-  closeButton: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'flex-end' },
-  sheetContent: { padding: 16, gap: 12, alignItems: 'center' },
-  sheetCover: { width: 120, height: 180, borderRadius: 4 },
-  sheetAuthor: { alignSelf: 'flex-start' },
-  sheetDescription: { lineHeight: 20 },
-  sheetButton: {
-    width: '100%',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  sheetButtonText: { fontWeight: '600' },
 });

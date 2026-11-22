@@ -9,7 +9,7 @@ from app.core.database import Base
 
 
 class AISetting(Base):
-    """One server-side AI dial or kill switch (``app/ai/settings.py``).
+    """One server-side AI dial or kill switch (``app/ai/settings/``).
 
     A handful of rows (one per key), each a small JSON value. The keys, their
     types and bounds live in code; anything else in the table is ignored. Rows

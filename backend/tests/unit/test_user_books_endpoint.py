@@ -31,6 +31,7 @@ def _make_user_book(**overrides):
     book.created_at = NOW
     book.updated_at = NOW
     book.editions = []
+    book.merged_into_id = None  # not merged (#682)
 
     ub = MagicMock()
     ub.id = USER_BOOK_ID
@@ -46,6 +47,8 @@ def _make_user_book(**overrides):
     # mock here, which UserBookRead reads as "this is an unverified entry".
     ub.custom_book_id = None
     ub.edition = None
+    # No user overrides (#682).
+    ub.title_override = ub.author_override = ub.cover_url_override = None
     ub.created_at = NOW
     ub.updated_at = NOW
     for k, v in overrides.items():
@@ -414,12 +417,14 @@ class TestAddPurchasedSuccess:
     def test_creates_new_user_book_when_none_exists(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         ub = _make_user_book(status="purchased")
 
         async def _fake_db():
             db = AsyncMock()
             db.execute = AsyncMock(
                 side_effect=[
+                    _none_result(),  # the user lock (#683)
                     _scalar_result(book),  # verify book exists
                     _none_result(),  # no existing user_book → create
                     _scalar_one_result(ub),  # re-fetch after commit
@@ -439,12 +444,14 @@ class TestAddPurchasedSuccess:
     def test_updates_existing_user_book_on_upsert(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         ub = _make_user_book(status="wishlisted")
 
         async def _fake_db():
             db = AsyncMock()
             db.execute = AsyncMock(
                 side_effect=[
+                    _none_result(),  # the user lock (#683)
                     _scalar_result(book),  # verify book exists
                     _scalar_result(ub),  # existing user_book found → update
                     _scalar_one_result(ub),  # re-fetch after commit
@@ -465,6 +472,7 @@ class TestAddPurchasedSuccess:
     def test_resolves_edition_when_isbn_13_provided_and_edition_found(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         edition = MagicMock()
         edition_id = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
         edition.id = edition_id
@@ -474,6 +482,7 @@ class TestAddPurchasedSuccess:
             db = AsyncMock()
             db.execute = AsyncMock(
                 side_effect=[
+                    _none_result(),  # the user lock (#683)
                     _scalar_result(book),  # verify book exists
                     _scalar_result(edition),  # resolve edition by ISBN
                     _none_result(),  # no existing user_book → create
@@ -497,6 +506,7 @@ class TestAddPurchasedSuccess:
     def test_skips_edition_lookup_when_isbn_not_provided(self, client):
         book = MagicMock()
         book.id = BOOK_ID
+        book.merged_into_id = None  # not merged (#682)
         ub = _make_user_book(status="purchased")
 
         execute_calls = []
@@ -507,8 +517,10 @@ class TestAddPurchasedSuccess:
             async def _execute(q, *args, **kwargs):
                 execute_calls.append(q)
                 if len(execute_calls) == 1:
-                    return _scalar_result(book)
+                    return _none_result()  # the user lock (#683)
                 elif len(execute_calls) == 2:
+                    return _scalar_result(book)
+                elif len(execute_calls) == 3:
                     return _none_result()
                 else:
                     return _scalar_one_result(ub)
@@ -524,8 +536,9 @@ class TestAddPurchasedSuccess:
         app.dependency_overrides[get_db] = _fake_db
         resp = client.post("/purchased", json={"book_id": str(BOOK_ID)})
         assert resp.status_code == 201
-        # Only 3 execute calls: book lookup, user_book lookup, re-fetch
-        assert len(execute_calls) == 3
+        # Only 4 execute calls: the user lock (#683), book lookup,
+        # user_book lookup, re-fetch
+        assert len(execute_calls) == 4
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

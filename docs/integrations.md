@@ -45,7 +45,8 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 - Non-2xx (including 429 rate limit) → `ScanUnavailableError` → 503
 - Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
 - No content, not JSON, the wrong shape (a bare list is still accepted), or a non-empty list in which every entry is structurally broken → ledger `malformed`, `503 scan_unavailable`, refunded (#572)
-- Structurally broken entries (not an object, a title or author missing or not a string, a confidence that is not a number) are skipped individually; an empty title or author is kept, as before (a title-only lookup)
+- Structurally broken entries (not an object, a title or author missing or not a string or over 500 characters after strip, a confidence that is not a number) are skipped individually (#754); a numeric confidence is clamped to 0–1 (NaN and bool become 0.5, an integer too large for a float clamps to 1 or 0), as in the Claude adapter; an empty or whitespace title is dropped (#746; schema-valid, so a reply of only such entries is `ok` with no books, not `malformed`), an empty author is kept (a title-only lookup)
+- `isbn_13` / `isbn_10` are cleaned by `app/ai/providers/_common.py` (#746; moved from `isbn.py` in #814): spaces and hyphens stripped; a non-string, non-ASCII-digit or bad-check-digit value becomes null and the book is kept (the model can invent ISBNs, e.g. #743)
 - `finish_reason: length` → ledger `truncated` with the parsed books; with none, `malformed` (503, refunded; #572)
 
 **Cost note:** gpt-4o-mini is the cheapest vision-capable model. Scan cost is approximately $0.001 per image at current pricing. The `rate_limit_scan` bucket (10/min per client) caps abuse at the HTTP layer.
@@ -87,12 +88,12 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Endpoint:** `https://www.googleapis.com/books/v1/volumes`
 **Key env var:** `GOOGLE_BOOKS_API_KEY` (optional — API works unauthenticated at a lower quota)
 **Timeout:** 10 seconds
-**Source:** `backend/app/services/google_books.py`
+**Source:** `backend/app/services/google_books.py`; the GET itself (10 s timeout, raise on a non-2xx status, JSON body) is `get_json` in `backend/app/services/_lookup_http.py`, shared with Open Library (#814)
 
 **Methods used:**
-- `search(title, author)` — `q=intitle:<title>+inauthor:<author>`, `maxResults=1`. Primary enrichment lookup.
+- `search(title, author, limit=1, score=None)` — `q=intitle:"<title>" inauthor:"<author>"` (quoted phrases; the author part only when there is one), `maxResults=limit` (at most 5). With `score`, returns the highest-scoring volume with a positive score, or None when none scores above 0; without `score`, the first volume. Enrichment calls it with the read title, the read author's surname, `limit=5` and a score of how well each volume fits the reading (#743): for a candidate without a valid ISBN-13, and when the ISBN lookup found nothing or another book.
 - `search_query(q, limit=3)` — free-text, backs `GET /books/search`.
-- `search_by_isbn(isbn)` — `q=isbn:<isbn>`, `maxResults=1`. Called as a fallback when title+author doesn't resolve cleanly.
+- `search_by_isbn(isbn)` — `q=isbn:<isbn>`, `maxResults=1`. The first lookup for a candidate with a valid ISBN-13; its volume is used only when it fits the reading or lists the ISBN under the same main title (#743).
 
 **Fields consumed:** `volumeInfo.{title, authors, description, imageLinks, industryIdentifiers}`. Cover URL picks the largest available (`large` → `medium` → `small` → `thumbnail`) and rewrites `http://` to `https://`.
 
@@ -107,11 +108,13 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Endpoint:** configurable via `OPEN_LIBRARY_BASE_URL` (default `https://openlibrary.org`)
 **No API key** — Open Library is free + unauthenticated
 **Timeout:** 10 seconds
-**Source:** `backend/app/services/open_library.py`
+**Source:** `backend/app/services/open_library.py` (request through `backend/app/services/_lookup_http.py`, as Google Books)
 
 **Methods used:**
-- `search(title, author)` — `/search.json?title=...&author=...&fields=key,title,author_name,isbn,subject&limit=1`
-- `search_by_isbn(isbn)` — same endpoint, `isbn=<isbn>` param
+- `search(title, author, limit=1, score=None)` — `/search.json?title=...&author=...&fields=key,title,subtitle,author_name,isbn,subject&limit=<limit>` (at most 5; `author` only when there is one). With `score`, returns the highest-scoring doc with a positive score, or None when none scores above 0; without `score`, the first doc. Called like the Google Books `search` above (#743).
+- `search_by_isbn(isbn)` — same endpoint, `isbn=<isbn>` param, `limit=1`
+
+**Cost (#743).** A scan candidate now costs up to 4 provider calls (was 2): an ISBN lookup and a title search per provider, so up to 60 per 15-book scan, half of them (30) to Google Books. An ISBN-13 with a bad check digit (which the vision model often invents) is not looked up, so such a candidate costs 2. Each call is cut off after 8 s, with a 20 s deadline for the whole scan's enrichment; see [architecture.md](architecture.md) step 3. Google Books quota: at most 2 requests per candidate, so up to 30 per scan (was 15) and, at the default `scan.global_daily_limit` of 2,000 scans a day, up to 60,000 a day from new scans (was 30,000). Repeats whose enrichment step is missing redo it outside that cap, and `GET /books/search` adds up to 7 per search (one free-text query plus 2 per result). Typical scans need far fewer: one Google Books request per candidate when the ISBN record fits or there is no ISBN.
 
 **Why Open Library over Google Books for dedup:** Open Library's `work_id` identifies the conceptual work (*Dune*), not a specific edition. Google Books' `volume_id` is also work-level but less consistent — Open Library has cleaner work/edition separation. See [data-model.md → Dedup strategy](data-model.md#dedup-strategy--why-work_id-not-isbn).
 
@@ -133,15 +136,19 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 
 **Spend alerts (#531):** the cost breaker (`backend/app/ai/breaker.py`) sends one `warning` event per day at 50, 75 and 90 % of the Free daily AI budget, fingerprint `ai-breaker:<day>:<pct>` (sent as `["ai-breaker", "<day>", "<pct>"]`), with tags `feature`, `model`, `status` and the day's totals as extras. They carry no user and no request data (an isolated scope plus an event processor strips the request block, user, breadcrumbs and request contexts). Sentry only stores them: an alert rule on these events (e.g. fingerprint/message starts with `ai-breaker`) must route them to the owner before they can be relied on.
 
-**Repeated empty enhanced scans (#533):** when a user's uncharged zero-result enhanced scans inside `scan.enhanced.zero_result_window_hours` reach `scan.enhanced.zero_result_threshold` (`backend/app/ai/quota.py`, `send_zero_result_warning`), one `warning` event is sent, message `ai-enhanced: zero-result enhanced scans reached the threshold`, fingerprint `["ai-enhanced-zero-results", "<action>"]`, tags `feature=scan.enhanced` and `action` (`charge` or `throttle`), extras `count`, `threshold` and `window_hours`. Never a user id, email, image, image hash or content: it is captured through the same stripped, emptied scopes as the spend alerts (`backend/app/ai/alerts.py`). At most one per user per window: the row that fires it is marked `warned = true` in `ai_enhanced_zero_results` in the same transaction, and no new warning is sent for that user while a marked row is inside the window, even if older rows age out and the count reaches the threshold again. Only the request holding the user's lease can claim it (the lease row is locked until the settle commits), so two overlapping settles cannot both send it. None with threshold 0; none for a user whose in-window count was already above a threshold that was then lowered (they are still charged or throttled); and none if the settle that committed the claim lost its acknowledgement (the retry records nothing, so that window's warning is lost rather than duplicated). Like the spend alerts, it needs a Sentry alert rule (e.g. fingerprint starts with `ai-enhanced-zero-results`) to reach anyone.
+**Repeated empty enhanced scans (#533):** when a user's uncharged zero-result enhanced scans inside `scan.enhanced.zero_result_window_hours` reach `scan.enhanced.zero_result_threshold` (`backend/app/ai/quota/sentry_warnings.py`, `send_zero_result_warning`), one `warning` event is sent, message `ai-enhanced: zero-result enhanced scans reached the threshold`, fingerprint `["ai-enhanced-zero-results", "<action>"]`, tags `feature=scan.enhanced` and `action` (`charge` or `throttle`), extras `count`, `threshold` and `window_hours`. Never a user id, email, image, image hash or content: it is captured through the same stripped, emptied scopes as the spend alerts (`backend/app/ai/alerts.py`). At most one per user per window: the row that fires it is marked `warned = true` in `ai_enhanced_zero_results` in the same transaction, and no new warning is sent for that user while a marked row is inside the window, even if older rows age out and the count reaches the threshold again. Only the request holding the user's lease can claim it (the lease row is locked until the settle commits), so two overlapping settles cannot both send it. None with threshold 0; none for a user whose in-window count was already above a threshold that was then lowered (they are still charged or throttled); and none if the settle that committed the claim lost its acknowledgement (the retry records nothing, so that window's warning is lost rather than duplicated). Like the spend alerts, it needs a Sentry alert rule (e.g. fingerprint starts with `ai-enhanced-zero-results`) to reach anyone.
 
-**No-match ceiling (#577):** when a user's no-match scans (standard scans where the AI answered but found no book) reach the day's ceiling `quota.<tier>.no_match_daily` (`backend/app/ai/quota.py`, `send_no_match_ceiling_warning`), one `warning` event is sent after the settle commits, message `ai-quota: a user's no-match scans reached the daily ceiling`, fingerprint `["ai-no-match-ceiling"]`, tag `tier` (`free` or `premium`), extra `ceiling`. At most one per user per UTC day: only the move that brings the count to the ceiling sends it. Never a user id, email, image, image hash or content (the same emptied, stripped scopes as above). Per-user counts are in `ai_quota` (quota key `scan.no_match`). The alert rule is #578.
+**No-match ceiling (#577):** when a user's no-match scans (standard scans where the AI answered but found no book) reach the day's ceiling `quota.<tier>.no_match_daily` (`backend/app/ai/quota/sentry_warnings.py`, `send_no_match_ceiling_warning`), one `warning` event is sent after the settle commits, message `ai-quota: a user's no-match scans reached the daily ceiling`, fingerprint `["ai-no-match-ceiling"]`, tag `tier` (`free` or `premium`), extra `ceiling`. At most one per user per UTC day: only the move that brings the count to the ceiling sends it. Never a user id, email, image, image hash or content (the same emptied, stripped scopes as above). Per-user counts are in `ai_quota` (quota key `scan.no_match`). The alert rule is #578.
 
 ### Frontend
 
 **Init:** `frontend/lib/sentry.ts`. Imported as the **first import in `app/_layout.tsx`** (rule #13) — the module self-initializes so the native crash reporter is up before any other module can throw.
 
 **Filtering (#701):** `beforeSend` drops two narrow, user-environment web network signatures (font-loader `<n>ms timeout exceeded`, stackless `NetworkError` DOMException); see `docs/claude/frontend.md` ("Sentry noise filter").
+
+**Scrubbing (#736):** after the filter, `beforeSend` replaces an unhandled AxiosError's own exception entry with a sanitized `ApiError`, and rebuilds `extra`, `contexts`, `logentry`, `message`, `event.request` and exception mechanism data: auth/cookie/secret-named keys (`authorization`, `cookie`, `access_token`, `password`, `api_key`, ...) at any depth and Axios/XHR-shaped `config`/`request`/`response` `headers`/`data` are redacted, and bearer tokens, raw JWTs, `Authorization`/`Cookie` header lines and token query params are masked in strings (all linear-time). `beforeBreadcrumb` applies the same scrub to breadcrumb `message`/`data`. It fails closed: a field that cannot be scrubbed is dropped, and an event that cannot be copied is dropped (`null`). Web caveat: `event.request`'s page URL gets query-param redaction only; no tokens travel in page URLs today. Code: `frontend/lib/sentryScrub.ts`; details in `docs/claude/frontend.md` ("Sentry event scrubbing").
+
+**API failures (#724):** `lib/api.ts` reports unexpected API failures (403, 5xx) once per (method, path template, status, detail) per app session, with tags `http.status`, `http.method`, `api.path` and (allowlisted codes only) `api.detail`; no tokens, headers or bodies. See `docs/claude/frontend.md` ("API error reporting").
 
 **Breadcrumb categories:**
 - `sentry.filter` — an event was dropped by the noise filter
@@ -164,7 +171,9 @@ Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No f
 **Timeout:** 5 seconds
 **Source:** `backend/app/api/scan.py:_verify_turnstile`
 
-When configured, every `POST /scan` must include `cf-turnstile-response` as a multipart form field. Missing → 400, invalid → 403. A Turnstile outage falls through to False (request rejected) — the 5s timeout prevents it from blocking the endpoint indefinitely.
+When `TURNSTILE_REQUIRED=true` (the default; production runs `false` until the app's site key ships), every `POST /scan` must include `cf-turnstile-response` as a multipart form field. Missing → 400, invalid → 403. A Turnstile outage falls through to False (request rejected) — the 5s timeout prevents it from blocking the endpoint indefinitely.
+
+**Client (#740):** `EXPO_PUBLIC_TURNSTILE_SITE_KEY` (public site key) and, native only, `EXPO_PUBLIC_TURNSTILE_BASE_URL` (default: the origin of `EXPO_PUBLIC_API_URL`). The app gets a fresh token per request from an invisible widget (hidden WebView on iOS/Android, Cloudflare's script on web) and sends it as `cf-turnstile-response`; without a site key, or when the widget times out (10 s) or fails, the request goes without one. Details: [`security.md` → Turnstile on /scan](security.md#turnstile-on-scan). Re-enabling the check: [`RENDER.md` → Re-enabling `TURNSTILE_REQUIRED`](RENDER.md#re-enabling-turnstile_required).
 
 ### WAF + Bot Fight Mode
 
@@ -187,10 +196,11 @@ With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client I
 - Health check path: `/health`
 - Root dir: `backend/`
 
-**Database:** `bookshelf-db` — Postgres, Oregon region, connection string injected as `DATABASE_URL`.
+**Database:** Supabase Postgres (prod project; persistent branch `dev` for the dev service) through the session pooler, as the `bookshelf_app` role (#696); see [`RENDER.md`](RENDER.md#database-role). The Render Postgres `bookshelf-db` is suspended and no longer referenced.
 
 **Env vars on Render:** configured in the Render dashboard (not in `render.yaml` for secrets). Expected:
-- `DATABASE_URL` (auto, from the DB resource)
+- `DATABASE_URL` (Supabase session pooler URL as `bookshelf_app`; dashboard secret)
+- `MIGRATION_DATABASE_URL` (owner DSN, used only by `alembic upgrade head`; dashboard secret)
 - `ENVIRONMENT=production`
 - `CORS_ORIGINS` (JSON array, no wildcards)
 - `TRUSTED_HOSTS` (JSON array — **must include both the public domain and any direct-origin probe hostnames**)

@@ -292,3 +292,12 @@ class TestAnthropicBaseUrl:
         with pytest.raises(ValidationError) as exc:
             self._settings("http://localhost:abc123")
         assert "abc123" not in str(exc.value)
+
+
+def test_blank_guard_source_get_field_value_is_an_inert_hook():
+    """PydanticBaseSettingsSource requires get_field_value; the guard source
+    contributes no values, so the hook must return "not found"."""
+    from app.core.config import _BlankGuardSource
+
+    source = _BlankGuardSource(Settings, None, ())
+    assert source.get_field_value(None, "environment") == (None, "environment", False)

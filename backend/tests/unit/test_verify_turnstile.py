@@ -18,7 +18,7 @@ class TestVerifyTurnstile:
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.api.scan.httpx.AsyncClient", return_value=client):
+        with patch("app.api._bot_check.httpx.AsyncClient", return_value=client):
             result = await _verify_turnstile("valid-token")
 
         assert result is True
@@ -33,7 +33,7 @@ class TestVerifyTurnstile:
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.api.scan.httpx.AsyncClient", return_value=client):
+        with patch("app.api._bot_check.httpx.AsyncClient", return_value=client):
             result = await _verify_turnstile("bad-token")
 
         assert result is False
@@ -44,7 +44,7 @@ class TestVerifyTurnstile:
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.api.scan.httpx.AsyncClient", return_value=client):
+        with patch("app.api._bot_check.httpx.AsyncClient", return_value=client):
             result = await _verify_turnstile("any-token")
 
         assert result is False
@@ -61,7 +61,7 @@ class TestVerifyTurnstile:
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.api.scan.httpx.AsyncClient", return_value=client):
+        with patch("app.api._bot_check.httpx.AsyncClient", return_value=client):
             result = await _verify_turnstile("any-token")
 
         assert result is False
@@ -77,8 +77,8 @@ class TestVerifyTurnstile:
         client.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch("app.api.scan.httpx.AsyncClient", return_value=client),
-            patch("app.api.scan.settings") as mock_settings,
+            patch("app.api._bot_check.httpx.AsyncClient", return_value=client),
+            patch("app.api._bot_check.settings") as mock_settings,
         ):
             mock_settings.turnstile_secret_key = "test-secret"
             await _verify_turnstile("user-token")

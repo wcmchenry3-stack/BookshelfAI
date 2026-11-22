@@ -176,8 +176,10 @@ class TestAuthFlowLogs:
             with (
                 patch("app.api.auth.verify_google_id_token", return_value=claims),
                 patch("app.api.auth.settings") as st,
-                patch("app.api.auth.create_access_token", return_value="a"),
-                patch("app.api.auth.create_refresh_token", return_value=("r", "j")),
+                patch("app.auth.sessions.create_access_token", return_value="a"),
+                patch(
+                    "app.auth.sessions.create_refresh_token", return_value=("r", "j")
+                ),
             ):
                 st.allowed_emails_list = allowed
                 st.jwt_expiry_hours = 24

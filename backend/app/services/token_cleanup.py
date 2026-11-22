@@ -1,13 +1,18 @@
-"""Background task: periodically delete expired refresh tokens.
+"""Background task: periodically delete expired and revoked refresh tokens.
 
 Expired tokens (expires_at < now) can never be used regardless of their
-revocation status, so they are safe to remove.  Keeping them indefinitely
-causes unbounded table growth and slows the JTI revocation lookup index.
+revocation status, so they are safe to remove.  Tokens revoked without being
+rotated (logout, logout-all) are never read again and go too; rotated tokens
+stay until they expire, because reuse detection needs them (#690).  Keeping
+them indefinitely causes unbounded table growth and slows the JTI revocation
+lookup index.  The purge runs in bounded batches and never waits for a row
+lock (``SKIP LOCKED``; a row a refresh is replaying waits for the next run)
+(app/auth/refresh_family.py:purge_refresh_tokens).
 
 The same daily run also purges, in bounded batches:
 
 - AI quota counters (``ai_quota``): day rows older than 90 days and month rows
-  (no longer written since #582) older than 13 months (app/ai/quota.py);
+  (no longer written since #582) older than 13 months (app/ai/quota/purge.py);
 - the AI usage ledger (``ai_usage``): raw rows older than 30 days are rolled
   up into ``ai_usage_daily`` and deleted, and daily rows older than 400 days
   are deleted (app/ai/ledger.py); in the same step, scan correction flags
@@ -17,17 +22,28 @@ The same daily run also purges, in bounded batches:
 - the daily AI spend totals (``ai_spend_daily``) older than 90 days
   (app/ai/breaker.py);
 - uncharged zero-result enhanced scans (``ai_enhanced_zero_results``) older
-  than 30 days (app/ai/quota.py, #533);
+  than 30 days (app/ai/quota/purge.py, #533);
 - per-user scan records (``scan_records``) older than
-  ``scan_records.retention_days`` (default 30) (app/ai/scan_records.py, #585).
+  ``scan_records.retention_days`` (default 30) (app/ai/scan_records.py, #585);
+- library entries in the trash (``user_books`` with ``deleted_at`` set, and
+  their ``user_custom_books``) trashed more than ``TRASH_RETENTION_DAYS``
+  (default 30) days ago, under a Postgres advisory lock so two instances
+  never run it at once (app/services/trash.py, #683).
+
+Every step opens its session from ``JobSessionLocal``, so each transaction
+runs under ``STATEMENT_TIMEOUT_JOB_MS`` (default 60 s) rather than the 5 s
+request ``statement_timeout`` (#696). A step whose query is still cancelled
+(SQLSTATE 57014, not transient) logs one ``logger.exception`` and waits for
+the next run.
 
 The task runs once at startup (with an initial delay) then every 24 hours.
 It is launched inside the FastAPI lifespan and cancelled on shutdown.
 
 Each step is isolated (one failing never skips the others) and runs through
-``_run_step``, which retries transient connection errors (any ``OSError``: DNS failure,
+``_run_step``, which retries transient errors (any ``OSError``: DNS failure,
 connection refused/reset, connect timeout; SQLAlchemy ``OperationalError`` /
-``InterfaceError``) a
+``InterfaceError``; and a deadlock or serialization failure, SQLSTATE
+``40P01`` / ``40001``, whose transaction Postgres rolled back) a
 bounded number of times with exponential backoff (#661).  A blip that recovers
 logs only a warning; a step that exhausts its retries, or fails with any other
 error, logs one ``logger.exception`` so a persistent outage still reaches
@@ -38,17 +54,16 @@ import asyncio
 import logging
 import socket
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 
-from sqlalchemy import delete
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.ai.breaker import purge_old_spend
 from app.ai.ledger import rollup_and_purge
 from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
-from app.core.database import AsyncSessionLocal
-from app.models.refresh_token import RefreshToken
+from app.auth.refresh_family import purge_refresh_tokens
+from app.core.database import JobSessionLocal
+from app.services.trash import purge_trash
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +87,32 @@ _TRANSIENT_ERRORS = (
 )
 
 
+# Postgres rolled the transaction back and a retry can succeed: deadlock
+# detected, serialization failure (#690: the refresh-token purge vs a
+# refresh-token replay).
+_TRANSIENT_SQLSTATES = frozenset({"40P01", "40001"})
+
+
+def _sqlstate(exc: BaseException) -> str | None:
+    """The SQLSTATE of a driver error (asyncpg ``sqlstate``, psycopg
+    ``pgcode``), or of the driver error a SQLAlchemy ``DBAPIError`` wraps."""
+    for err in (exc, getattr(exc, "orig", None)):
+        for attr in ("sqlstate", "pgcode"):
+            code = getattr(err, attr, None)
+            if isinstance(code, str):
+                return code
+    return None
+
+
 def _is_transient(exc: BaseException) -> bool:
-    """True for connection-level blips worth retrying (checks the cause chain)."""
+    """True for connection-level blips, deadlocks and serialization failures
+    worth retrying (checks the cause chain)."""
     seen: set[int] = set()
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
         if isinstance(cur, _TRANSIENT_ERRORS):
+            return True
+        if _sqlstate(cur) in _TRANSIENT_SQLSTATES:
             return True
         seen.add(id(cur))
         cur = cur.__cause__ or cur.__context__
@@ -114,13 +149,13 @@ async def _run_step(step: Callable[[], Awaitable[None]], label: str = "") -> Non
 
 
 async def _purge_quota() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_quota(db)
         logger.info("token_cleanup: purged %d old ai_quota row(s)", purged)
 
 
 async def _purge_usage() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         rolled, purged = await rollup_and_purge(db)
         logger.info(
             "token_cleanup: rolled up %d ai_usage row(s), "
@@ -131,13 +166,13 @@ async def _purge_usage() -> None:
 
 
 async def _purge_spend() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_spend(db, utc_today())
         logger.info("token_cleanup: purged %d old ai_spend_daily row(s)", purged)
 
 
 async def _purge_zero_results() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_zero_results(db)
         logger.info(
             "token_cleanup: purged %d old ai_enhanced_zero_results row(s)", purged
@@ -145,20 +180,23 @@ async def _purge_zero_results() -> None:
 
 
 async def _purge_scan_records() -> None:
-    async with AsyncSessionLocal() as db:
+    async with JobSessionLocal() as db:
         purged = await purge_old_scan_records(db)
         logger.info("token_cleanup: purged %d old scan_records row(s)", purged)
 
 
 async def _purge_refresh_tokens() -> None:
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            delete(RefreshToken).where(RefreshToken.expires_at < datetime.now(UTC))
-        )
-        await db.commit()
+    async with JobSessionLocal() as db:
+        deleted = await purge_refresh_tokens(db)
         logger.info(
-            "token_cleanup: deleted %d expired refresh token(s)", result.rowcount
+            "token_cleanup: deleted %d expired or revoked refresh token(s)", deleted
         )
+
+
+async def _purge_trash() -> None:
+    async with JobSessionLocal() as db:
+        purged = await purge_trash(db)
+        logger.info("token_cleanup: purged %d trashed library entr(ies)", purged)
 
 
 async def cleanup_expired_tokens() -> None:
@@ -172,6 +210,7 @@ async def cleanup_expired_tokens() -> None:
         await _run_step(_purge_spend, "ai spend")
         await _run_step(_purge_zero_results, "enhanced zero results")
         await _run_step(_purge_scan_records, "scan records")
+        await _run_step(_purge_trash, "trash")
         await _run_step(_purge_refresh_tokens)
 
         await asyncio.sleep(_INTERVAL_SECONDS)

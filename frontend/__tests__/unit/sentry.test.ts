@@ -40,6 +40,7 @@ describe('initSentry', () => {
       sendDefaultPii: false,
       enabled: true,
       beforeSend: expect.any(Function),
+      beforeBreadcrumb: expect.any(Function),
     });
   });
 

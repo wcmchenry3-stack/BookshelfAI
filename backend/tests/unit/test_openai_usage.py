@@ -215,7 +215,7 @@ def test_parse_uses_the_max_books_it_is_given():
         {"books": [{"title": f"Book {i}", "author": "A"} for i in range(5)]}
     )
     provider = OpenAIVisionProvider(FEATURES["scan.standard"])
-    assert len(provider._parse(content, "stop", 2)) == 2
+    assert len(provider._parse_reply(content, "stop", 2) or []) == 2
 
 
 async def test_identify_reads_max_books_once():

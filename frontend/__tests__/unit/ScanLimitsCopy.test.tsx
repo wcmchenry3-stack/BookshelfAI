@@ -38,6 +38,7 @@ jest.mock('expo-camera', () => ({
   useCameraPermissions: () => [{ granted: true }, jest.fn()],
 }));
 jest.mock('expo-file-system', () => ({ Paths: {}, Directory: jest.fn(), File: jest.fn() }));
+jest.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ logout: jest.fn() }) }));
 jest.mock('../../components/ThemeToggleButton', () => ({ ThemeToggleButton: () => null }));
 jest.mock('../../hooks/useNetworkStatus', () => ({
   useNetworkStatus: () => ({ isConnected: true }),

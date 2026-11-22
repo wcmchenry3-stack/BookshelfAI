@@ -8,5 +8,6 @@
   "requiresConnection": "이 작업에는 인터넷 연결이 필요합니다.",
   "offlineEditNotice": "오프라인 상태입니다. 서재를 수정하려면 온라인으로 연결하세요.",
   "unverified": "미확인",
-  "unverifiedA11y": "미확인: 직접 추가한 책, 카탈로그에 없음"
+  "unverifiedA11y": "미확인: 직접 추가한 책, 카탈로그에 없음",
+  "serviceUnavailable": "지금은 BookshelfAI에 연결할 수 없습니다. 나중에 다시 시도해 주세요."
 }

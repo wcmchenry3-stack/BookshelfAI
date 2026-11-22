@@ -48,7 +48,7 @@ def scan_for_malware(raw_bytes: bytes) -> None:
         return
 
     try:
-        import clamd  # type: ignore[import-untyped]
+        import clamd  # type: ignore[import-untyped] - clamd ships no type stubs
     except ImportError:
         logger.error("pyclamd is not installed but CLAMAV_ENABLED=true")
         raise HTTPException(
@@ -64,7 +64,7 @@ def scan_for_malware(raw_bytes: bytes) -> None:
         )
         result = cd.instream(io.BytesIO(raw_bytes))
     # Any clamd failure (connection, protocol, timeout) means scanning is unavailable.
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - any clamd failure = 503
         logger.error("ClamAV daemon unreachable: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

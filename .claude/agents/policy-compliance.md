@@ -87,7 +87,7 @@ Policy definitions live in `.claude/policies/`:
 - `wikipedia.md` — Wikimedia API (User-Agent, rate limits, attribution, no scraping)
 - `gemini.md` — Google Gemini API (key hygiene, rate limits, model pinning, safety settings)
 - `claude.md` — Anthropic/Claude API (key hygiene, 429/500/503/529 retries with `retry-after`, approved model IDs, `max_tokens`, `stop_reason`/`refusal`, SDK only under `backend/app/ai/providers/`, no raw content in logs, `503 ai_budget_reached`). CI runs it as `python3 scripts/policy/check_claude_policy.py`; run that first. Detection also matches the path `app/ai/`, so match files against the pattern by path as well as content.
-- `policy-patterns.json` — detection patterns for the hook
+- `policy-patterns.json` — detection patterns for the hook (policy entries are objects; the string `_global_skip` is the hook's shared skip regex, not a policy)
 
 To add a new policy: create a new `.md` file following the same format and
 add its detection pattern to `policy-patterns.json`.

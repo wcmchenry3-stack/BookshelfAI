@@ -50,6 +50,7 @@ def service():
 def existing_book():
     b = MagicMock(spec=Book)
     b.id = uuid.uuid4()
+    b.merged_into_id = None  # not merged (#682)
     return b
 
 
@@ -172,6 +173,11 @@ class TestFindOrCreateUserBook:
             google_books_id=None,
             isbn_13=None,
             isbn_10=None,
+            # Not merged (#682): the book is its own survivor and whole work.
+            survivor_id=book_id,
+            family_book_ids=[book_id],
+            family_work_ids=[None],
+            family_volume_ids=[None],
         )
         result = MagicMock()
         result.all.return_value = [entry]

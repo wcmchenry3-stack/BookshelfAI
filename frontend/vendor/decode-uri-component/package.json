@@ -1,0 +1,9 @@
+{
+  "name": "decode-uri-component",
+  "version": "0.5.1+bookshelf.0",
+  "description": "Vendored CommonJS port of decode-uri-component 0.5.1 (fixes CVE-2026-118664)",
+  "license": "MIT",
+  "private": true,
+  "main": "index.js",
+  "sideEffects": false
+}

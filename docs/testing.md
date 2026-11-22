@@ -6,7 +6,7 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 
 - **Unit tests mock the DB** — they're fast and run on every PR.
 - **Integration tests hit a real Postgres** and are auto-skipped when `DATABASE_URL` points at the dummy URL used by CI's default config. CI runs them in the `test-migrations` job, which has a Postgres 16 service.
-- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own CI job.
+- **Security tests are a separate marker** — `pytest -m security` — so the OWASP-aligned suite can be run standalone and surfaced in its own workflow (`security.yml`). `pytest.ini` has no marker filter, so they also run with everything else in `test-python` on every PR. See "When the security suite runs" below.
 - **Accuracy and performance suites** live beside the core tests but run opt-in (benchmarks are skipped by default).
 - **Don't mock what you can rollback** — when testing DB interactions, prefer the savepoint-based `db_session` fixture over mock sessions. Feedback memory flagged a real production incident where mocked DB tests passed and the actual migration broke prod.
 
@@ -21,8 +21,10 @@ How Bookshelf is tested: the split between unit / integration / security / accur
 ```
 backend/tests/
 ├── conftest.py          DATABASE_URL guard, rate-limit reset fixture, db_session fixture
+├── helpers.py           Shared auth fakes and request helpers (see "Shared helpers")
 ├── unit/                Per-module tests — mock DB via fixtures
 ├── integration/         Real-DB tests — @pytest.mark.integration, auto-skipped w/o DATABASE_URL
+├── limits/              Scan limits matrix on real Postgres — @pytest.mark.integration (test_no_real_provider.py is unmarked)
 ├── security/            OWASP tests — @pytest.mark.security
 ├── accuracy/            Dedup + enrichment correctness benchmarks
 └── performance/         @pytest.mark.benchmark (pytest-benchmark)
@@ -42,7 +44,22 @@ async def test_create_user(db_session: AsyncSession):
     # implicit rollback at end of test — DB state never persists
 ```
 
+### Shared helpers
+
+Test setup that two or more files need lives in one place, so a change to a fake is made once (#816). Reach for these before copying a fixture into a new file; if the setup you need is not here and a second file will use it, add it here rather than pasting it.
+
+| Helper | Where | Use it for |
+|---|---|---|
+| `rsa_pem_pair()`, `install_jwt_keys(keys)` | `tests/helpers.py` | A throwaway RS256 key pair and the `settings` patch that makes the app sign and verify with it |
+| `FakeAuthDb`, `serve_fake_db(fake)` | `tests/helpers.py` | Database-free auth flows: one user and its refresh rows, the jti selects, `get` by primary key and the two `revoke_all_sessions` UPDATEs, with `executes` / `gets` counters. Subclass it for a test-specific hook (see `FakeDb` in `security/test_refresh_reuse.py`). Use from a fixture: `yield from serve_fake_db(FakeAuthDb())` |
+| `sign_in(client, claims)`, `bearer(token)` | `tests/helpers.py` | `POST /auth/google` with Google verification stubbed, and the `Authorization` header |
+| `_keys` (module-scoped fixture) | `tests/security/conftest.py` | One key pair per security test module. It is not autouse: a module adds its own autouse `_jwt_settings` fixture that calls `install_jwt_keys(_keys)` |
+
+Rules: a helper holds setup, never an assertion about the behaviour under test, and a test keeps its own `assert` lines. A test may extend a shared fake by subclassing but must not weaken it.
+
 **DB guard** — `pytest_collection_modifyitems` auto-skips tests tagged `@pytest.mark.integration` when `DATABASE_URL` isn't a real Postgres URL. That keeps CI fast on the default Python-test job while the integration job passes its own real DB URL.
+
+Integration tests can live in any folder (`tests/integration/`, `tests/limits/`, `tests/security/`, `tests/unit/`); the marker, not the folder, decides. The `test-migrations` job runs `pytest -m integration tests -q -rs` (all folders), so the summary line shows how many ran and `-rs` lists every skip. It also sets `REQUIRE_DB_TESTS=1`: with that variable set, `tests/_db_guard.py` makes `conftest.py` abort the run with an error if `DATABASE_URL` is missing or the dummy URL, so a mass skip can never pass (#760). `tests/unit/test_db_guard.py` covers the guard.
 
 ### Running
 
@@ -56,7 +73,7 @@ pytest
 pytest --cov=app --cov-report=term-missing
 
 # Enforce the CI threshold (app code only via backend/.coveragerc, compared to 2 decimal places; #621)
-pytest --cov=. --cov-fail-under=90
+pytest --cov=. --cov-fail-under=98
 
 # Single file
 pytest tests/unit/test_health_host_exemption.py
@@ -64,12 +81,22 @@ pytest tests/unit/test_health_host_exemption.py
 # Single test
 pytest tests/unit/test_health_host_exemption.py::test_health_accepts_untrusted_host_header
 
-# Security suite only
+# Security suite only (the marker run in security.yml)
 pytest -m security
 
 # Integration tests (against a real DB)
 DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_test pytest -m integration
 ```
+
+### When the security suite runs
+
+`security`-marked tests run on every PR as part of the plain `pytest` in `test-python` (`backend/pytest.ini` sets no marker filter). They also run on their own, as `pytest -m security`, in `.github/workflows/security.yml` (job `pytest-security`, with `TURNSTILE_REQUIRED=false`, next to Bandit and ZAP) when:
+
+- a pull request targets `dev` and changes `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `.github/workflows/security.yml` or `.zap/**`;
+- on the weekly schedule (Monday 08:00 UTC); or
+- on manual dispatch.
+
+A PR that changes none of those paths, or a PR to `main`, skips the separate `security.yml` run, but still runs the security tests in `test-python`.
 
 ### Nightly scan abuse load run (#539)
 
@@ -100,7 +127,8 @@ Run it locally (about 75 s for all three scenarios):
 ```bash
 cd backend
 pip install -r requirements-perf.txt
-createdb bs539_perf && DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf alembic upgrade head   # a THROWAWAY database, its name must contain "perf"
+createdb bs539_perf && psql -d bs539_perf -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # role: once per cluster, skip if it exists (#696)
+DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf alembic upgrade head   # a THROWAWAY database, its name must contain "perf"
 PERF_CONFIRM_ISOLATED_DB=yes DATABASE_URL=postgresql+asyncpg://localhost/bs539_perf \
   python perf/run_scan_abuse.py                      # or --scenario abuse|breaker|kill
 ```
@@ -171,8 +199,35 @@ async def test_dedup_across_editions(db_session: AsyncSession):
 ```
 frontend/__tests__/
 ├── unit/            Screen + hook + context + component unit tests
-└── integration/     Cross-provider flows (e.g. ScanCaptureFlow)
+├── integration/     Cross-provider flows (e.g. ScanCaptureFlow)
+└── helpers/         Shared mocks, fixtures and provider wrappers (not tests; ignored by Jest)
 ```
+
+### Shared helpers (`__tests__/helpers/`)
+
+`package.json → jest.testPathIgnorePatterns` keeps this folder out of the test run. Use these before copying a mock block into a new test file (#816).
+
+| File | Exports | Use it for |
+|---|---|---|
+| `scanJobMocks.ts` | `scanMocks` (spies: `post`, `get`, `loadJobs`, `saveJobs`, `netFetch`, `captureMessage`, `captureException`, plus the registered `netListener` and the uuid counter), `resetScanMocks()`, the `jest.mock` factories `authedModule`, `scanApiModule`, `scanStorageModule`, `netInfoModule`, `sentryModule`, `cryptoModule`, and the fixtures `refusal`, `scanOk`, `queuedImageJob`, `queuedJob` | Every test that renders `ScanJobProvider`. It imports no app code, so the factories can be `require`d while app modules load |
+| `providers.tsx` | `ScanJobsWrapper`, `renderScanJobs`, `renderScanJobsWithBanner`, `reconnectAndDrain` | The Banner + ScanJob provider wrapper for `renderHook`, and firing the NetInfo listener then running the drain |
+| `wishlistFlow.tsx` | `book`, `httpError`, `scanAndAdd` | The "scan a photo, review, add to the wishlist" flow behind `POST /wishlist` refusal tests |
+| `screenMocks.tsx` | `themeModule`, `loadingSpinnerModule`, `focusEffectRouterModule`, `userBookRow` | Library screen tests: `useTheme` returning the real light theme, a spinner stand-in, `useFocusEffect` on mount, and a `/user-books` row |
+
+`jest.mock` calls stay in the test file, because babel-jest hoists them above imports. Pass the helper in through a factory that `require`s it:
+
+```typescript
+jest.mock('../../lib/api', () => require('../helpers/scanJobMocks').scanApiModule());
+jest.mock('../../lib/scanJobStorage', () => require('../helpers/scanJobMocks').scanStorageModule());
+
+const { post: mockPost } = scanMocks;          // alias the spies the test bodies use
+beforeEach(() => {
+  jest.resetAllMocks();                          // then restore the defaults
+  resetScanMocks();
+});
+```
+
+`no-require-imports` is off under `__tests__/**`, so the `require` inside a factory is allowed. Keep `expect(...)` calls in the test file: a helper sets up state and never asserts the behaviour under test (the one exception is `scanAndAdd`, whose first step waits for the hook to mount).
 
 Locale guards in `unit/`: `localeKeyParity.test.ts` (every `en` key exists in every locale, plural-aware) and `localeCharacterLimits.test.ts` (`_meta` character limits).
 
@@ -237,6 +292,9 @@ npx jest __tests__/unit/useScanJobs.test.tsx
 # Type-check (tsc --noEmit; also the typecheck-frontend CI job)
 npm run typecheck
 
+# Unused files, exports and dependencies (knip; also the static-frontend CI job)
+npm run knip
+
 # Watch mode
 npx jest --watch
 
@@ -263,37 +321,135 @@ test('renders and responds to tap', async () => {
 2. `getByText` — for visible text content
 3. `getByTestId` — last resort, needs an explicit `testID` prop
 
+## Web e2e (Playwright, #470)
+
+`frontend/e2e/` is a Playwright suite (Chromium) that drives the **static web export** of the app against a **real backend on a scratch Postgres**. It is not part of Jest (`*.e2e.ts`, outside Jest's test patterns) and is **not a required check**: `.github/workflows/e2e-web.yml` runs it on pull requests to `dev` that touch `frontend/**`, `backend/**` or the workflow, and on demand (`workflow_dispatch`). On failure the HTML report and traces are uploaded as the `e2e-web-report` artifact.
+
+| Scenario (file) | What it checks |
+|---|---|
+| Auth (`auth.e2e.ts`) | The login screen's dev **Test Login** signs in and lands on My Books |
+| Scan upload (`scan.e2e.ts`) | A photo upload shows progress, then the two books the fake provider "reads"; `POST /scan` reaches the fake provider exactly once |
+| My Books (`my-books.e2e.ts`) | The library loads, the status and text filters work, a book opens its details |
+| Add, delete, restore (`add-and-trash.e2e.ts`) | Search, add, remove (banner), restore from Trash |
+| Wishlist (`wishlist.e2e.ts`) | Add from a search, remove |
+| Settings (`settings.e2e.ts`) | The scan allowance is shown (the screen has no email today), sign out returns to login |
+
+Every scenario also runs `@axe-core/playwright` with the tags `wcag2a, wcag2aa, wcag21aa, wcag22aa` on each screen it visits (`expectNoA11yViolations` in `e2e/support/fixtures.ts`).
+
+**How it avoids real services**
+
+- **Sign-in:** the web build keeps tokens in memory only (`lib/storage.ts`), so seeding tokens is not possible. The suite clicks the login screen's **Test Login** button, which calls `POST /auth/test-login` (dev only: the route does not exist when hardened, #688). That button exists only when `__DEV__` is true, so the export is a development bundle (`npm run e2e:build` runs `expo export --platform web --dev`) with the test secret and email baked in through `EXPO_PUBLIC_TEST_AUTH_SECRET` / `EXPO_PUBLIC_TEST_EMAIL`. All tests share that one user; each starts by removing its library entries (`Backend.resetLibrary`).
+- **AI provider:** `e2e/stack/run_backend.py` starts the API with `AI_ANTHROPIC_BASE_URL` pointing at a fake server (`e2e/stack/fake_services.py`, which reuses `backend/perf/fake_provider.py` from the nightly load run, #539), a dummy `ANTHROPIC_API_KEY`, no OpenAI key, and `scan.standard` switched to the Anthropic adapter. No real model is called and no key is needed. `TURNSTILE_REQUIRED=false`, `CLAMAV_ENABLED=false`.
+- **Book catalog (search and enrichment):** the same fake server answers Open Library (`OPEN_LIBRARY_BASE_URL`) and Google Books from a four-book catalog (Dune, The Great Gatsby, Emma, Frankenstein). Google Books has no base-URL setting (the URL is a constant in `app/services/google_books.py`), so the launcher rebinds that constant in its own process; no app code changed. The search-and-add scenarios therefore use the real search, enrichment, catalog-token and `POST /wishlist` code with no public network. `HTTPS_PROXY` is pointed at a dead port in that process, so a call that escapes the fakes fails instead of leaving the machine.
+- **Rate limits** are switched off in that process (`/auth/test-login` is 2/minute per IP and every test signs in); limits are covered by the backend tests.
+- Saved scan records (#585) answer a repeated photo without calling the provider, so scan tests first call the fake's `POST /__forget_scans`.
+
+**Run it locally** (Node 22, Python 3.12 with `backend/requirements.txt`, a scratch Postgres 16):
+
+```bash
+createdb bookshelf_e2e
+psql -d bookshelf_e2e -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # once per cluster, skip if it exists (#696)
+cd backend && DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e alembic upgrade head
+cd ../frontend
+npm ci
+npx playwright install chromium        # once
+npm run e2e:build                       # the web export into dist/ (about a minute)
+DATABASE_URL=postgresql+asyncpg://localhost/bookshelf_e2e npm run e2e
+```
+
+`playwright.config.ts` starts the backend (`:8001`, fakes on `:18080`) and a static server for `dist/` (`:8081`), and reuses them when they are already running (outside CI). Without a Playwright-managed browser, set `E2E_CHROMIUM_PATH` to a Chromium binary. `npx playwright test e2e/wishlist.e2e.ts --headed` runs one file; `npx playwright show-report` opens the report. Rebuild the export after changing app code. The database must be **throwaway**, and this is enforced (`e2e/stack/db_guard.py`, unit tested by `backend/tests/unit/test_e2e_db_guard.py`): the launcher writes `ai_settings` rows and `/__forget_scans` deletes every scan record, so it exits before the app starts unless `DATABASE_URL` is a local host (`localhost`, `127.0.0.1`, `::1`) with no query parameters and a database name containing `e2e` (CI uses `e2e`), `ENVIRONMENT` is not staging or production, and the URL does not look hosted (`supabase`, `render.com`, `pooler`). `E2E_ALLOW_DB=<exact database name>` allows one other local name; it never lifts the host, query, hosted or environment checks. The connected `current_database()` is checked again before the first write, and `/__forget_scans` refuses to run unless the guard passed.
+
+**Known app defects the suite carries** (each is a real finding, kept visible rather than hidden):
+
+- *Scan upload on web fails.* `ScanJobContext` appends the photo's blob URL string to the form data, which browsers reject (`parameter 2 is not of type 'Blob'`), so no `POST /scan` is sent. The scan UI test is marked `test.fail(...)`: it passes as an expected failure now and turns red once the upload works, which is the cue to remove that line (with the upload fixed it passes as written).
+- *Accessibility.* A scenario tolerates a violation only through `KNOWN_VIOLATIONS` in `e2e/support/fixtures.ts`: one rule on the matching nodes, every other rule still runs, and the call fails when axe stops reporting it (so a fix has to remove the entry). Never add one without an issue. Today: book cards that are buttons containing buttons (`nested-interactive`), picker rows with `role="checkbox"` and no `aria-checked`, the wishlist cover placeholder's `aria-label` on a role-less div, the success banner's white-on-green contrast (3.29:1), and the scan spinner as an unnamed progressbar.
+- The development bundle's LogBox toast (`#error-toast`) covers the tab bar, so the fixtures hide it; it is not app UI.
+
 ## CI test jobs
 
-Most jobs are reusable workflows from `wcmchenry3-stack/.github`; `typecheck-frontend`, `js-bundle-check` and the other bundle/build checks are defined inline in `ci.yml`:
+Every CI check (what it does, what it prevents, where it is defined, when it was added, how it gates and how long it takes) is listed in [ci-checks.md](ci-checks.md). The test-specific details are kept here:
 
-| Job | What it runs |
-|---|---|
-| `test-python` | `pytest` with coverage (default, no integration) |
-| `test-frontend` | `npx jest` with coverage |
-| `test-migrations` | Against a Postgres 16 service: `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests/integration` (the real-DB integration suite) |
-| `pytest -m security` | Separate security-suite run (on every PR) |
-| `lint-python` | `black --check` + `ruff` |
-| `lint-frontend` | `eslint` + `prettier --check` |
-| `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`), covers tests too |
-| `cve-python` | `pip-audit` |
-| `cve-frontend` | `npm audit` |
-| `sast-python` | Bandit static analysis |
-| `secret-scan` | gitleaks |
-| `js-bundle-check` | Metro bundle compiles for iOS |
-| `android-bundle-check` | Metro bundle compiles for Android |
-| `ios-build-check` | Full `xcodebuild archive` (no signing) |
-| `android-build-check` | Full `./gradlew assembleDebug` |
-| `migration-guard` | Own workflow (`migration-guard.yml`, re-runs on label changes): `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`). Listed in the required checks of `.github/rulesets/protect-main-dev.json`; the owner must apply the ruleset in GitHub settings. On PRs into `main` it passes without scanning (already scanned on the feature PRs into `dev`) |
+- `test-python`: `pytest` with coverage (default, no integration). It also runs the `security`-marked tests (see "When the security suite runs" above).
+- `test-frontend`: `npx jest --coverage`; fails below the Jest `coverageThreshold` floor (see Coverage targets).
+- `test-migrations`: against a Postgres 16 service, create the `bookshelf_app` role (migration 0028 needs it, #696), then `alembic upgrade head`, `alembic check`, a `downgrade -1` smoke test, then `pytest -m integration tests -q -rs` with `REQUIRE_DB_TESTS=1` (every integration-marked test in every folder, on real Postgres).
+- `lint-frontend`: `eslint` + `prettier --check`. The key rules (`import/first`, `react/display-name`, `react-hooks/exhaustive-deps`, `no-unused-vars`, `no-require-imports`) are errors, so lint stays warning-free; `no-require-imports` is off only under `__tests__/**` (Jest mock hoisting). See `docs/claude/frontend.md` (Lint).
+- `typecheck-frontend`: `npm run typecheck` (`tsc --noEmit`, covers tests too).
+- `static-frontend`: its own workflow (`static-frontend.yml`; every PR to `dev`/`main` with no paths filter so it can be required, and pushes to `dev`): `npm ci` then `npm run knip` (#768, #771).
+- `design-token-check`: its own workflow, calling the shared `called-design-token-check.yml`, the colour-literal gate for CLAUDE.md Hard Rule 5 and the accessibility check. It stays a separate workflow; do not fold it into `static-frontend.yml`.
+- `migration-guard`: `scripts/migration_guard/check_destructive_migrations.py` over the migrations a PR adds or changes; fails on a destructive `upgrade()` step unless the PR has the owner-applied label `destructive-migration-approved` (see "Migrations: expand/contract" in `docs/claude/backend.md`).
 
-Required checks are listed in `.github/rulesets/protect-main-dev.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
+### Composite setup actions (#770)
+
+Jobs that set up Node or Python use two local composite actions instead of repeating `setup-node`/`setup-python` steps. Pins and cache settings live only in these files. Each one needs `actions/checkout` first.
+
+- `.github/actions/setup-frontend/action.yml`: `actions/setup-node` with the npm cache (`frontend/package-lock.json`), then `npm ci` in `frontend/`. Inputs: `node-version` (default `'22'`; pass `'20'` only where a job pins 20, as `npm audit` in `security.yml` does) and `install` (default `'true'`; `'false'` sets up Node and the cache only).
+- `.github/actions/setup-backend/action.yml`: `actions/setup-python` (`python-version` default `'3.12'`) with the pip cache (`backend/requirements*.txt`), then `pip install -r` for each file in `requirements`. Inputs: `requirements` (space-separated, relative to `backend/`, default `'requirements.txt'`; `''` installs nothing) and `python-version`.
+
+### Conditional bundle and native build checks
+
+The four slowest jobs do not run on every PR. `detect-changes` (plain `git diff --name-only <base>...HEAD`, no third-party action) decides:
+
+| Output | True when the PR touches | Gates |
+|---|---|---|
+| `frontend` | `frontend/**`, `.github/workflows/ci.yml` or `.github/actions/setup-frontend/**` | `js-bundle-check`, `android-bundle-check` |
+| `native` | `frontend/ios/**` (Podfile, `ci_scripts/`), `frontend/android/**` (Gradle files), `frontend/plugins/**`, `frontend/app.json`, `frontend/app.config.*`, `frontend/package.json`, `frontend/package-lock.json`, or `.github/workflows/ci.yml` | `ios-build-check`, `android-build-check` |
+
+- On `push` (dev/main) and `workflow_call` (Deploy) there is no PR base, so both outputs are `true` and everything always runs.
+- **Draft PRs skip only `ios-build-check` and `android-build-check`.** Every other job, including the bundle checks, still runs on drafts. `ready_for_review` is a `pull_request` trigger type, so the native builds run when the PR is marked ready. Because of the `cancel-in-progress` concurrency group, that run cancels any in-flight draft run, which is expected.
+- A job skipped by `if:` reports as success to required checks, so a skipped build check does not block merge. A docs-only or backend-only PR therefore shows these jobs as skipped.
+- The required check is `native-build-gate` (always runs, `if: always()`), not `ios-build-check / Xcode Build (no signing)`. A reusable-workflow job skipped by `if:` reports under the plain job name (`ios-build-check`, skipped), never under the `<job> / <inner job>` name, so the inner name would never report on a skipped PR and block merge. The gate passes when `ios-build-check`, `android-build-check`, `js-bundle-check` and `android-bundle-check` each succeeded or were skipped, and fails on failure or cancellation, or if `detect-changes` did not succeed.
+- `podfile-lock-check` and `gradle-wrapper-check` are unchanged.
+
+### Required status checks (#771)
+
+The required checks live in `.github/rulesets/protect-dev.json` / `protect-main.json` (the owner applies the ruleset in GitHub settings by hand). The full per-check table and the recommended required list are in [ci-checks.md](ci-checks.md#branch-protection). A context must be exactly what GitHub reports: an in-repo job is its `name:` (else its job id); a reusable-workflow job is `<caller job id> / <inner job name>`.
+
+- A job skipped by `if:` still reports (as skipped) and passes. A workflow that does not run at all because of `on.pull_request.paths` never reports, so it blocks every PR outside those paths: never require a path-filtered workflow unless its filter is removed. This is why `static-frontend.yml` has no `paths:` filter. `e2e-web`, everything in `security.yml`, `doc-reminder`, `external-links`, `OWASP ZAP Active Scan` and `detect-changes` are deliberately not required.
+- `ios-build-check` and `android-build-check` are never required directly: when they run they report `ios-build-check / Xcode Build (no signing)` and `android-build-check / Gradle Build (Debug)`, when skipped the plain ids, so no single name always reports. `native-build-gate` is the required stand-in for both (and for the bundle checks); this is how android-build-check is covered.
+- `backend/tests/unit/test_ruleset_required_checks.py` (run by `test-python`) fails when a required context matches no workflow job, when its workflow has a `paths`/`paths-ignore` filter or does not run on PRs into `dev`, or when a native build job is required directly.
+
+### Fixing or ignoring a knip finding (#768)
+
+`frontend/knip.json` configures knip: entry points are `app/**` (Expo Router), `__tests__/**` (Jest), `plugins/*.js`, `scripts/*.js` and `components/*.web.tsx` (platform files); the Jest, Babel and Expo plugins add `jest.setup.ts`, `babel.config.js` and the `app.json` plugin references.
+
+- Unused file, export or type: delete it, or drop the `export` keyword if the symbol is still used in its own file. A test counts as a user, so an export used only by tests is not reported.
+- Unused or unlisted dependency: remove it from `package.json`, or add it to `package.json` if it is really imported.
+- File read at runtime rather than imported (e.g. `src/i18n/glossary.ts`, read by `scripts/translate.js`): declare it in `entry`, not `ignore`.
+- Peer or native-only dependency that is never imported: add it to `ignoreDependencies` with a one-line `//` comment above it saying who loads it and why it is not imported. An entry without a reason is not accepted. `ignore`, `ignoreIssues` and `ignoreUnresolved` are empty and stay empty: fix the code (for a test that asserts a file is gone, use `fs.existsSync`, not an unresolvable `require`). No blanket globs.
+
+Required checks are listed in `.github/rulesets/protect-dev.json` / `protect-main.json` by the exact name GitHub reports. A job that calls a reusable workflow reports as `<job> / <inner job name>` (e.g. `secret-scan / Secret scan (gitleaks)`), a plain job by its id (e.g. `test-migrations`). Copy names from a PR's checks list; a name that never reports blocks every merge. The file is a record, not applied automatically: mirror any change in Settings → Rules → Rulesets.
+
+Not a required check: `.github/workflows/e2e-web.yml` runs the Playwright web e2e suite (see "Web e2e (Playwright, #470)") on pull requests to `dev` that touch the frontend, the backend or the workflow.
 
 Not part of the PR checks: `.github/workflows/perf-ai.yml` (nightly `schedule` and `workflow_dispatch`, not a required check) runs the scan abuse load run described under "Nightly scan abuse load run" above, and `.github/workflows/ai-eval.yml` (`workflow_dispatch` only) runs the AI scan evaluation described under "AI scan evaluation" above.
 
+## Repo hygiene checks
+
+`.github/workflows/repo-hygiene.yml` (job `repo-hygiene`, on every PR and push to `dev`/`main`) runs five steps (#769, the vulture check from #813, the strict and test-duplication ratchets from #820). It is a separate workflow from `ci.yml`. The tools run by exact version (`JSCPD_VERSION`, `LYCHEE_VERSION` in the workflow), not through third-party actions; the lychee tarball is checked against a pinned sha256 (`LYCHEE_SHA256`). Bump the version and the checksum together.
+
+- **Copy-paste detection (jscpd), source.** `.jscpd.json` at the repo root scans `backend/app` and `frontend/{app,components,contexts,hooks,lib}` (tests and locales excluded), with `minLines 5` / `minTokens 50`. The `threshold` is a percentage of duplicated lines, set just above the measured level: 0.07% measured, threshold 0.1 (#820; it was 1.6 before the duplication cleanup). Lowering `minLines`/`minTokens` to 4/40 measured 0.46%, which leaves too little headroom, so they stay at 5/50. New duplication that pushes the total over it fails the job. To run it locally: `npx jscpd@5.4.0 --config .jscpd.json` from the repo root; the report lands in `jscpd-report/` (gitignored, uploaded as the `jscpd-report` artifact). When you remove duplication, lower `threshold` to just above the new measured percentage so the gain is kept. Never raise it to fit new copy-pasted code; extract the shared code instead.
+- **Copy-paste detection (jscpd), tests (#820).** `.jscpd.tests.json` scans `backend/tests` and `frontend/__tests__` with the same `minLines 5` / `minTokens 50`, ignoring `locales`, `*.json` and `__tests__/helpers` (shared helpers are the cure for duplication, not a source of it). It is a separate config so source duplication cannot hide in the looser test budget (source 0.07% vs tests 6.48%). Threshold 7.0 against a measured 6.48%: 6.6 left only about 92 lines of headroom, so an unrelated new test file could fail it. Ratchet it down (to just above the new measured value) whenever tests are deduped. Run it with `npx jscpd@5.4.0 --config .jscpd.tests.json`; the report lands in `jscpd-report/tests/`. The same rule applies: lower it when you dedupe, never raise it; move repeated setup into `backend/tests/helpers.py` or `frontend/__tests__/helpers/` (see "Shared helpers").
+- **File-length cap (strict).** `python3 scripts/check_file_length.py --strict` (the CI command) fails when a `.py`, `.ts` or `.tsx` file is over 600 lines, and, with `--strict`, when an allowlist entry is stale (file now under the cap, cap above the file's length, or file missing). Tests, `__tests__`, locales, generated files, `backend/alembic/versions`, `node_modules`, `ios/` and `android/` are not counted. `scripts/file_length_allowlist.txt` (`path max_lines`) is empty since #820 and stays comment-only. It is kept (rather than deleting the allowlist code path) so a genuinely permanent exception, such as a generated or table-like file, can be recorded with owner sign-off; every other file must be split. See "No new exceptions" below. Tested by `backend/tests/unit/test_check_file_length.py` (strict mode fails on a stale entry and on an over-cap file; the real repo must pass strict with no entries).
+- **Backend dead code (vulture, #813).** From `backend/`: `vulture app --min-confidence 60` (the CI command, after `pip install -r requirements-dev.txt`, which pins `vulture==`). Config is `[tool.vulture]` in `backend/pyproject.toml`: `ignore_decorators` covers route handlers (`@router.*`, `@app.*`) and pydantic validators and serializers, and `ignore_names` is the whitelist. Vulture matches a name everywhere in `app/`, so keep each entry specific. An entry is for a name used at runtime that static analysis cannot see (a pydantic response or request field, an ORM column, a settings key read by `getattr`, a framework hook), and each one needs a one-line comment saying how it is used. Do not whitelist to get a PR through: delete the code, and its tests if they were its only callers (with owner sign-off), or fix the caller. When you delete code vulture flagged, remove its whitelist entry in the same change. Entries marked "PENDING" are pending owner decision #830 (tested-only functions and unread settings); do not add to that group. CI installs only the vulture pin into a venv, not the backend's runtime deps, because vulture reads the AST.
+- **No new exceptions (#820).** The grandfather lists are the file-length allowlist, the knip `ignore*` keys (`ignore`, `ignoreIssues`, `ignoreUnresolved`, and `ignoreDependencies` beyond the justified entries) and the `ignore` arrays in `.jscpd.json` / `.jscpd.tests.json`. A PR may not add to them, or loosen a jscpd `threshold` / `minLines` / `minTokens`, without an `epic:refactor #NNN` (or `owner-approved #NNN`) reference added to the same file: a trailing `# epic:refactor #NNN` on an allowlist line, a `// epic:refactor #NNN` comment in JSONC, or a `"//": "epic:refactor #NNN"` key in JSON. `scripts/policy/check_grandfather_lists.py --diff-base origin/dev` enforces this as a step of the `claude-policy` job on pull requests. What it covers, exactly:
+  - It compares the old and new set of exceptions per file, not diff lines: removing or reordering entries or lowering a cap never flags; appending an entry, raising a cap, or renaming a key to `ignore*` does.
+  - It guards `scripts/file_length_allowlist.txt`, every knip config knip itself reads (`knip.json`, `knip.jsonc`, `.knip.json`, `.knip.jsonc`, a `knip` key in any `package.json`; adding a `knip.ts`/`knip.js`/`knip.config.*` file is always a violation because it cannot be compared) and every `.jscpd*.json`.
+  - It does not cover knip `project` negations, source ignore comments (`jscpd:ignore-start`, `eslint-disable`, `# vulture`), or workflow flags. Those stay a review matter.
+  - One marker per file is enough, and it does not check that the issue exists or carries the label. It is a speed bump that sits behind CODEOWNERS review, not a substitute for it.
+  - Lowering an allowlist cap or moving an existing entry is not an addition. Tested by `backend/tests/unit/test_grandfather_policy.py`.
+- **Merge safety (#859, resolved).** The two-PRs-pass-separately race of 2026-10-30 is closed on `dev` by a merge queue (`ALLGREEN`, squash), declared in `.github/rulesets/protect-dev.json`; required workflows also trigger on `merge_group`. `main` keeps `strict_required_status_checks_policy: true` and merge commits (`protect-main.json`). Ruleset changes are owner-applied; see [ci-checks.md](ci-checks.md#branch-protection).
+- **Docs links (lychee).** `lychee.toml` at the repo root. On PRs: `lychee --config lychee.toml --offline --include-fragments 'docs/**/*.md' README.md CLAUDE.md`, i.e. relative links and `#anchors` only, no network. External URLs are checked only by the `external-links` job, which runs weekly (Monday 06:17 UTC) and on manual dispatch and is not a PR gate. A link that cannot resolve in CI on purpose (for example the owner's `~/.claude/standards/` files) goes in `exclude` in `lychee.toml`, with a comment.
+
 ## Coverage targets
 
-- **Backend:** 90% line coverage of app code (`pytest --cov=. --cov-fail-under=90`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
-- **Frontend:** tracked via `npx jest --coverage`, no hard threshold enforced by default
+- **Backend:** 98% line coverage of app code (`pytest --cov=. --cov-fail-under=98`). `backend/.coveragerc` omits `tests/`, `alembic/`, `perf/` (the load-run scripts, #539; their parts the run depends on are unit tested) and `eval/` (the on-demand AI scan evaluation, #536; unit tested by `tests/unit/test_ai_eval_*.py`) and sets `precision = 2`, so the gate compares the total to two decimal places, leaving a rounding window under 0.005 points (pytest-cov rounds to the configured precision, which defaulted to 0 before #621). `tests/unit/test_coverage_gate.py` guards this.
+- **Frontend:** `npx jest --coverage` (`npm run test:ci`) enforces `coverageThreshold.global` from the `jest` key in `frontend/package.json` (statements 95, branches 90, functions 92, lines 97, #764), so it fails locally as well as in CI. `collectCoverageFrom` is explicit (app, components, contexts, hooks, lib, src/i18n, theme). The CI `test-frontend` job passes `coverage-threshold: 90` (#820), the lowest of the four Jest floors, because the caller input is a single number for an org workflow that does not document which metric it reads; every measured metric (96.34 / 91.97 / 93.69 / 97.74) clears it. Jest's `coverageThreshold` is the real per-metric gate and already fails the run on its own. Keep the CI input at or below the lowest Jest floor and never above what is measured.
+  - **Ratchet:** the Jest `coverageThreshold` is the floor and it only goes up. Any PR that raises a metric by 1 point or more may bump that floor (rounded down to the whole percent). Never lower it without an owner decision.
+
+## End-to-end
+
+- **Web e2e:** Playwright against the web export runs in CI (`e2e-web.yml`, not a required check). See "Web e2e (Playwright, #470)" above.
+- **Native flows:** Maestro (Phase 4) is planned. The Maestro flows under `frontend/.maestro/` are not run by any workflow yet.
 
 ## Rule + memory references
 

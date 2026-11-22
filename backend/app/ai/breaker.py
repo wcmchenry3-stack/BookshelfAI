@@ -37,7 +37,8 @@ delete commits, so the ledger row, the spend and the lease release land in one
 transaction. :func:`release` gives the whole estimate back (a refusal after
 the reservation) and commits.
 
-What a call settles (``app/api/scan.py``):
+What a call settles (``app/api/scan.py:_run_provider``, built by
+``app/services/scan/settlement.py``):
 
 - the provider answered (``ok``/``refused``/``truncated``, and ``malformed``,
   #572: a billed reply with no usable answer, refunded to the user): its

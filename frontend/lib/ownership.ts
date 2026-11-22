@@ -6,7 +6,7 @@ export type Ownership =
   'owned_same_edition' | 'owned_other_edition' | 'owned_edition_unknown' | 'not_owned';
 
 /** The 409 `detail` codes POST /wishlist returns for a book the user has. */
-export const OWNED_CODES: readonly Ownership[] = [
+const OWNED_CODES: readonly Ownership[] = [
   'owned_same_edition',
   'owned_other_edition',
   'owned_edition_unknown',

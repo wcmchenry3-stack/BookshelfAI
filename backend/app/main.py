@@ -2,10 +2,10 @@ import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 import sentry_sdk
+from asyncpg.exceptions import QueryCanceledError
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -14,19 +14,23 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from slowapi import _rate_limit_exceeded_handler as _slowapi_429
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
 
+from app.ai.alerts import capture_service_warning
 from app.ai.settings import seed_ai_settings_at_startup
+from app.api.attestation import router as attestation_router
 from app.api.auth import router as auth_router
 from app.api.books import router as books_router
 from app.api.scan import MAX_SCAN_REQUEST_BYTES, SCAN_UPLOAD_PATH
 from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
+from app.api.users import router as users_router
 from app.core import catalog_token
 from app.core.config import check_turnstile_configured, settings
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, log_db_role
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
 from app.core.origin_auth import OriginAuthMiddleware
@@ -50,6 +54,12 @@ if settings.sentry_dsn:
     )
 
 logger = logging.getLogger(__name__)
+
+# Retry-After hint in seconds returned when statement_timeout cancels a query.
+_TIMEOUT_RETRY_AFTER = 5
+# SQLSTATE query_canceled: raised when statement_timeout (or a cancel request)
+# stops a statement.
+_QUERY_CANCELED_SQLSTATE = "57014"
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -237,6 +247,9 @@ async def lifespan(app: FastAPI):
     # Insert any missing ai_settings rows from the env. Never raises: with the
     # DB down the app still starts and scans fail closed until it is back.
     await seed_ai_settings_at_startup()
+    # Which DB role this process runs as (#696): bookshelf_app once
+    # DATABASE_URL is switched. Never raises.
+    await log_db_role()
     cleanup_task = asyncio.create_task(cleanup_expired_tokens())
     yield
     cleanup_task.cancel()
@@ -260,8 +273,84 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Re
     return _slowapi_429(request, exc)
 
 
+def _is_query_canceled(exc: BaseException) -> bool:
+    """True when ``exc`` (or the driver error it wraps) is a Postgres
+    query_canceled error, SQLSTATE 57014.
+
+    Through SQLAlchemy a statement_timeout surfaces as ``DBAPIError`` whose
+    ``orig`` is the adapter's error (carrying ``sqlstate``) and whose
+    ``orig.__cause__`` is asyncpg's ``QueryCanceledError``, so check each link.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, QueryCanceledError):
+            return True
+        if getattr(cur, "sqlstate", None) == _QUERY_CANCELED_SQLSTATE:
+            return True
+        cur = getattr(cur, "orig", None) or cur.__cause__
+    return False
+
+
+# Stable 503 ``detail`` code for a cancelled query (docs/api.md). The frontend
+# reads ``detail`` (frontend/lib/apiError.ts); the code is not in its scan
+# code lists, so a /scan that hits it shows the generic error state.
+DB_TIMEOUT_DETAIL = "db_timeout"
+
+
+def _route_template(request: Request) -> str:
+    """The matched route's path template (``/user-books/{book_id}``), never the
+    concrete path, so a Sentry tag carries no ids."""
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
+
+
+def _report_statement_timeout(request: Request) -> None:
+    """One warning-level Sentry event per cancelled query (#696 review): the
+    503 path would otherwise send nothing, since Sentry only captures
+    unhandled errors. Grouped by a fixed fingerprint and tagged with the route
+    template only; captured through ``capture_service_warning``, which drops
+    the request block, user and breadcrumbs. Never raises into the 503."""
+    try:
+        capture_service_warning(
+            "database statement timeout",
+            fingerprint=["db-statement-timeout"],
+            tags={"route": _route_template(request)},
+            extras={"statement_timeout_ms": settings.statement_timeout_ms},
+        )
+    except Exception:
+        logger.exception("statement_timeout_report_failed")
+
+
+def _query_canceled_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return 503 when Postgres cancels a query due to statement_timeout (#696).
+
+    Registered for ``sqlalchemy.exc.DBAPIError``. Any other database error is
+    re-raised unchanged, so it reaches ServerErrorMiddleware (500) and Sentry
+    exactly as it would with no handler registered.
+
+    The body is the API's standard ``{"detail": "<code>"}`` shape. Logs the
+    route path only, never SQL text, bound values or other details that might
+    contain user data, and sends one Sentry warning.
+    """
+    if not _is_query_canceled(exc):
+        raise exc
+    logger.warning(
+        "statement_timeout_canceled path=%s",
+        request.url.path,
+    )
+    _report_statement_timeout(request)
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": str(_TIMEOUT_RETRY_AFTER)},
+        content={"detail": DB_TIMEOUT_DETAIL},
+    )
+
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(DBAPIError, _query_canceled_handler)
 
 # Middleware stack — add_middleware wraps in reverse order so the last call added
 # becomes the outermost layer (first to run on incoming requests).
@@ -322,13 +411,19 @@ class _HealthExemptTrustedHost(TrustedHostMiddleware):
 if settings.is_hardened:
     app.add_middleware(_HealthExemptTrustedHost, allowed_hosts=settings.trusted_hosts)
 
+app.include_router(attestation_router)
 app.include_router(auth_router)
 app.include_router(books_router)
 app.include_router(scan_router)
 app.include_router(user_books_router)
+app.include_router(users_router)
 
 
-@app.get("/health")
+# @app.api_route instead of @app.get: slowapi's @limiter.limit wrapper
+# disrupts Starlette's implicit GET→HEAD routing, causing 405 for HEAD.
+# Uptime monitors (e.g. UptimeRobot free plan) send HEAD, so we register
+# both methods explicitly.
+@app.api_route("/health", methods=["GET", "HEAD"])
 @limiter.limit(settings.rate_limit_health)
 async def health(request: Request) -> JSONResponse:
     """Liveness probe. Never touches the DB.
@@ -358,7 +453,7 @@ async def health_db(request: Request) -> JSONResponse:
             )
         db_status = "ok"
     # Any DB failure (including a timeout) means the health check reports "error".
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - any DB failure = error
         db_status = "error"
 
     healthy = db_status == "ok"
@@ -373,7 +468,7 @@ if not settings.is_hardened:
     @app.get("/debug/sentry-test")
     @limiter.limit("5/minute")
     async def sentry_test(request: Request) -> JSONResponse:
-        1 / 0  # noqa: B018 — intentional, triggers Sentry capture
+        1 / 0  # noqa: B018 - intentional, triggers Sentry capture
 
     @app.post("/auth/test-login")
     @limiter.limit("2/minute")
@@ -392,13 +487,8 @@ if not settings.is_hardened:
             email_allowed,
             resolve_and_commit_google_user,
         )
-        from app.auth.jwt import (
-            access_token_ttl_seconds,
-            create_access_token,
-            create_refresh_token,
-        )
+        from app.auth.sessions import issue_session_tokens
         from app.core.database import get_db
-        from app.models.refresh_token import RefreshToken as RefreshTokenModel
 
         # A whitespace-only secret counts as unset: the route stays disabled.
         if not settings.test_auth_secret.strip():
@@ -447,21 +537,13 @@ if not settings.is_hardened:
                     status_code=409, content={"detail": ACCOUNT_CONFLICT}
                 )
 
-            access_token = create_access_token(
-                str(user.id), user.email, user.token_version
-            )
-            refresh_token, jti = create_refresh_token(str(user.id), user.token_version)
-            expires_at = datetime.now(UTC) + timedelta(
-                days=settings.refresh_token_expiry_days
-            )
-            db.add(RefreshTokenModel(jti=jti, user_id=user.id, expires_at=expires_at))
-            await db.commit()
+            tokens = await issue_session_tokens(db, user)
 
             logger.info("test-login: issued tokens (user_id=%s)", user.id)
             return JSONResponse(
                 content={
-                    "access_token": access_token,
-                    "refresh_token": refresh_token,
-                    "expires_in": access_token_ttl_seconds(),
+                    "access_token": tokens.access_token,
+                    "refresh_token": tokens.refresh_token,
+                    "expires_in": tokens.expires_in,
                 }
             )

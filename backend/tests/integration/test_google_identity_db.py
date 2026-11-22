@@ -6,7 +6,7 @@ Needs DATABASE_URL pointing at a Postgres database.
 import uuid
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -198,8 +198,8 @@ async def test_email_taken_concurrently_by_other_subject_is_conflict(
             await resolve_and_commit_google_user(
                 db,
                 google_id=f"mine-{t}",
-                # Same case: a concurrent case-variant insert is not caught
-                # until users.email has a unique index on lower(email).
+                # Same case; the case-variant race is
+                # test_case_variant_email_taken_concurrently_is_conflict.
                 email=f"race-{t}@example.com",
                 display_name=None,
                 avatar_url=None,
@@ -229,15 +229,49 @@ async def test_real_postgres_errors_are_classified(sessions):
     assert not is_unique_violation(not_null.value)
 
 
-async def test_case_only_change_to_another_rows_spelling_keeps_stored_email(db_session):
-    # Codex on #702: case-duplicate rows are allowed by the schema; a known
-    # subject reporting the other row's exact spelling must still sign in.
+async def test_case_variant_second_row_refused_by_lower_index(db_session):
+    # Codex on #702 covered a known subject reporting another row's exact
+    # spelling when case-duplicate rows existed. Since #705 the schema
+    # (uq_users_email_lower) refuses the second, case-variant row, so that
+    # state can no longer arise.
     t = _tag()
-    a = await _add(db_session, f"alice-{t}@example.com", f"a-{t}")
-    await _add(db_session, f"Alice-{t}@example.com", f"b-{t}")
+    await _add(db_session, f"alice-{t}@example.com", f"a-{t}")
 
-    got = await _resolve(db_session, f"a-{t}", f"Alice-{t}@example.com")
-    await db_session.flush()  # would raise on the unique constraint before
+    savepoint = await db_session.begin_nested()
+    with pytest.raises(IntegrityError, match="uq_users_email_lower") as dup:
+        await _add(db_session, f"Alice-{t}@example.com", f"b-{t}")
+    await savepoint.rollback()
+    assert is_unique_violation(dup.value)
 
-    assert got.id == a.id
-    assert got.email == f"alice-{t}@example.com"
+
+async def test_case_variant_email_taken_concurrently_is_conflict(sessions, monkeypatch):
+    """#705: after this sign-in's lookup found no holder, another subject
+    commits a case variant of the same address. The commit hits
+    uq_users_email_lower; the retry finds the winner and reports a conflict.
+    """
+    maker, t = sessions
+    other = User(email=f"Race-{t}@Example.com", google_id=f"other-{t}")
+    _race(monkeypatch, maker, other)
+
+    async with maker() as db:
+        with pytest.raises(AccountConflictError):
+            await resolve_and_commit_google_user(
+                db,
+                google_id=f"mine-{t}",
+                email=f"race-{t}@example.com",
+                display_name=None,
+                avatar_url=None,
+            )
+    async with maker() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(User.google_id).where(
+                        func.lower(User.email) == f"race-{t}@example.com"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert rows == [f"other-{t}"]

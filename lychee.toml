@@ -1,0 +1,20 @@
+# lychee link-check config (repo-hygiene workflow, #769).
+# PRs run it with --offline (relative links + anchors only); the weekly
+# scheduled run drops --offline to check external links as well.
+include_fragments = true
+no_progress = true
+max_concurrency = 8
+max_retries = 2
+timeout = 30
+accept = ["200..=299", "429"]
+
+exclude = [
+  # The owner's personal, machine-level standards (outside this repo); the docs
+  # point at them on purpose and they cannot resolve in CI.
+  '~/\.claude/standards/',
+  # Placeholders / local-only URLs used in examples.
+  '^https?://localhost',
+  '^https?://127\.0\.0\.1',
+  '^https?://0\.0\.0\.0',
+  '^https?://example\.(com|org)',
+]

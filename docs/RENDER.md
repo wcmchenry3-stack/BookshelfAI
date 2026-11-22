@@ -10,7 +10,13 @@ cutover checklist. For the day-to-day release process (all platforms) see
 | Environment | Branch | API service          | API domain                        | Static site         | Site domain                   | Database                                  |
 | ----------- | ------ | --------------------- | ----------------------------------- | --------------------- | ------------------------------- | ------------------------------------------ |
 | Production  | `main` | `bookshelf-api`        | `bookshelfapi.buffingchi.com`       | `bookshelf-web`        | `bookshelfai.buffingchi.com`     | **Supabase** Postgres (session pooler)    |
-| Dev         | `dev`  | `bookshelf-api-dev`    | `bookshelfapi-dev.buffingchi.com`   | `bookshelf-web-dev`    | (new dev site — DNS TBD)         | Render Postgres `bookshelf-db` (dev only) |
+| Dev         | `dev`  | `bookshelf-api-dev`    | `bookshelfapi-dev.buffingchi.com`   | `bookshelf-web-dev`    | (new dev site — DNS TBD)         | **Supabase** persistent branch `dev` (session pooler) |
+
+Dev moved to the Supabase branch `dev` on 2026-10-22. The Render Postgres
+`bookshelf-db` it used before is **suspended** (legacy): nothing references it
+any more, and `render.yaml` keeps its `databases:` entry only so a blueprint
+sync does not delete it. The cutover notes below that mention `bookshelf-db`
+describe the earlier setup.
 
 All services are in Oregon. `bookshelf-api`/`bookshelf-web` are the pre-existing
 services — their hostnames are already live and do not change.
@@ -32,7 +38,9 @@ done **manually**, not applied from the blueprint — every secret is
 **Until checklist step 3, `bookshelfapi.buffingchi.com` (prod) still serves the
 `dev` branch against the existing Render `bookshelf-db`.** Native release
 builds compiled from `frontend/.env.production` already point at that
-hostname, so they're talking to dev code/data right now. Do the dev cutover
+hostname, so they're talking to dev code/data right now. (Since #973 this
+applies to Xcode Cloud builds from `main` and tags only; builds from `dev` use
+`bookshelfapi-dev` — see `docs/claude/ios-ci.md` § Which backend a build talks to.) Do the dev cutover
 (step 2) first and verify it end to end before step 3.
 
 **Step 3 replaces prod's database.** Once `DATABASE_URL` on `bookshelf-api`
@@ -40,6 +48,141 @@ switches to the fresh Supabase project, every account/library currently on the
 prod hostname starts **empty** — by design (a clean production start), not
 data loss: the old data stays reachable on the dev stack
 (`bookshelfapi-dev.buffingchi.com`, still on `bookshelf-db`).
+
+## Database role
+
+The app connects as the **`bookshelf_app`** role — a least-privilege login role
+that can only run `SELECT`, `INSERT`, `UPDATE`, `DELETE` on app tables and
+`USAGE` on sequences. It cannot run DDL (`DROP TABLE`, `ALTER TABLE`, `CREATE`,
+…). Alembic migrations keep running as the owner (`postgres` on Supabase),
+through a separate env var (`MIGRATION_DATABASE_URL`, below).
+
+| Env var | Role | Used by |
+| --- | --- | --- |
+| `DATABASE_URL` | `bookshelf_app` (DML only) | the app (uvicorn) |
+| `MIGRATION_DATABASE_URL` | owner (`postgres`) | `alembic upgrade head` only (the `preDeployCommand`). Unset = falls back to `DATABASE_URL`, which is what local dev and CI rely on |
+
+Both are `sync: false` dashboard secrets on `bookshelf-api` (prod Supabase
+project) and on `bookshelf-api-dev` (the Supabase branch `dev`, project ref
+`nlqushhvskuizvvpvkzi`).
+
+At startup the app logs `db_role current_user=<role>` once (the role name is
+not a secret). In a hardened environment (staging, production) a role other
+than `bookshelf_app` is logged as a **warning**
+(`db_role current_user=postgres expected=bookshelf_app`), so a `DATABASE_URL`
+that was never switched, or was rolled back, shows in the Render boot log.
+
+### Creating the role (owner steps — before migration 0028 deploys)
+
+Do this for **both** databases: the Supabase branch `dev` (first) and the
+production project. Never commit the password, or put it in a PR, chat or MCP
+tool argument.
+
+**Dev comes first, and before the next dev deploy.** `bookshelf-api-dev` has
+auto-deploy off; merging to `dev` does not run 0028, the next manual dev
+deploy does. If the role does not exist on the `dev` branch by then, 0028's
+pre-flight fails the `preDeployCommand` and the deploy is blocked (a safe
+failure: the old release keeps serving). The same holds for prod, which
+deploys only through `.github/workflows/deploy.yml`.
+
+**1. Create the role while connected as `postgres`** (Supabase: the SQL
+editor of that project or branch, which runs as `postgres`). This matters on
+Supabase: its `postgres` role is **not a superuser** (prod and the `dev`
+branch are Postgres 17); it has `CREATEROLE` and `BYPASSRLS`. Migration 0028
+runs `ALTER ROLE bookshelf_app BYPASSRLS`, which a non-superuser may only do on
+a role it holds `ADMIN OPTION` on — and since Postgres 16 a `CREATEROLE` role
+gets that automatically only for roles **it created itself**. A role created
+by any other user makes 0028 fail with `permission denied to alter role`.
+
+```sql
+-- Supabase SQL editor (connected as postgres). Strong random password,
+-- e.g. from: openssl rand -hex 32. A different password per database.
+CREATE ROLE bookshelf_app LOGIN PASSWORD '<strong random password>';
+-- Optional: grant BYPASSRLS up front (0028 then just re-applies it):
+-- CREATE ROLE bookshelf_app LOGIN BYPASSRLS PASSWORD '<strong random password>';
+```
+
+**2. On the Render API service, set `MIGRATION_DATABASE_URL` to the owner
+DSN** of the same database: the `postgres.<project-ref>` session pooler URL,
+port 5432 (for prod, the value `DATABASE_URL` has today; for dev, the `dev`
+branch's pooler URL, ref `nlqushhvskuizvvpvkzi`). Do this *before* step 3, so
+the deploy's `alembic upgrade head` runs as the owner.
+
+**3. Deploy** (migration 0028 runs in the `preDeployCommand` as the owner and
+grants the role its DML privileges, `BYPASSRLS` and default privileges; it
+stops with an informative error if the role does not exist yet).
+
+**4. Switch `DATABASE_URL` to the app role**: same session pooler host and
+port (5432), user `bookshelf_app.<project-ref>` (Supabase's pooler takes
+`<role>.<project-ref>` as the user name), the role's password
+(percent-encoded if it has special characters), e.g.
+
+```
+postgresql://bookshelf_app.<project-ref>:<password>@<region>.pooler.supabase.com:5432/postgres
+```
+
+Changing an env var restarts the service on Render. Do **not** append
+`?options=-c statement_timeout=...`: SQLAlchemy hands URL query parameters to
+`asyncpg.connect()`, which has no `options` argument, so every connection
+would fail with `TypeError` (checked against Postgres 16 and in
+`tests/integration/test_statement_timeout_db.py`). The app sets the timeout
+itself (below).
+
+**5. Verify**:
+
+- The Render log of the new instance shows
+  `db_role current_user=bookshelf_app` (at info level, no warning).
+- `/health/db` is ok and a scan completes.
+- In the SQL editor (as `postgres`), each of these blocks, run on its own,
+  must fail with `permission denied` (SQLSTATE 42501):
+
+  ```sql
+  BEGIN;
+  SET LOCAL ROLE bookshelf_app;
+  ALTER TABLE users ADD COLUMN _probe int;   -- fails
+  ROLLBACK;
+  BEGIN;
+  SET LOCAL ROLE bookshelf_app;
+  CREATE TABLE public._probe (id int);      -- fails
+  ROLLBACK;
+  ```
+
+  and this must return `f` (no `CREATE` on schema `public`; Supabase sets its
+  own schema grants, so check rather than assume):
+
+  ```sql
+  SELECT has_schema_privilege('bookshelf_app', 'public', 'CREATE');
+  ```
+
+To roll back, set `DATABASE_URL` back to the owner DSN; nothing else changes
+(the boot log then warns `db_role current_user=postgres expected=bookshelf_app`).
+
+After a restore from backup, the grants must be re-applied before
+`DATABASE_URL` points at the restored database: see
+[`backups.md` → Restoring: the app role](backups.md#restoring-the-app-role).
+
+### Statement timeout
+
+Every request connection runs with `statement_timeout = STATEMENT_TIMEOUT_MS`
+(default 5000 ms = 5 s), set in `app/core/database.py` in two layers: as an
+asyncpg startup parameter (`server_settings`) when the connection opens, and
+again with `SET` on every pool checkout, in case the pooler does not pass the
+startup parameter through. Migrations are never subject to it: Alembic builds
+its own engine from `MIGRATION_DATABASE_URL` without either layer. A query
+that exceeds the timeout is cancelled by Postgres and the API returns
+`HTTP 503` with `{"detail": "db_timeout"}` and a `Retry-After: 5` header. The
+API logs `statement_timeout_canceled path=<path>` and sends one Sentry
+warning, "database statement timeout" (fingerprint `db-statement-timeout`,
+tagged with the route template only, no request data).
+
+The daily purge jobs (`app/services/token_cleanup.py`) use
+`JobSessionLocal`, whose every transaction runs
+`SET LOCAL statement_timeout = STATEMENT_TIMEOUT_JOB_MS` (default 60000 ms =
+60 s), so a large bounded batch is not cancelled at 5 s. `SET LOCAL` ends with
+the transaction, so the longer value never reaches a request.
+
+To adjust either, set `STATEMENT_TIMEOUT_MS` / `STATEMENT_TIMEOUT_JOB_MS` on
+the Render service (0 disables it, not recommended in production).
 
 ## Connecting to Supabase (production only)
 
@@ -58,16 +201,74 @@ Storage, or the Data API.
   directly.
 - **RLS on for every table, with no policies** (migration 0020). If the Data
   API were ever switched back on, `anon` and `authenticated` would still see
-  no rows. The app connects as `postgres` (table owner, `BYPASSRLS`), so it is
-  unaffected. A new table's migration must run
+  no rows. The app connects as `bookshelf_app` (`BYPASSRLS`, see above), so it
+  is unaffected. A new table's migration must run
   `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`;
   `tests/integration/test_rls_enabled_db.py` fails the build otherwise (#677).
+- **No table or sequence privileges for `anon` / `authenticated`** (migration
+  0023, #704). Supabase grants both roles up to `ALL` (stock Supabase grants `ALL`; the
+  dev branch had fewer) on every table and sequence in `public`. RLS hides rows, but it doesn't govern `TRUNCATE`, `REFERENCES`,
+  `TRIGGER` or sequences, so 0023 revokes all of it, plus the default
+  privileges of the migrating role (`postgres`), so tables created later
+  aren't granted either. Limits:
+  - Supabase also keeps default privileges `FOR ROLE supabase_admin`, which
+    `postgres` can't change. They only apply to objects `supabase_admin`
+    creates in `public`; the app never does, and RLS still covers those rows.
+  - Function `EXECUTE` and schema `USAGE` are left as they are (`EXECUTE` is
+    granted to `PUBLIC` anyway; see the migration's docstring).
+  - On plain Postgres (CI, local) the roles don't exist and 0023 does nothing.
+
+  0023 checks itself: it raises, and the deploy fails, if either role still
+  holds anything after the revoke (for example a grant made by another
+  grantor, which `REVOKE` leaves in place).
+
+  **Verify after each deploy that runs 0023** (Supabase SQL editor, prod and
+  the `dev` branch). Both queries must return 0 rows. First, every privilege
+  either role holds on a relation in `public`:
+
+  ```sql
+  SELECT c.relname, a.grantee::regrole, a.privilege_type
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) a
+  WHERE n.nspname = 'public' AND a.grantee::regrole::text IN ('anon', 'authenticated');
+  ```
+
+  Second, the table (`r`) and sequence (`S`) default privileges of `postgres`
+  in `public` that still name either role. Function defaults (`f`, `EXECUTE`)
+  are deliberately left as Supabase sets them, since 0023 doesn't touch
+  functions and the app defines none in `public`:
+
+  ```sql
+  SELECT d.defaclobjtype, a.grantee::regrole, a.privilege_type
+  FROM pg_default_acl d, aclexplode(d.defaclacl) a
+  WHERE d.defaclrole = 'postgres'::regrole AND d.defaclnamespace = 'public'::regnamespace
+    AND d.defaclobjtype IN ('r', 'S')
+    AND a.grantee::regrole::text IN ('anon', 'authenticated');
+  ```
+
+  `alembic downgrade` past 0023 does nothing to the grants; they stay revoked.
+  If Supabase's stock grants are ever needed back, run as `postgres`:
+
+  ```sql
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated;
+  ```
+
+- **Owner check: the `service_role` key.** `service_role` bypasses RLS and
+  keeps its grants, so its API key (and the `sb_secret_...` secret keys) must
+  not be stored anywhere the app or CI can read: not in Render env vars,
+  GitHub secrets, `.env*` files or this repo. The app has no use for it.
+  Confirm this once, and again whenever someone adds a Supabase secret.
 - **No Supabase Auth.** Alembic is the only schema tool; its
   `alembic upgrade head` pre-deploy step is what keeps prod's schema current.
 - **Pro plan**: daily backups, no idle pause. The point-in-time recovery
   add-on is not bought. The nightly encrypted `pg_dump` to R2
   (`.github/workflows/db-backup.yml`) is the independent copy.
-- **Dev** is the persistent Supabase branch `dev` of the same project.
+- **Dev** is the persistent Supabase branch `dev` of the same project (ref
+  `nlqushhvskuizvvpvkzi`), used by `bookshelf-api-dev` since 2026-10-22. The
+  Render Postgres `bookshelf-db` is suspended and no longer referenced (see
+  Topology).
 
 ## Secrets policy
 
@@ -120,7 +321,12 @@ Rollout, per service (dev first, then prod):
    the API hostname.
 4. Set `ORIGIN_AUTH_SECRET` in the dashboard to the same value. Check that the
    public hostname still works and that `/health` still passes Render's health
-   check.
+   check. Run `scripts/smoke_origin_lockdown.sh` (add the dev hostname as an
+   argument): it requests `/health/db` through the public hostname and fails on
+   403, which `/health` (exempt) cannot reveal. A wrongly configured edge also
+   raises the Sentry message `origin_auth_rejected_authenticated` (at most one
+   per 5 minutes per process) as soon as a signed-in client is rejected; see
+   [`security.md`](security.md#client-ip-and-origin-lockdown).
 
 To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
 `TRUSTED_PROXY_MODE=none`.
@@ -179,6 +385,64 @@ touches the DB itself (no separate `/health/db` exists yet).
   runs `alembic upgrade head`, so web must never ship against a failed API
   deploy. Its `if:` still runs when `deploy-api` was merely *skipped* (blank
   service-ID var) — only an actual API deploy failure blocks it.
+
+## Re-enabling `TURNSTILE_REQUIRED`
+
+`POST /scan` runs with `TURNSTILE_REQUIRED=false` in production because, before
+#740, no client sent a Turnstile token. The app now sends one per scan request
+when it is built with a site key (see [`security.md` → Turnstile on
+/scan](security.md#turnstile-on-scan)). To turn the check back on:
+
+1. **Create the widget** in the Cloudflare dashboard (Turnstile → Add widget):
+   widget mode **Invisible** (the native widget runs in a hidden WebView and
+   cannot show a challenge). Allowed hostnames:
+   - `bookshelfapi.buffingchi.com` and `bookshelfapi-dev.buffingchi.com`: the
+     hostname the native app's hidden WebView page claims (`baseUrl`, the
+     origin of `EXPO_PUBLIC_API_URL` unless `EXPO_PUBLIC_TURNSTILE_BASE_URL`
+     overrides it);
+   - the web app's own hostnames (the `bookshelf-web` / `bookshelf-web-dev`
+     custom domains or `*.onrender.com` names users open).
+2. **Site key (public):** set `EXPO_PUBLIC_TURNSTILE_SITE_KEY` on
+   `bookshelf-web` and `bookshelf-web-dev` in the Render dashboard
+   (`sync: false` in `render.yaml`), and in `frontend/.env.production` / the
+   Xcode Cloud and Android build environment for native builds. Rebuild and
+   ship the web app and the native apps.
+3. **Secret key:** paste the widget's secret into `TURNSTILE_SECRET_KEY` on
+   `bookshelf-api-dev` (dashboard only, per the secrets policy above).
+4. **Dev first:** set `TURNSTILE_REQUIRED=true` on `bookshelf-api-dev`. Scan
+   from the web app and an iOS and an Android build that has the site key.
+   Every scan must succeed; Sentry must show no `turnstile` breadcrumbs with
+   `timeout`/`error` on them and no `403` on `POST /scan`.
+5. **Wait for the app update:** builds from before #740 send no token and
+   treat a `400 "Missing Turnstile token"` as a generic failure: with the check
+   on, every scan from them fails at once ("Scan failed", no automatic
+   retry). Turn production on only once those builds are no longer in use (or
+   are blocked by a forced update).
+6. **Production:** set `TURNSTILE_SECRET_KEY` and then `TURNSTILE_REQUIRED=true`
+   on `bookshelf-api` (boot fails if the secret is missing while required).
+   Watch `400`/`403` rates on `POST /scan` for the first day.
+7. **Rollback:** set `TURNSTILE_REQUIRED=false` again; clients keep sending
+   tokens, which the server then ignores.
+
+## Enabling device attestation (#753)
+
+`POST /scan` accepts Apple App Attest (iOS) and Android Play Integrity tokens as a stronger bot signal. A valid assertion bypasses Turnstile entirely. All five settings default to off/empty; the kill switch `ATTESTATION_REQUIRED` defaults to `false` so no request is broken before the owner completes setup.
+
+| Variable | Purpose | Where to set |
+| --- | --- | --- |
+| `ATTESTATION_REQUIRED` | `true` = hard-fail `/scan` when attestation data is sent but verification fails (default: `false`) | `bookshelf-api-dev` then `bookshelf-api` dashboard |
+| `ATTESTATION_NONCE_SECRET` | HMAC secret for stateless nonces (`openssl rand -hex 32`). Boot proceeds with it unset (attestation endpoints return 503) | dashboard secret (`sync: false`) |
+| `ATTESTATION_APPLE_APP_ID` | `<TEAM_ID>.<BUNDLE_ID>` — from App Attest capability in Apple Developer. Unset = Apple path always-rejects | dashboard |
+| `ATTESTATION_ANDROID_PACKAGE_NAME` | e.g. `com.buffingchi.bookshelf` | dashboard |
+| `ATTESTATION_GOOGLE_CREDENTIALS_JSON` | Service-account JSON (inline, single line) for the Play Integrity API. Unset = Android path always-rejects | dashboard secret (`sync: false`) |
+
+**Setup order:**
+
+1. **Apple**: enable App Attest in the Xcode target's Signing & Capabilities, set `ATTESTATION_APPLE_APP_ID` on both API services. Replace `StubAppleAttestVerifier` in `backend/app/api/_bot_check.py` with the real verifier once cert-chain verification is implemented.
+2. **Android**: enrol the app in the Play Integrity API (Google Play Console → Release → App integrity), create a Google service account with `playintegrity.apks.verify`, download the JSON, set `ATTESTATION_ANDROID_PACKAGE_NAME` and `ATTESTATION_GOOGLE_CREDENTIALS_JSON`.
+3. **Nonce secret**: generate with `openssl rand -hex 32` and set `ATTESTATION_NONCE_SECRET` on both services.
+4. **Test on dev** with `ATTESTATION_REQUIRED=false` first. Confirm `/attestation/nonce` returns a nonce, `/attestation/register` succeeds, and `/scan` passes without returning 403.
+5. **Enable** `ATTESTATION_REQUIRED=true` once end-to-end is verified. Keep `ATTESTATION_REQUIRED=false` until both platforms are tested; Turnstile remains the fallback.
 
 ## Resolving a sign-in `account_conflict` (409)
 
@@ -271,6 +535,23 @@ the two; an operator does, by hand:
    If the old Google account signs in later, its stored email is refreshed
    from its token again (when no other user holds that address).
 4. Ask the person to sign in again and confirm it succeeds.
+
+### Migration 0022 refuses: case-duplicate emails
+
+Migration 0022 (#705) adds a unique index on `lower(users.email)`. If two
+`users` rows hold the same address differing only in case, the upgrade (the
+Render `preDeployCommand`) fails with `0022: <n> email address(es) are held
+by more than one users row` and changes nothing. Check before deploying with
+this read-only query (prints ids only, no emails):
+
+```sql
+SELECT count(*) AS user_rows, array_agg(id ORDER BY created_at) AS user_ids
+  FROM users GROUP BY lower(email) HAVING count(*) > 1;
+```
+
+No rows means the migration will run. Otherwise treat each group like an
+`account_conflict` above: verify who owns the mailbox, then move the library
+(A) or release the address on the other rows (B), and redeploy.
 
 ## First production deploy — cutover checklist
 

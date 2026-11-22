@@ -56,6 +56,12 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies (app + Locust)
         run: pip install -r requirements-perf.txt
+      # Migration 0028 (#696) grants to the least-privilege app role and stops
+      # if it is missing; in prod the owner creates it by hand. Throwaway DB only.
+      - name: Create the bookshelf_app role
+        run: >-
+          psql "postgresql://test:test@localhost:5432/perf" -v ON_ERROR_STOP=1
+          -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bookshelf_app') THEN CREATE ROLE bookshelf_app LOGIN PASSWORD 'test'; END IF; END \$\$;"
       - name: Migrate the throwaway database
         run: alembic upgrade head
       - name: Start the fake provider

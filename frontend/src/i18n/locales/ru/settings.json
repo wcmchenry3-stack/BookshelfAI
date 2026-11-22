@@ -1,4 +1,21 @@
 {
   "heading": "Настройки",
-  "scanUsageLabel": "Расход сканирований"
+  "scanUsageLabel": "Расход сканирований",
+  "signOut": "Выйти",
+  "signOutConfirmTitle": "Выйти?",
+  "signOutConfirmBody": "Чтобы пользоваться Bookshelf, нужно будет войти снова.",
+  "signOutConfirm": "Выйти",
+  "signOutCancel": "Отмена",
+  "trash": "Корзина",
+  "trashA11y": "Открыть корзину",
+  "trashHint": "Восстановите книги, удалённые за последние 30 дней",
+  "openOn": "Открывать",
+  "openOnA11y": "Открывать: {{value}}",
+  "openOnHint": "Выберите экран, с которого открывается приложение",
+  "openOnPickerTitle": "Открывать приложение на",
+  "openOnScan": "Скан",
+  "openOnWishlist": "Желаемое",
+  "openOnMyBooks": "Мои книги",
+  "openOnCancel": "Отмена",
+  "openOnSaveFailed": "Не удалось сохранить выбор. Попробуйте ещё раз."
 }

@@ -33,7 +33,7 @@ class AIQuota(Base):
     rows; the ones written before are left to age out. One small row (~70
     bytes) per active user, quota key and day. Day rows are purged after 90
     days and month rows after 13 months by the daily cleanup task
-    (``app/ai/quota.py``). Rows go with the user (ON DELETE CASCADE).
+    (``app/ai/quota/purge.py``). Rows go with the user (ON DELETE CASCADE).
     """
 
     __tablename__ = "ai_quota"

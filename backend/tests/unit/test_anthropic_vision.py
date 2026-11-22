@@ -17,7 +17,7 @@ from app.ai.providers.anthropic_vision import (
     AnthropicVisionProvider,
     backoff_delay,
     output_schema,
-    parse_books,
+    parse_reply,
 )
 from app.ai.providers.base import ProviderConnectError, ProviderTimeoutError
 from app.ai.providers.openai_vision import SYSTEM_PROMPT
@@ -308,7 +308,7 @@ class TestResult:
 
 class TestParsing:
     def _parse(self, books, max_books=15):
-        return parse_books(json.dumps({"books": books}), "end_turn", max_books)
+        return parse_reply(json.dumps({"books": books}), "end_turn", max_books) or []
 
     @pytest.mark.parametrize(
         "field,value",
@@ -367,7 +367,7 @@ class TestParsing:
 
     @pytest.mark.parametrize("text", ["not json", "[]", '{"books": "x"}', "null"])
     def test_unparseable_is_empty(self, text):
-        assert parse_books(text, "end_turn", 15) == []
+        assert (parse_reply(text, "end_turn", 15) or []) == []
 
 
 # ---------------------------------------------------------------------------

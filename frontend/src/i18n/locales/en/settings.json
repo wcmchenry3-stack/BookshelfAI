@@ -1,4 +1,21 @@
 {
   "heading": "Settings",
-  "scanUsageLabel": "Scan usage"
+  "scanUsageLabel": "Scan usage",
+  "signOut": "Sign out",
+  "signOutConfirmTitle": "Sign out?",
+  "signOutConfirmBody": "You will need to sign in again to use Bookshelf.",
+  "signOutConfirm": "Sign out",
+  "signOutCancel": "Cancel",
+  "trash": "Trash",
+  "trashA11y": "Open the trash",
+  "trashHint": "Restore books you removed in the last 30 days",
+  "openOn": "Open on",
+  "openOnA11y": "Open on: {{value}}",
+  "openOnHint": "Choose the screen the app opens on",
+  "openOnPickerTitle": "Open the app on",
+  "openOnScan": "Scan",
+  "openOnWishlist": "Wishlist",
+  "openOnMyBooks": "My Books",
+  "openOnCancel": "Cancel",
+  "openOnSaveFailed": "Couldn't save your choice. Try again."
 }

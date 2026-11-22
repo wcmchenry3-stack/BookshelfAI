@@ -168,7 +168,7 @@ class TestNoProviderId:
     async def test_signed_book_without_ids_is_refused(self):
         db = _mock_db()
         req = _signed(open_library_work_id=None, google_books_id=None)
-        assert catalog_token.verify(req.catalog_token, req, USER_ID)
+        assert catalog_token.check(req.catalog_token, req, USER_ID) == catalog_token.OK
         with pytest.raises(BookNotInCatalogError):
             await WishlistService().add(db, USER_ID, req)
         db.execute.assert_not_called()

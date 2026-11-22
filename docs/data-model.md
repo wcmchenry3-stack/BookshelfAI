@@ -20,6 +20,7 @@ erDiagram
   USER_CUSTOM_BOOKS ||--o| USER_BOOKS : "held by (cascade)"
   BOOKS ||--o{ EDITIONS : "has editions"
   BOOKS ||--o{ USER_BOOKS : "tracked by"
+  BOOKS |o--o{ BOOKS : "merged into (#682)"
   EDITIONS ||--o{ USER_BOOKS : "optional edition"
 
   USERS {
@@ -28,6 +29,7 @@ erDiagram
     string google_id UK
     string display_name
     string avatar_url
+    string default_tab "scan, wishlist, my-books or null (#913)"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -41,6 +43,9 @@ erDiagram
     string cover_url
     string_array subjects
     string language "default 'en'"
+    string source "provenance, check constraint (#682)"
+    timestamptz fetched_at "provenance (#682)"
+    uuid merged_into_id FK "self, restrict delete, indexed (#682)"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -69,6 +74,9 @@ erDiagram
     timestamptz finished_at
     string notes
     int rating "1..5"
+    string title_override "user's own, nullable (#682)"
+    string author_override "user's own, nullable (#682)"
+    string cover_url_override "user's own, nullable (#682)"
     timestamptz created_at
     timestamptz updated_at
   }
@@ -184,28 +192,33 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 |---|---|---|
 | `user_books.user_id` → `users.id` | `CASCADE` | Deleting an account removes that user's library (intentional). |
 | `refresh_tokens.user_id` → `users.id` | `CASCADE` | Deleting an account removes its refresh tokens. |
+| `refresh_tokens.replaced_by_id` → `refresh_tokens.id` | `SET NULL` | The cleanup can delete a successor before the row rotated into it; the pointer becomes NULL (#690). |
 | `ai_quota.user_id`, `ai_inflight.user_id`, `ai_enhanced_zero_results.user_id` → `users.id` | `CASCADE` | Deleting an account removes its usage counters, any lease and its zero-result enhanced-scan rows. |
 | `scan_records.user_id` → `users.id` | `CASCADE` | Deleting an account removes its scan records. |
 | `scan_corrections.scan_record_id` → `scan_records.id` | `CASCADE` | A scan record's correction flags go with it (retention purge, per-user cap, account deletion); the daily totals in `scan_corrections_daily` (no user) stay. |
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
+| `books.merged_into_id` → `books.id` | `RESTRICT` | A book that other rows were merged into cannot be deleted (#682). |
 | `user_books.edition_id` → `editions.id` | none (`NO ACTION`) | An edition referenced by a `UserBook` cannot be deleted. |
 
 An unreferenced book can be deleted. The ORM relationships `Book.editions` and `Book.user_books` have no delete cascade and use `passive_deletes="all"`, so the ORM never deletes or nulls out children (even when they are loaded in the session) and the `ON DELETE RESTRICT` FKs reject the delete (migration `0004`).
 
 ## Entity reference
 
+**Shared columns (#814).** Columns that several tables declare the same way come from the mixins in `backend/app/models/_mixins.py`: `IdMixin` (`id`, UUID primary key, `uuid4`), `UserOwnedMixin` (`user_id` → `users.id` `ON DELETE CASCADE`, NOT NULL; `user_id_indexed = True` adds `ix_<table>_user_id`), `CreatedAtMixin` (`created_at`, `server_default now()`), `TimestampMixin` (`created_at` plus `updated_at` with `onupdate`) and `DailyFeatureModelKeyMixin` (the `day`, `feature`, `model` primary key of the daily totals tables). The tables below still list every column. A mixin's columns keep the place the table declared them in through `sort_order` (SQLAlchemy would otherwise put them after the class's own columns). `tests/unit/test_model_schema_snapshot.py` pins every table's columns, indexes and constraints against `backend/tests/fixtures/model_schema_snapshot.json`; a migration that changes the schema regenerates it in the same PR (see *Writing a new migration*).
+
 ### `users` (`backend/app/models/user.py`)
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | generated |
-| `email` | string, **unique**, not null | authenticated email |
+| `email` | string, **unique**, not null | authenticated email, stored as Google reports it. Also **unique ignoring case**: index `uq_users_email_lower` on `lower(email)` (#705, migration 0022); the case-sensitive constraint `uq_users_email` is kept, as the index implies it |
 | `google_id` | string, **unique**, not null | Google OAuth `sub` claim |
 | `display_name` | string, nullable | from Google profile |
 | `avatar_url` | string, nullable | from Google profile |
 | `token_version` | integer, not null, server default `0` | carried in every token as `tv`; bumping it revokes all the user's sessions (`app/auth/sessions.py`, #689, migration 0021) |
+| `default_tab` | string, nullable | the "Open on" screen the app opens on after sign-in and on launch (#913, migration 0029): `scan`, `wishlist` or `my-books`; NULL means Scan. Check constraint `ck_users_default_tab` (NULL or one of the three; `DEFAULT_TABS` in the model). Returned by `GET /auth/me`, set only by `PATCH /users/me/preferences` (the caller's own row). Goes with the account row; account data export (not built yet) must include it |
 | `created_at` / `updated_at` | timestamptz, server defaults | `updated_at` auto-bumps on row change |
 
 **Lockdown:** the backend enforces `ALLOWED_EMAILS` at the `/auth/google` endpoint — any Google account whose email isn't in that comma-separated env var is rejected *before* a User row is created. See [`architecture.md`](architecture.md#auth-architecture).
@@ -227,11 +240,21 @@ Represents the **conceptual work** — the thing a user would say "I own Dune" a
 | `cover_url` | string, nullable | Google Books cover URL (typically) |
 | `subjects` | text[], nullable | Open Library subject tags |
 | `language` | string, default `'en'`, not null | ISO 639-1 code |
+| `source` | string, nullable, check `ck_books_source`: `google_books`, `open_library`, `scan` | provenance (#682, migration 0025): `google_books` when a Google Books volume matched (it supplies the description, cover and edition details), else `open_library`, else `scan` (no provider matched; only rows from before #602). Set on every new row (`app/services/catalog.py:source_of`); 0025 backfilled existing rows with the same rule. Nullable only so the previous release can insert during a deploy; a later contract migration backfills those and sets NOT NULL |
+| `fetched_at` | timestamptz, nullable | when the server fetched the row's provider data (#682); `created_at` for rows backfilled by 0025 |
+| `merged_into_id` | UUID FK → `books.id`, `ON DELETE RESTRICT`, nullable, indexed (`ix_books_merged_into_id`) | set when this row was merged into another (#682); check `ck_books_merged_into_other` (never itself). Always points at a row that is not merged. See [the catalog/user boundary](#the-cataloguser-boundary-682) |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
 **Relationships:**
 - `editions` → `Edition[]` (no cascade — a Book with Editions cannot be deleted)
 - `user_books` → `UserBook[]` (no cascade — a Book in any user's library cannot be deleted)
+- `merged_into` → `Book` (the survivor; `lazy="raise"`, loaded explicitly)
+
+#### The catalog/user boundary (#682)
+
+`books` / `editions` hold what the providers say about a work and are shared by every user; nothing a client sends is written to them (#602, #611). What a user says about *their* copy lives on their `user_books` row: status, dates, notes, rating and the overrides `title_override`, `author_override`, `cover_url_override`. Library reads show an override in place of the catalog value and list the user's values under `overrides`; another user's read of the same book is unaffected.
+
+Merges: a duplicate catalog row is kept with `merged_into_id` set rather than deleted. A merged row and its survivor are one work. Library entries on a merged row can exist (a merge moves them, but nothing relies on it) and count as entries of the survivor everywhere: library reads follow `merged_into_id` to the survivor; the library check (`held_entries`, used by scan, search and `POST /wishlist` alike) matches an entry when the candidate carries any ID of the work (the survivor's or any merged row's `id`, Open Library work ID or Google Books ID), whichever row the entry is on, so scan says owned exactly when `POST /wishlist` answers 409; `POST /purchased` with either row's `book_id` promotes the user's existing entry of the work (the survivor's own entry first, else the oldest) instead of adding a second one. `POST /wishlist` / `POST /purchased` redirect a merged row to the survivor, so no new library entry ever targets a merged row (redirect rather than reject: a client holding a stale `book_id` still adds the work it meant, and only once). The edition check (#686) runs against the survivor: since a merge moves editions to the survivor, an `edition_id` still on the merged row is refused (`422 edition_book_mismatch`). There is no runtime merge code: the only merge so far is migration 0015 (#613), which deleted its duplicates before this column existed. A future merge must set `merged_into_id` (re-pointing rows already merged into the duplicate, so one hop always reaches the survivor) and move the duplicate's `user_books` and `editions` to the survivor as 0015 did.
 
 ### `editions` (`backend/app/models/edition.py`)
 
@@ -260,7 +283,7 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | |
 | `book_id` | UUID FK → `books.id`, restrict delete, nullable | the catalog book; `NULL` only for an unverified entry (#616) |
 | `custom_book_id` | UUID FK → `user_custom_books.id`, cascade delete, nullable, unique (`uq_user_books_custom_book`) | the user's own unverified entry (#616); `ck_user_books_one_book` requires exactly one of `book_id` / `custom_book_id` |
-| `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet |
+| `edition_id` | UUID FK → `editions.id`, nullable (no cascade) | nullable because wishlisted items often don't have an edition picked yet. **Must be an edition of `book_id`** (#686): enforced in the API (`app/services/edition_check.py`, `422 edition_book_mismatch`), not by a composite FK (see below) |
 | `status` | string, indexed, not null | check constraint: `wishlisted`, `purchased`, `reading`, `read` |
 | `wishlisted_at` | timestamptz, nullable | set when status first enters `wishlisted` |
 | `purchased_at` | timestamptz, nullable | set on wishlisted→purchased transition |
@@ -268,9 +291,29 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `finished_at` | timestamptz, nullable | set on reading→read transition |
 | `notes` | string, nullable | user notes |
 | `rating` | int, nullable | check constraint: 1..5 |
+| `title_override` | string, nullable | the user's own title for this copy (#682, migration 0025); check: 1–500 characters. Never written to `books` |
+| `author_override` | string, nullable | the user's own author (#682); check: 1–500 characters |
+| `cover_url_override` | string, nullable | the user's own cover URL (#682), validated like every user-supplied URL (https, public IP); check: 1–2048 characters |
+| `deleted_at` | timestamptz, nullable | set when the entry is moved to the trash (`DELETE /user-books/{id}`, #683, migration 0026); NULL for a live entry. Partial index `ix_user_books_deleted_at` on `(deleted_at) WHERE deleted_at IS NOT NULL` (trashed rows only) serves the trash list and the purge |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
-**Uniqueness:** `(user_id, book_id)` is a unique constraint (`uq_user_books_user_book`). A user can have at most one tracking row per work — this is what dedup is enforcing. Different editions of the same work still share one `UserBook`; changing edition updates `edition_id` in place. (Unverified rows have `book_id` NULL, which the constraint does not compare; their duplicates are refused by `UnverifiedBookService`.)
+Overrides are NULL for an unverified entry (`ck_user_books_overrides_catalog_only`): that entry is already the user's own data and never carries a cover (#616). Storage: at most ~3 KB more per row, typically none.
+
+**Uniqueness:** `(user_id, book_id)` is unique among live rows: the partial unique index `uq_user_books_user_book_live` `WHERE deleted_at IS NULL` (#683, migration 0026; before it the full constraint `uq_user_books_user_book`). A user can have at most one live tracking row per work — this is what dedup is enforcing. Entries in the trash do not count, so a deleted book can be added again; restoring the trashed entry is then refused (`409 restore_conflict`). Different editions of the same work still share one `UserBook`; changing edition updates `edition_id` in place. (Unverified rows have `book_id` NULL, which the constraint does not compare; their duplicates are refused by `UnverifiedBookService`.)
+
+**Soft delete and trash (#683).** `DELETE /user-books/{id}` sets `deleted_at` (on the row and, for an unverified entry, its `user_custom_books` row) and deletes nothing. Lifecycle:
+
+1. **Live** (`deleted_at` NULL): the only state any library read or check sees. Every query on `user_books` / `user_custom_books` filters on `UserBook.live()` / `UserCustomBook.live()` (`deleted_at IS NULL`) except the trash list, restore and the purge: `GET /user-books`, `PATCH`, `DELETE`, `POST /purchased`'s existing-entry lookup (a trashed entry is never promoted), `held_entries` (scan, search and `POST /wishlist`'s 409), and the unverified cap and duplicate check.
+2. **Trashed** (`deleted_at` set): listed by `GET /user-books/trash` with `purge_after = deleted_at + TRASH_RETENTION_DAYS` (default 30); `POST /user-books/{id}/restore` clears `deleted_at` on both rows and the entry is exactly as it was (status, dates, notes, rating, edition, overrides). Restore is refused with `409` when the user has a live entry of the same work (merged rows count, #682) or, for an unverified entry, a live duplicate or a full cap. One trashed copy per book, unless a copy holds the user's data: a `DELETE` hard-deletes, in the same transaction, the user's other, older trashed rows of the same book that hold no user data (`trash.evict_same_book`; a catalog entry matches any row of the same work, merged rows included (`catalog.of_work`, #682), an unverified entry the same normalised title and author or ISBN (`unverified_books.same_book`)), so an add / delete loop never grows the trash. "No user data" is `UserBook.has_no_user_data()`: `status = 'wishlisted'`, `purchased_at`, `started_at` and `finished_at` NULL, `notes` NULL or whitespace only, and `rating`, `edition_id`, `title_override`, `author_override` and `cover_url_override` NULL (`wishlisted_at` is set by the server on every add, and an unverified entry's title, author and ISBN are the book itself, so neither counts). A copy with any of these set is never same-book evicted: it stays until the purge or the backstop cap (owner decision, 2026-10-28). The entry being deleted is never evicted, whatever it holds. Backstop: at most `TRASH_MAX_ENTRIES_PER_USER` (default 1,000, range 100–5,000) per user; a `DELETE` beyond it hard-deletes the user's oldest trashed rows (`trash.evict_over_cap`, newest `deleted_at` kept, ties by `id`, highest kept, the trash list's order), in the same transaction. The cap eviction and the catalog same-book eviction lock `FOR UPDATE SKIP LOCKED` (a row the purge holds is being deleted anyway); the unverified same-book eviction reads its candidates without row locks (it matches the book in Python over every trashed unverified entry of the user, so locking would lock them all) and relies on the user lock, which serialises it with restore. Every eviction re-checks the row in the `DELETE` (still trashed, still the user's, and for same-book eviction still empty).
+3. **Purged**: the daily cleanup (`app/services/trash.py:purge_trash`) hard-deletes rows trashed before `now - TRASH_RETENTION_DAYS`, with the `user_custom_books` rows of exactly the rows it deleted, in batches of 500 (one commit each, at most 20 per run), `FOR UPDATE SKIP LOCKED` with a `DELETE` that re-checks the row is still trashed and past the cutoff (so a concurrent restore always wins), under the transaction-level advisory lock `pg_try_advisory_xact_lock(PURGE_LOCK_KEY)` so two instances never purge at once (the second skips). A trashed entry stays restorable until it is purged, so up to a day past `purge_after`.
+
+So the trash keeps 30 days, one trashed copy per book (copies with your data are kept), and the newest 1,000 entries per user. Storage: a trashed `user_books` row is at most ~13 KB (10,000 characters of notes plus overrides of 500 / 500 / 2,048, measured with `pg_column_size`), up to ~25 KB with multibyte notes, so ~13–25 MB per user worst case at the default cap and ~65–125 MB at the maximum of 5,000, typically far less.
+
+**Locking.** `DELETE`, restore, `POST /purchased` and `POST /wishlist` take the user's row lock first (`unverified_books.lock_user`, `FOR NO KEY UPDATE`), then the `user_books` row (`FOR UPDATE`, live filter kept), then `user_custom_books`: one order everywhere, so one user's library writes are serialised and a write never lands on a row trashed meanwhile. `PATCH` locks the row it updates.
+
+Account deletion (#291, not built yet) must remove trashed rows at once, not leave them to the purge; the `users` cascade does.
+
+**Edition belongs to book (#686).** A composite FK `(book_id, edition_id)` → `editions(book_id, id)` was considered and not added: it needs a unique key on `editions(book_id, id)` and would fail on any existing mismatched row, so it waits for the existing-data check to come back clean. Until then the API enforces the rule on every write that takes an `edition_id`.
 
 ### `user_custom_books` (`backend/app/models/user_custom_book.py`)
 
@@ -283,9 +326,10 @@ Unverified entries (#616, migration 0016): books the user added themselves becau
 | `title` | string, not null | check: 1–500 characters |
 | `author` | string, not null | check: 1–500 characters |
 | `isbn_13` | string, nullable | the ISBN the user typed, normalised to ISBN-13 (check: 13 characters). **Not unique and never matched against anyone else's data**: it never claims `editions.isbn_13` |
+| `deleted_at` | timestamptz, nullable | set and cleared together with its library row's `deleted_at` (#683, migration 0026). No index: the table is only read by `user_id` and is purged with its library row |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
 
-No provider IDs, cover, description or edition. At most `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) rows per user; each row is at most ~1.1 KB (typically ~150 B), so ~220 KB per user worst case, and writes are rate limited (`rate_limit_writes`). Rows go with the account (cascade) and with their library row (`DELETE /user-books/{id}` deletes both). Account deletion and data export (not built yet) must include this table. Downgrading 0016 deletes every unverified entry.
+No provider IDs, cover, description or edition. At most `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) live rows per user (trashed rows do not count, #683, which changes #625's decision that deleting an unverified entry is permanent); plus at most `TRASH_MAX_ENTRIES_PER_USER` (default 1,000) trashed rows; each row is at most ~1.1 KB (typically ~150 B), so ~1.3 MB per user worst case (200 live + 1,000 trashed), and writes are rate limited (`rate_limit_writes`). Rows go with the account (cascade) and with their library row: `DELETE /user-books/{id}` moves both to the trash, restore brings both back, and both are deleted 30 days after deletion, when the same book is deleted again (an older trashed copy whose library row holds no user data is replaced), or when the user's trash passes the cap, whichever comes first (#683). Account deletion and data export (not built yet) must include this table. Downgrading 0016 deletes every unverified entry.
 
 ### `refresh_tokens` (`backend/app/models/refresh_token.py`)
 
@@ -298,11 +342,32 @@ Backs the refresh-rotation + revocation mechanism ([architecture.md](architectur
 | `user_id` | UUID FK → `users.id`, indexed, cascade delete, not null | |
 | `issued_at` | timestamptz, server default | |
 | `expires_at` | timestamptz, not null | issued + `REFRESH_TOKEN_EXPIRY_DAYS` (default 7) |
-| `revoked_at` | timestamptz, nullable | set on `/auth/refresh` (old jti) or `/auth/logout` |
+| `revoked_at` | timestamptz, nullable | set on `/auth/refresh` (old jti), `/auth/logout`, or `revoke_all_sessions` (logout-all, reuse detection) |
+| `family_id` | UUID, nullable | the rotation chain (#690, migration 0024): a sign-in's first row uses its own `id`, each successor inherits it. Backfilled to `id` for rows from before 0024; NULL only for a row written during the deploy by older code, read as its own `id` |
+| `used_at` | timestamptz, nullable | set when `/auth/refresh` rotated this row (with `revoked_at`); starts the reuse grace window. Rows revoked any other way have none |
+| `replaced_by_id` | UUID FK → `refresh_tokens.id`, nullable, indexed, `ON DELETE SET NULL` | the successor this row was rotated into (for a displaced row, the row that replaced it; a retried row keeps pointing at the displaced one) |
+| `displaced_at` | timestamptz, nullable | set when a grace-window retry or a concurrent refresh replaced this row before it was used (with `revoked_at`, `used_at` and `replaced_by_id`); presenting it is reuse, and a row whose successor is displaced has had its one retry (#690) |
 
-**Lifecycle:** `/auth/refresh` validates the presented refresh JWT → checks `jti` exists and `revoked_at IS NULL` → issues a new access+refresh pair, inserts a new row, and sets `revoked_at = now()` on the old row. The effect is that **refresh tokens are single-use** — a stolen copy is invalidated by the legitimate client's next refresh.
+**Lifecycle:** `/auth/refresh` validates the presented refresh JWT and looks up its `jti`. An unknown `jti`, or a row revoked without being rotated (logout, logout-all, a stale `tv`; `revoked_at` set, `used_at` NULL), gets a plain `401`. A live row is rotated: a new access+refresh pair, a new row in the same family, and `revoked_at = used_at = now()` and `replaced_by_id` on the old row, so **refresh tokens are single-use**. A rotated row presented again is classified (`classify_replay`): **race** (a concurrent request with the same token rotated it first) and **retry** (within `REFRESH_REUSE_GRACE_SECONDS`, 30 s, with an unused successor) get a fresh pair and *displace* the successor (`displaced_at`); **ended** (the successor was logged out or deleted) gets a plain `401`; **reuse** (outside the window, the successor already rotated or displaced, or the token itself displaced) revokes every row of the user and bumps `users.token_version` (`401 refresh_reused`, #690; see [architecture.md](architecture.md#auth-architecture)). A legacy refresh token without `tv` (#725) is rotated without `used_at`, so it counts as plainly revoked afterwards.
 
-**Volume and retention:** about 150 bytes per row, one row per refresh. Since #689 the access token lives 15 minutes, so a user refreshes about once per 15 minutes of use (a refresh happens only on a request after expiry): an hour of use a day is about 4 rows a day, about 30 live rows per user (about 5 KB); a heavy user (8 hours a day) about 220 rows (about 35 KB). A row is deleted by the daily cleanup task (`app/services/token_cleanup.py`) once `expires_at` has passed; revoked rows stay until they expire (at most 7 days). That purge is a single `DELETE`, not batched. Rows go with the user (cascade). **Phase 2 account deletion and data export must include this table.**
+**Volume and retention:** about 150 bytes per row, one row per refresh. Since #689 the access token lives 15 minutes, so a user refreshes about once per 15 minutes of use (a refresh happens only on a request after expiry): an hour of use a day is about 4 rows a day, about 30 live rows per user (about 5 KB); a heavy user (8 hours a day) about 220 rows (about 35 KB). The daily cleanup task (`app/services/token_cleanup.py` → `app/auth/refresh_family.py:purge_refresh_tokens`) deletes a row once `expires_at` has passed, or once it is revoked without having been rotated (logout, logout-all: nothing reads it again). Rotated rows stay until they expire (at most 7 days), because reuse detection needs them. Since #690 the purge runs in batches of 5,000 rows, at most 20 batches per run, with a commit per batch, and never waits for a row lock (`FOR UPDATE SKIP LOCKED` on the batch and on the rows pointing at it; a skipped row goes in a later run). Migration 0024 adds about 50 bytes per row (two UUIDs and two timestamps) plus the `replaced_by_id` index, so about 190 bytes per row. Rows go with the user (cascade). **Phase 2 account deletion and data export must include this table.**
+
+### `device_keys` (`backend/app/models/device_key.py`)
+
+Stores registered iOS App Attest public keys for `/scan` bot protection (#753).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK | `IdMixin` |
+| user_id | UUID FK | CASCADE delete on `users.id`, indexed (`UserOwnedMixin`) |
+| platform | ENUM `device_key_platform` | `ios` or `android` (android rows unused — Play Integrity is stateless) |
+| key_id | VARCHAR(256) | Hex key id from `DCAppAttestService.generateKey()` |
+| public_key_cbor | BYTEA | COSE-encoded public key from the Apple attestation object |
+| counter | BIGINT | Strictly-monotonic assertion counter; reset on re-registration |
+| last_used_at | TIMESTAMPTZ | Set on each successful `/scan` assertion |
+| created_at | TIMESTAMPTZ | Server default (`CreatedAtMixin`) |
+
+Unique constraint: `(user_id, key_id)` — one row per device per user; re-registering replaces the key.
 
 ### `ai_quota` (`backend/app/models/ai_quota.py`)
 
@@ -318,7 +383,7 @@ Per-user count of AI calls reserved, per quota key and window (#528). Backs the 
 
 **Keys and indexes:** the composite primary key `(user_id, feature, window_kind, window_start)` is the unique key the reservation upsert targets (`INSERT … ON CONFLICT … DO UPDATE SET units_used = units_used + 1 WHERE units_used < limit`). `ix_ai_quota_window (window_kind, window_start)` serves the global daily sum (which filters out `scan.requests`) and the retention purge.
 
-**Writes:** only `app/ai/quota.py` (reserve, refund, the no-match move, the request count, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
+**Writes:** only `app/ai/quota/` (reserve, refund, the no-match move, the request count, purge), from the request's server-side user and the server's quota key. No client-supplied value is stored.
 
 **Volume and retention:** about 70 bytes per row. Per active user, up to three day rows for each day they scan (`scan`, `scan.no_match` on a day with a no-match, #577, and `scan.requests` on any day they call `/scan`, #586): at most about 210 bytes per active user per day. `scan.requests` rows are purged with the other day rows. No month rows are written since #582. The daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_quota`) deletes day rows older than 90 days and month rows whose month began more than 13 months before the current month (so the legacy month rows are gone 13 months after the last one was written; until then they are kept so a rollback to the previous release finds its counters), in batches of 5,000 and at most 20 batches per window kind per run. This table is not used for reporting: monthly spend and call counts come from `ai_usage` / `ai_usage_daily`.
 
@@ -413,7 +478,7 @@ One row per recorded enhanced scan that returned no books (#533). Before #582 su
 
 **Index:** `ix_ai_enhanced_zero_results_user_created (user_id, created_at)` serves the window count (`WHERE user_id = ? AND created_at > clock_timestamp() - window`) and the throttle's Retry-After lookup.
 
-**Writes:** only `app/ai/quota.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row and the lease delete commit together (before #582 also the refund of the `scan.enhanced` month unit; there is no such unit any more). It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the user was below the threshold; an empty scan at or above it, a scan with books and any provider error, timeout or malformed reply write nothing. The scan's daily unit stays charged either way (#582). A repeat served from a scan record (#585) makes no provider call and writes none. No client-supplied value is stored: no image, hash or content.
+**Writes:** only `app/ai/quota/zero_result.py` (`record_zero_result`), inside the scan's settle transaction (`quota.release`): the `ai_usage` insert, the cost settle, this row and the lease delete commit together (before #582 also the refund of the `scan.enhanced` month unit; there is no such unit any more). It is applied only when that ledger insert returned a row (without a ledger row, only on the first attempt), so a settle retried after a lost commit acknowledgement writes no second row, and only while the request still holds its lease (its `ai_inflight` row is locked `FOR UPDATE` until the commit), so a request whose lease was taken over writes nothing. The insert also sets `warned` when it claims the threshold warning, so the claim commits with the row. The row is written only when the user was below the threshold; an empty scan at or above it, a scan with books and any provider error, timeout or malformed reply write nothing. The scan's daily unit stays charged either way (#582). A repeat served from a scan record (#585) makes no provider call and writes none. No client-supplied value is stored: no image, hash or content.
 
 **Volume and retention:** about 40 bytes per row (more with the index), bounded by the threshold per user per window (at most 20 per window at the maximum setting). Rows older than 30 days are deleted by the daily cleanup task (`app/services/token_cleanup.py`, calling `quota.purge_old_zero_results`) in batches of 5,000 and at most 20 batches per run. Deleting a user removes their rows by cascade. **Phase 2 account deletion and data export must include this table.**
 
@@ -507,7 +572,7 @@ Server-side AI dials and kill switches ([architecture.md](architecture.md#book-i
 
 | Column | Type | Notes |
 |---|---|---|
-| `key` | text, PK | one of the keys defined in `app/ai/settings.py`; other keys are ignored |
+| `key` | text, PK | one of the keys defined in `app/ai/settings/definitions.py`; other keys are ignored |
 | `value` | JSONB, not null | bool, string or int depending on the key; validated on write and again on read |
 | `updated_at` | timestamptz, not null, server default `now()` | set on every write |
 | `updated_by` | text, nullable | `seed` for startup seeding, else the CLI's `--by` / `$USER` / `cli` |
@@ -552,7 +617,7 @@ rows = db.exec(
 
 **When dedup is actually applied:**
 - On `POST /scan` and `GET /books/search` the candidates are marked (`ownership`, plus `already_in_library` / `in_library`) but still returned. The frontend's `BookCandidatePicker` shows the edition-level note and does not let the user tick a book they already have.
-- On `POST /wishlist` a book the user already has (an entry for the `Book`, or an entry holding an edition with the same ISBN) is refused with `409` and the ownership code, and nothing is written (#587). The unique constraint `uq_user_books_user_book` on `(user_id, book_id)` remains the database-level enforcement.
+- On `POST /wishlist` a book the user already has (an entry for the `Book`, or an entry holding an edition with the same ISBN) is refused with `409` and the ownership code, and nothing is written (#587). The partial unique index `uq_user_books_user_book_live` on `(user_id, book_id) WHERE deleted_at IS NULL` (#683) remains the database-level enforcement. Entries in the trash are not owned.
 
 ## Migration workflow
 
@@ -576,6 +641,13 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0017_scan_corrections.py` — adds `scan_corrections` (correction flags per scan record and candidate, #631; FK `scan_records` `ON DELETE CASCADE`, unique `(scan_record_id, candidate_index)`, `created_at` index) and `scan_corrections_daily` (daily totals, no user); expand only, the downgrade drops only these two tables
 - `0018_drop_retired_monthly_quota.py` — contract step for #582 (#594): deletes the `ai_settings` rows `quota.free.monthly`, `quota.premium.monthly` and `quota.premium.enhanced_monthly` (only those keys) and drops `ai_inflight.monthly_taken` and `ai_inflight.enhanced_taken`. `ai_quota` month rows are left to age out through the 13-month retention. The downgrade recreates the two columns as 0012 made them (boolean, not null, default false) but cannot restore the deleted settings rows (the release before #582 re-seeds missing quota keys at boot).
 - `0019_drop_legacy_scan_counters.py` — contract step for #528 and #533 (#540): drops the table `scan_usage_daily` (with `ix_scan_usage_daily_usage_date`; the per-user daily scan counter `/scan` stopped using in #528) and the column `users.enhanced_scan_credits` (the lifetime enhanced-scan balance nothing read since #533). Both go with their data. The downgrade recreates them exactly as 0005 and 0003 made them (schema only: the table comes back empty and every user gets the column's default of 5). The previous release maps `users.enhanced_scan_credits`, so user queries fail between the migration and the new code taking traffic; see "Upgrade notes" in [`deployment.md`](deployment.md#upgrade-notes)
+- `0022_users_email_lower_unique.py` — adds the unique index `uq_users_email_lower` on `users (lower(email))` (#705), so two concurrent first sign-ins whose emails differ only in case cannot both create a user (the loser gets `409 account_conflict`); expand only, the case-sensitive `uq_users_email` stays. Before building, it takes `LOCK TABLE users IN SHARE MODE` (writes wait, reads run; 5 s `lock_timeout`, reset at the end) and counts case-duplicate addresses; if there are any, the upgrade fails with the count only (no emails) and changes nothing; they are resolved by hand (see [`RENDER.md`](RENDER.md#resolving-a-sign-in-account_conflict-409)), not merged. Offline `--sql` is refused. The downgrade drops the index
+- `0023_revoke_supabase_grants.py` — revokes every table and sequence privilege, and the migrating role's default privileges in `public`, from Supabase's `anon` and `authenticated` roles (#704); a no-op where those roles don't exist (CI, local). It raises if either role still holds a privilege afterwards. Privileges only, no schema or data change; the downgrade deliberately leaves the grants revoked (see [`RENDER.md`](RENDER.md#connecting-to-supabase-production-only))
+- `0024_refresh_token_families.py` — refresh-token families (#690): adds the nullable columns `refresh_tokens.family_id` (UUID), `used_at` (timestamptz), `replaced_by_id` (UUID, self-FK `refresh_tokens_replaced_by_id_fkey`, `ON DELETE SET NULL`, index `ix_refresh_tokens_replaced_by_id`) and `displaced_at` (timestamptz); additive (expand only). Backfills `family_id = id` for every existing row (each its own family) in one UPDATE written with SQLAlchemy Core (the migration's transaction already holds ACCESS EXCLUSIVE on the table, so batching would not shorten any lock). `family_id` stays nullable so the previous release can keep inserting rows during the deploy; a later contract migration may make it NOT NULL. The downgrade drops the index, the FK and the four columns
+- `0025_catalog_user_split.py` — catalog/user split (#682): adds `user_books.title_override`, `author_override`, `cover_url_override` (nullable; checks for 1–500 / 1–500 / 1–2048 characters and none on unverified entries), `books.source` (nullable, check `google_books` / `open_library` / `scan`), `books.fetched_at` (nullable) and `books.merged_into_id` (self-FK `ON DELETE RESTRICT`, index `ix_books_merged_into_id`, never itself); expand only. Backfills `source` (by `source_of`'s rule) and `fetched_at = created_at` for existing books in one UPDATE. The downgrade drops the columns, constraints and index (user overrides and provenance are lost; `books` values are untouched)
+- `0026_soft_delete_trash.py` — soft delete with a 30-day trash (#683); expand only. Adds nullable `deleted_at` (timestamptz) to `user_books` and `user_custom_books`; replaces the unique constraint `uq_user_books_user_book (user_id, book_id)` with the partial unique index `uq_user_books_user_book_live` on the same columns `WHERE deleted_at IS NULL` (built before the constraint is dropped; with no trashed rows yet it enforces exactly the same thing, so nothing is lost); adds the partial index `ix_user_books_deleted_at` on `(deleted_at) WHERE deleted_at IS NOT NULL`. **The downgrade loses the trash**: it hard-deletes every trashed row (the `user_custom_books` of trashed entries, cascading to their library rows, then the remaining trashed `user_books`), since a trashed and a live entry of the same book would block the full constraint, then restores the constraint and drops the indexes and columns
+- `0027_device_attestation.py` — device attestation (#753); expand only. Adds the `device_key_platform` ENUM (`ios`, `android`) and the `device_keys` table (UUID PK, `user_id` FK CASCADE, `platform`, `key_id` VARCHAR(256), `public_key_cbor` BYTEA, `counter` BIGINT, `last_used_at` TIMESTAMPTZ nullable, `created_at` server default; unique `(user_id, key_id)`). The downgrade drops the table and the ENUM
+- `0029_users_default_tab.py` — the "Open on" preference (#913); expand only. Adds the nullable `users.default_tab` (varchar, no default, so existing users stay NULL, i.e. Scan; no backfill) and the check constraint `ck_users_default_tab` (`default_tab IS NULL OR default_tab IN ('scan', 'wishlist', 'my-books')`). The previous release never reads or writes the column. The downgrade drops the constraint and the column (users' choices are lost and the app falls back to Scan)
 
 ### Writing a new migration
 
@@ -594,6 +666,9 @@ $EDITOR alembic/versions/<new-file>.py
 
 # Apply it
 alembic upgrade head
+
+# Update the pinned schema snapshot (#814) and review its diff
+python -m tests.unit.test_model_schema_snapshot --write
 ```
 
 ### Check-constraint gotcha

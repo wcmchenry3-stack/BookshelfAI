@@ -1,26 +1,23 @@
 import uuid
-from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    Date,
-    DateTime,
     ForeignKey,
     Index,
     SmallInteger,
     String,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.models._mixins import CreatedAtMixin, DailyFeatureModelKeyMixin
 
 
-class ScanCorrection(Base):
+class ScanCorrection(CreatedAtMixin, Base):
     """Whether the user changed the scan's reading when they saved an
     "Add it yourself" entry pre-filled from it (#631).
 
@@ -67,12 +64,9 @@ class ScanCorrection(Base):
     title_edited: Mapped[bool] = mapped_column(Boolean, nullable=False)
     author_edited: Mapped[bool] = mapped_column(Boolean, nullable=False)
     isbn_edited: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
 
 
-class ScanCorrectionDaily(Base):
+class ScanCorrectionDaily(DailyFeatureModelKeyMixin, Base):
     """Daily totals of ``scan_corrections`` per (UTC day, feature, model)
     (#631), next to the cost per scan in ``ai_usage_daily``.
 
@@ -90,9 +84,6 @@ class ScanCorrectionDaily(Base):
         ),
     )
 
-    day: Mapped[date] = mapped_column(Date, primary_key=True)
-    feature: Mapped[str] = mapped_column(String(64), primary_key=True)
-    model: Mapped[str] = mapped_column(String(64), primary_key=True)
     prefilled_saves: Mapped[int] = mapped_column(BigInteger, nullable=False)
     title_edited: Mapped[int] = mapped_column(BigInteger, nullable=False)
     author_edited: Mapped[int] = mapped_column(BigInteger, nullable=False)

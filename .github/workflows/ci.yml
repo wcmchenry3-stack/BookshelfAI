@@ -3,6 +3,11 @@ name: CI
 on:
   pull_request:
     branches: [dev, main]
+    # Default types plus ready_for_review, so the native build checks (skipped
+    # on drafts) run when a draft PR is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [dev, main]
   workflow_call:
@@ -12,6 +17,62 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # === Change detection (#767) =============================================
+  # One cheap job decides whether the expensive bundle/native build checks run.
+  # Plain `git diff` against the PR base, or the merge queue's base_sha on
+  # merge_group (no third-party action). On push and
+  # workflow_call (Deploy) there is no PR base, so both outputs are 'true' and
+  # the checks always run. A job skipped via `if:` reports success to required
+  # checks.
+  detect-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      native: ${{ steps.detect.outputs.native }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Detect changed paths
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          # PR base on pull_request; the branch tip the queue entry builds on for merge_group.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "merge_group" ]; then
+            echo "Event is $EVENT_NAME: running all checks"
+            echo "native=true" >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames: a move out of frontend/ must count its source path too.
+          # Fail closed: if the diff can't be computed, run everything. A
+          # failed detect job would skip the checks, and skipped required
+          # checks report success.
+          if ! CHANGED=$(git diff --name-only --no-renames "$BASE_SHA"...HEAD) || [ -z "$BASE_SHA" ]; then
+            echo "::warning::Could not diff against the PR base; running all checks"
+            echo "native=true" >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Changed files:"
+          echo "$CHANGED"
+          # native: anything that can change the iOS/Android native build.
+          # Podfile, Gradle files and ios/ci_scripts live under frontend/ios
+          # and frontend/android, so the directory prefixes cover them.
+          NATIVE_RE='^(frontend/(ios|android|plugins)/|frontend/(app\.json|app\.config\.[A-Za-z]+|package\.json|package-lock\.json)$|\.github/workflows/ci\.yml$)'
+          # frontend: any frontend file (JS bundle inputs) plus this workflow.
+          FRONTEND_RE='^(frontend/|\.github/workflows/ci\.yml$|\.github/actions/setup-frontend/)'
+          if echo "$CHANGED" | grep -qE "$NATIVE_RE"; then NATIVE=true; else NATIVE=false; fi
+          if echo "$CHANGED" | grep -qE "$FRONTEND_RE"; then FRONTEND=true; else FRONTEND=false; fi
+          echo "native=$NATIVE" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
+          echo "native=$NATIVE frontend=$FRONTEND"
+
   # === Tier 0: Hygiene gates (run immediately, must pass before tier 1) ====
 
   gate-main-source:
@@ -97,7 +158,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the grandfather-list step diffs against the base branch
       - run: python3 scripts/policy/check_claude_policy.py
+      # #820: a PR may not add a file-length allowlist, knip ignore* or jscpd
+      # ignore entry without an `epic:refactor #NNN` line in the same file.
+      # Reuses this job so no new required status check name is needed.
+      - name: No new grandfather-list entries
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/policy/check_grandfather_lists.py --diff-base "origin/$BASE_REF"
 
   provenance-coverage:
     needs: [lint-python, lint-frontend, secret-scan]
@@ -115,16 +186,47 @@ jobs:
     with:
       working-directory: backend
       # App code only (backend/.coveragerc omits tests/ and alembic/). Raised
-      # from 80 to 90 in #621 once the gate actually failed below threshold.
-      coverage-threshold: 90
+      # from 80 to 90 in #621 once the gate actually failed below threshold, then
+      # to 98 in #765 (measured 99.47% on the no-DB run; owner chose 98 for headroom).
+      coverage-threshold: 98
     secrets: inherit
+
+  # Unit tests for the Python asset tools in tools/assets (docs/ASSETS.md). Not collected by the
+  # backend suite. Not a required check, so a red run does not block a merge; read it when assets change.
+  test-tools:
+    # Skip while the PR is a draft; ready_for_review starts the run (ship-story skill).
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Test tools (pytest)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: backend/.python-version
+          cache: pip
+          cache-dependency-path: tools/assets/requirements.txt
+      - name: Install tools requirements
+        run: pip install -r tools/assets/requirements.txt
+      - name: pytest
+        working-directory: tools
+        run: python -m pytest
 
   test-frontend:
     needs: [lint-python, lint-frontend, secret-scan]
     uses: wcmchenry3-stack/.github/.github/workflows/called-test-frontend.yml@main
     with:
       working-directory: frontend
-      coverage-threshold: 80
+      # Aligned in #820 with the Jest coverageThreshold floors in
+      # frontend/package.json (statements 95, branches 90, functions 92, lines
+      # 97; measured 96.34 / 91.97 / 93.69 / 97.74). The caller input is one
+      # number and the org workflow does not say which metric it reads, so it
+      # is the lowest Jest floor (90), which every measured metric clears.
+      # Jest itself enforces the per-metric floors. Never set it above 90.
+      coverage-threshold: 90
     secrets: inherit
 
   cve-python:
@@ -150,9 +252,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: ./.github/actions/setup-backend
         with:
-          python-version: '3.12'
+          requirements: ''
       - name: Install bandit
         run: pip install bandit[toml]==1.8.3
       - name: Run Bandit SAST
@@ -200,11 +302,13 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - uses: ./.github/actions/setup-backend
+      # Migration 0028 (#696) grants to the least-privilege app role and stops
+      # if it is missing; in prod the owner creates it by hand. Throwaway DB only.
+      - name: Create the bookshelf_app role
+        run: >-
+          psql "postgresql://test:test@localhost:5432/test" -v ON_ERROR_STOP=1
+          -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bookshelf_app') THEN CREATE ROLE bookshelf_app LOGIN PASSWORD 'test'; END IF; END \$\$;"
       - name: Upgrade to head
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
@@ -220,11 +324,15 @@ jobs:
       - name: Integration tests (real Postgres)
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
+          # Abort (instead of silently skipping) if no real DB is configured (#760).
+          REQUIRE_DB_TESTS: '1'
         run: |
           pip install -r requirements-dev.txt
           alembic upgrade head
-          # tests/limits: the scan limits matrix (#584), every row on every PR.
-          pytest -m integration tests/integration tests/limits -q
+          # Every integration-marked test in every folder (tests/integration,
+          # tests/limits, tests/security, tests/unit, ...). -rs lists skips and the
+          # summary line shows how many ran, so a mass skip is visible (#760).
+          pytest -m integration tests -q -rs
 
   # --- Podfile.lock staleness check -------------------------------------------
   # If Podfile was modified but Podfile.lock was not, the developer forgot to
@@ -258,13 +366,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - name: Type-check (tsc --noEmit)
         run: npm run typecheck
 
@@ -274,20 +376,15 @@ jobs:
   # so it cannot detect issues with the JS bundler or entry-point resolution.
 
   js-bundle-check:
-    needs: [lint-python, lint-frontend, secret-scan]
+    if: needs.detect-changes.outputs.frontend == 'true'
+    needs: [detect-changes, lint-python, lint-frontend, secret-scan]
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - name: Create iOS JS bundle
         run: |
           ENTRY_FILE=$(node -e "require('expo/scripts/resolveAppEntry')" . ios absolute | tail -n 1)
@@ -316,20 +413,15 @@ jobs:
   # so it cannot detect issues with the JS bundler or entry-point resolution.
 
   android-bundle-check:
-    needs: [lint-python, lint-frontend, secret-scan]
+    if: needs.detect-changes.outputs.frontend == 'true'
+    needs: [detect-changes, lint-python, lint-frontend, secret-scan]
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - name: Create Android JS bundle
         run: |
           ENTRY_FILE=$(node -e "require('expo/scripts/resolveAppEntry')" . android absolute | tail -n 1)
@@ -355,7 +447,9 @@ jobs:
   # === Tier 2: Expensive checks (need unit tests) ==========================
 
   ios-build-check:
-    needs: [test-python, test-frontend]
+    # Skipped on draft PRs and when no native-affecting path changed.
+    if: needs.detect-changes.outputs.native == 'true' && github.event.pull_request.draft != true
+    needs: [detect-changes, test-python, test-frontend]
     uses: wcmchenry3-stack/.github/.github/workflows/called-ios-build-check.yml@main
     with:
       working-directory: frontend
@@ -364,11 +458,53 @@ jobs:
     secrets: inherit
 
   android-build-check:
-    needs: [test-python, test-frontend]
+    # Skipped on draft PRs and when no native-affecting path changed.
+    if: needs.detect-changes.outputs.native == 'true' && github.event.pull_request.draft != true
+    needs: [detect-changes, test-python, test-frontend]
     uses: wcmchenry3-stack/.github/.github/workflows/called-android-build-check.yml@main
     with:
       working-directory: frontend
     secrets: inherit
+
+  # --- Required-check gate (#767) -------------------------------------------
+  # A reusable-workflow caller skipped by `if:` reports as plain
+  # `ios-build-check` (skipped), never as `ios-build-check / Xcode Build (no
+  # signing)`, so that inner context can never be a required check. This job
+  # always reports under a stable name and is the required check instead.
+  # Passes when every needed job succeeded or was skipped; fails on failure,
+  # cancelled, or if detect-changes itself did not succeed.
+  native-build-gate:
+    if: always()
+    needs: [detect-changes, ios-build-check, android-build-check, js-bundle-check, android-bundle-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate conditional build checks
+        env:
+          DETECT: ${{ needs.detect-changes.result }}
+          IOS_BUILD: ${{ needs.ios-build-check.result }}
+          ANDROID_BUILD: ${{ needs.android-build-check.result }}
+          JS_BUNDLE: ${{ needs.js-bundle-check.result }}
+          ANDROID_BUNDLE: ${{ needs.android-bundle-check.result }}
+        run: |
+          echo "| job | result |"
+          echo "|---|---|"
+          echo "| detect-changes | $DETECT |"
+          echo "| ios-build-check | $IOS_BUILD |"
+          echo "| android-build-check | $ANDROID_BUILD |"
+          echo "| js-bundle-check | $JS_BUNDLE |"
+          echo "| android-bundle-check | $ANDROID_BUNDLE |"
+          if [ "$DETECT" != "success" ]; then
+            echo "::error::detect-changes did not succeed ($DETECT)"
+            exit 1
+          fi
+          for r in "$IOS_BUILD" "$ANDROID_BUILD" "$JS_BUNDLE" "$ANDROID_BUNDLE"; do
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
+              echo "::error::A conditional build check ended as '$r'"
+              exit 1
+            fi
+          done
+          echo "Conditional build checks OK"
 
   # --- Gradle wrapper validation --------------------------------------------
   # Validates the Gradle wrapper JAR checksum to prevent supply-chain attacks.

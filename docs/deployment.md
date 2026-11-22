@@ -33,7 +33,8 @@ For iOS + Android build infrastructure deep-dives, see [`claude/ios-ci.md`](clau
 ENVIRONMENT=production
 CORS_ORIGINS=["https://bookshelfai.buffingchi.com"]
 TRUSTED_HOSTS=["bookshelfapi.buffingchi.com"]
-DATABASE_URL              (auto, from bookshelf-db)
+DATABASE_URL              (sync:false — Supabase session pooler URL as the bookshelf_app role, #696)
+MIGRATION_DATABASE_URL    (sync:false — owner-role DSN for `alembic upgrade head`, #696)
 TURNSTILE_SECRET_KEY      (sync:false — set in dashboard)
 SENTRY_DSN                (sync:false — set in dashboard)
 ```
@@ -65,6 +66,8 @@ Scan dials (optional; defaults shown; change in the dashboard and restart, no re
 - `SCAN_FREE_MONTHLY_LIMIT`, `SCAN_PREMIUM_MONTHLY_LIMIT`, `SCAN_PREMIUM_ENHANCED_MONTHLY_LIMIT` — **removed** (#582, #594): there is no monthly limit. See "Upgrade notes" below
 - `ENHANCED_SCAN_FREE_CREDITS`, `SCAN_DAILY_LIMIT_PER_USER` — **removed** (#533, #528, #540): the lifetime enhanced-scan credit grant and the old per-user daily cap are gone (the caps are `quota.<tier>.found_daily` and `quota.<tier>.no_match_daily` above). See "Upgrade notes" below
 - `UNVERIFIED_BOOKS_PER_USER_MAX` (`200`, range 1–10,000) — the most private unverified library entries one user can have (#616, `POST /wishlist/unverified` answers `409 unverified_limit_reached` above it). Read at startup, so a change needs a restart
+- `TRASH_RETENTION_DAYS` (`30`, range 1–365) — how long a deleted library entry stays in the trash, restorable, before the daily cleanup purges it (#683; 30 days is the owner's decision of 2026-10-26). Read at startup, so a change needs a restart; lowering it purges the older trash at the next daily run
+- `TRASH_MAX_ENTRIES_PER_USER` (`1000`, range 100–5,000) — the most entries one user's trash holds (#683), a backstop: a delete already replaces older trashed copies of the same book that hold no user data, so a delete loop cannot grow the database; copies with the user's data are kept, and this cap is the only thing that removes them before the trash window ends. A delete beyond the cap hard-deletes that user's oldest trashed entries, so a mass delete of up to this many distinct books stays restorable for the trash window. Read at startup, so a change needs a restart; lowering it trims a user's trash at their next delete
 - `SCAN_MAX_IMAGE_PIXELS` (`40000000`, range 1,000,000–100,000,000) — seed for `scan.max_image_pixels`; decompression-bomb guard: an upload whose width × height is above this gets `413 image_too_large_pixels` before it is decoded
 - `SCAN_NORMALISE_CONCURRENCY` (`1`, range 1–8) — how many scan images are normalised (decoded and resized, in worker threads) at once per process. Each can briefly hold a few hundred MB for a 40 MP image, so this bounds peak memory; requests over the limit wait for a slot. Peak is roughly 160–350 MB per 40 MP image, times this value, times the uvicorn worker count; keep it at 1 on a 512 MB instance and raise it only with more memory. Stays env (not in `ai_settings`): it sizes a process-wide `anyio.CapacityLimiter` created at import, so a database change could not take effect without a restart
 - `AI_SETTINGS_CACHE_TTL_SECONDS` (`30`, range 1–300) — how long each process (uvicorn worker) reuses the `ai_settings` rows it last read
@@ -92,9 +95,13 @@ All settings are read from the environment by `Settings` in `backend/app/core/co
 
 | Name | Required? | Default | Allowed values / range | Blank |
 |---|---|---|---|---|
-| `DATABASE_URL` | required | none | Postgres URL; port 6543 (Supabase transaction pooler) refused | error (no default) |
+| `DATABASE_URL` | required | none | Postgres URL the app connects with (the DML-only `bookshelf_app` role in prod, #696); port 6543 (Supabase transaction pooler) refused. Do not add a libpq `?options=` query: asyncpg rejects it and every connect fails | error (no default) |
+| `MIGRATION_DATABASE_URL` | required in prod once `DATABASE_URL` is `bookshelf_app` | empty (use `DATABASE_URL`) | owner-role Postgres URL, used only by `alembic` (Render's `preDeployCommand`); port 6543 refused (#696) | blank = unset |
+| `STATEMENT_TIMEOUT_MS` | optional | `5000` | milliseconds; app engine only (never migrations). 0 or less disables it (not in production) | blank = default |
+| `STATEMENT_TIMEOUT_JOB_MS` | optional | `60000` | milliseconds; the daily purge jobs' transactions (`JobSessionLocal`, `SET LOCAL`). 0 or less disables it for jobs | blank = default |
 | `JWT_PRIVATE_KEY` | required when `ENVIRONMENT` is not `development`/`test` | empty | non-empty secret (the catalog-token key derives from it) | blank = unset, then the hardened check fails |
 | `JWT_ACCESS_TTL_MINUTES` | optional | `15` | 1-60 (access-token lifetime, #689) | blank = default |
+| `REFRESH_REUSE_GRACE_SECONDS` | optional | `30` | 0-120 (seconds after a refresh-token rotation in which replaying the old token is a client retry, not reuse; 0 = every later replay is reuse; concurrent duplicates still get a replacement, #690) | blank = default |
 | `JWT_EXPIRY_HOURS` | **retired**, remove it | unset | ignored; boot logs a warning while it is set. Still accepted for one release so a leftover value does not fail boot | blank = unset |
 | `ENVIRONMENT` | optional | `development` | any; anything but `development`/`test` is hardened | **boot error** (never silently development) |
 | `TRUSTED_HOSTS` | optional | `["*"]` | JSON list of hosts, e.g. `["api.example.com"]` | **boot error** |
@@ -121,7 +128,7 @@ It builds `Settings` as boot does and runs the database-free checks (such as `JW
 
 ### Database
 
-`bookshelf-db` — Postgres, `basic-256mb` plan, Oregon. Connection string is auto-injected into the API service.
+Supabase Postgres: the production project for `bookshelf-api`, its persistent branch `dev` for `bookshelf-api-dev`, both through the session pooler (port 5432). `DATABASE_URL` (app role `bookshelf_app`) and `MIGRATION_DATABASE_URL` (owner) are dashboard secrets on each service; see [`RENDER.md` → Database role](RENDER.md#database-role). The Render Postgres `bookshelf-db` that dev used before is suspended (since 2026-10-22) and no longer referenced.
 
 ### Release process (backend)
 
@@ -169,7 +176,7 @@ Every response from the static site carries:
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-- `Content-Security-Policy: default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com; style-src 'self' 'unsafe-inline'; script-src 'self'`
+- `Content-Security-Policy: default-src 'self'; img-src 'self' https: data:; connect-src 'self' https://bookshelfapi-dev.buffingchi.com https://*.ingest.us.sentry.io; style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com` (Turnstile's script and challenge frame, #740)
 
 **Caching:**
 - `/*` → `no-cache` (HTML doesn't cache)
@@ -184,6 +191,7 @@ Every response from the static site carries:
 Dashboard-only (sync:false):
 - `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`
 - `EXPO_PUBLIC_SENTRY_DSN`
+- `EXPO_PUBLIC_TURNSTILE_SITE_KEY` (#740, the public Turnstile site key; unset = `/scan` without a token)
 
 ### Release process (web)
 
@@ -280,7 +288,7 @@ See [`getting-started.md`](getting-started.md) for the full local-env setup.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Render deploy fails at `alembic upgrade head` | migration error | fix the migration, re-push; the old version keeps serving traffic |
-| `/health/db` returns 503 after deploy | DB unreachable | check `bookshelf-db` status in Render dashboard |
+| `/health/db` returns 503 after deploy | DB unreachable, or `DATABASE_URL` points at a role without grants | check the Supabase project (prod) or `dev` branch status, then the startup log line `db_role current_user=...` and [`RENDER.md` → Database role](RENDER.md#database-role) |
 | Web site serving old JS | browser cached `/*` | `Cache-Control: no-cache` is set on HTML but browsers sometimes cache aggressively — hard-reload |
 | iOS build fails at `ci_post_clone.sh` | Node version mismatch (rule #12) | see `claude/ios-ci.md` |
 | Android `bundleRelease` fails with CMake error | JDK 24+ on path | `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` (rule #22, preflight in `settings.gradle`) |

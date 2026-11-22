@@ -1,6 +1,20 @@
 {
   "loading": "पुस्तकें लोड हो रही हैं…",
-  "noBooksYet": "यहाँ अभी कोई पुस्तक नहीं।",
+  "emptyLibraryTitle": "आपकी लाइब्रेरी खाली है",
+  "emptyLibraryBody": "अपनी पहली किताबें जोड़ने के लिए बारकोड या शेल्फ़ स्कैन करें।",
+  "emptyLibraryAction": "किताबें स्कैन करें",
+  "emptyFilter": {
+    "wishlisted": "विशलिस्ट में अभी कुछ नहीं है",
+    "purchased": "अभी कुछ भी खरीदा हुआ चिह्नित नहीं है",
+    "reading": "अभी कुछ भी पढ़ा नहीं जा रहा",
+    "read": "अभी कुछ भी पढ़ा हुआ चिह्नित नहीं है"
+  },
+  "emptyFilterBody": "किसी किताब की स्थिति बदलें, वह यहाँ दिखाई देगी।",
+  "emptyFilterAction": "सभी किताबें दिखाएँ",
+  "emptySearchTitle": "“{{query}}” से कोई किताब मेल नहीं खाती",
+  "emptySearchBody": "वर्तनी जाँचें या कोई दूसरा शीर्षक या लेखक आज़माएँ।",
+  "emptySearchAction": "खोज साफ़ करें",
+  "loadErrorAction": "फिर से कोशिश करें",
   "statusTab": {
     "all": "सभी",
     "wishlisted": "विशलिस्ट",
@@ -14,10 +28,18 @@
     "reading": "पढ़ रहे",
     "read": "पढ़ी गई"
   },
-  "filterBy": "{{label}} द्वारा फ़िल्टर करें",
-  "bookCardA11y": "{{title}} — {{status}}",
-  "bookCardUnverifiedA11y": "{{title}} — {{status}} — असत्यापित",
+  "filterBy_one": "{{label}} द्वारा फ़िल्टर करें, {{count}} किताब",
+  "filterBy_other": "{{label}} द्वारा फ़िल्टर करें, {{count}} किताबें",
+  "bookCardA11y": "{{title}} — {{status}}, लेखक {{author}}",
+  "bookCardUnverifiedA11y": "{{title}} — {{status}}, लेखक {{author}} — असत्यापित",
   "bookCardHint": "विवरण और विकल्प देखने के लिए टैप करें",
+  "moreOptionsA11y": "{{title}} के लिए और विकल्प",
+  "actions": {
+    "viewDetails": "विवरण देखें",
+    "remove": "लाइब्रेरी से हटाएं",
+    "close": "बंद करें"
+  },
+  "rowMeta": "{{status}} · {{year}}",
   "markAs": "{{status}} चिह्नित करें",
   "markAsA11y": "{{status}} के रूप में चिह्नित करें",
   "removeFromList": "सूची से हटाएं",
@@ -27,10 +49,55 @@
   "errorLoadBooks": "पुस्तकें लोड नहीं हो सकीं।",
   "errorUpdateStatus": "स्थिति अपडेट नहीं हो सकी।",
   "errorRemoveBook": "पुस्तक हटाई नहीं जा सकी।",
-  "searchPlaceholder": "अपनी लाइब्रेरी खोजें...",
-  "searchA11y": "अपनी लाइब्रेरी खोजें",
-  "sectionTitle": "मेरी लाइब्रेरी",
-  "bookCount": "आपके संग्रह में {{count}} किताबें।",
-  "heroSubtitle": "आपकी पढ़ाई की दुनिया एक जगह",
-  "archiveSummary": "किताबें दर्ज"
+  "searchPlaceholder": "शीर्षक या लेखक",
+  "searchA11y": "अपनी किताबें खोजें",
+  "searchClearA11y": "खोज साफ़ करें",
+  "screenTitle": "मेरी किताबें",
+  "headerBooks_one": "{{count}} किताब",
+  "headerBooks_other": "{{count}} किताबें",
+  "headerReading_one": "{{count}} अभी पढ़ रहे हैं",
+  "headerReading_other": "{{count}} अभी पढ़ रहे हैं",
+  "headerSubtitle": "{{books}} · {{reading}}",
+  "section": {
+    "readingNow": "अभी पढ़ रहे हैं",
+    "allBooks": "सभी किताबें"
+  },
+  "sort": {
+    "sheetTitle": "क्रमबद्ध करें",
+    "buttonA11y": "क्रमबद्ध करें, अभी: {{label}}",
+    "added": "हाल ही में जोड़ी गईं",
+    "title": "शीर्षक अ–ह",
+    "author": "लेखक अ–ह"
+  },
+  "view": {
+    "showGrid": "ग्रिड के रूप में दिखाएँ",
+    "showList": "सूची के रूप में दिखाएँ"
+  },
+  "shelfA11y_one": "अभी पढ़ रहे हैं, {{count}} किताब",
+  "shelfA11y_other": "अभी पढ़ रहे हैं, {{count}} किताबें",
+  "shelfItemA11y": "{{title}}, लेखक {{author}}",
+  "movedToTrash": "ट्रैश में भेज दी गई। आप 30 दिनों के भीतर इसे वापस ला सकते हैं।",
+  "viewTrash": "ट्रैश देखें",
+  "trash": {
+    "title": "ट्रैश",
+    "back": "वापस",
+    "loading": "ट्रैश लोड हो रहा है…",
+    "intro": "हटाई गई किताबें यहाँ 30 दिनों तक रहती हैं, फिर हमेशा के लिए हटा दी जाती हैं।",
+    "emptyTitle": "ट्रैश खाली है",
+    "emptyBody": "आपकी लाइब्रेरी से हटाई गई किताबें यहाँ 30 दिनों तक दिखती हैं। तब तक आप उन्हें वापस ला सकते हैं।",
+    "purgeIn_one": "{{count}} दिन में हमेशा के लिए हटेगी",
+    "purgeIn_other": "{{count}} दिनों में हमेशा के लिए हटेगी",
+    "purgeToday": "आज हमेशा के लिए हटेगी",
+    "rowA11y": "{{title}}, {{author}}। {{when}}",
+    "rowUnverifiedA11y": "{{title}}, {{author}}। {{when}}। असत्यापित",
+    "restore": "वापस लाएँ",
+    "restoreA11y": "{{title}} वापस लाएँ",
+    "restored": "{{title}} आपकी लाइब्रेरी में वापस आ गई।",
+    "restoreConflict": "यह किताब पहले से आपकी लाइब्रेरी में है।",
+    "restoreNotFound": "यह किताब अब ट्रैश में नहीं है।",
+    "restoreFailed": "यह किताब वापस नहीं लाई जा सकी। फिर कोशिश करें।",
+    "errorLoad": "ट्रैश लोड नहीं हो सका।",
+    "retry": "फिर कोशिश करें",
+    "errorRefresh": "ट्रैश रीफ़्रेश नहीं हो सका।"
+  }
 }

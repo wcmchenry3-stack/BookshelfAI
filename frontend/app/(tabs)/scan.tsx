@@ -1,29 +1,36 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Directory, File, Paths } from 'expo-file-system';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { openScanQueue } from '../../lib/scanQueueNav';
-import { Sentry } from '../../lib/sentry';
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
 import { useBanner } from '../../hooks/useBanner';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { useScanCapture } from '../../hooks/useScanCapture';
+import { useScanProgress } from '../../hooks/useScanProgress';
 import { isScanningLimited } from '../../lib/scanErrors';
 import { isAwaitingRetry } from '../../lib/scanJob';
-import { ScanStatusPanel } from '../../components/ScanStatusPanel';
+import { ScanModeToggle, type InputMode } from '../../components/scan/ScanModeToggle';
+import { ScanProgressPanel } from '../../components/scan/ScanProgressPanel';
+import { fontFor } from '../../theme/typography';
 
-type InputMode = 'camera' | 'search';
 type CameraFacing = 'back' | 'front';
+
+// Space between the status bar / notch and the mode toggle over the camera (the
+// root header is gone, so the screen owns the top safe area, #936).
+const CAMERA_TOP_GAP = 16;
 
 export default function ScanScreen() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t } = useTranslation('scan');
-  // Gold tertiary in dark mode, primary in light mode — active/CTA accent.
-  const activeColor = theme.isDark ? theme.colors.tertiary : theme.colors.primary;
-  const onActiveColor = theme.isDark ? theme.colors.onTertiary : theme.colors.onPrimary;
+  // The single accent (primary) in both modes — active/CTA accent (#898).
+  const activeColor = theme.colors.primary;
+  const onActiveColor = theme.colors.onPrimary;
   const {
     jobs,
     startScan,
@@ -57,132 +64,30 @@ export default function ScanScreen() {
   }
   const { showBanner } = useBanner();
   const [permission, requestPermission] = useCameraPermissions();
-  const [inputMode, setInputMode] = useState<InputMode>('camera');
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  // This screen's own navigation object: `setParams` there acts on the Scan route,
+  // not on whichever route happens to be focused.
+  const navigation = useNavigation() as unknown as { setParams: (p: { mode?: string }) => void };
+  const [inputMode, setInputMode] = useState<InputMode>(mode === 'text' ? 'search' : 'camera');
+  // `?mode=text|camera` is a one-shot request (Wishlist's "Search by title" and
+  // "Scan books"). The tab stays mounted, so its last mode would otherwise stick:
+  // set the requested mode once, then clear the param. The clear only sets `mode`
+  // to undefined, which this effect ignores, so it can never undo the mode just set.
+  // Any other value is ignored.
+  useEffect(() => {
+    if (mode !== 'text' && mode !== 'camera') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs the route param (an external navigation event) into the screen's mode once
+    setInputMode(mode === 'text' ? 'search' : 'camera');
+    navigation.setParams({ mode: undefined });
+  }, [mode, navigation]);
   const [query, setQuery] = useState('');
   const [facing, setFacing] = useState<CameraFacing>('back');
-  const [capturing, setCapturing] = useState(false);
-  const cameraRef = useRef<CameraView>(null);
-  const captureSeq = useRef(0);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const webInputRef = useRef<any>(null);
-
-  // Web: file input onChange — receives a File object directly from the browser.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function handleWebFileChange(e: any) {
-    const file: File | undefined = e?.target?.files?.[0];
-    if (!file) return;
-    if (webInputRef.current) webInputRef.current.value = '';
-    if (isQueueFull) {
-      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
-      return;
-    }
-
-    // On web, pass the File object URL. The ScanJobContext handles FormData.
-    let uri: string;
-    try {
-      uri = URL.createObjectURL(file);
-    } catch {
-      uri = file.name;
-    }
-    startScan('image', uri);
-  }
-
-  // Native: camera shutter — take photo, persist to document dir, start background scan.
-  async function handleCapture() {
-    if (!cameraRef.current || capturing) return;
-    // Check before copying to scan-queue/ so a rejected capture leaves no file behind.
-    if (isQueueFull) {
-      showBanner({ message: queueFullMessage(), type: 'error', duration: 4000 });
-      return;
-    }
-    setCapturing(true);
-    Sentry.addBreadcrumb({
-      category: 'scan',
-      message: 'Camera capture started',
-      level: 'info',
-    });
-    // Track which pipeline stage is executing so the catch block can tag the
-    // failure precisely. Each silent failure previously looked identical in Sentry.
-    let stage: 'take_picture' | 'dir_create' | 'file_copy' | 'start_scan' = 'take_picture';
-    try {
-      // Wrap takePictureAsync in a 10s timeout — without this, a hung native
-      // promise makes the whole flow silently stall with no Sentry signal.
-      const photo = await Promise.race([
-        cameraRef.current.takePictureAsync({
-          quality: 0.7,
-          base64: false,
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('takePictureAsync timeout after 10s')), 10000)
-        ),
-      ]);
-      if (!photo?.uri) {
-        Sentry.addBreadcrumb({
-          category: 'scan',
-          message: 'takePictureAsync returned no URI',
-          level: 'warning',
-        });
-        return;
-      }
-
-      // Heal corruption from the pre-#174 bug: if an earlier version of the app
-      // wrote a File (not a Directory) at the scan-queue path, delete it so the
-      // Directory.create() call below doesn't collide with it.
-      stage = 'dir_create';
-      try {
-        const stalePath = new File(Paths.document, 'scan-queue');
-        if (stalePath.exists) {
-          stalePath.delete();
-          Sentry.addBreadcrumb({
-            category: 'scan',
-            message: 'Removed stale scan-queue file from pre-#174 state',
-            level: 'info',
-          });
-        }
-      } catch {
-        // Best-effort cleanup — if this throws we'll still attempt create() below
-        // and surface that failure to the user.
-      }
-
-      // Copy temp file to persistent document directory. idempotent: true means
-      // create() is a no-op when the directory already exists (expo-file-system
-      // otherwise throws). intermediates: true guards first-launch edge cases.
-      const destDir = new Directory(Paths.document, 'scan-queue');
-      destDir.create({ intermediates: true, idempotent: true });
-
-      stage = 'file_copy';
-      // Sequence counter prevents filename collisions if two captures land in
-      // the same millisecond (double-tap race).
-      const seq = captureSeq.current++;
-      const destFile = new File(destDir, `${Date.now()}-${seq}.jpg`);
-      const sourceFile = new File(photo.uri);
-      sourceFile.copy(destFile);
-
-      stage = 'start_scan';
-      Sentry.addBreadcrumb({
-        category: 'scan',
-        message: 'Photo saved, starting scan',
-        level: 'info',
-        data: { destUri: destFile.uri },
-      });
-      startScan('image', destFile.uri);
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { feature: 'camera-capture', stage },
-        extra: { facing },
-      });
-      // Give the user visible feedback instead of just logging to Sentry. The
-      // original bug shipped precisely because this catch was silent.
-      showBanner({
-        message: t('scanFailedMessage'),
-        type: 'error',
-        actions: [{ label: t('retryNow'), onPress: () => handleCapture() }],
-        duration: 8000,
-      });
-    } finally {
-      setCapturing(false);
-    }
-  }
+  const { cameraRef, webInputRef, capturing, handleCapture, handleWebFileChange } = useScanCapture({
+    startScan,
+    isQueueFull,
+    queueFullMessage,
+    facing,
+  });
 
   function handleSearch() {
     const q = query.trim();
@@ -195,89 +100,30 @@ export default function ScanScreen() {
     setQuery('');
   }
 
-  const modeToggle = (
-    <View style={[styles.modeToggle, { backgroundColor: theme.colors.surfaceContainerLow }]}>
-      <Pressable
-        style={[styles.modeTab, inputMode === 'camera' && { backgroundColor: activeColor }]}
-        onPress={() => setInputMode('camera')}
-        accessibilityRole="button"
-        accessibilityLabel={t('cameraModeLabel')}
-        accessibilityState={{ selected: inputMode === 'camera' }}
-      >
-        <Text
-          style={[
-            styles.modeTabText,
-            { color: inputMode === 'camera' ? onActiveColor : theme.colors.secondary },
-          ]}
-        >
-          {t('cameraTab')}
-        </Text>
-      </Pressable>
-      <Pressable
-        style={[styles.modeTab, inputMode === 'search' && { backgroundColor: activeColor }]}
-        onPress={() => setInputMode('search')}
-        accessibilityRole="button"
-        accessibilityLabel={t('searchModeLabel')}
-        accessibilityState={{ selected: inputMode === 'search' }}
-      >
-        <Text
-          style={[
-            styles.modeTabText,
-            { color: inputMode === 'search' ? onActiveColor : theme.colors.secondary },
-          ]}
-        >
-          {t('searchTab')}
-        </Text>
-      </Pressable>
-    </View>
+  const allJobs = jobs ?? [];
+  const { waitingCount, failedCount, inProgress, progressText } = useScanProgress(
+    allJobs,
+    pendingCount,
+    capturing
   );
 
-  const failedCount = (jobs ?? []).filter((j) => j.status === 'failed').length;
-  const pendingBadge =
-    pendingCount > 0 ? (
-      <View
-        style={[styles.pendingBadge, { backgroundColor: theme.colors.surfaceContainerHighest }]}
-        accessibilityRole="text"
-        accessibilityLiveRegion="polite"
-      >
-        <Text style={[styles.pendingBadgeText, { color: theme.colors.onSurface }]}>
-          {t('pendingUploads', { count: pendingCount })}
-        </Text>
-        <Pressable
-          onPress={openScanQueue}
-          style={styles.sendNow}
-          accessibilityRole="button"
-          accessibilityLabel={t('viewQueue')}
-        >
-          <Text style={[styles.sendNowText, { color: activeColor }]}>{t('viewQueue')}</Text>
-        </Pressable>
-        {isConnected ? (
-          <Pressable
-            onPress={handleRetryNotice}
-            style={styles.sendNow}
-            accessibilityRole="button"
-            accessibilityLabel={t('sendPendingNow')}
-          >
-            <Text style={[styles.sendNowText, { color: activeColor }]}>{t('sendPendingNow')}</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    ) : failedCount > 0 ? (
-      // Only failed scans are left: still a way into the queue (#605).
-      <Pressable
-        onPress={openScanQueue}
-        style={[styles.sendNow, styles.failedLink]}
-        accessibilityRole="button"
-        accessibilityLabel={t('viewQueueFailed', { count: failedCount })}
-      >
-        <Text style={[styles.sendNowText, { color: activeColor }]}>
-          {t('viewQueueFailed', { count: failedCount })}
-        </Text>
-      </Pressable>
-    ) : null;
-
-  const statusPanel = (
-    <ScanStatusPanel
+  const modeToggle = (
+    <ScanModeToggle
+      inputMode={inputMode}
+      onChange={setInputMode}
+      activeColor={activeColor}
+      onActiveColor={onActiveColor}
+    />
+  );
+  const progressPanel = (
+    <ScanProgressPanel
+      waitingCount={waitingCount}
+      failedCount={failedCount}
+      inProgress={inProgress}
+      progressText={progressText}
+      isConnected={isConnected}
+      activeColor={activeColor}
+      onSendPending={handleRetryNotice}
       usage={usage}
       notice={scanNotice ?? null}
       onDismissNotice={dismissScanNotice ?? (() => {})}
@@ -292,16 +138,21 @@ export default function ScanScreen() {
   // ── Search mode ──────────────────────────────────────────────────────────
   if (inputMode === 'search') {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
-        {pendingBadge}
-        {statusPanel}
+        {progressPanel}
         <View style={styles.searchContainer}>
           <TextInput
             style={[
               styles.searchInput,
               {
                 backgroundColor: theme.colors.surfaceContainerHighest,
+                borderColor: theme.colors.outlineField,
                 color: theme.colors.onSurface,
                 fontSize: theme.typography.fontSizeBase,
               },
@@ -333,8 +184,10 @@ export default function ScanScreen() {
   if (Platform.OS === 'web') {
     return (
       <>
+        {/* Raw DOM element: react-native-web only maps testID on its own
+            components, so a DOM <input> needs the data-testid attribute. */}
         {React.createElement('input', {
-          testID: 'web-file-input',
+          'data-testid': 'web-file-input',
           ref: webInputRef,
           type: 'file',
           accept: 'image/*',
@@ -342,10 +195,14 @@ export default function ScanScreen() {
           style: { display: 'none' },
           onChange: handleWebFileChange,
         })}
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <View
+          style={[
+            styles.container,
+            { backgroundColor: theme.colors.background, paddingTop: insets.top },
+          ]}
+        >
           {modeToggle}
-          {pendingBadge}
-          {statusPanel}
+          {progressPanel}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
             onPress={() => webInputRef.current?.click()}
@@ -365,7 +222,12 @@ export default function ScanScreen() {
   // ── Native camera mode — permission checks ────────────────────────────────
   if (!permission) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
       </View>
     );
@@ -373,7 +235,12 @@ export default function ScanScreen() {
 
   if (!permission.granted) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: theme.colors.background, paddingTop: insets.top },
+        ]}
+      >
         {modeToggle}
         <Text
           style={[
@@ -409,12 +276,14 @@ export default function ScanScreen() {
       {/* box-none: overlay itself doesn't intercept touches, but its Pressable
           children still receive them. Without this, iOS was swallowing the
           shutter press on top of the CameraView. */}
-      <View style={styles.overlay} pointerEvents="box-none">
+      <View
+        style={[styles.overlay, { paddingTop: insets.top + CAMERA_TOP_GAP }]}
+        pointerEvents="box-none"
+      >
         {/* Grouped so the badge appearing doesn't shift the space-between layout. */}
         <View style={styles.topGroup}>
           {modeToggle}
-          {pendingBadge}
-          {statusPanel}
+          {progressPanel}
         </View>
 
         {/* Viewfinder: corner-bracket markers + scanning line */}
@@ -477,41 +346,9 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 60,
-  },
-  modeToggle: {
-    flexDirection: 'row',
-    borderRadius: 12,
-    overflow: 'hidden',
-    margin: 16,
-    padding: 4,
-  },
-  modeTab: {
-    paddingHorizontal: 24,
-    paddingVertical: 8,
-    borderRadius: 10,
-    minHeight: 44,
-    justifyContent: 'center',
+    paddingBottom: 60,
   },
   topGroup: { alignItems: 'center' },
-  pendingBadge: {
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginBottom: 8,
-    alignItems: 'center',
-  },
-  sendNow: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
-  failedLink: { alignSelf: 'center', marginBottom: 8 },
-  sendNowText: { fontWeight: '600', fontSize: 13 },
-  pendingBadgeText: {
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  modeTabText: {
-    fontWeight: '600',
-    fontSize: 14,
-  },
   // Viewfinder frame area — contains corner brackets and scan line.
   frameWrapper: {
     width: 240,
@@ -570,7 +407,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   flipButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 12,
   },
   captureButton: {
@@ -596,7 +433,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   webCaptureButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 18,
   },
   searchContainer: {
@@ -619,7 +456,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   searchButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
     fontSize: 16,
   },
   permissionText: {
@@ -635,6 +472,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   permissionButtonText: {
-    fontWeight: '600',
+    fontFamily: fontFor('600'),
   },
 });

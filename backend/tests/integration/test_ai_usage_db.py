@@ -358,16 +358,24 @@ class TestSingleCommitSettle:
         factory, make_user, _ = sessions
         user_id = await make_user()
 
+        # Cancel from inside the provider call, not on a wall-clock deadline
+        # that can fire before the reservation on a slow runner. 30s is only
+        # a hang guard.
+        reached = []
+
         async def hung(_image):
+            reached.append(True)
+            scope.cancel()
             await anyio.sleep(10)
 
         cls = MagicMock()
         cls.return_value.identify = hung
         with (
             patch("app.ai.gateway.OpenAIVisionProvider", cls),
-            anyio.move_on_after(0.5) as scope,
+            anyio.move_on_after(30) as scope,
         ):
             await _call_scan(factory, user_id)
+        assert reached == [True]
         assert scope.cancelled_caught
         (row,) = await _rows(factory, user_id=user_id)
         assert (row.status, row.input_tokens, row.cost_micros) == ("error", 0, 0)

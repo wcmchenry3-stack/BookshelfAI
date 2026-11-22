@@ -3,8 +3,10 @@
 Prod (`bookshelf-api`, `bookshelf-web`, branch `main`) must never reference a
 Render-managed database — production data lives in Supabase, configured only
 through dashboard secrets (`sync: false`). Dev (`bookshelf-api-dev`,
-`bookshelf-web-dev`, branch `dev`) keeps using the Render Postgres
-`bookshelf-db`, and runs with `ENVIRONMENT=staging` (not `development`) so it
+`bookshelf-web-dev`, branch `dev`) uses the Supabase `dev` branch, also
+through dashboard secrets (#696: the app connects as the DML-only
+`bookshelf_app` role, which a Render `fromDatabase` owner URL cannot be), and
+runs with `ENVIRONMENT=staging` (not `development`) so it
 exercises the same hardened code path as prod (`Settings.is_hardened`, #448).
 These tests also guard against secret-shaped env vars carrying a literal
 `value` and against literal Postgres connection strings anywhere in the file.
@@ -119,17 +121,28 @@ def test_dev_api_environment_is_staging():
     assert value == "staging"
 
 
-def test_dev_api_database_url_comes_from_render_database():
+def test_dev_api_database_urls_are_dashboard_secrets():
+    """#696: dev runs as bookshelf_app on the Supabase `dev` branch, so both
+    DATABASE_URL (app role) and MIGRATION_DATABASE_URL (owner) are set in the
+    dashboard, never from the legacy Render `bookshelf-db`."""
     config = _load_render_yaml()
     dev_api = _service(config, "bookshelf-api-dev")
-    database_url = _env_var(dev_api, "DATABASE_URL")
-    assert database_url["fromDatabase"]["name"] == "bookshelf-db"
+    for key in ("DATABASE_URL", "MIGRATION_DATABASE_URL"):
+        assert _env_var(dev_api, key) == {"key": key, "sync": False}
 
 
 def test_dev_api_deploys_from_dev_branch():
     config = _load_render_yaml()
     dev_api = _service(config, "bookshelf-api-dev")
     assert dev_api["branch"] == "dev"
+
+
+def test_dev_api_auto_deploy_is_off():
+    """#696: the role rollout (docs/RENDER.md) relies on migration 0028 not
+    running on merge to dev, before the role exists on the dev branch."""
+    config = _load_render_yaml()
+    dev_api = _service(config, "bookshelf-api-dev")
+    assert dev_api["autoDeploy"] is False
 
 
 # --- Prod web (bookshelf-web) ------------------------------------------------
@@ -191,6 +204,38 @@ def test_web_csp_does_not_allow_retired_feedback_worker(service_name):
         _service(_load_render_yaml(), service_name), "Content-Security-Policy"
     )
     assert "workers.dev" not in csp
+
+
+def _csp_directive(csp: str, name: str) -> list[str]:
+    for part in csp.split(";"):
+        tokens = part.split()
+        if tokens and tokens[0] == name:
+            return tokens[1:]
+    return []
+
+
+@pytest.mark.parametrize("service_name", ["bookshelf-web", "bookshelf-web-dev"])
+def test_web_csp_allows_turnstile_script_and_frame(service_name):
+    # #740: the web app loads Cloudflare Turnstile's script, which renders its
+    # challenge in an iframe from the same origin. Nothing broader is allowed.
+    csp = _header_value(
+        _service(_load_render_yaml(), service_name), "Content-Security-Policy"
+    )
+    assert _csp_directive(csp, "script-src") == [
+        "'self'",
+        "https://challenges.cloudflare.com",
+    ]
+    assert _csp_directive(csp, "frame-src") == ["https://challenges.cloudflare.com"]
+
+
+@pytest.mark.parametrize("service_name", ["bookshelf-web", "bookshelf-web-dev"])
+def test_web_turnstile_site_key_is_set_in_the_dashboard(service_name):
+    # #740: declared for the web build, value set by the owner in Render.
+    env_var = _env_var(
+        _service(_load_render_yaml(), service_name), "EXPO_PUBLIC_TURNSTILE_SITE_KEY"
+    )
+    assert env_var.get("sync") is False
+    assert "value" not in env_var
 
 
 # --- Secret-leak guards -------------------------------------------------------

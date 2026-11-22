@@ -366,6 +366,18 @@ class TestRateLimitEnforcement:
             response = client.get("/health/db")
         assert response.status_code == 429
 
+    def test_health_endpoint_returns_429_after_limit_head(self) -> None:
+        """HEAD /health is limited (same rate_limit_health bucket as GET);
+        the (limit + 1)th request must be 429."""
+        from app.core.config import settings
+
+        limit = int(settings.rate_limit_health.split("/")[0])
+        client = TestClient(app, raise_server_exceptions=False)
+        for _ in range(limit):
+            client.head("/health")
+        response = client.head("/health")
+        assert response.status_code == 429
+
 
 # ---------------------------------------------------------------------------
 # A01/A07 — Authentication bypass attempts
@@ -460,6 +472,7 @@ class TestInputLengthLimits:
             )
 
     def test_wishlist_cover_url_at_limit_accepted(self) -> None:
+        # No DNS lookup (#747/#778): passes offline.
         url = "https://x.com/" + "a" * (2048 - len("https://x.com/"))
         req = WishlistRequest(title="Title", author="Author", cover_url=url)
         assert req.cover_url is not None and len(req.cover_url) == 2048

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useTheme } from '../hooks/useTheme';
 import type { ScanUsage } from '../hooks/useScanUsage';
 import { scanNoticeMessage, type ScanNotice } from '../lib/scanErrors';
+import { fontFor } from '../theme/typography';
 
 /** Scans left today: the found counter (#577; there is no monthly
  * allowance, #582); never negative. Falls back to `used_today` /
@@ -116,10 +117,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  noticeText: { fontSize: 14, fontWeight: '500', textAlign: 'center' },
+  noticeText: { fontSize: 14, fontFamily: fontFor('500'), textAlign: 'center' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 16 },
   dismiss: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
-  dismissText: { fontSize: 14, fontWeight: '600' },
-  usageText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
-  usageSubText: { fontSize: 12, fontWeight: '500', textAlign: 'center', marginTop: 2 },
+  dismissText: { fontSize: 14, fontFamily: fontFor('600') },
+  usageText: { fontSize: 13, fontFamily: fontFor('600'), textAlign: 'center' },
+  usageSubText: { fontSize: 12, fontFamily: fontFor('500'), textAlign: 'center', marginTop: 2 },
 });

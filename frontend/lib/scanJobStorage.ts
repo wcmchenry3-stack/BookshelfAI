@@ -5,7 +5,7 @@ import type { ScanJob } from './scanJob';
 
 const STORAGE_KEY = 'scan_job_queue';
 // Directory under Paths.document where captures are persisted (see scan.tsx).
-export const SCAN_QUEUE_DIR = 'scan-queue';
+const SCAN_QUEUE_DIR = 'scan-queue';
 
 // Web: in-memory only (no offline persistence needed).
 const _webStore = new Map<string, string>();
@@ -56,7 +56,7 @@ export async function loadJobs(): Promise<ScanJob[] | null> {
 
 export async function clearJobs(): Promise<void> {
   const storage = await getStorage();
-  storage.removeItem(STORAGE_KEY);
+  await storage.removeItem(STORAGE_KEY);
 }
 
 function fileNameOf(uri: string): string {

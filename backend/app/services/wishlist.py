@@ -15,9 +15,10 @@ provider data the server itself produced (#602):
   (and an existing Edition of that Book), else it is refused with
   :class:`CatalogTokenInvalidError` (422 ``catalog_token_invalid``).
 
-A library holds one entry per title (``uq_user_books_user_book``), so a book
-the user already has is refused with :class:`AlreadyOwnedError` (409, #587)
-and no row is created or changed: the same edition (the same ISBN-13, an
+A library holds one live entry per title (``uq_user_books_user_book_live``;
+an entry in the trash does not count, so a trashed book can be added again
+as a new entry, #683), so a book the user already has is refused with
+:class:`AlreadyOwnedError` (409, #587) and no row is created or changed: the same edition (the same ISBN-13, an
 ISBN-10 normalised, or the same ``edition_id``) is ``owned_same_edition``,
 another edition of the work ``owned_other_edition``, and a match where one
 side has no ISBN ``owned_edition_unknown``. The work matches on the resolved
@@ -51,6 +52,7 @@ from app.models.edition import Edition
 from app.models.user_book import UserBook
 from app.schemas.book import NOT_OWNED, Ownership
 from app.schemas.user_book import WishlistRequest
+from app.services import catalog
 from app.services.deduplication import (
     candidate_key,
     held_entries,
@@ -142,6 +144,10 @@ class WishlistService:
             description=req.description,
             cover_url=req.cover_url,
             subjects=req.subjects or [],
+            # Provenance (#682): signed provider data, fetched by the server
+            # for the scan or search this token came from.
+            source=catalog.source_of(req.open_library_work_id, req.google_books_id),
+            fetched_at=datetime.now(UTC),
         )
         try:
             async with db.begin_nested():
@@ -159,7 +165,16 @@ class WishlistService:
 
     async def _find_book(self, db: AsyncSession, req: WishlistRequest) -> Book | None:
         """The Book with ``req``'s Open Library work ID, else its Google
-        Books ID, else None."""
+        Books ID, else None. A merged row is redirected to the row it was
+        merged into (#682): no new library entry targets a merged row."""
+        book = await self._find_book_row(db, req)
+        if book is None:
+            return None
+        return await catalog.resolve_survivor(db, book)
+
+    async def _find_book_row(
+        self, db: AsyncSession, req: WishlistRequest
+    ) -> Book | None:
         if req.open_library_work_id:
             result = await db.execute(
                 select(Book).where(
@@ -253,7 +268,7 @@ class WishlistService:
         Library work or Google Books volume (the scan's library check, so the
         409 matches what the scan showed), or holding this edition (``isbn``,
         normalised ISBN-13, whatever book it belongs to). One query; a
-        concurrent add of the same book (``uq_user_books_user_book``) is
+        concurrent add of the same book (``uq_user_books_user_book_live``) is
         refused the same way."""
         await self._refuse_if_owned(
             db, user_id, book_id, edition_id, isbn, work_id, volume_id

@@ -19,6 +19,7 @@ import pytest
 
 from app.ai import quota, scan_records
 from app.ai.entitlements import Tier
+from app.api import _bot_check as bot_check_api
 from app.api import scan as scan_api
 from app.core.config import settings
 from tests.limits import _harness as h
@@ -51,7 +52,7 @@ async def test_refused_at_the_limit_before_any_other_work(limits_db, downstream)
         h.as_tier(Tier.FREE),
         provider.patch(),
         patch.object(settings, "turnstile_required", True),
-        patch.object(scan_api, "_verify_turnstile", turnstile),
+        patch.object(bot_check_api, "_verify_turnstile", turnstile),
         patch.object(scan_api, "sanitize_image", sanitize),
         patch.object(scan_records, "fingerprint", fingerprint),
         patch.object(scan_records, "lookup", lookup),

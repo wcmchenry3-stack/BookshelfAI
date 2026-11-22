@@ -21,6 +21,12 @@
  *                                 reply (#572); refunded server-side. The
  *                                 only retryable outcome: the app retries the
  *                                 photo on SCAN_RETRY_DELAYS_MS.)
+ *   400 "Missing Turnstile token"      -> unavailable (code turnstile_missing)
+ *   403 "Turnstile verification failed" -> unavailable (code turnstile_failed)
+ *                                 (#740: the bot check, when the server has
+ *                                 TURNSTILE_REQUIRED=true. Retried on the same
+ *                                 schedule and caps; every attempt fetches a
+ *                                 fresh token.)
  *   anything else              -> generic
  *
  * There is no monthly limit (#582): the server no longer sends 402
@@ -38,7 +44,11 @@ export type ScanUiState =
   | { kind: 'requests_daily_limit'; retryAfterSeconds?: number }
   | { kind: 'in_progress'; retryAfterSeconds: number }
   | { kind: 'paused'; enhancedOnly?: boolean }
-  /** Retryable (#604): the provider was unavailable; `code` is the server's detail. */
+  /**
+   * Retryable (#604): the provider was unavailable (`code` is the server's
+   * detail), or the Turnstile check failed (#740: `turnstile_missing` /
+   * `turnstile_failed`, see TURNSTILE_REFUSALS).
+   */
   | { kind: 'unavailable'; code: string }
   | {
       kind: 'enhanced_refused';
@@ -95,12 +105,12 @@ export function hasRefusedJobs(jobs: readonly { status: string; error?: string }
 /** Silent retries for 429 scan_in_progress before showing "Still processing". */
 export const MAX_IN_PROGRESS_RETRIES = 3;
 /** Used when Retry-After is missing or unusable. */
-export const DEFAULT_IN_PROGRESS_RETRY_SECONDS = 2;
+const DEFAULT_IN_PROGRESS_RETRY_SECONDS = 2;
 /** Cap so a bad header can't stall the job for long. */
-export const MAX_IN_PROGRESS_RETRY_SECONDS = 10;
+const MAX_IN_PROGRESS_RETRY_SECONDS = 10;
 
 /** Backend 503 `detail` codes that all mean "scanning is off right now". */
-export const PAUSED_CODES: readonly string[] = [
+const PAUSED_CODES: readonly string[] = [
   'scan_disabled',
   'enhanced_scan_disabled',
   'scan_capacity',
@@ -117,7 +127,27 @@ export const PAUSED_CODES: readonly string[] = [
  * only outcomes the app retries on its schedule. Kill switches, the AI budget
  * and capacity stay `paused` (not retried).
  */
-export const RETRYABLE_CODES: readonly string[] = ['scan_unavailable'];
+const RETRYABLE_CODES: readonly string[] = ['scan_unavailable'];
+
+/**
+ * The server's Turnstile refusals (#740, backend/app/api/scan.py), by status
+ * and `detail`, with the code the app uses for each. Retryable: the token was
+ * missing (the widget timed out or failed) or rejected (expired, already
+ * used), and the next attempt gets a fresh one.
+ */
+const TURNSTILE_REFUSALS: readonly {
+  status: number;
+  detail: string;
+  code: 'turnstile_missing' | 'turnstile_failed';
+}[] = [
+  { status: 400, detail: 'Missing Turnstile token', code: 'turnstile_missing' },
+  { status: 403, detail: 'Turnstile verification failed', code: 'turnstile_failed' },
+];
+
+/** True for an `unavailable` code that came from the Turnstile check (#740). */
+export function isTurnstileCode(code: string): boolean {
+  return TURNSTILE_REFUSALS.some((r) => r.code === code);
+}
 
 /**
  * The retry schedule for a retryable outcome (#604), counted per photo: the
@@ -192,6 +222,8 @@ export function classifyScanError(err: unknown): ScanUiState {
     }
     return { kind: 'generic' };
   }
+  const turnstile = TURNSTILE_REFUSALS.find((r) => r.status === status && r.detail === detail);
+  if (turnstile) return { kind: 'unavailable', code: turnstile.code };
   if (status === 503 && detail !== undefined && RETRYABLE_CODES.includes(detail)) {
     return { kind: 'unavailable', code: detail };
   }
