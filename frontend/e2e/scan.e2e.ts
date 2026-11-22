@@ -1,4 +1,4 @@
-import { expect, FAKE_URL, KNOWN_VIOLATIONS, SHELF_PHOTO, test } from './support/fixtures';
+import { expect, FAKE_URL, SHELF_PHOTO, test } from './support/fixtures';
 
 // The backend's AI provider is the fake server from e2e/stack/fake_services.py
 // (AI_ANTHROPIC_BASE_URL, scan.standard switched to the Anthropic adapter):
@@ -41,9 +41,7 @@ test.describe('Scan upload', () => {
       name: 'Reading your books and looking up matches…',
     });
     await expect(progress).toBeVisible();
-    await expectNoA11yViolations('scan in progress', {
-      known: [KNOWN_VIOLATIONS.scanSpinnerNoName],
-    });
+    await expectNoA11yViolations('scan in progress');
 
     await expect(page.getByRole('alert')).toContainText('Found 2 books');
     await expect(progress).toHaveCount(0);
@@ -55,9 +53,7 @@ test.describe('Scan upload', () => {
     await expect(
       picker.getByRole('checkbox', { name: 'Select The Great Gatsby by F. Scott Fitzgerald' })
     ).toBeVisible();
-    await expectNoA11yViolations('scan results', {
-      known: [KNOWN_VIOLATIONS.pickerCheckboxMissingAriaChecked],
-    });
+    await expectNoA11yViolations('scan results');
     expect(await backend.providerCalls()).toBe(callsBefore + 1);
   });
 

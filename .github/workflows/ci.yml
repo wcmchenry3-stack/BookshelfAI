@@ -438,7 +438,7 @@ jobs:
           echo "✓ main.jsbundle created successfully (${BUNDLE_SIZE} bytes)"
 
   # --- Phase 6: Android JS bundle validation (Linux, fast) -------------------
-  # Catches silent bundling failures BEFORE they reach EAS Build.
+  # Catches silent bundling failures before they reach the Gradle release build.
   # The Android build check below only compiles in Debug mode (skips bundling),
   # so it cannot detect issues with the JS bundler or entry-point resolution.
 
