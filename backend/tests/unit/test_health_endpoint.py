@@ -16,6 +16,7 @@ def app():
 
 @pytest.mark.asyncio
 async def test_health_ok(app):
+    """GET /health returns 200 with status=ok; never touches the database."""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
