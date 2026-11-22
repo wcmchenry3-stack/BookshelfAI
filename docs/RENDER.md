@@ -332,13 +332,44 @@ steps:
    Supabase setting for a custom threshold, which is why the job exists.
 3. After the first run, confirm the `size-check` job is green.
 
+## Switching scans to Claude (#538)
+
+Which AI provider a scan uses is an `ai_settings` row, not an env var or a
+deploy. Dev (`bookshelf-api-dev`) already runs on Claude. For production
+(`bookshelf-api`):
+
+1. **Key first.** In the dashboard, set `ANTHROPIC_API_KEY` on `bookshelf-api`
+   (`sync: false`; use a production key, never dev's) and redeploy through
+   `deploy.yml` so the process reads it. Without it a switched feature answers
+   `503 scan_unavailable` (the user is refunded).
+2. **Check the current state** from the `bookshelf-api` Render shell:
+   `cd backend && python -m app.ai.settings list`. The "Providers and models"
+   group should show `openai` / `gpt-4o-mini` and `gpt-4o`.
+3. **Switch both tiers.** Each command writes the provider and its registry
+   default model in one transaction (Haiku 5.5 standard, Sonnet 5.5 enhanced,
+   as dated IDs, decided in #547):
+   `python -m app.ai.settings switch scan.standard anthropic --by <you>`, then
+   `python -m app.ai.settings switch scan.enhanced anthropic --by <you>`.
+   Every process picks it up within 30 s (`AI_SETTINGS_CACHE_TTL_SECONDS`).
+4. **Smoke test.** Run one standard scan (and one enhanced scan with a Premium
+   account, if one exists) in the production app. Confirm books come back, no
+   new Sentry errors, and that the newest `ai_usage` (ledger) rows show the
+   Claude model IDs (the ledger records the model, not the provider).
+5. **Rollback** is the same command with `openai`
+   (`python -m app.ai.settings switch scan.standard openai --by <you>`). Keep
+   `OPENAI_API_KEY` set until the OpenAI removal PR merges.
+6. **Soak.** Production stays on Claude for 7 days with no rollback (owner
+   decision on #978). Then the removal PR (#538 part 2) deletes the OpenAI
+   code, and the owner revokes the OpenAI keys and drops the `openai-policy`
+   required check.
+
 ## Secrets policy
 
 Every credential is `sync: false` in `render.yaml` and is pasted directly into
 the Render dashboard by the owner. Secrets never go in this repo, a PR, a
 chat message, or an MCP tool argument (including the Render MCP server —
 paste values by hand in the dashboard UI instead). This applies to the
-Supabase pooler URL, JWT keypair, Google OAuth credentials, the OpenAI key,
+Supabase pooler URL, JWT keypair, Google OAuth credentials, the OpenAI and Anthropic keys,
 Turnstile, and Sentry DSNs.
 
 ## Environment values
