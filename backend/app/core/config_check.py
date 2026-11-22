@@ -97,7 +97,8 @@ def collect_problems() -> list[str]:
 def collect_warnings() -> list[str]:
     """Warn-only findings (never fail the check); empty if settings cannot load."""
     try:
-        from app.core.config import Settings, google_client_id_warnings
+        from app.core.config import Settings
+        from app.core.google_client_ids import google_client_id_warnings
 
         return google_client_id_warnings(Settings())
     except Exception:  # noqa: BLE001 - problems are reported by collect_problems

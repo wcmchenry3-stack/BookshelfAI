@@ -317,7 +317,7 @@ class TestGoogleClientIdWarnings:
         return Settings.model_construct(**{**base, **kw})
 
     def test_hardened_one_blank_slot_gives_one_warning_naming_it(self):
-        from app.core.config import google_client_id_warnings
+        from app.core.google_client_ids import google_client_id_warnings
 
         out = google_client_id_warnings(self._cfg(google_ios_client_id=""))
         assert len(out) == 1
@@ -325,12 +325,12 @@ class TestGoogleClientIdWarnings:
         assert "secret-id" not in out[0]
 
     def test_all_set_gives_nothing(self):
-        from app.core.config import google_client_id_warnings
+        from app.core.google_client_ids import google_client_id_warnings
 
         assert google_client_id_warnings(self._cfg()) == []
 
     def test_development_gives_nothing(self):
-        from app.core.config import google_client_id_warnings
+        from app.core.google_client_ids import google_client_id_warnings
 
         cfg = self._cfg(environment="development", google_client_id="")
         assert google_client_id_warnings(cfg) == []

@@ -29,12 +29,9 @@ from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
 from app.api.users import router as users_router
 from app.core import catalog_token
-from app.core.config import (
-    check_turnstile_configured,
-    google_client_id_warnings,
-    settings,
-)
+from app.core.config import check_turnstile_configured, settings
 from app.core.database import AsyncSessionLocal, log_db_role
+from app.core.google_client_ids import google_client_id_warnings
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
 from app.core.origin_auth import OriginAuthMiddleware
