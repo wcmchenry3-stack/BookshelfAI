@@ -2,6 +2,8 @@
 
 This file is for picking up the work on Mac after the initial commits were made on Windows.
 
+Before submitting, check [`../store-compliance.md`](../store-compliance.md): it lists the open App Store and Play Store compliance gaps (account deletion, Sign in with Apple, privacy manifest, privacy label answers).
+
 ## What's already done (committed on Windows)
 - `frontend/app.json` — bundle ID changed to `com.buffingchi.bookshelf`, buildNumber, ITSAppUsesNonExemptEncryption, privacyManifests
 - `docs/privacy.html` — privacy policy page (email filled in)
