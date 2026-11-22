@@ -11,7 +11,7 @@
 # check before spending a build on it. Called by ci_post_clone.sh before any install.
 #
 # Usage: check_xcode_compat.sh <path to frontend/package-lock.json>
-# Env:   CI_WORKFLOW, CI_BRANCH, CI_PULL_REQUEST_TARGET_BRANCH (set by Xcode Cloud) are logged
+# Env:   CI_WORKFLOW, CI_BRANCH, CI_TAG, CI_PULL_REQUEST_TARGET_BRANCH (set by Xcode Cloud) are logged
 #        first, so a failure shows which workflow and branch it came from (#987).
 #        ALLOW_UNSUPPORTED_XCODE=1 skips the check (e.g. to try an Expo upgrade on Xcode 27).
 #        XCODE_VERSION_OVERRIDE / JSI_VERSION_OVERRIDE are for tests only.
@@ -21,7 +21,7 @@ set -eu
 
 # Logged before anything can fail: the Xcode Cloud log otherwise doesn't say which
 # workflow or branch a build came from (build 159, #987).
-echo "INFO: workflow ${CI_WORKFLOW:-unknown}, branch ${CI_BRANCH:-unknown}, PR target ${CI_PULL_REQUEST_TARGET_BRANCH:-none}"
+echo "INFO: workflow ${CI_WORKFLOW:-unknown}, branch ${CI_BRANCH:-unknown}, tag ${CI_TAG:-none}, PR target ${CI_PULL_REQUEST_TARGET_BRANCH:-none}"
 
 MIN_JSI_FOR_XCODE_27="58.0.12"
 
