@@ -36,8 +36,10 @@ UNKNOWN_AUTHOR = "Unknown"
 
 
 # Each candidate fires one Open Library and one Google Books request, and at
-# most one more of each (#743): a title search when that provider's ISBN
-# lookup found nothing or another book. A shelf photo can yield 15
+# most two more of each: a title search when that provider's ISBN lookup
+# found nothing or another book (#743), and, for a reading with a subtitle
+# whose title search answered with nothing that fits, one more search by the
+# main title alone (#1003). A shelf photo can yield 15
 # candidates, so cap how many are in flight at once.
 MAX_CONCURRENT_ENRICHMENTS = 5
 # How many records one title search considers (#743).
@@ -45,14 +47,15 @@ TITLE_SEARCH_RESULTS = 5
 # Time limits (#743 review): one provider request may take at most
 # PROVIDER_CALL_TIMEOUT_S (the HTTP client's own 10 s applies per phase, so
 # a request could otherwise run longer). Each provider's ISBN lookup and
-# title search run in sequence, and the two providers' chains concurrently,
-# so a candidate takes at most 2 sequential requests' time: 2 x L for a
-# per-request latency L, at most 16 s. Candidates run in
-# waves = ceil(scan_max_books / MAX_CONCURRENT_ENRICHMENTS), 3 for 15, so a
-# whole scan takes up to waves x 2 x L when every candidate needs its title
-# search (waves x L when its ISBN record fits or it has no ISBN). That is
-# within ENRICHMENT_DEADLINE_S for L up to about 3.3 s (6.6 s when one
-# request per provider is enough), not for every candidate at the timeout.
+# title search (and the subtitle fallback) run in sequence, and the two
+# providers' chains concurrently, so a candidate takes at most 3 sequential
+# requests' time: 3 x L for a per-request latency L, at most 24 s. Candidates
+# run in waves = ceil(scan_max_books / MAX_CONCURRENT_ENRICHMENTS), 3 for 15,
+# so a whole scan takes up to waves x 3 x L when every candidate needs all
+# three (waves x 2 x L without the fallback, waves x L when its ISBN record
+# fits or it has no ISBN). That is within ENRICHMENT_DEADLINE_S for L up to
+# about 2.2 s (3.3 s without the fallback, 6.6 s when one request per
+# provider is enough), not for every candidate at the timeout.
 # The whole ``enrich`` call therefore stops at ENRICHMENT_DEADLINE_S:
 # candidates still running then come back as their unsigned reading and the
 # enrichment counts as incomplete. With the vision call's 45 s
@@ -229,9 +232,12 @@ class EnrichmentService:
         provider is searched by title and author surname
         (``TITLE_SEARCH_RESULTS`` records, the best fitting one kept). A
         reading without a title is never searched by title, and a lookup
-        that raised is not retried. So a candidate costs at most two
-        requests per provider, four in all, and takes at most two sequential
-        requests' time."""
+        that raised is not retried. When the reading has a subtitle and the
+        title search answered with nothing that fits, the provider is
+        searched once more by the main title alone (#1003; providers often
+        keep the subtitle in a separate field). So a candidate costs at most
+        three requests per provider, six in all, and takes at most three
+        sequential requests' time."""
         isbn_13 = candidate.isbn_13
         if isbn_13 and not valid_isbn_13(isbn_13):
             logger.info("enrichment: ISBN check digit invalid; not looked up")
@@ -329,6 +335,22 @@ class EnrichmentService:
         # The service already picked the best record; check it again here,
         # so nothing that does not fit the reading is ever used.
         best = found if isinstance(found, dict) and score(found) > 0 else None
+        main_title, subtitle = _split_title(candidate.title)
+        if best is None and subtitle and found is not _FAILED:
+            # The search answered but nothing fitted (#1003): a provider that
+            # keeps the subtitle in its own field often misses the full
+            # title. Search once more by the main title; the scorer still
+            # decides. A failed lookup is not retried.
+            found = await _lookup(
+                provider.search(
+                    main_title,
+                    reading_surname(candidate),
+                    limit=TITLE_SEARCH_RESULTS,
+                    score=score,
+                ),
+                source,
+            )
+            best = found if isinstance(found, dict) and score(found) > 0 else None
         if weak is None or best is None:
             return weak if best is None else best
         if score(weak) != score(best):
