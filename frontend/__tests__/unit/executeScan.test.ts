@@ -492,6 +492,22 @@ describe('executeScan', () => {
       expect(deps.showBanner).not.toHaveBeenCalled();
     });
 
+    it('web: aborting during the photo read sends nothing and shows no error', async () => {
+      setOS('web');
+      const deps = makeDeps();
+      global.fetch = jest.fn(async () => {
+        deps.abortersRef.current.forEach((c) => c.abort());
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }) as unknown as typeof fetch;
+      await executeScan(deps, makeJob({ imageUri: 'blob:http://localhost/x' }));
+      expect(post).not.toHaveBeenCalled();
+      expect(deps.updateJob).not.toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'failed' })
+      );
+      expect(deps.showBanner).not.toHaveBeenCalled();
+    });
+
     it('web: the blob read is given the abort signal', async () => {
       setOS('web');
       const fetchMock = jest.fn(async () => ({ ok: true, blob: async () => new Blob(['x']) }));
