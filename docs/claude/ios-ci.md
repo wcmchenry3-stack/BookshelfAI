@@ -145,7 +145,12 @@ the whole `git diff` afterwards and restore anything prebuild removed:
 | The `fmt` consteval patch at the end of the Podfile `post_install` | Hand-kept (not owned by a plugin); restore it. It is a no-op when the `fmt` header does not match |
 
 `PrivacyInfo.xcprivacy` is generated from `app.json` `ios.privacyManifests`, so
-change the API reasons there, not in the file.
+change the API reasons and the collected data types there, not in the file, then
+regenerate it. A Linux prebuild writes the plist with 2-space indentation; re-indent it
+with tabs like the committed file so the diff shows only the real change.
+`__tests__/unit/IosPrivacyManifest.test.ts` fails if the two differ (#1001); the
+declared types and their store answers are listed in
+`docs/claude/ios-appstore-submission.md` (App Privacy declarations).
 
 ## JS bundle validation (GitHub Actions)
 
