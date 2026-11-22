@@ -4,8 +4,7 @@ import { Sentry } from '../lib/sentry';
 
 import '../src/i18n/i18n';
 
-import { StyleSheet, View } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
 import { NotoSerif_600SemiBold, NotoSerif_700Bold } from '@expo-google-fonts/noto-serif';
@@ -19,6 +18,7 @@ import {
 import { AddUnverifiedBookSheet } from '../components/AddUnverifiedBookSheet';
 import { BookCandidatePicker } from '../components/BookCandidatePicker';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { GestureRoot } from '../components/GestureRoot';
 import { InAppBanner } from '../components/InAppBanner';
 import { AuthProvider } from '../contexts/AuthContext';
 import { BannerProvider } from '../contexts/BannerContext';
@@ -151,10 +151,10 @@ function RootLayout() {
     return <View />;
   }
 
-  // react-native-gesture-handler needs one GestureHandlerRootView at the root of
-  // the tree (#901). No gestures are attached yet.
+  // One gesture-handler root for the whole tree (#901; a plain View on web).
+  // No gestures are attached yet.
   return (
-    <GestureHandlerRootView style={styles.root} testID="gesture-root">
+    <GestureRoot testID="gesture-root">
       <ErrorBoundary>
         <ThemeProvider>
           <BannerProvider>
@@ -173,12 +173,8 @@ function RootLayout() {
           </BannerProvider>
         </ThemeProvider>
       </ErrorBoundary>
-    </GestureHandlerRootView>
+    </GestureRoot>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-});
 
 export default Sentry.wrap(RootLayout);

@@ -153,7 +153,11 @@ expo-haptics, Reanimated, Worklets, gesture-handler) the only kept change was
 `expo-image.disable-libdav1d` in `Podfile.properties.json`, from expo-image's
 plugin. The rest of that prebuild was churn from the table above (Info.plist
 version literals and tab formatting, the 1024 icon re-encoded, `PrivacyInfo.xcprivacy`
-whitespace, `PRODUCT_NAME` quoting) and was restored.
+whitespace, `PRODUCT_NAME` quoting) and was restored. The workflow's `pod install`
+also reported `project.pbxproj` and `PrivacyInfo.xcprivacy` changes (privacy-manifest
+aggregation, as in #994); those are informational and deliberately not committed.
+#901 also moves gesture-handler 3.4.0 to 3.3.0 and Worklets 0.13.1 to 0.13.0 (they
+were already linked as peers of `expo-router`); Reanimated stays 4.7.1.
 
 `PrivacyInfo.xcprivacy` is generated from `app.json` `ios.privacyManifests`, so
 change the API reasons there, not in the file.

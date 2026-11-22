@@ -314,17 +314,20 @@ Call the backend through the `api` instance in `lib/api.ts` (never bare `axios`,
 
 Installed with `npx expo install` (versions pinned by Expo SDK 58's `bundledNativeModules.json`); never hand-pick a version. Nothing imports expo-haptics, Reanimated or a gesture yet: later issues do.
 
+Before #901, gesture-handler 3.4.0, Reanimated 4.7.1 and Worklets 0.13.1 were already installed and autolinked as peers of `expo-router` / `react-native-drawer-layout` (expo-modules-autolinking follows non-optional peers recursively). Listing them as direct dependencies pins them to SDK 58's bundled versions instead of whatever transitive resolution floats to, so this moves gesture-handler 3.4.0 to 3.3.0 and Worklets 0.13.1 to 0.13.0; Reanimated stays 4.7.1.
+
 | Package | Version | Why it is here |
 |---|---|---|
 | `expo-image` | ~58.0.18 | Cached, fading cover images. `BookCover`'s `CoverImage` switches to it in a follow-up to #902. Its config plugin is in `app.json` `plugins` (it writes `expo-image.disable-libdav1d` to `ios/Podfile.properties.json`). |
 | `expo-haptics` | ~58.0.8 | Tactile feedback (shutter, toggles) in phase 7. |
 | `react-native-reanimated` | 4.7.1 | Press, sheet and list motion in phase 7. |
-| `react-native-worklets` | 0.13.0 | Required peer of Reanimated 4 (its `validate-worklets-version` check fails without it, and only direct dependencies are autolinked). Also provides the Babel plugin. |
-| `react-native-gesture-handler` | ~3.3.0 | Swipe and pan gestures (swipe actions, sheet dismissal) in phase 7. `app/_layout.tsx` wraps the whole tree in one `GestureHandlerRootView` (`flex: 1`, testID `gesture-root`); do not add a second one. |
+| `react-native-worklets` | 0.13.0 | Required peer of Reanimated 4 (its `validate-worklets-version` check fails without it). A direct dependency so its version is pinned to SDK 58's (see above). Also provides the Babel plugin. |
+| `react-native-gesture-handler` | ~3.3.0 | Swipe and pan gestures (swipe actions, sheet dismissal) in phase 7. `app/_layout.tsx` wraps the whole tree in `components/GestureRoot` (`GestureHandlerRootView`, `flex: 1`, testID `gesture-root`). Keep one root at the app root, plus one inside any RN `<Modal>` whose content uses gestures, because native modals render in a separate view hierarchy (e.g. `components/SheetModal.tsx` once sheet-dismiss gestures land). |
 
-- **Babel:** `babel-preset-expo` adds `react-native-worklets/plugin` by itself when `react-native-worklets` is installed, so `babel.config.js` does not list it (a second copy would run the plugin twice). `__tests__/unit/BabelWorklets.test.ts` checks that a `'worklet'` function is transformed exactly once.
-- **Native projects:** Android and iOS autolink all five (`expo-modules-autolinking`), so adding them changed nothing under `android/` and only `ios/Podfile.properties.json` under `ios/`. `Podfile.lock` came from the `Podfile lock` workflow (see `ios-ci.md` § Podfile.lock from the `Podfile lock` workflow), not from a Mac.
-- **Jest:** expo-image, expo-haptics and `GestureHandlerRootView` work under Jest without a mock (`__tests__/unit/NativeDeps.test.tsx`). Reanimated does not: see "Reanimated under Jest" in `testing.md`.
+- **Babel:** `babel-preset-expo` already adds `react-native-worklets/plugin` when `react-native-worklets` is installed, so listing it in `babel.config.js` is redundant (`react-native-reanimated/plugin` just re-exports it in 4.7.1). `__tests__/unit/BabelWorklets.test.ts` checks that the app config transforms a `'worklet'` function and that the preset with `worklets: false, reanimated: false` does not, so the plugin comes from the preset.
+- **Web bundle:** `GestureRoot.web.tsx` is a plain `flex: 1` View, so the web entry bundle does not import gesture-handler (which pulls in Reanimated and Worklets, about +201 KB gzip, +20%). Web pays for gesture-handler only when a web feature imports it. The stand-in does not provide gesture-handler's root-view context, which its web handlers read, so the first web feature with a gesture must render the real `GestureHandlerRootView` in `GestureRoot.web.tsx`. Tests: `__tests__/unit/GestureRoot.test.tsx`.
+- **Native projects:** Android and iOS autolink all five (`expo-modules-autolinking`), so adding them changed nothing under `android/` and only `ios/Podfile.properties.json` under `ios/`. `Podfile.lock` came from the `Podfile lock` workflow (see `ios-ci.md` § Podfile.lock from the `Podfile lock` workflow), not from a Mac. That workflow's `pod install` also rewrites `project.pbxproj` and `PrivacyInfo.xcprivacy` (privacy-manifest aggregation, as in #994); those are deliberately not committed.
+- **Jest:** expo-image, expo-haptics and `GestureHandlerRootView` work under Jest without a mock (`__tests__/unit/NativeDeps.test.tsx`; its expo-haptics case also keeps knip from flagging the package until a real import lands, then delete it). Reanimated does not: see "Reanimated under Jest" in `testing.md`.
 
 ### Dependencies: retired `decode-uri-component` vendor (#779, removed in #886)
 

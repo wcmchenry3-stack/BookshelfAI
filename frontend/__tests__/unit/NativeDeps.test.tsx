@@ -2,8 +2,11 @@
  * #901 installs expo-image, expo-haptics, react-native-reanimated (with
  * react-native-worklets) and react-native-gesture-handler for later cover,
  * haptic and motion work. These smoke tests check that expo-haptics, expo-image
- * and the gesture root load and work under Jest with no hand-written mock, so the
- * issues that start using them can test their screens straight away.
+ * and the gesture root load and work under Jest with no hand-written mock.
+ *
+ * The expo-haptics case also exists so knip sees expo-haptics as used: nothing
+ * in the app imports it yet. Delete that case once the first real
+ * `import ... from 'expo-haptics'` lands in app code.
  *
  * Reanimated is not imported here: importing it under Jest needs its official
  * Jest setup (see docs/claude/testing.md), which the first issue that animates
