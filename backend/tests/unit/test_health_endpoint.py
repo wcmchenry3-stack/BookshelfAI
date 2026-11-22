@@ -27,6 +27,17 @@ async def test_health_ok(app):
 
 
 @pytest.mark.asyncio
+async def test_health_head_ok(app):
+    """UptimeRobot (free plan) sends HEAD; must get 200, not 405."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.head("/health")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_health_ignores_db_errors(app):
     """/health is a pure liveness probe — it must return 200 even when the
     database is unreachable, since Render restarts the service on a failed

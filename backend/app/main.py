@@ -419,7 +419,7 @@ app.include_router(user_books_router)
 app.include_router(users_router)
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 @limiter.limit(settings.rate_limit_health)
 async def health(request: Request) -> JSONResponse:
     """Liveness probe. Never touches the DB.
