@@ -48,7 +48,7 @@ EXCLUDED_DIRS = {
 EXCLUDED_DOC_DIR = REPO / "docs" / "archive"
 EXCLUDED_FILES = {
     # The privacy policy keeps one historical sentence saying that scans made
-    # before 22 November 2026 were processed by the previous provider (users
+    # until 22 November 2026 were processed by the previous provider (users
     # are entitled to know). Owner/lawyer approved wording (#538 AC 8).
     REPO / "docs" / "privacy.html",
     # This test (it must spell the name).
