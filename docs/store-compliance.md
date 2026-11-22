@@ -106,11 +106,12 @@ Facts the answers rest on:
 | Photos (shelf or cover scans) | Yes | Declared Linked = No, matching the #1001 manifest (open owner question: #1024) | No | App functionality | Yes, processed by Anthropic as a service provider | Optional (feature) | Not stored beyond a 30-day fingerprint; Apple: "Photos or Videos" collected; Play: "Photos" collected and shared (service-provider exemption may apply, owner decides). The request is authenticated, so whether it counts as linked is the #1024 question |
 | Other user content (library, shelves, reading status, corrections) | Yes | Yes | No | App functionality | No | Required for core use | iOS "Other User Content"; Play "Other in-app content" |
 | Product interaction / usage (AI usage records) | Yes | Linked: Yes | No | App functionality, analytics (scan accuracy), cost and abuse control | No | Required | Apple "Product Interaction" (AppFunctionality + Analytics, as in the #1001 manifest) |
+| Search history (book search text) | Yes | No (device breadcrumbs carry no user; access logs carry no account ID) | No | App functionality | Yes, Sentry as a service provider (breadcrumbs) | Optional (feature) | `GET /books/search?q=` text reaches device Sentry breadcrumbs and API access logs; declared in the #1001 manifest until #1029 stops collecting it. Play: "In-app search history" |
 | Crash data (device crash events) | Yes | Linked: No (no user on device events) | No | App functionality | Yes, Sentry as a service provider | Required | Play: "Crash logs" |
 | Performance data and other diagnostic data (backend Sentry) | Yes | Linked: Yes (`user.id` set) | No | App functionality | Yes, Sentry as a service provider | Required | Matches the #1001 manifest; Play: "Diagnostics" |
 | Customer support (in-app feedback via Sentry) | Yes, only when the user submits feedback | Linked: No | No | App functionality, customer support | Yes, Sentry as a service provider | Optional | `useFeedbackSubmit.ts:79-91` |
 | Device or other identifiers | No advertising ID. Device attestation tokens if enabled | No | No | Fraud prevention | Yes (Apple/Google attestation) | n/a | Revisit when attestation becomes required |
-| Location, contacts, health, financial, browsing, search history, audio | No | | | | | | Microphone permission is declared but unused; remove (#1017) so the answer stays No |
+| Location, contacts, health, financial, browsing, audio | No | | | | | | Microphone permission is declared but unused; remove (#1017) so the answer stays No |
 
 Security answers (Play): data encrypted in transit: **Yes**; users can request deletion:
 **No until #291 and #1014 ship**; independent security review: **No**.
