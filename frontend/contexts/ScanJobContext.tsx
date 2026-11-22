@@ -362,7 +362,12 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   const purgeExpiredFailedJobs = useCallback(
     (keepId: string | null = reviewingJobIdRef.current) => {
       const now = Date.now();
-      const ids = jobsToPurge(jobsRef.current, now, keepId);
+      // Also protect a review waiting to reopen after "Add it yourself": while
+      // its forms are open the review id is null, but the job must survive so
+      // cancelling or finishing the forms can bring the review back.
+      const keepIds = [keepId, reopenReviewJobIdRef.current];
+      for (const src of draftSourcesRef.current.values()) keepIds.push(src.jobId);
+      const ids = jobsToPurge(jobsRef.current, now, keepIds);
       if (ids.size === 0) return;
       const expired = jobsRef.current.filter((j) => ids.has(j.id));
       if (expired.length === 0) return;
@@ -385,7 +390,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
   // The 20-failed and 10-unreviewed caps apply the moment a job fails or completes.
   useEffect(() => {
     if (loaded) purgeExpiredFailedJobs(reviewingJobId);
-  }, [jobs, loaded, reviewingJobId, purgeExpiredFailedJobs]);
+  }, [jobs, loaded, reviewingJobId, unverifiedDrafts, purgeExpiredFailedJobs]);
 
   const queueForLater = useCallback(
     (jobId: string) => {

@@ -1117,6 +1117,46 @@ describe('ScanJobContext — storage bounds (#669, G3)', () => {
     expect(mockDeleteScanImage).not.toHaveBeenCalledWith('file:///docs/scan-queue/old.jpg');
   });
 
+  it('keeps the source job and photo during "Add it yourself", then reopens its review', async () => {
+    mockPost.mockResolvedValue(scanResponse([{ title: 'Dune', author: 'Herbert' }]));
+    let clock = Date.now();
+    const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => (clock += 10));
+    try {
+      const { result } = await renderScanJobs();
+      await act(async () => {
+        await result.current.startScan('image', 'file:///docs/scan-queue/old.jpg');
+      });
+      const oldId = result.current.jobs[0].id;
+      await act(() => {
+        result.current.reviewJob(oldId);
+      });
+      // 10 newer completions while the old job's review is open.
+      for (let i = 0; i < 10; i++) {
+        await act(async () => {
+          await result.current.startScan('image', `file:///docs/scan-queue/n${i}.jpg`);
+        });
+      }
+      expect(result.current.jobs).toHaveLength(11);
+
+      // Hand off to manual entry: the review id is cleared, the job must stay.
+      await act(async () => {
+        result.current.addYourself([BOOK]);
+      });
+      expect(result.current.reviewingJob).toBeNull();
+      expect(result.current.jobs.some((j) => j.id === oldId)).toBe(true);
+      expect(mockDeleteScanImage).not.toHaveBeenCalledWith('file:///docs/scan-queue/old.jpg');
+
+      // Cancelling the forms brings the review back.
+      await act(async () => {
+        result.current.dismissUnverified();
+      });
+      expect(result.current.reviewingJob?.id).toBe(oldId);
+      expect(mockDeleteScanImage).not.toHaveBeenCalledWith('file:///docs/scan-queue/old.jpg');
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it('a failed job retried after 7 days is not purged: it counts from when it was queued', async () => {
     const DAY_MS = 24 * 60 * 60 * 1000;
     mockLoadJobs.mockResolvedValue([

@@ -149,11 +149,13 @@ export function isQueuedScanStale(job: ScanJob, now: number = Date.now()): boole
 export function jobsToPurge(
   jobs: readonly ScanJob[],
   now: number = Date.now(),
-  keepId?: string | null
+  keepId?: string | null | readonly (string | null)[]
 ): Set<string> {
   const out = new Set<string>();
+  const keep = new Set<string | null | undefined>(Array.isArray(keepId) ? keepId : [keepId]);
+  const kept = (id: string) => keep.has(id);
   for (const j of jobs) {
-    if (j.id !== keepId && (isFailedScanExpired(j, now) || isQueuedScanStale(j, now))) {
+    if (!kept(j.id) && (isFailedScanExpired(j, now) || isQueuedScanStale(j, now))) {
       out.add(j.id);
     }
   }
@@ -168,7 +170,7 @@ export function jobsToPurge(
     .sort(newestFirst(failedTimeOf));
   for (const j of failed.slice(MAX_FAILED_JOBS)) out.add(j.id);
   const unreviewed = jobs
-    .filter((j) => j.status === 'complete' && j.imageUri && j.id !== keepId)
+    .filter((j) => j.status === 'complete' && j.imageUri && !kept(j.id))
     .sort(newestFirst((j) => j.completedAt ?? j.createdAt));
   for (const j of unreviewed.slice(MAX_UNREVIEWED_JOBS)) out.add(j.id);
   return out;
