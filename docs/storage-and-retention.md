@@ -209,11 +209,11 @@ Measured on production, 2026-11-22 (#673), read-only, with `scripts/db/db_size_r
 
 | Item | Measured (2026-11-22) | Estimate used above |
 |---|---|---|
-| Database size (`pg_database_size`) | 12,504,211 bytes (12 MB), mostly the empty schema, indexes and Postgres defaults | n/a |
-| Largest tables (data + indexes) | `user_books` 104 kB, `refresh_tokens` 96 kB, `books` 88 kB, `users` 80 kB, `scan_records` 80 kB; every public table under 110 kB | n/a |
-| Average `scan_records` row (`pg_column_size`) | about 965 bytes, from 3 rows | 5 KB typical (1 to 10 KB, 80 KB for a full shelf) |
+| Database size (`pg_database_size`) | about 12 MB in total, mostly the empty schema, indexes and Postgres defaults | n/a |
+| Largest tables (data + indexes) | every `public` table under about 0.1 MB | n/a |
+| Average `scan_records` row (`pg_column_size`) | about 1 KB, from 3 rows | 5 KB typical (1 to 10 KB, 80 KB for a full shelf) |
 
-Why the 5 KB stays: 3 rows are not a sample, and they are probably small test scans. The row size scales with the books found per photo, so the measured 965 bytes (about 1 KB) is inside the documented 1 to 10 KB range and is the low end of it. Re-run the query once there are a few hundred real scans (the first month after launch) and change the number then. At 965 bytes the 1,000-user steady state would be about 90 MB of `scan_records` instead of about 450 MB; the plan below does not depend on which is right.
+Why the 5 KB stays: 3 rows are not a sample, and they are probably small test scans. The row size scales with the books found per photo, so the measured about 1 KB is inside the documented 1 to 10 KB range and is the low end of it. Re-run the query once there are a few hundred real scans (the first month after launch) and change the number then. At 1 KB the 1,000-user steady state would be about 90 MB of `scan_records` instead of about 450 MB; the plan below does not depend on which is right.
 
 Plan limits (checked 2026-11-22; sources and the spend-cap detail are in [`RENDER.md`](RENDER.md#database-size-and-limits)):
 
@@ -222,7 +222,7 @@ Plan limits (checked 2026-11-22; sources and the spend-cap detail are in [`RENDE
 | Production (`bookshelf-api`) | Supabase project `bookshelfai`, Postgres 17, session pooler | Supabase organization on Pro | 8 GB disk included. It auto-expands by 50% at 90% use, but the spend cap (on by default) covers Disk Size and blocks that, so treat 8 GB as the limit until the owner turns the cap off. Read-only mode at 95% |
 | Staging / dev (`bookshelf-api-dev`) | the persistent Supabase branch `dev`; the Render Postgres `bookshelf-db` it used before (`basic_256mb`, 15 GB disk, autoscaling off) is suspended since 2026-10-22 | same Supabase organization (Pro); Render workspace Professional | branch: own disk, size not recorded; `bookshelf-db`: unused |
 
-Reading the table: at 100 users the purgeable data (about 50 MB) is small against the 8 GB limit. At 1,000 users it is about 500 MB (about 6%), at 10,000 users about 5 GB plus 3 GB a year of library growth, so the 70% alert (5.6 GB) trips somewhere between 5,000 and 10,000 daily-active users on the 5 KB estimate, sooner with the yearly library growth added. The backup job dumps the `public` schema daily and keeps 30 dumps (`docs/backups.md` `## Cost`): 30 dumps stay inside R2's 10 GB free tier while the database is under about 330 MB (about 1 GB if the dump compresses 3 to 1), roughly 700 to 2,000 daily-active users, which is where the backup retention needs another look (G8).
+Reading the table: at 100 users the purgeable data (about 50 MB) is small against the 8 GB limit. At 1,000 users it is about 500 MB (about 6%), at 10,000 users about 5 GB plus 3 GB a year of library growth, so on steady-state purgeable data alone the 70% alert (5.6 GB) trips at about 11,000 to 12,000 daily-active users on the 5 KB estimate. It trips earlier once library and catalog growth is counted (about 3 GB a year at 10,000 users, and it is never purged): at 10,000 users that is within about a year. The backup job dumps the `public` schema daily and keeps 30 dumps (`docs/backups.md` `## Cost`): 30 dumps stay inside R2's 10 GB free tier while the database is under about 330 MB (about 1 GB if the dump compresses 3 to 1), roughly 700 to 2,000 daily-active users, which is where the backup retention needs another look (G8).
 
 ### Logs
 

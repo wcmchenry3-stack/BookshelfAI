@@ -1,5 +1,6 @@
 """The database size alert script trips at 70 percent of the limit (#673)."""
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -56,19 +57,76 @@ def test_bad_args_exit_2(args):
     assert _run(*args).returncode == 2
 
 
+def test_zero_size_is_below_threshold():
+    assert _run(0, 8).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("100", "08"),  # leading zero: bash would parse octal and crash
+        ("0100", "8"),
+        ("100", "8", "070"),
+        ("00", "8"),
+        ("9" * 16, "8"),  # over-long size
+        ("100", "9" * 7),  # over-long limit
+        ("100", "8", "1" + "0" * 20),
+        ("9" * 40, "9" * 40, "9" * 40),
+    ],
+)
+def test_leading_zero_and_overlong_inputs_exit_2(args):
+    assert _run(*args).returncode == 2
+
+
+def _statements(sql: str) -> list[str]:
+    no_block = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+    no_line = re.sub(r"--[^\n]*", "", no_block)
+    return [x.strip() for x in no_line.split(";") if x.strip()]
+
+
+FORBIDDEN = (
+    "insert",
+    "update",
+    "delete",
+    "merge",
+    "copy",
+    "create",
+    "alter",
+    "drop",
+    "truncate",
+    "grant",
+    "revoke",
+    "vacuum",
+    "call",
+    "set",
+    "for update",
+)
+
+
 def test_sql_report_is_read_only():
-    sql = SQL.read_text().lower()
-    for word in (
-        "insert ",
-        "update ",
-        "delete ",
-        "drop ",
-        "alter ",
-        "truncate",
-        "create ",
+    statements = _statements(SQL.read_text())
+    assert len(statements) == 3
+    for stmt in statements:
+        low = stmt.lower()
+        assert re.match(r"(select|with)\b", low), stmt
+        for word in FORBIDDEN:
+            assert not re.search(rf"\b{word}\b", low), (word, stmt)
+    text = SQL.read_text().lower()
+    assert "pg_database_size" in text and "scan_records" in text
+
+
+def test_sql_read_only_check_catches_writes():
+    for bad in (
+        "DELETE FROM x",
+        "select 1; drop table x",
+        "SELECT * FROM t FOR UPDATE",
     ):
-        assert word not in sql
-    assert "pg_database_size" in sql and "scan_records" in sql
+        stmts = _statements(bad)
+        assert any(
+            not re.match(r"(select|with)\b", x.lower())
+            or any(re.search(rf"\b{w}\b", x.lower()) for w in FORBIDDEN)
+            for x in stmts
+        )
 
 
 def test_workflow_wires_the_alert():

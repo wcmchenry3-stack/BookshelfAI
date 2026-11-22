@@ -16,10 +16,13 @@ size="${1:-}"
 limit_gb="${2:-}"
 pct="${3:-70}"
 
-is_uint() { case "$1" in '' | *[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+# Plain decimal only: no sign, no leading zeros (bash would read "08" as an
+# invalid octal number and crash), and a digit cap so the arithmetic below
+# cannot overflow 64 bits (size 15 digits, limit 6, percent 3).
+is_size() { case "$1" in 0) return 0 ;; '' | 0* | *[!0-9]*) return 1 ;; esac; [ "${#1}" -le 15 ]; }
+is_pos() { case "$1" in '' | 0* | *[!0-9]*) return 1 ;; esac; [ "${#1}" -le "$2" ]; }
 
-if ! is_uint "$size" || ! is_uint "$limit_gb" || ! is_uint "$pct" \
-  || [ "$limit_gb" -lt 1 ] || [ "$pct" -lt 1 ] || [ "$pct" -gt 100 ]; then
+if ! is_size "$size" || ! is_pos "$limit_gb" 6 || ! is_pos "$pct" 3 || [ "$pct" -gt 100 ]; then
   echo "usage: $0 <size_bytes> <limit_gb> [threshold_pct 1-100]" >&2
   exit 2
 fi

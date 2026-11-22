@@ -1,6 +1,7 @@
--- Read-only database size report (#673, G8). Run by hand as any role that can
--- connect, for example in the Supabase SQL editor or `psql -f`. It changes
--- nothing. Output is for the owner: do not paste it into a public issue or PR
+-- Read-only database size report (#673, G8). Run by hand as the table owner
+-- (`postgres`), for example in the Supabase SQL editor or `psql -f`: RLS is on
+-- for every table, so another role would see fewer rows and under-count
+-- `scan_records` in query 3. It changes nothing. Output is for the owner: do not paste it into a public issue or PR
 -- (public repository). Documented in docs/RENDER.md ("Database size and
 -- limits") and docs/storage-and-retention.md ("Expected growth").
 

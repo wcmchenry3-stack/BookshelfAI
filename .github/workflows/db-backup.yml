@@ -170,12 +170,18 @@ jobs:
             echo "::error::Could not read the database size. Details are withheld because workflow logs are public."
             exit 1
           fi
+          case "$size" in
+            '' | *[!0-9]*)
+              echo "::error::Could not read the database size. Details are withheld because workflow logs are public."
+              exit 1
+              ;;
+          esac
           rc=0
           scripts/db/check_size_threshold.sh "$size" "$DB_SIZE_LIMIT_GB" "$DB_SIZE_ALERT_PCT" || rc=$?
           if [ "$rc" -eq 1 ]; then
             echo "::error::Production database is at or above ${DB_SIZE_ALERT_PCT}% of its size limit. Run scripts/db/db_size_report.sql, then purge, raise the disk or turn off the Supabase spend cap (docs/RENDER.md, Database size and limits)."
             exit 1
           elif [ "$rc" -ne 0 ]; then
-            echo "::error::Size check misconfigured (DB_SIZE_LIMIT_GB must be a whole number of GB)."
+            echo "::error::Invalid size or limit (DB_SIZE_LIMIT_GB must be a whole number of GB)."
             exit 1
           fi
