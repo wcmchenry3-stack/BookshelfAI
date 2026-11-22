@@ -11,7 +11,7 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 - **Raw per-call data lives 30 days, aggregates up to 400 days, per-user scan answers 30 days at most, counters 90 days.** Aggregates carry no user ID.
 - **On the phone, the photo is the only thing that is big.** A scan photo is kept until it is scanned and dismissed, or 7 days after it failed. The pending queue is capped at 50 photos; failed photos have an age limit and no count limit, and completed photos the user has not reviewed have no limit until the next app launch (G3). Everything else on the device is small and bounded.
 - **Today the app stores the camera's full-size JPEG** (quality 0.7). The server shrinks every photo to 1,568 px on the long edge anyway. Recommendation: shrink once at capture to the same size (G2), which cuts the queue from about 125 MB to about 15 MB (estimates).
-- **Plan limits are not in the repo**: Supabase's plan and size are not recorded (dev is a Supabase branch since 2026-10-22; the Render Postgres `bookshelf-db`, `basic-256mb`, is suspended). Confirm both before the 1,000-user mark (see [growth](#expected-growth)). The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
+- **Plan limits are recorded** in [`RENDER.md`](RENDER.md#database-size-and-limits) (#673): production is Supabase Pro with an 8 GB disk that does not auto-expand while the spend cap is on, and 12 MB was measured on 2026-11-22 (pre-launch). A nightly job alerts at 70% of the limit. The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
 
 ---
 
@@ -205,14 +205,24 @@ Steady-state size (what the purges allow) and yearly growth (what they do not):
 
 Aggregate tables are negligible: `ai_usage_daily` and `scan_corrections_daily` are tens of rows a day (under 1 MB over 400 days), `ai_spend_daily` is 90 rows.
 
-Plan limits:
+Measured on production, 2026-11-22 (#673), read-only, with `scripts/db/db_size_report.sql`. **This is a pre-launch baseline (3 `scan_records` rows), not a growth sample**, so the estimates above stay the planning numbers. Measured against estimated:
 
-| Environment | Database | Plan in the repo | Storage limit |
+| Item | Measured (2026-11-22) | Estimate used above |
+|---|---|---|
+| Database size (`pg_database_size`) | about 12 MB in total, mostly the empty schema, indexes and Postgres defaults | n/a |
+| Largest tables (data + indexes) | every `public` table under about 0.1 MB | n/a |
+| Average `scan_records` row (`pg_column_size`) | about 1 KB, from 3 rows | 5 KB typical (1 to 10 KB, 80 KB for a full shelf) |
+
+Why the 5 KB stays: 3 rows are not a sample, and they are probably small test scans. The row size scales with the books found per photo, so the measured about 1 KB is inside the documented 1 to 10 KB range and is the low end of it. Re-run the query once there are a few hundred real scans (the first month after launch) and change the number then. At 1 KB the 1,000-user steady state would be about 90 MB of `scan_records` instead of about 450 MB; the plan below does not depend on which is right.
+
+Plan limits (checked 2026-11-22; sources and the spend-cap detail are in [`RENDER.md`](RENDER.md#database-size-and-limits)):
+
+| Environment | Database | Plan | Storage limit |
 |---|---|---|---|
-| Production (`bookshelf-api`) | Supabase Postgres, session pooler (`render.yaml` header comment; `docs/RENDER.md` `## Connecting to Supabase (production only)`) | the repo says to upgrade to Pro before store submission (`docs/RENDER.md` `## First production deploy — cutover checklist`); the current plan is not recorded | plan limit to confirm |
-| Staging / dev (`bookshelf-api-dev`) | the persistent Supabase branch `dev` of the production project (`docs/RENDER.md`); the Render Postgres `bookshelf-db` it used before (`basic-256mb`) is suspended since 2026-10-22 | not recorded | plan limit to confirm |
+| Production (`bookshelf-api`) | Supabase project `bookshelfai`, Postgres 17, session pooler | Supabase organization on Pro | 8 GB disk included. It auto-expands by 50% at 90% use, but the spend cap (on by default) covers Disk Size and blocks that, so treat 8 GB as the limit until the owner turns the cap off. Read-only mode at 95% |
+| Staging / dev (`bookshelf-api-dev`) | the persistent Supabase branch `dev`; the Render Postgres `bookshelf-db` it used before (`basic_256mb`, 15 GB disk, autoscaling off) is suspended since 2026-10-22 | same Supabase organization (Pro); Render workspace Professional | branch: own disk, size not recorded; `bookshelf-db`: unused |
 
-Reading the table: at 100 users the purgeable data (about 50 MB) is small against any paid plan. At 1,000 users it is about 500 MB, which is where the plan's limit must be known. At 10,000 users it is about 5 GB plus 3 GB a year of library growth. The backup job dumps the whole database daily and keeps 30 dumps (`docs/backups.md` `## Cost`): at 5 GB uncompressed that is up to 30 x the compressed size in R2's 10 GB free tier, so the backup retention needs a look at the same time (G8).
+Reading the table: at 100 users the purgeable data (about 50 MB) is small against the 8 GB limit. At 1,000 users it is about 500 MB (about 6%), at 10,000 users about 5 GB plus 3 GB a year of library growth, so on steady-state purgeable data alone the 70% alert (5.6 GB) trips at about 11,000 to 12,000 daily-active users on the 5 KB estimate. It trips earlier once library and catalog growth is counted (about 3 GB a year at 10,000 users, and it is never purged): at 10,000 users that is within about a year. The backup job dumps the `public` schema daily and keeps 30 dumps (`docs/backups.md` `## Cost`): 30 dumps stay inside R2's 10 GB free tier while the database is under about 330 MB (about 1 GB if the dump compresses 3 to 1), roughly 700 to 2,000 daily-active users, which is where the backup retention needs another look (G8).
 
 ### Logs
 
@@ -225,8 +235,8 @@ What the backend logs (all structured JSON to stdout, `backend/app/core/logging.
 
 Where they go:
 
-- **Render logs** (stdout of `bookshelf-api` and `bookshelf-api-dev`). Retention is set by the Render workspace plan, not by the repo: plan limit to confirm.
-- **Sentry**: backend errors and 20 percent of traces when hardened (`app/main.py` `sentry_sdk.init`, `traces_sample_rate`), scrubbed by `app/core/sentry_context.py`; the app sends errors and 20 percent of traces in production. Retention is set by the Sentry plan: plan limit to confirm.
+- **Render logs** (stdout of `bookshelf-api` and `bookshelf-api-dev`). Retention is set by the Render workspace plan (Professional), not by the repo: **14 days** (checked 2026-11-22, see [`RENDER.md`](RENDER.md#database-size-and-limits)).
+- **Sentry**: backend errors and 20 percent of traces when hardened (`app/main.py` `sentry_sdk.init`, `traces_sample_rate`), scrubbed by `app/core/sentry_context.py`; the app sends errors and 20 percent of traces in production. Retention is set by the Sentry plan: the org is on Developer (free), which keeps errors, logs, spans and attachments 30 days (checked 2026-11-22, [Sentry data retention](https://docs.sentry.io/security-legal-pii/security/data-retention-periods)).
 
 Retention the repo controls: none. It controls only what is logged (the rules above) and the sampling rate. There is no log file, no log table and no `logging` handler that writes to disk or the database.
 
@@ -241,8 +251,8 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 | G5 | No free-space check and no storage-full message | `frontend/` |
 | G6 | ~~Session log lines are unbounded in length~~ Fixed by #671/#758: 1,000-character lines, 100 KB attachment, bounded serialisation, redact-then-cut; known redaction limits are listed under "Logs and caches on the device" | `SessionLogger.ts` |
 | G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others; doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
-| G8 | `scan_records` dominates the database and `docs/backups.md` sizes backups on the dump size; neither production size nor plan limit is recorded | `docs/RENDER.md`, `docs/backups.md` |
-| G9 | Log and Sentry retention are not documented anywhere | n/a |
+| G8 | ~~`scan_records` dominates the database and `docs/backups.md` sizes backups on the dump size; neither production size nor plan limit is recorded~~ Done by #673: plan and limit in `RENDER.md`, size measured, growth table re-run, 70% alert, backup cost checked | `docs/RENDER.md`, `docs/backups.md`, `scripts/db/` |
+| G9 | ~~Log and Sentry retention are not documented anywhere~~ Done by #673: Sentry 30 days, Render logs 14 days | `docs/RENDER.md` |
 
 #### Proposed follow-up stories
 
@@ -272,7 +282,7 @@ Sizes: S under half a day, M about a day, L several days.
 - Why: it is the one purge that is not bounded; at 10,000 users after an outage it could delete hundreds of thousands of rows in one transaction.
 - AC: `cleanup_expired_tokens` deletes in batches of 5,000 (20 per run) like the others; an integration test for the batching; `data-model.md` text unchanged.
 
-**7. Record production size and plan limits (G8, G9) - S**
+**7. Record production size and plan limits (G8, G9) - S** (done in #673)
 - Why: the plan and size limits for Supabase and Render Postgres, and Render and Sentry log retention, are not in the repo, so nothing says when to upgrade.
 - AC: `docs/RENDER.md` records the plan and limit of each database and log retention of Render and Sentry; a query (documented, read-only) measures size per table and the average `scan_records` row; this page's growth table is re-run with the measured numbers; a size alert is set at 70 percent of the limit; the backup lifecycle in `docs/backups.md` is checked against the measured dump size.
 

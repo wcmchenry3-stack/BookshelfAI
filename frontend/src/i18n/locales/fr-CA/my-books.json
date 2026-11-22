@@ -22,6 +22,12 @@
     "reading": "En lecture",
     "read": "Lus"
   },
+  "rowStatus": {
+    "wishlisted": "Souhaité",
+    "purchased": "Acheté",
+    "reading": "En lecture",
+    "read": "Lu"
+  },
   "status": {
     "wishlisted": "En souhaits",
     "purchased": "Acheté",

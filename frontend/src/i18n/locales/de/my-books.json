@@ -22,6 +22,12 @@
     "reading": "Lesen",
     "read": "Gelesen"
   },
+  "rowStatus": {
+    "wishlisted": "Wunschliste",
+    "purchased": "Gekauft",
+    "reading": "Wird gelesen",
+    "read": "Gelesen"
+  },
   "status": {
     "wishlisted": "Wunschliste",
     "purchased": "Gekauft",

@@ -126,3 +126,42 @@ def test_main_prints_each_problem_and_returns_one(monkeypatch, capsys):
     assert config_check.main() == 1
     out = capsys.readouterr().out.splitlines()
     assert out == ["Invalid configuration:", "  A_B: x", "  C_D: y"]
+
+
+def test_main_prints_warnings_and_still_returns_zero(monkeypatch, capsys):
+    monkeypatch.setattr(config_check, "collect_problems", list)
+    monkeypatch.setattr(
+        config_check, "collect_warnings", lambda: ["GOOGLE_IOS_CLIENT_ID is unset: x"]
+    )
+    assert config_check.main() == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out == ["OK", "WARNING: GOOGLE_IOS_CLIENT_ID is unset: x"]
+
+
+def test_main_warnings_do_not_change_failure_output(monkeypatch, capsys):
+    monkeypatch.setattr(config_check, "collect_problems", lambda: ["A_B: x"])
+    monkeypatch.setattr(config_check, "collect_warnings", lambda: ["C_D is unset: y"])
+    assert config_check.main() == 1
+    out = capsys.readouterr().out.splitlines()
+    assert out == ["Invalid configuration:", "  A_B: x", "WARNING: C_D is unset: y"]
+
+
+def test_collect_warnings_names_blank_slot_without_values(monkeypatch):
+    cfg = config_module.Settings.model_construct(
+        environment="production",
+        google_client_id="web-value-988",
+        google_ios_client_id="",
+        google_android_client_id="android-value-988",
+    )
+    monkeypatch.setattr(config_module, "Settings", lambda: cfg)
+    out = config_check.collect_warnings()
+    assert len(out) == 1 and out[0].startswith("GOOGLE_IOS_CLIENT_ID is unset")
+    assert "value-988" not in out[0]
+
+
+def test_collect_warnings_never_raises(monkeypatch):
+    def boom():
+        raise RuntimeError("bad")
+
+    monkeypatch.setattr(config_module, "Settings", boom)
+    assert config_check.collect_warnings() == []

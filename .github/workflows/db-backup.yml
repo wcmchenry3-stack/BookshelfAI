@@ -129,3 +129,59 @@ jobs:
         if: always()
         run: |
           rm -f "${BACKUP_FILE:-}" "${BACKUP_ERR_FILE:-}"
+
+  # Size alert (#673): fails when the production database reaches 70% of its
+  # limit, so GitHub's failed-workflow notification reaches the owner (same
+  # path as a failed backup, docs/backups.md step 7). Read-only: one
+  # `SELECT pg_database_size(...)`. Separate job so a full database never
+  # blocks the backup. The repository is public: no sizes are printed.
+  size-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: backup
+    permissions:
+      contents: read
+    env:
+      # Plan limit in GB. Supabase Pro includes an 8 GB disk, and with the
+      # spend cap on the disk does not auto-expand past it (docs/RENDER.md).
+      # Override with a `DB_SIZE_LIMIT_GB` variable of the `backup`
+      # environment after changing the disk size.
+      DB_SIZE_LIMIT_GB: ${{ vars.DB_SIZE_LIMIT_GB || '8' }}
+      DB_SIZE_ALERT_PCT: "70"
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/db
+      - name: Check database size against the limit
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BACKUP_DATABASE_URL" ]; then
+            echo "::error::Missing required secret: BACKUP_DATABASE_URL. See docs/backups.md for setup."
+            exit 1
+          fi
+          # stderr can echo connection details; keep it out of the public log.
+          if ! size="$(docker run --rm -e BACKUP_DATABASE_URL "postgres:${PG_MAJOR}" \
+            sh -c 'psql "$BACKUP_DATABASE_URL" -At -c "SELECT pg_database_size(current_database())"' \
+            2>/dev/null)"; then
+            echo "::error::Could not read the database size. Details are withheld because workflow logs are public."
+            exit 1
+          fi
+          case "$size" in
+            '' | *[!0-9]*)
+              echo "::error::Could not read the database size. Details are withheld because workflow logs are public."
+              exit 1
+              ;;
+          esac
+          rc=0
+          scripts/db/check_size_threshold.sh "$size" "$DB_SIZE_LIMIT_GB" "$DB_SIZE_ALERT_PCT" || rc=$?
+          if [ "$rc" -eq 1 ]; then
+            echo "::error::Production database is at or above ${DB_SIZE_ALERT_PCT}% of its size limit. Run scripts/db/db_size_report.sql, then purge, raise the disk or turn off the Supabase spend cap (docs/RENDER.md, Database size and limits)."
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error::Invalid size or limit (DB_SIZE_LIMIT_GB must be a whole number of GB)."
+            exit 1
+          fi

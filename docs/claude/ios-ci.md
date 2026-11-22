@@ -26,7 +26,7 @@ Xcode Cloud automatically executes
 `frontend/ios/ci_scripts/ci_post_clone.sh` after cloning. The script:
 
 1. Sets `SENTRY_ALLOW_FAILURE=true` so `sentry-cli` failures don't block the build
-2. Runs `check_xcode_compat.sh`, which fails in seconds if the selected Xcode is too new for the Expo SDK (see § Xcode version rollovers)
+2. Runs `check_xcode_compat.sh`, which first logs the Xcode Cloud workflow, branch, tag and PR target (`CI_WORKFLOW`, `CI_BRANCH`, `CI_TAG`, `CI_PULL_REQUEST_TARGET_BRANCH`, #987), then fails in seconds if the selected Xcode is too new for the Expo SDK (see § Xcode version rollovers)
 3. Installs **Node 22 LTS** from the official nodejs.org tarball, with the version pinned and the SHA-256 checked, for arm64 or x86_64 (Node 25.x ships npm 11.x, which crashes on our package-lock.json tree). It doesn't use Homebrew; see § Intel workers below
 4. Persists `NODE_BINARY` to `.xcode.env.local` (this Node is not on the default PATH on Xcode Cloud — without this, the "Bundle React Native code" phase fails silently)
 5. Runs `select_app_env.sh`, which points non-release builds at the dev backend (see § Which backend a build talks to)
@@ -245,13 +245,51 @@ no longer blocks Xcode 27. The Xcode Cloud workflow is still pinned to Xcode
 GitHub's `ios-build-check` runs on the runner's default Xcode (26.x), so it stays
 green while Xcode Cloud on 27 fails.
 
+### Current pins (update whenever a workflow's Xcode Version changes)
+
+| Workflow | Start condition | Builds | Xcode Version | Since |
+|---|---|---|---|---|
+| `Default` (`dev` builds; uses the dev API, see § Which backend a build talks to) | Branch changes on `dev` | Archive - iOS → TestFlight (internal) | **Xcode 26.6** | 2026-11-22 (#987) |
+| `Xcode 27 – SDK 58 test` (#716) | Branch changes on `feature/sdk58-upgrade` only | Archive - iOS → TestFlight (internal) | Xcode 27.x (owner: record the exact version) | 2026-11 (#716) |
+
+Never leave a workflow on "Latest Release" or "Latest Beta". The `Default`
+workflow sat on "Latest Release" until build 159 (2026-11-22, #987): it rolled
+onto Xcode 27.2 while `dev` was still on Expo SDK 56, and
+`check_xcode_compat.sh` stopped the build in `ci_post_clone`.
+
+At the SDK 58 cutover (#717), the `Default` workflow moves from 26.6 to the
+explicit 27.x the test workflow used, and the test workflow is deleted or
+disabled. Update this table in the same PR.
+
 ### Pinning the Xcode Cloud workflow (owner, App Store Connect)
 
 App Store Connect → Apps → BookShelfAI → Xcode Cloud → Manage Workflows → the
-release workflow → **Environment** → Xcode Version → choose the newest
-**Xcode 26.x** (not "Latest Release" and not "Latest Beta") → Save. Then start a
-new build. Bump it deliberately, together with the Expo SDK, and update this
-section when you do.
+workflow → **Environment** → Xcode Version → choose an explicit version (not
+"Latest Release" and not "Latest Beta"). Set macOS Version to the one that goes
+with it (Xcode Cloud lists the macOS versions each Xcode supports; pick the newest one it
+offers) → Save. Then start a new build.
+
+### Bumping the pin
+
+Bump deliberately, together with the Expo SDK when the new Xcode needs it:
+
+1. **Check compatibility.** Read the Expo SDK's supported Xcode range and the
+   `check_xcode_compat.sh` floor (`MIN_JSI_FOR_XCODE_27`). An Xcode major the
+   app's SDK doesn't support needs the SDK upgrade first.
+2. **Try it on a test workflow first.** Duplicate the `Default` workflow, point it
+   at the branch you're testing, and set the new Xcode Version. You need a green
+   archive before touching `Default`.
+3. **Smoke-test on TestFlight** on a real device: cold launch, Google sign-in
+   and Sign in with Apple, deep links, camera scan, sign out, and a Sentry test
+   error that arrives symbolicated.
+4. **Move the `Default` pin** to the exact version the test workflow used, then
+   delete or disable the test workflow.
+5. **Update the table above** in a PR, with the date and the issue.
+
+When you duplicate a workflow, check that it can see `SENTRY_ORG`,
+`SENTRY_PROJECT` and `SENTRY_AUTH_TOKEN` (set on the workflow or as shared
+environment variables). Without them, source maps aren't uploaded and the JS
+bundle depends on the fallback in § Sentry bundling fallback.
 
 ## Scene-based life cycle (SDK 58)
 

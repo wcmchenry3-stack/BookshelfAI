@@ -56,7 +56,7 @@ function LibraryRowBase({
   const { t } = useTranslation('my-books');
 
   const year = item.edition?.publish_year ?? null;
-  const status = t(`statusTab.${item.status}`);
+  const status = t(`rowStatus.${item.status}`);
   const showDot = showStatus && metaText === undefined;
   const meta =
     metaText !== undefined

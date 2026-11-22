@@ -22,6 +22,12 @@
     "reading": "Читаю",
     "read": "Прочитано"
   },
+  "rowStatus": {
+    "wishlisted": "Избранное",
+    "purchased": "Куплено",
+    "reading": "Читаю",
+    "read": "Прочитано"
+  },
   "status": {
     "wishlisted": "Избранное",
     "purchased": "Куплено",

@@ -54,6 +54,16 @@ These aren't in `render.yaml` because they're secrets or because they change ind
 - `GOOGLE_BOOKS_API_KEY`
 - `OPENAI_MAX_TOKENS` (optional)
 
+**Troubleshooting Google sign-in `401` (`Invalid claim 'aud'`, #988):** the Google client IDs are public identifiers bound to the single bundle ID / package name, so dev and prod intentionally share the same `GOOGLE_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID` and `GOOGLE_ANDROID_CLIENT_ID` (dev builds are the same app pointed at the dev API, #976). Secrets (`JWT_PRIVATE_KEY`, `GOOGLE_CLIENT_SECRET`, DB URLs, `ORIGIN_AUTH_SECRET`, `TURNSTILE_SECRET_KEY`) must differ per environment. On an audience mismatch the API logs one warning, `Google token audience not allowed: token_aud=<fp> web=<fp> ios=<fp> android=<fp>`, with 12-character SHA-256 prefixes (a blank slot shows `unset`; raw IDs are never logged). Fingerprint the client ID you expect and compare it with `token_aud` and the slot it should match:
+
+```
+printf %s "<client id>" | sha256sum | cut -c1-12
+```
+
+If `token_aud` matches no slot, the Render service has the wrong (or no) value for that slot. If all three slots are blank, every Google sign-in is refused and logged as `Google sign-in refused: no Google client IDs configured` (fail closed: an empty allowlist would otherwise skip the `aud` check entirely).
+
+At startup a hardened environment (staging, production) logs a warning, `GOOGLE_<slot>_CLIENT_ID is unset: ...`, for each blank slot, and `python -m app.core.config_check` prints it as a `WARNING:` line. These are warnings only: boot is not blocked and the check still exits 0. Development and test stay silent.
+
 Every scan limit and dial (default, bounds, setting, what the user sees, where it is counted) is listed in one place in [`scan-limits.md`](scan-limits.md); `python -m app.ai.settings list` shows them grouped by area with the current value, default and bounds.
 
 Scan dials (optional; defaults shown; change in the dashboard and restart, no release needed — out-of-range values fail at boot):

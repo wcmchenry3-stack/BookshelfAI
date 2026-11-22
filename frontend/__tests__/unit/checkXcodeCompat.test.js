@@ -53,6 +53,62 @@ describe('check_xcode_compat.sh (#708)', () => {
     }
   });
 
+  it('logs the Xcode Cloud workflow and branch before the check (#987)', () => {
+    const result = run(fixture('sdk56.json'), {
+      XCODE_VERSION_OVERRIDE: 'Xcode 27.2',
+      CI_WORKFLOW: 'Default',
+      CI_BRANCH: 'dev',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('INFO: workflow Default, branch dev, tag none, PR target none');
+    // Logged before the version line and the failure, so it survives any early exit.
+    expect(result.stdout.indexOf('INFO: workflow')).toBeLessThan(
+      result.stdout.indexOf('INFO: Xcode 27.2')
+    );
+  });
+
+  it('logs the PR target branch and still logs when the lockfile is missing', () => {
+    const result = run(fixture('missing.json'), {
+      CI_WORKFLOW: 'Xcode 27 – SDK 58 test',
+      CI_BRANCH: 'feature/x',
+      CI_PULL_REQUEST_TARGET_BRANCH: 'dev',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      'INFO: workflow Xcode 27 – SDK 58 test, branch feature/x, tag none, PR target dev'
+    );
+  });
+
+  it('logs the tag on tag builds, where CI_BRANCH is unset', () => {
+    const result = run(fixture('sdk56.json'), {
+      XCODE_VERSION_OVERRIDE: 'Xcode 26.6',
+      CI_WORKFLOW: 'Release',
+      CI_TAG: 'v0.1.0',
+    });
+    expect(result.stdout).toContain(
+      'INFO: workflow Release, branch unknown, tag v0.1.0, PR target none'
+    );
+  });
+
+  it('logs unknown when the Xcode Cloud variables are unset or empty', () => {
+    const unset = run(fixture('sdk56.json'), { XCODE_VERSION_OVERRIDE: 'Xcode 26.6' });
+    expect(unset.status).toBe(0);
+    expect(unset.stdout).toContain(
+      'INFO: workflow unknown, branch unknown, tag none, PR target none'
+    );
+    const empty = run(fixture('sdk56.json'), {
+      XCODE_VERSION_OVERRIDE: 'Xcode 26.6',
+      CI_WORKFLOW: '',
+      CI_BRANCH: '',
+      CI_TAG: '',
+      CI_PULL_REQUEST_TARGET_BRANCH: '',
+    });
+    expect(empty.status).toBe(0);
+    expect(empty.stdout).toContain(
+      'INFO: workflow unknown, branch unknown, tag none, PR target none'
+    );
+  });
+
   it('fails when the lockfile is missing', () => {
     const result = run(fixture('missing.json'), { XCODE_VERSION_OVERRIDE: 'Xcode 26.6' });
     expect(result.status).toBe(1);

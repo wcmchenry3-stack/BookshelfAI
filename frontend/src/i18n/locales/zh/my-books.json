@@ -22,6 +22,12 @@
     "reading": "阅读中",
     "read": "已读"
   },
+  "rowStatus": {
+    "wishlisted": "愿望单",
+    "purchased": "已购买",
+    "reading": "阅读中",
+    "read": "已读"
+  },
   "status": {
     "wishlisted": "愿望单",
     "purchased": "已购买",

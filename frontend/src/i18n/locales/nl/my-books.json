@@ -22,6 +22,12 @@
     "reading": "Lezen",
     "read": "Gelezen"
   },
+  "rowStatus": {
+    "wishlisted": "Verlanglijst",
+    "purchased": "Gekocht",
+    "reading": "Aan het lezen",
+    "read": "Gelezen"
+  },
   "status": {
     "wishlisted": "Verlanglijst",
     "purchased": "Gekocht",
