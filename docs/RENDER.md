@@ -368,7 +368,20 @@ Both endpoints accept `GET` and `HEAD` (uptime monitors such as UptimeRobot's fr
 | `/health` | Render `healthCheckPath` (origin); CI `backend-health` (Render origin, via the org reusable workflow); any UptimeRobot liveness monitor | GET or HEAD (endpoint accepts both) | Render's own schedule; CI per run; monitor as configured in UptimeRobot | Render restarts the service; CI fails the run |
 | `/health/db` | UptimeRobot (prod `https://bookshelfapi.buffingchi.com/health/db`, dev `https://bookshelfapi-dev.buffingchi.com/health/db`) | HEAD, expect 2xx | 5 min | owner email, first failure |
 
-Monitors created: _pending (owner, see #562)_
+Monitors created 2026-11-22 (#562). UptimeRobot (all HEAD, 5 min, email on
+first failure):
+
+| Monitor | URL | Success codes |
+|---|---|---|
+| BookshelfAI-Prod | `https://bookshelfapi.buffingchi.com/health` | 2xx, 3xx |
+| BookshelfAI - dev | `https://bookshelfapi-dev.buffingchi.com/health` | 2xx, 3xx |
+| BookshelfAI-Prod DB | `https://bookshelfapi.buffingchi.com/health/db` | 2xx (no redirects) |
+| BookshelfAI - dev DB | `https://bookshelfapi-dev.buffingchi.com/health/db` | 2xx (no redirects) |
+
+A `405` on a monitor means the deployed code predates HEAD support (#977 for
+`/health`, #981 for `/health/db`). A `400` means the hostname is missing from
+that service's `TRUSTED_HOSTS`; a `403`, that the edge did not add the origin
+header; a `503` from `/health/db`, that the database is unreachable.
 
 Why the monitor uses the public hostname: `/health/db` is not exempt from
 TrustedHost or the origin lockdown, so a request to the Render origin is
