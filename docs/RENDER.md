@@ -303,10 +303,12 @@ re-check the linked pages when the plan changes.
 **Log retention.** Sentry (Developer plan, free), checked 2026-11-22
 ([Data Retention Periods](https://docs.sentry.io/security-legal-pii/security/data-retention-periods)):
 errors, logs, spans and attachments are kept **30 days**. Render (workspace
-Professional): **not verified**. The Render documentation host could not be
-reached from the session that wrote this, so no number is recorded. Owner: read
-the retention for the Professional workspace in the Render dashboard (Logs) or
-<https://render.com/docs/logging> and fill it in here and in G9.
+Professional), checked 2026-11-22 ([Logs in the Render Dashboard](https://render.com/docs/logging)):
+service logs are kept **14 days** (Hobby 7, Organization/Enterprise 30). Logs
+older than the retention are gone even after an upgrade; stream them to a
+syslog provider if longer history is ever needed. Render renamed its workspace
+plans in 2026 (Pro / Scale / Enterprise); if the dashboard shows "Pro", confirm
+the figure on its plan page.
 
 **Measuring.** Run [`scripts/db/db_size_report.sql`](../scripts/db/db_size_report.sql)
 (read-only: database size, size per `public` table, average and largest

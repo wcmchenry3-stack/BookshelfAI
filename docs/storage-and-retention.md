@@ -235,7 +235,7 @@ What the backend logs (all structured JSON to stdout, `backend/app/core/logging.
 
 Where they go:
 
-- **Render logs** (stdout of `bookshelf-api` and `bookshelf-api-dev`). Retention is set by the Render workspace plan (Professional), not by the repo. The number is not verified yet (the Render docs could not be reached when #673 was done); the owner fills it in at [`RENDER.md`](RENDER.md#database-size-and-limits).
+- **Render logs** (stdout of `bookshelf-api` and `bookshelf-api-dev`). Retention is set by the Render workspace plan (Professional), not by the repo: **14 days** (checked 2026-11-22, see [`RENDER.md`](RENDER.md#database-size-and-limits)).
 - **Sentry**: backend errors and 20 percent of traces when hardened (`app/main.py` `sentry_sdk.init`, `traces_sample_rate`), scrubbed by `app/core/sentry_context.py`; the app sends errors and 20 percent of traces in production. Retention is set by the Sentry plan: the org is on Developer (free), which keeps errors, logs, spans and attachments 30 days (checked 2026-11-22, [Sentry data retention](https://docs.sentry.io/security-legal-pii/security/data-retention-periods)).
 
 Retention the repo controls: none. It controls only what is logged (the rules above) and the sampling rate. There is no log file, no log table and no `logging` handler that writes to disk or the database.
@@ -252,7 +252,7 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 | G6 | ~~Session log lines are unbounded in length~~ Fixed by #671/#758: 1,000-character lines, 100 KB attachment, bounded serialisation, redact-then-cut; known redaction limits are listed under "Logs and caches on the device" | `SessionLogger.ts` |
 | G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others; doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
 | G8 | ~~`scan_records` dominates the database and `docs/backups.md` sizes backups on the dump size; neither production size nor plan limit is recorded~~ Done by #673: plan and limit in `RENDER.md`, size measured, growth table re-run, 70% alert, backup cost checked | `docs/RENDER.md`, `docs/backups.md`, `scripts/db/` |
-| G9 | ~~Log and Sentry retention are not documented anywhere~~ Done by #673 for Sentry (30 days); the Render figure is still to be filled in by the owner | `docs/RENDER.md` |
+| G9 | ~~Log and Sentry retention are not documented anywhere~~ Done by #673: Sentry 30 days, Render logs 14 days | `docs/RENDER.md` |
 
 #### Proposed follow-up stories
 
@@ -282,7 +282,7 @@ Sizes: S under half a day, M about a day, L several days.
 - Why: it is the one purge that is not bounded; at 10,000 users after an outage it could delete hundreds of thousands of rows in one transaction.
 - AC: `cleanup_expired_tokens` deletes in batches of 5,000 (20 per run) like the others; an integration test for the batching; `data-model.md` text unchanged.
 
-**7. Record production size and plan limits (G8, G9) - S** (done in #673; the Render log retention number is an open owner step)
+**7. Record production size and plan limits (G8, G9) - S** (done in #673)
 - Why: the plan and size limits for Supabase and Render Postgres, and Render and Sentry log retention, are not in the repo, so nothing says when to upgrade.
 - AC: `docs/RENDER.md` records the plan and limit of each database and log retention of Render and Sentry; a query (documented, read-only) measures size per table and the average `scan_records` row; this page's growth table is re-run with the measured numbers; a size alert is set at 70 percent of the limit; the backup lifecycle in `docs/backups.md` is checked against the measured dump size.
 
