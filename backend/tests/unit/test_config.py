@@ -301,3 +301,55 @@ def test_blank_guard_source_get_field_value_is_an_inert_hook():
 
     source = _BlankGuardSource(Settings, None, ())
     assert source.get_field_value(None, "environment") == (None, "environment", False)
+
+
+class TestGoogleClientIdWarnings:
+    @staticmethod
+    def _cfg(**kw):
+        from app.core.config import Settings
+
+        base = {
+            "environment": "production",
+            "google_client_id": "web-secret-id-988",
+            "google_ios_client_id": "ios-secret-id-988",
+            "google_android_client_id": "android-secret-id-988",
+        }
+        return Settings.model_construct(**{**base, **kw})
+
+    def test_hardened_one_blank_slot_gives_one_warning_naming_it(self):
+        from app.core.google_client_ids import google_client_id_warnings
+
+        out = google_client_id_warnings(self._cfg(google_ios_client_id=""))
+        assert len(out) == 1
+        assert out[0].startswith("GOOGLE_IOS_CLIENT_ID is unset")
+        assert "secret-id" not in out[0]
+
+    def test_all_set_gives_nothing(self):
+        from app.core.google_client_ids import google_client_id_warnings
+
+        assert google_client_id_warnings(self._cfg()) == []
+
+    def test_development_gives_nothing(self):
+        from app.core.google_client_ids import google_client_id_warnings
+
+        cfg = self._cfg(environment="development", google_client_id="")
+        assert google_client_id_warnings(cfg) == []
+
+    def test_startup_logs_warnings_without_raising(self, caplog):
+        import asyncio
+        import logging
+        from unittest.mock import patch
+
+        from app import main
+
+        cfg = self._cfg(google_android_client_id="")
+        caplog.set_level(logging.WARNING, logger="app.main")
+        with (
+            patch.object(main, "settings", cfg),
+            patch.object(main, "check_turnstile_configured"),
+            patch.object(main.catalog_token, "check_configured"),
+        ):
+            asyncio.run(main._validate_config())
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(m.startswith("GOOGLE_ANDROID_CLIENT_ID is unset") for m in msgs)
+        assert "secret-id" not in " ".join(msgs)

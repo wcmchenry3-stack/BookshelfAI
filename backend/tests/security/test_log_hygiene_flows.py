@@ -18,6 +18,7 @@ deletion does not exist yet: the story that adds it must drive its flow inside
 Run on its own with:  pytest -m security tests/security/test_log_hygiene_flows.py
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -296,6 +297,39 @@ class TestAuthFlows:
         # The verifier's own exception text is the verifier's; the app's log
         # lines must not echo the ID token or email.
         lh.assert_clean(cap, emails=[EMAIL], secrets=[SUB, ID_TOKEN])
+
+    def test_google_audience_mismatch_logs_no_client_ids(self, db):
+        """#988: the aud-mismatch diagnostic logs fingerprints, never raw IDs."""
+        from authlib.jose.errors import InvalidClaimError
+
+        from app.auth.google import verify_google_id_token
+
+        bad_aud = "leaky-token-aud-988.apps.googleusercontent.com"
+        web_id = "leaky-web-id-988.apps.googleusercontent.com"
+        ios_id = "leaky-ios-id-988.apps.googleusercontent.com"
+
+        class _Claims(dict):
+            def validate(self):
+                raise InvalidClaimError("aud")
+
+        with (
+            lh.capture() as cap,
+            patch(
+                "app.auth.google.google_jwks_cache.get_jwks", AsyncMock(return_value={})
+            ),
+            patch(
+                "app.auth.google.authlib_jwt.decode", return_value=_Claims(aud=bad_aud)
+            ),
+            patch.object(settings, "google_client_id", web_id),
+            patch.object(settings, "google_ios_client_id", ios_id),
+            patch.object(settings, "google_android_client_id", ""),
+            pytest.raises(InvalidClaimError),
+        ):
+            asyncio.run(verify_google_id_token(ID_TOKEN))
+        assert any("audience not allowed" in t for t in cap.log_texts)
+        lh.assert_clean(
+            cap, emails=[EMAIL], secrets=[SUB, ID_TOKEN, bad_aud, web_id, ios_id]
+        )
 
     def test_allowlist_reject_path(self, db):
         client = TestClient(app)

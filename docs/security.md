@@ -222,7 +222,7 @@ To roll back the lockdown, clear `ORIGIN_AUTH_SECRET`. To stop trusting
 
 Application logs are structured JSON on stdout (`backend/app/core/logging.py`).
 
-**Logged:** request IDs, internal user IDs (when known), HTTP status codes, counts, and for AI-model parse failures only the response length, a 12-character SHA-256 prefix and the finish reason.
+**Logged:** request IDs, internal user IDs (when known), HTTP status codes, counts, and for AI-model parse failures only the response length, a 12-character SHA-256 prefix and the finish reason; and, on a Google ID-token audience mismatch, 12-character SHA-256 prefixes of the token's `aud` and of each configured client-ID slot (web/ios/android, or `unset`), never the raw values (see [deployment.md](deployment.md) for how to compare).
 
 **Never logged:** email addresses, Google client IDs / allowed audiences, the email allowlist, ID/access/refresh tokens, `Authorization` headers, or raw model output.
 
