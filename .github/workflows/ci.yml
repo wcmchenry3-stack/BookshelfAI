@@ -83,14 +83,45 @@ jobs:
     uses: wcmchenry3-stack/.github/.github/workflows/called-secret-scan.yml@main
     secrets: inherit
 
+  # Reads the black and ruff pins from backend/requirements-dev.txt, so CI lints
+  # with the same versions as a local run. Dependabot bumps that file and this
+  # job follows it with no second edit (#1012). Fails if either pin is missing.
+  lint-versions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      ruff: ${{ steps.pins.outputs.ruff }}
+      black: ${{ steps.pins.outputs.black }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read lint pins from requirements-dev.txt
+        id: pins
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          for tool in ruff black; do
+            lines="$(grep -E "^${tool}==" requirements-dev.txt || true)"
+            if [ "$(printf '%s\n' "$lines" | grep -c .)" -ne 1 ]; then
+              echo "::error::expected exactly one '${tool}==' pin in backend/requirements-dev.txt"
+              exit 1
+            fi
+            version="$(printf '%s\n' "$lines" | sed -E 's/^[^=]+==([^[:space:]#]+).*$/\1/')"
+            if ! printf '%s\n' "$version" | grep -qE '^[0-9][0-9A-Za-z.]*$'; then
+              echo "::error::'${tool}' pin '${version}' is not a plain version"
+              exit 1
+            fi
+            echo "${tool}=${version}" >> "$GITHUB_OUTPUT"
+          done
+
   lint-python:
+    needs: lint-versions
     uses: wcmchenry3-stack/.github/.github/workflows/called-lint-python.yml@main
     with:
       working-directory: backend
-      # Keep in sync with backend/requirements-dev.txt — unpinned installs let
-      # upstream rule changes silently break lint on unrelated PRs.
-      black-version: '26.10.1'
-      ruff-version: '0.17.1'
+      black-version: ${{ needs.lint-versions.outputs.black }}
+      ruff-version: ${{ needs.lint-versions.outputs.ruff }}
     secrets: inherit
 
   lint-frontend:

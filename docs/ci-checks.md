@@ -8,7 +8,7 @@ PRs into `dev` are **squash-merged** (the branch must be up to date with `dev` b
 
 ## Summary
 
-A PR into `dev` triggers **42 workflow jobs** in 10 workflow files: 27 in `ci.yml`, and 15 in 9 stand-alone workflows (`commitlint`, `design-token-check`, `gemini-policy`, `migration-guard`, `static-frontend`, `repo-hygiene` (2 jobs), `doc-reminder`, `e2e-web`, `security` (6 jobs)). Two of the 42 never run on a PR and always show as skipped (`external-links`, `OWASP ZAP Active Scan`). That leaves **40 jobs that report a result**, plus the external `Supabase Preview` row, which also shows as skipped. A PR into `main` skips `security.yml` (6 jobs) and `e2e-web` (1 job) because both only trigger on PRs into `dev`, so it triggers 35 jobs.
+A PR into `dev` triggers **43 workflow jobs** in 10 workflow files: 28 in `ci.yml`, and 15 in 9 stand-alone workflows (`commitlint`, `design-token-check`, `gemini-policy`, `migration-guard`, `static-frontend`, `repo-hygiene` (2 jobs), `doc-reminder`, `e2e-web`, `security` (6 jobs)). Two of the 43 never run on a PR and always show as skipped (`external-links`, `OWASP ZAP Active Scan`). That leaves **41 jobs that report a result**, plus the external `Supabase Preview` row, which also shows as skipped. A PR into `main` skips `security.yml` (6 jobs) and `e2e-web` (1 job) because both only trigger on PRs into `dev`, so it triggers 36 jobs.
 
 - **Required directly by the ruleset file: 28 contexts** (23 from `ci.yml`, 5 from stand-alone workflows). See [Branch protection](#branch-protection).
 - **Conditional: 11 jobs.**
@@ -18,7 +18,7 @@ A PR into `dev` triggers **42 workflow jobs** in 10 workflow files: 27 in `ci.ym
   - `Generate Podfile.lock` (`podfile-lock.yml`, added after the snapshot in #713, so not in the counts above): only on PRs that touch the iOS pod inputs. Not required.
   - `e2e-web`: only on PRs into `dev` that touch `frontend/**`, `backend/**`, the workflow or the two setup actions.
   - The five `security.yml` PR jobs (`Bandit SAST`, `pip-audit SCA`, `npm audit SCA`, `Trivy filesystem scan`, `pytest -m security`): only on PRs into `dev` that touch `backend/app/**`, `backend/tests/security/**`, `backend/requirements*.txt`, `security.yml`, the two setup actions or `.zap/**`. A frontend-only PR runs none of them.
-- **Not required: 14 jobs** (42 − 28). Three of them are orchestration or gate-covered (`detect-changes`, and `ios-build-check`/`android-build-check`, which `native-build-gate` stands in for). The other **9 are advisory**: they run or are meant to run on PRs but are not in the ruleset file, so they cannot block a merge as the file stands: `commitlint`, `doc-reminder`, `e2e-web`, `test-tools` and the five `security.yml` jobs. Two more (`external-links`, `OWASP ZAP Active Scan`) never run on a PR.
+- **Not required: 15 jobs** (43 − 28). Three of them are orchestration or gate-covered (`detect-changes`, and `ios-build-check`/`android-build-check`, which `native-build-gate` stands in for). The other **10 are advisory**: they run or are meant to run on PRs but are not in the ruleset file, so they cannot block a merge as the file stands: `commitlint`, `doc-reminder`, `e2e-web`, `lint-versions`, `test-tools` and the five `security.yml` jobs. `lint-versions` feeds `lint-python`; see the note on it in [Job tiers](#job-tiers-in-ci-yml). Two more (`external-links`, `OWASP ZAP Active Scan`) never run on a PR.
 - **Fixed: `commitlint`** (#856). Until 2026-11-08, every run of `commitlint.yml` from run number 1 (2026-04-11) onwards ended `startup_failure`, so no check run was created. The cause: the org `called-commitlint.yml` gives its job `permissions: pull-requests: read`, the caller granted nothing, and the repo default token is read-only. A called workflow can never have more than its caller grants. `commitlint.yml` now grants `contents: read` and `pull-requests: read`, the same fix `release-please.yml` needed.
 - **Slowest checks** (run 41164807416): `ios-build-check` 15 min 35 s, `android-build-check` 7 min 5 s (both conditional); then `test-python` 2 min 32 s, `e2e-web` 1 min 54 s (conditional), `test-migrations` 1 min 49 s. Every other job finished in under 70 seconds. These are single samples; the same jobs varied by about ±40% across runs (for example `test-migrations` took 2 min 27 s on #852). On a native PR the chain `test-python` then `ios-build-check` makes the whole run take about 19 minutes.
 
@@ -35,8 +35,8 @@ A PR into `dev` triggers **42 workflow jobs** in 10 workflow files: 27 in `ci.ym
 
 ```text
 Tier 0 (no needs)
-  detect-changes, gate-main-source, secret-scan, lint-python, lint-frontend,
-  test-tools
+  detect-changes, gate-main-source, secret-scan, lint-versions, lint-python,
+  lint-frontend, test-tools
         |
         v   needs: lint-python, lint-frontend, secret-scan
 Tier 1  backend-health, expo-compat, local-path-check, sentry-check,
@@ -54,6 +54,7 @@ Gate    native-build-gate (if: always())
 ```
 
 - `gate-main-source` and `test-tools` are Tier 0 but are not in the Tier 1 `needs:` list, so a failure there does not skip Tier 1.
+- `lint-versions` reads the `ruff` and `black` pins from `backend/requirements-dev.txt` and passes them to `lint-python` as outputs (#1012). It has no `if:`, so it runs wherever `lint-python` runs. Its failure is not required, but `lint-python` then reports as skipped, and a skipped required check counts as passing. A missing or malformed pin therefore lets the merge through, unless the owner adds `lint-versions` to the ruleset.
 - If `lint-python`, `lint-frontend` or `secret-scan` fails, every Tier 1 and Tier 2 job is skipped (their `needs:` failed). Skipped counts as passing for required checks, but the failed lint job is itself required, so the merge stays blocked.
 - `podfile-lock-check` and `gradle-wrapper-check` have `if: github.event_name == 'pull_request'`, so they run on PRs only (see [Branch protection](#branch-protection)).
 - `backend-health` has `if: github.workflow != 'Deploy'` so a production outage cannot block the deploy that would fix it (the workflow is also called from `deploy.yml`).
@@ -67,7 +68,8 @@ Gate    native-build-gate (if: always())
 
 | Check | Purpose | Prevents | Workflow:job | Introduced | Gating | Time |
 | --- | --- | --- | --- | --- | --- | --- |
-| `lint-python / Lint Python (black + ruff)` | black and ruff on `backend/` (pins in the caller: black 26.10.1, ruff 0.17.1; the comment says keep them in sync with `requirements-dev.txt`) | Unformatted code and lint findings landing in the backend, and an unpinned ruff changing the rules under unrelated PRs | `ci.yml:lint-python` (org `called-lint-python.yml`) | 2026-03-22, f36db91 (#31, sync from main) | Always, Tier 0, required (file) | 16s |
+| `lint-python / Lint Python (black + ruff)` | black and ruff on `backend/`, at the versions `lint-versions` reads from `backend/requirements-dev.txt` (so Dependabot bumps apply to CI too, #1012) | Unformatted code and lint findings landing in the backend, and an unpinned ruff changing the rules under unrelated PRs | `ci.yml:lint-python` (org `called-lint-python.yml`) | 2026-03-22, f36db91 (#31, sync from main) | Always, Tier 0, required (file) | 16s |
+| `lint-versions` | Reads the `ruff` and `black` pins from `backend/requirements-dev.txt` and passes them to `lint-python`, so CI and local runs lint with the same versions | `lint-python` running an older ruff than the one the backend pins (#1012); a missing or malformed pin fails this job, but see the note under Job tiers | `ci.yml:lint-versions` (inline) | this PR (#1012) | Always, Tier 0, advisory (not in the ruleset file) | not measured |
 | `lint-frontend / Lint frontend (eslint + prettier)` | eslint and prettier on `frontend/`; the caller passes `run-a11y: true` (an accessibility lint pass, inferred from the input) | Lint errors, formatting drift, accessibility lint findings | `ci.yml:lint-frontend` (org `called-lint-frontend.yml`) | 2026-03-22, f36db91 (#31) | Always, Tier 0, required (file) | 42s |
 | `typecheck-frontend` | `npm run typecheck` (`tsc --noEmit`) in `frontend/` | A type error merging, because Jest and Babel do not type-check | `ci.yml:typecheck-frontend` | 2026-10-26, a72bfa6 | Always, Tier 1, required (file) | 41s |
 | `expo-compat / Expo Compatibility Check` | `called-expo-compat.yml` on `frontend/`; purpose inferred from the name (Expo SDK compatibility of installed packages; `dependabot.yml` says bumps that break it were seen twice) | A dependency bump outside what the installed Expo SDK supports | `ci.yml:expo-compat` (org `called-expo-compat.yml`) | 2026-03-31, d2e1b0c | Always, Tier 1, required (file) | 33s |
