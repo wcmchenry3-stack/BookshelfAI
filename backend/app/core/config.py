@@ -17,6 +17,7 @@ from app.ai.models_allowlist import (
     TIMEOUT_S_BOUNDS,
 )
 from app.core.db_url import to_async_url
+from app.core.email_settings import EmailSettings
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
 # asyncpg's server-side prepared statements, which asyncpg uses by default. It
@@ -35,12 +36,6 @@ _ORIGIN_AUTH_SECRET_MIN_LENGTH = 32
 # The only hosts AI_ANTHROPIC_BASE_URL may name, in any environment (#539).
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _PRINTABLE_ASCII_PATTERN = re.compile(r"[\x20-\x7e]+")
-
-# A single bare address (no display name, no list, no whitespace/CRLF), since it
-# ends up in an email header.
-_EMAIL_ADDRESS_PATTERN = re.compile(
-    r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+"
-)
 
 
 # Settings where a blank value is NOT treated as unset (#648). Everywhere else a
@@ -119,7 +114,7 @@ class _BlankGuardSource(PydanticBaseSettingsSource):
         return {}
 
 
-class Settings(BaseSettings):
+class Settings(EmailSettings, BaseSettings):
     # hide_input_in_errors: a validation error must never echo a secret value
     # (e.g. ORIGIN_AUTH_SECRET) into boot logs.
     # env_ignore_empty (#648): a blank env var (process or .env) is treated as
@@ -392,19 +387,6 @@ class Settings(BaseSettings):
     # exactly that value, or it gets 403. Empty disables the check.
     origin_auth_header: str = "X-Origin-Auth"
     origin_auth_secret: str = ""
-
-    # Reply-to address on transactional email sent through Resend (#678). Resend
-    # only sends; replies land in the inbox that Cloudflare Email Routing
-    # forwards this address to. Empty = send without a Reply-To header.
-    email_reply_to: str = "support@buffingchi.com"
-
-    @field_validator("email_reply_to")
-    @classmethod
-    def valid_email_reply_to(cls, v: str) -> str:
-        v = v.strip()
-        if v and not _EMAIL_ADDRESS_PATTERN.fullmatch(v):
-            raise ValueError("EMAIL_REPLY_TO must be a single plain email address")
-        return v
 
     @field_validator("cors_origins")
     @classmethod
