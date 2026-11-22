@@ -108,11 +108,11 @@ The first logo (and the old `icon.png`) was a Gemini image. It is AI-generated, 
 | `assets/adaptive-icon.png`, Android `ic_launcher_foreground` | same, transparent, inside the 66 % safe zone   | C     |
 | `assets/monochrome-icon.png`, Android `ic_launcher_monochrome` | solid silhouette for Android 13 themed icons | B     |
 | `assets/splash.png`, iOS splash, Android `splashscreen_logo` | the whole mark (ring and name) on navy         | A     |
-| `assets/logo.png` (login screen), `favicon.png`             | the whole mark; favicon as the icon            | A / C |
+| `assets/favicon.png`                                        | the icon art (no ring, no wordmark)            | C     |
 
 Brand navy `#263250` and cream `#EFE9D4` are fixed in `draw_logo.py` (native icons cannot read a theme). Android `iconBackground`, `splashscreen_background`, the iOS splash colour (colorset and storyboard) and `app.json` are written by the generator. Android icons keep every pixel within the 66 dp safe circle (`gen_app_icons_test.py` measures it).
 
-In-app logo: `frontend/components/brand/BookshelfLogo.tsx` draws the whole mark with `react-native-svg` from `frontend/components/brand/logoPaths.ts`, which `gen_app_icons.py` writes (and `--check` covers) from the same shapes as the PNGs. Its colours come from the theme (field `primary`, ink `onPrimary`), so it follows light and dark mode; the native icon and splash keep the fixed brand navy. Swapping the login screen's `assets/logo.png` for it, and removing that file, is a separate step (#961).
+In-app logo: `frontend/components/brand/BookshelfLogo.tsx` draws the whole mark with `react-native-svg` from `frontend/components/brand/logoPaths.ts`, which `gen_app_icons.py` writes (and `--check` covers) from the same shapes as the PNGs. Its colours come from the theme (field `primary`, ink `onPrimary`), so it follows light and dark mode; the native icon and splash keep the fixed brand navy. The login screen uses it; there is no `logo.png` any more (#961).
 
 ## Decision log
 
