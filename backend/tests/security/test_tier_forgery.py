@@ -126,7 +126,7 @@ def _scan(client, token, **kwargs):
 
     with (
         patch.object(entitlements, "tier_for", spy),
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
         patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),

@@ -89,7 +89,7 @@ def client():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
     ):
@@ -231,7 +231,7 @@ class TestAlertContent:
                 reserved_micros=10_000,
                 ceiling_micros=10_000_000,
                 settlement=breaker.Settlement(
-                    600, "scan.standard", "gpt-4o-mini", "ok"
+                    600, "scan.standard", "claude-haiku-5-5", "ok"
                 ),
             )
             sentry_sdk.capture_message("later")
@@ -285,7 +285,7 @@ class TestAlertContent:
                 reserved_micros=10_000,
                 ceiling_micros=10_000_000,
                 settlement=breaker.Settlement(
-                    600, "scan.standard", "gpt-4o-mini", "ok"
+                    600, "scan.standard", "claude-haiku-5-5", "ok"
                 ),
             )
             sentry_sdk.capture_message("later in the same request")

@@ -1,1 +1,1 @@
-ALLOWED_MODELS = {"openai": frozenset({"gpt-4o"})}
+ALLOWED_MODELS = {"other": frozenset({"other-1"})}

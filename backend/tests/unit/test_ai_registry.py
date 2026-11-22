@@ -18,8 +18,8 @@ from app.core.config import settings
 def _spec(**overrides) -> FeatureSpec:
     values = {
         "name": "test.feature",
-        "provider": "openai",
-        "model": "gpt-4o-mini",
+        "provider": "anthropic",
+        "model": "claude-haiku-5-5",
         "effort": "medium",
         "max_tokens": 2048,
         "max_image_long_edge_px": 1568,
@@ -42,9 +42,9 @@ class TestRegisteredFeatures:
     def test_existing_values_are_unchanged(self):
         standard = FEATURES["scan.standard"]
         enhanced = FEATURES["scan.enhanced"]
-        assert standard.provider == enhanced.provider == "openai"
-        assert standard.model == settings.scan_model == "gpt-4o-mini"
-        assert enhanced.model == settings.scan_enhanced_model == "gpt-4o"
+        assert standard.provider == enhanced.provider == "anthropic"
+        assert standard.model == "claude-haiku-5-5"
+        assert enhanced.model == "claude-sonnet-5-5"
         for spec in (standard, enhanced):
             assert spec.max_tokens == settings.scan_max_tokens
             assert spec.timeout_s == settings.scan_timeout_seconds
@@ -63,7 +63,7 @@ class TestRegisteredFeatures:
 
     def test_spec_is_frozen(self):
         with pytest.raises(dataclasses.FrozenInstanceError):
-            FEATURES["scan.standard"].model = "gpt-4o"  # type: ignore[misc]
+            FEATURES["scan.standard"].model = "claude-sonnet-5-5"  # type: ignore[misc]
 
 
 class TestGetFeature:
@@ -105,7 +105,7 @@ class TestValidation:
         with pytest.raises(FeatureSpecError, match="unknown provider"):
             _spec(provider="acme")
 
-    @pytest.mark.parametrize("model", ["gpt-5-unknown", "", "claude-model"])
+    @pytest.mark.parametrize("model", ["claude-unknown", "", "claude-model"])
     def test_unknown_model_rejected(self, model):
         with pytest.raises(FeatureSpecError, match="not allowed"):
             _spec(model=model)

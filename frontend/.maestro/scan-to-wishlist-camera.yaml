@@ -11,7 +11,7 @@ tags:
 #
 # Prerequisites:
 #   - App is running in dev mode (Expo Go or dev build)
-#   - Backend has TEST_AUTH_SECRET, ALLOWED_EMAILS, and valid OpenAI API key
+#   - Backend has TEST_AUTH_SECRET, ALLOWED_EMAILS, and valid ANTHROPIC_API_KEY
 #   - Frontend .env has EXPO_PUBLIC_TEST_AUTH_SECRET and EXPO_PUBLIC_TEST_EMAIL
 #   - EXPO_PUBLIC_TEST_EMAIL is a dedicated test address, never one that a real
 #     Google account has signed in with on that database (test-login matches

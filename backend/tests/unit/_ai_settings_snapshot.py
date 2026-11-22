@@ -7,8 +7,10 @@ of probe values), every constant, and the CLI's exact output and exit code
 for a set of commands. ``tests/fixtures/ai_settings_snapshot.json`` was
 generated with this code from the single-module version on ``dev``;
 ``test_ai_settings_package.py`` checks the package still produces it.
-The fixture was generated once, before the split; never regenerate it from
-the package.
+The fixture was generated once, before the split. It was regenerated once
+more in #538, when the previous provider and its models left the allow-list
+(that changes the allow-list text and the probes); otherwise never
+regenerate it from the package.
 
 Everything env-dependent is pinned: the app settings the defaults read, the
 registry spec ``get_feature`` returns, the terminal width argparse wraps at,
@@ -40,8 +42,8 @@ PINNED_SETTINGS = {
 }
 
 _REGISTRY = {
-    "scan.standard": SimpleNamespace(provider="openai", model="gpt-4o-mini"),
-    "scan.enhanced": SimpleNamespace(provider="openai", model="gpt-4o"),
+    "scan.standard": SimpleNamespace(provider="anthropic", model="claude-haiku-5-5"),
+    "scan.enhanced": SimpleNamespace(provider="anthropic", model="claude-sonnet-5-5"),
 }
 
 # Values each validator is asked about; the answer (typed value or error
@@ -80,10 +82,9 @@ PROBES = [
     "true",
     "charge",
     "throttle",
-    "openai",
     "anthropic",
-    "gpt-4o",
-    "gpt-4o-mini",
+    "other-provider",
+    "other-model",
     "claude-haiku-5-5",
     "claude-sonnet-5-5",
     "x" * 101,
@@ -164,7 +165,7 @@ def _stored() -> dict:
         _Row("scan.enhanced.enabled", "false", "hand\x1b[31medit"),
         _Row("quota.premium.daily", 9, "ops"),
         _Row("quota.free.monthly", 50),
-        _Row("scan.standard.model", "gpt-4o-mini"),
+        _Row("scan.standard.model", "claude-haiku-5-5"),
         _Row("mystery.key", 1),
     ]
     return {row.key: row for row in rows}
@@ -197,7 +198,7 @@ CLI_CASES = [
     ["set", "scan.standard.model", "claude-haiku-5-5"],
     ["switch", "scan.standard", "anthropic"],
     ["switch", "scan.enhanced", "anthropic", "--model", "claude-haiku-5-5"],
-    ["switch", "scan.enhanced", "anthropic", "--model", "gpt-4o"],
+    ["switch", "scan.enhanced", "anthropic", "--model", "other-model"],
     ["switch", "scan.other", "anthropic"],
 ]
 

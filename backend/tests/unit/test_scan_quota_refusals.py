@@ -78,7 +78,7 @@ def client():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
     ):

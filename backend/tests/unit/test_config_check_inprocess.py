@@ -19,23 +19,25 @@ def _reset_raw_values(monkeypatch):
 
 
 class _Model(BaseModel):
-    scan_model: str
+    scan_max_tokens: str
 
-    @field_validator("scan_model")
+    @field_validator("scan_max_tokens")
     @classmethod
     def _check(cls, v):
-        raise ValueError("SCAN_MODEL='bogus' is not an allowed model")
+        raise ValueError("SCAN_MAX_TOKENS='bogus' is not an allowed model")
 
 
 def _validation_error() -> ValidationError:
     with pytest.raises(ValidationError) as ei:
-        _Model(scan_model="bogus")
+        _Model(scan_max_tokens="bogus")
     return ei.value
 
 
 def test_validation_problems_name_the_variable_and_redact_the_value():
     problems = config_check._validation_problems(_validation_error())
-    assert problems == ["SCAN_MODEL: SCAN_MODEL=<redacted> is not an allowed model"]
+    assert problems == [
+        "SCAN_MAX_TOKENS: SCAN_MAX_TOKENS=<redacted> is not an allowed model"
+    ]
 
 
 def test_validation_problems_without_location_use_settings_label():
@@ -55,9 +57,9 @@ def test_reason_keeps_first_line_only_and_redacts_known_secret_fragments(monkeyp
 
 
 def test_reason_leaves_variable_names_and_short_tokens(monkeypatch):
-    monkeypatch.setattr(config_check, "_raw_values", ["SCAN_MODEL abc"])
-    out = config_check._reason("SCAN_MODEL abc is wrong")
-    assert out == "SCAN_MODEL abc is wrong"
+    monkeypatch.setattr(config_check, "_raw_values", ["SCAN_MAX_TOKENS abc"])
+    out = config_check._reason("SCAN_MAX_TOKENS abc is wrong")
+    assert out == "SCAN_MAX_TOKENS abc is wrong"
 
 
 def test_collect_raw_values_includes_environment_and_dotenv(monkeypatch, tmp_path):
@@ -79,7 +81,7 @@ def test_collect_problems_reports_settings_validation_error(monkeypatch):
 
     monkeypatch.setattr(config_module, "Settings", boom)
     assert config_check.collect_problems() == [
-        "SCAN_MODEL: SCAN_MODEL=<redacted> is not an allowed model"
+        "SCAN_MAX_TOKENS: SCAN_MAX_TOKENS=<redacted> is not an allowed model"
     ]
 
 

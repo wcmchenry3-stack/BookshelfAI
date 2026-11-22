@@ -91,7 +91,7 @@ def as_user():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
         patch("app.api.scan.ledger.record", AsyncMock()),
@@ -202,7 +202,7 @@ _FORGED = {
     "fingerprint": "f" * 64,
     "user_id": str(BOB.id),
     "tier": "premium",
-    "model": "gpt-4o",
+    "model": "claude-sonnet-5-5",
     "feature": "scan.enhanced",
     "ai_done": "true",
     "enrich_done": "true",
@@ -298,7 +298,7 @@ async def test_stored_record_has_no_image_bytes_and_no_raw_output():
     provider_cls.return_value.identify = identify
     try:
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider", provider_cls),
+            patch("app.ai.gateway.AnthropicVisionProvider", provider_cls),
             patch("app.api.scan.EnrichmentService") as enrich,
             patch.object(settings, "turnstile_required", False),
         ):

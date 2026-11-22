@@ -24,47 +24,20 @@ Every third-party service Bookshelf talks to, what role it plays, and where to l
 
 **Why all three audiences are accepted:** each platform's OAuth SDK issues tokens with its own `aud` claim. Accepting all three in one check means the backend doesn't have to care which client signed in.
 
-## OpenAI (gpt-4o-mini vision)
+## Anthropic Claude (vision)
 
-**Role:** book-cover identification. Given a photo, returns up to 3 candidates with confidence scores.
-
-**Endpoint:** `https://api.openai.com/v1/chat/completions`
-**Model:** `gpt-4o-mini`
-**Key env var:** `OPENAI_API_KEY`
-**Timeout:** 45 seconds (`SCAN_TIMEOUT_SECONDS`)
-**Max tokens:** `SCAN_MAX_TOKENS` (default 2048), applied via the feature registry
-**Source:** `backend/app/ai/providers/openai_vision.py`, called only through the AI gateway (`backend/app/ai/gateway.py`)
-
-**Prompt strategy** — structured JSON output, no free text:
-> You are a book identification assistant. Given a photo of a book cover, identify the book and return a JSON array of up to 3 candidates ranked by confidence. Each candidate must have title, author, confidence (0–1), isbn_13 (nullable), isbn_10 (nullable). Return ONLY a valid JSON array, no other text.
-
-Image is base64-encoded and attached as a `data:image/jpeg;base64,...` URL. No file upload to OpenAI's Files API — the call is single-turn, no state.
-
-**Error handling:**
-- Timeout → `ScanUnavailableError` → endpoint returns `503 scan_unavailable`
-- Non-2xx (including 429 rate limit) → `ScanUnavailableError` → 503
-- Connection never established (`httpx.ConnectError`) → endpoint returns 503 `scan_unavailable` and refunds the daily-scan reservation
-- No content, not JSON, the wrong shape (a bare list is still accepted), or a non-empty list in which every entry is structurally broken → ledger `malformed`, `503 scan_unavailable`, refunded (#572)
-- Structurally broken entries (not an object, a title or author missing or not a string or over 500 characters after strip, a confidence that is not a number) are skipped individually (#754); a numeric confidence is clamped to 0–1 (NaN and bool become 0.5, an integer too large for a float clamps to 1 or 0), as in the Claude adapter; an empty or whitespace title is dropped (#746; schema-valid, so a reply of only such entries is `ok` with no books, not `malformed`), an empty author is kept (a title-only lookup)
-- `isbn_13` / `isbn_10` are cleaned by `app/ai/providers/_common.py` (#746; moved from `isbn.py` in #814): spaces and hyphens stripped; a non-string, non-ASCII-digit or bad-check-digit value becomes null and the book is kept (the model can invent ISBNs, e.g. #743)
-- `finish_reason: length` → ledger `truncated` with the parsed books; with none, `malformed` (503, refunded; #572)
-
-**Cost note:** gpt-4o-mini is the cheapest vision-capable model. Scan cost is approximately $0.001 per image at current pricing. The `rate_limit_scan` bucket (10/min per client) caps abuse at the HTTP layer.
-
-## Anthropic Claude (vision, #532)
-
-**Role:** the same book identification as OpenAI, behind a per-feature setting. OpenAI stays listed above and stays the registry default until the OpenAI removal (#538). Both environments' `ai_settings` rows select `anthropic` (production since 2026-11-22, after the #549 decision); see [`RENDER.md`](RENDER.md#switching-scans-to-claude-538).
+**Role:** book identification. Given a photo (one cover, a stack, or a shelf of spines), returns every readable book (up to `SCAN_MAX_BOOKS`) with a confidence and optional ISBN hints. Anthropic is the **only** AI provider (#532 added it; the previous provider was removed in #538 on 2026-11-22, there is no rollback to it). Production has run on Claude since 2026-11-22 (after the #549 decision); see [`RENDER.md`](RENDER.md#scans-run-on-claude-538). An `ai_settings` row that still names a removed provider or model is ignored with a warning and the registry default is used.
 
 **SDK:** official `anthropic` Python SDK, pinned in `backend/requirements.txt` (1.x, built on `httpx2`); `client.messages.create` only
 **Endpoint:** `https://api.anthropic.com`, pinned in the adapter. The only way to change it is the validated `AI_ANTHROPIC_BASE_URL` setting (#539, read once at boot into `settings.ai_anthropic_base_url`), which exists for the nightly load run's local fake provider; it accepts only `localhost` / `127.0.0.1` / `::1` in any environment, and in staging and production any value fails boot. With the override set, the SDK client does not follow redirects, so a local endpoint cannot bounce the API key and photo to another host
 **Operator environment:** the base URL and the API key are passed explicitly, so the SDK's own reading of `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and saved profiles is not used. **The generic `ANTHROPIC_BASE_URL` is deliberately ignored** by the app and the SDK: a developer's shell often exports it for Claude Code or a gateway, and honouring it would send `ANTHROPIC_API_KEY` to that host. Only the project-specific `AI_ANTHROPIC_BASE_URL` (validated, as above) can change the endpoint. Some environment settings do still apply to the SDK client, for example: the HTTP library's proxy and TLS variables (`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, `SSL_CERT_FILE` / `SSL_CERT_DIR`), `ANTHROPIC_CUSTOM_HEADERS` (extra request headers) and `ANTHROPIC_LOG`. **Keep `ANTHROPIC_LOG` unset in production** (and the `anthropic` / `httpx2` loggers above DEBUG): at `debug` the SDK logs the full request options, including the base64 image, which breaks the rule that logs carry only lengths and hashes. Keep the others unset on the API service unless a proxy or custom CA is intended.
 **Models:** `claude-haiku-5-5` (`scan.standard`), `claude-sonnet-5-5` (`scan.enhanced`): fixed IDs (Anthropic publishes no dated snapshot for them, #548), from `registry.PROVIDER_MODELS`
-**Key env var:** `ANTHROPIC_API_KEY` (only needed once a feature is switched to `anthropic`)
+**Key env var:** `ANTHROPIC_API_KEY` (without it a scan answers 503 `scan_unavailable`; the app still boots)
 **Timeout / max tokens / effort:** the feature spec's (`SCAN_TIMEOUT_SECONDS`, `SCAN_MAX_TOKENS`; effort `low` standard, `medium` enhanced)
 **Source:** `backend/app/ai/providers/anthropic_vision.py`, called only through the AI gateway
-**Switch:** `python -m app.ai.settings switch scan.standard anthropic` (and back with `... switch scan.standard openai`); see [deployment.md](deployment.md)
+**Settings:** the kill switches and limits are `ai_settings` rows (`python -m app.ai.settings list`); see [deployment.md](deployment.md) and [scan-limits.md](scan-limits.md)
 
-**Request:** the OpenAI adapter's system prompt (unchanged wording) with a `cache_control` breakpoint (the prompt is about 300 tokens, under the 512-token cache minimum, so it most likely does not cache; confirm on staging from the ledger's cache token columns); structured output (`output_config.format`) for `{books: [{title, author, confidence, isbn_13, isbn_10}]}`; the normalised JPEG as a base64 image block. No sampling parameters and no prefill.
+**Request:** the system prompt (`SYSTEM_PROMPT` in the adapter) with a `cache_control` breakpoint. The cached prefix is about 900 tokens and is reused: on dev (2026-11-22) the ledger showed `cache_write_tokens = 907` on the first scan and `cache_read_tokens = 907` on the next; structured output (`output_config.format`) for `{books: [{title, author, confidence, isbn_13, isbn_10}]}`; the normalised JPEG as a base64 image block. No sampling parameters and no prefill.
 
 **Error handling:**
 - `stop_reason: refusal` → empty result, ledger `refused`, reservation kept
@@ -207,12 +180,10 @@ With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client I
 - `GOOGLE_CLIENT_ID` + `GOOGLE_IOS_CLIENT_ID` + `GOOGLE_ANDROID_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`
 - `JWT_PRIVATE_KEY` + `JWT_PUBLIC_KEY`
 - `ALLOWED_EMAILS`
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY` (only once a feature is switched to `anthropic`)
+- `ANTHROPIC_API_KEY`
 - `GOOGLE_BOOKS_API_KEY`
 - `SENTRY_DSN`
 - `TURNSTILE_SECRET_KEY`
-- `OPENAI_MAX_TOKENS` (optional, default 512)
 
 **TRUSTED_HOSTS gotcha:** production's `TRUSTED_HOSTS` is locked to the public domain. Any probe that hits the origin by its `*.onrender.com` hostname (CI, uptime monitors) gets rejected by `TrustedHostMiddleware` with HTTP 400 — unless the request hits `/health`, which is explicitly exempt via `_HealthExemptTrustedHost`. See [architecture.md → Auth + middleware](architecture.md#middleware-stack).
 
@@ -221,9 +192,9 @@ With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client I
 One `POST /scan` hits **five** external services:
 
 1. **Cloudflare Turnstile** — verify the bot-check token (400/403 guard)
-2. **OpenAI Vision** — identify the cover → 3 candidates with confidence + ISBN hints
+2. **Claude vision (Anthropic)** — identify every book in the photo → candidates with confidence + ISBN hints
 3. **Google Books** — enrich each candidate with covers / descriptions / page counts
 4. **Open Library** — resolve `work_id` for the primary dedup key
 5. **Sentry** — breadcrumbs + error capture throughout
 
-Each call is independently timed out (5s Turnstile, 15s OpenAI, 10s Google Books, 10s Open Library) so one slow upstream can't block the request beyond its own budget.
+Each call is independently timed out (5s Turnstile, 45s Claude (`SCAN_TIMEOUT_SECONDS`), 10s Google Books, 10s Open Library) so one slow upstream can't block the request beyond its own budget.

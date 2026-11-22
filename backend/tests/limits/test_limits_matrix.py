@@ -623,15 +623,15 @@ def test_matrix_ids_are_unique_and_cover_every_refusal_code():
 
 def test_expected_standard_scan_cost_is_anchored_to_a_literal():
     """``h.cost`` prices expectations with the code's own price table, so pin
-    one value by hand. The default standard scan is openai gpt-4o-mini (prices
-    in micro-dollars per million tokens: input 150_000, output 600_000, cache
-    read 75_000); USAGE = 1_000 input, 500 output, 2_000 cache-read tokens:
-        1_000 * 150_000 / 1e6 = 150
-          500 * 600_000 / 1e6 = 300
-        2_000 *  75_000 / 1e6 = 150
-                        total = 600 micro-dollars.
+    one value by hand. The default standard scan is Claude Haiku 5.5 (prices
+    in micro-dollars per million tokens: input 100_000, output 500_000, cache
+    read 10_000); USAGE = 1_000 input, 500 output, 2_000 cache-read tokens:
+        1_000 * 100_000 / 1e6 = 100
+          500 * 500_000 / 1e6 = 250
+        2_000 *  10_000 / 1e6 = 20
+                        total = 370 micro-dollars.
     """
-    assert h.cost(False, BASE) == 600
+    assert h.cost(False, BASE) == 370
 
 
 # ===========================================================================

@@ -9,9 +9,9 @@ What is different from production, on purpose, and only in this process:
 - ``ENVIRONMENT=development`` with ``TEST_AUTH_SECRET`` set, so the dev-only
   ``POST /auth/test-login`` exists (#688). It is not registered when hardened.
 - ``AI_ANTHROPIC_BASE_URL`` and ``OPEN_LIBRARY_BASE_URL`` point at the fake
-  services, ``ANTHROPIC_API_KEY`` is a dummy, and ``OPENAI_API_KEY`` is empty.
-  ``scan.standard`` is switched to the Anthropic adapter in ``ai_settings``
-  (the registry default is OpenAI, which has no key here and would answer 503).
+  services, and ``ANTHROPIC_API_KEY`` is a dummy.
+  ``scan.standard`` is written to ``ai_settings`` as the Anthropic adapter
+  (the registry default already is; the rows pin the e2e values).
 - Google Books has no base-URL setting (``GOOGLE_BOOKS_URL`` is a constant in
   ``app/services/google_books.py``), so this launcher rebinds that module
   attribute to the fake before the first request. No app code is changed.
@@ -80,7 +80,6 @@ def configure_environment() -> None:
             "CLAMAV_ENABLED": "false",
             "ANTHROPIC_API_KEY": "e2e-fake-key",
             "AI_ANTHROPIC_BASE_URL": FAKE_URL,
-            "OPENAI_API_KEY": "",
             "OPEN_LIBRARY_BASE_URL": FAKE_URL,
             "GOOGLE_BOOKS_API_KEY": "",
             "RATE_LIMIT_SCAN": "100000/minute",

@@ -120,14 +120,14 @@ async def test_read_inside_an_open_transaction_keeps_the_session_usable(factory)
     ai_settings.reset_cache()
     async with factory() as db:
         await ai_settings.set_setting(
-            db, "scan.standard.model", "gpt-4o", updated_by="ops"
+            db, "scan.standard.model", "claude-sonnet-5-5", updated_by="ops"
         )
         await db.execute(select(AISetting.key))  # an open transaction
         current = await ai_settings.get_ai_settings(db)
         assert db.in_transaction()
         assert (await db.execute(select(AISetting.key))).all()
     assert current.spec_for(ai_settings.get_feature("scan.standard")).model == (
-        "gpt-4o"
+        "claude-sonnet-5-5"
     )
 
 
@@ -185,13 +185,13 @@ async def test_invalid_switch_row_is_disabled_and_missing_row_uses_env(factory):
 async def test_set_writes_actor_and_rejects_invalid(factory):
     async with factory() as db:
         await ai_settings.set_setting(
-            db, "scan.standard.model", "gpt-4o", updated_by="will"
+            db, "scan.standard.model", "claude-sonnet-5-5", updated_by="will"
         )
     first = (await _rows(factory))["scan.standard.model"]
     async with factory() as db:
         with pytest.raises(ai_settings.AISettingValueError):
             await ai_settings.set_setting(
-                db, "scan.standard.model", "gpt-5", updated_by="will"
+                db, "scan.standard.model", "claude-9", updated_by="will"
             )
         with pytest.raises(ai_settings.AISettingValueError):
             await ai_settings.set_setting(
@@ -199,13 +199,13 @@ async def test_set_writes_actor_and_rejects_invalid(factory):
             )
     async with factory() as db:
         await ai_settings.set_setting(
-            db, "scan.standard.model", "gpt-4o-mini", updated_by="ann"
+            db, "scan.standard.model", "claude-haiku-5-5", updated_by="ann"
         )
     rows = await _rows(factory)
     second = rows["scan.standard.model"]
     assert "scan.max_image_pixels" not in rows
-    assert (first.value, first.updated_by) == ("gpt-4o", "will")
-    assert (second.value, second.updated_by) == ("gpt-4o-mini", "ann")
+    assert (first.value, first.updated_by) == ("claude-sonnet-5-5", "will")
+    assert (second.value, second.updated_by) == ("claude-haiku-5-5", "ann")
     assert second.updated_at >= first.updated_at
 
 
@@ -245,38 +245,37 @@ def _migration_cycle(connection) -> None:
 
 
 async def test_switch_provider_writes_the_pair_and_is_read_back(factory):
-    """#532: switching to anthropic and back through the real table."""
+    """#532: switching the pair through the real table."""
     async with factory() as db:
         await ai_settings.seed_ai_settings(db)
         await ai_settings.switch_provider(
-            db, "scan.standard", "anthropic", updated_by="ops"
+            db,
+            "scan.standard",
+            "anthropic",
+            model="claude-sonnet-5-5",
+            updated_by="ops",
         )
     rows = await _rows(factory)
     assert rows["scan.standard.provider"].value == "anthropic"
-    assert rows["scan.standard.model"].value == "claude-haiku-5-5"
+    assert rows["scan.standard.model"].value == "claude-sonnet-5-5"
     assert rows["scan.standard.model"].updated_by == "ops"
-    # The enhanced pair is untouched.
-    assert rows["scan.enhanced.provider"].value == "openai"
+    # The enhanced pair is untouched (seeded from the registry).
+    assert rows["scan.enhanced.provider"].value == "anthropic"
+    assert rows["scan.enhanced.model"].value == "claude-sonnet-5-5"
 
     ai_settings.reset_cache()
     async with factory() as db:
         current = await ai_settings.get_ai_settings(db)
     spec = current.spec_for(ai_settings.get_feature("scan.standard"))
-    assert (spec.provider, spec.model) == ("anthropic", "claude-haiku-5-5")
+    assert (spec.provider, spec.model) == ("anthropic", "claude-sonnet-5-5")
 
     async with factory() as db:
-        # A provider alone cannot be switched while the model is Claude's.
-        with pytest.raises(ai_settings.AISettingValueError):
-            await ai_settings.set_setting(
-                db, "scan.standard.provider", "openai", updated_by="ops"
-            )
-    async with factory() as db:
+        # Without a model the registry default comes back.
         await ai_settings.switch_provider(
-            db, "scan.standard", "openai", updated_by="ops"
+            db, "scan.standard", "anthropic", updated_by="ops"
         )
     rows = await _rows(factory)
-    assert rows["scan.standard.provider"].value == "openai"
-    assert rows["scan.standard.model"].value == settings.scan_model
+    assert rows["scan.standard.model"].value == "claude-haiku-5-5"
     ai_settings.reset_cache()
 
 

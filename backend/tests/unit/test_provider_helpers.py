@@ -1,19 +1,13 @@
-"""Edge cases in the vision providers' parsing and error helpers that the
+"""Edge cases in the vision provider's parsing and error helpers that the
 end-to-end provider tests do not reach."""
 
-import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 from pydantic import ValidationError
 
 from app.ai.providers import anthropic_vision as av
 from app.ai.providers._common import MAX_TOKEN_COUNT, clean_isbn_10
-from app.ai.providers.openai_vision import OpenAIVisionProvider
-from app.ai.registry import FEATURES
-from app.services.book_identifier import ScanUnavailableError
 
 
 class TestBookValidators:
@@ -116,31 +110,3 @@ class TestBackoff:
 
     def test_server_retry_after_is_a_floor(self):
         assert av.backoff_delay(0, 30.0) == 30.0
-
-
-class TestOpenAIStatusErrors:
-    @staticmethod
-    async def _call(status_code):
-        request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
-        response = httpx.Response(status_code, request=request)
-        client = AsyncMock()
-        client.post = AsyncMock(return_value=response)
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        provider = OpenAIVisionProvider(FEATURES["scan.standard"])
-        with patch(
-            "app.ai.providers.openai_vision.httpx.AsyncClient",
-            MagicMock(return_value=client),
-        ):
-            await provider.identify(b"img")
-
-    async def test_429_is_logged_as_rate_limit(self, caplog):
-        with caplog.at_level(logging.WARNING), pytest.raises(ScanUnavailableError):
-            await self._call(429)
-        assert "rate limit" in caplog.text
-
-    async def test_other_statuses_log_the_code(self, caplog):
-        with caplog.at_level(logging.WARNING), pytest.raises(ScanUnavailableError):
-            await self._call(503)
-        assert "HTTP 503" in caplog.text
-        assert "rate limit" not in caplog.text

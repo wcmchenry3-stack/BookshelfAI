@@ -33,7 +33,7 @@ USER = User(
 # Every key, and the short names a client might guess, as request inputs.
 _HOSTILE = {
     **{key: "x" for key in ai_settings.KNOWN_KEYS},
-    "model": "gpt-4o",
+    "model": "claude-sonnet-5-5",
     "provider": "anthropic",
     "max_image_pixels": "100000000",
     "enabled": "true",
@@ -74,7 +74,7 @@ def client():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),
         patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),

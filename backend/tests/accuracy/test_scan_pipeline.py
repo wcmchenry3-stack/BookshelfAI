@@ -5,7 +5,7 @@ ISBN → enriched book mappings. All external HTTP is intercepted so tests
 are deterministic and free.
 
 Design goals:
-  1. Catch prompt regressions: if ChatGPT Vision response format changes,
+  1. Catch prompt regressions: if the Claude vision response format changes,
      the ISBN extraction step will silently return None — these tests catch that.
   2. Catch enrichment regressions: if Open Library or Google Books schema
      changes, metadata fields go missing — golden assertions catch that.
@@ -16,13 +16,11 @@ Expand GOLDEN_DATASET as you scan more books.
 
 import dataclasses
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
 from app.ai.providers.anthropic_vision import AnthropicVisionProvider
-from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FEATURES, default_model
 from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate
@@ -106,19 +104,17 @@ def _vision_candidate(entry: dict) -> BookCandidate:
 
 
 class TestIsbnExtractionAccuracy:
-    """Verify that each vision provider returns the expected ISBN.
+    """Verify that the vision provider returns the expected ISBN.
 
-    The vision model response is mocked (OpenAI at its HTTP client, Claude
-    at its SDK client, #532) — these tests validate that the parsing logic
-    correctly extracts structured data from the model's reply. The parsing
-    assertions are identical for both providers.
+    The vision model response is mocked at the Claude SDK client (#532) —
+    these tests validate that the parsing logic correctly extracts
+    structured data from the model's reply.
     """
 
-    @pytest.mark.parametrize("provider", ["openai", "anthropic"])
     @pytest.mark.parametrize(
         "entry", GOLDEN_DATASET, ids=[e["isbn"] for e in GOLDEN_DATASET]
     )
-    async def test_identifies_expected_isbn(self, entry, provider):
+    async def test_identifies_expected_isbn(self, entry):
         book = {
             "title": entry["title"],
             "author": entry["author"],
@@ -126,10 +122,7 @@ class TestIsbnExtractionAccuracy:
             "isbn_13": entry["isbn"],
             "isbn_10": None,
         }
-        if provider == "openai":
-            results = await self._identify_openai(json.dumps([book]))
-        else:
-            results = await self._identify_claude(json.dumps({"books": [book]}))
+        results = await self._identify_claude(json.dumps({"books": [book]}))
 
         assert len(results) >= 1
         isbns = [r.isbn_13 for r in results if r.isbn_13]
@@ -138,25 +131,6 @@ class TestIsbnExtractionAccuracy:
         ), f"Expected ISBN {entry['isbn']} not found in results: {isbns}"
         assert results[0].title == entry["title"]
         assert results[0].author == entry["author"]
-
-    @staticmethod
-    async def _identify_openai(json_response: str) -> list[BookCandidate]:
-        mock_resp = MagicMock(spec=httpx.Response)
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": json_response}}]
-        }
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=mock_client
-        ):
-            identifier = OpenAIVisionProvider(FEATURES["scan.standard"])
-            return (await identifier.identify(b"fake_image_bytes")).candidates
 
     @staticmethod
     async def _identify_claude(json_response: str) -> list[BookCandidate]:

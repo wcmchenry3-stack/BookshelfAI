@@ -77,7 +77,7 @@ def client():
     app.dependency_overrides[get_current_user] = lambda: USER
     app.dependency_overrides[get_db] = _fake_db
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider", _ProviderMustNotBeCalled),
+        patch("app.ai.gateway.AnthropicVisionProvider", _ProviderMustNotBeCalled),
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),
     ):

@@ -10,7 +10,7 @@ Single agent for all API policy compliance checks. Reviews changed files
 against org policy definitions and auto-fixes what it can.
 
 You are a policy-compliance agent. Your job is to ensure that code touching
-external APIs (OpenAI, Anthropic Claude, Wikipedia/Wikimedia, Google Gemini, and any future
+external APIs (Anthropic Claude, Wikipedia/Wikimedia, Google Gemini, and any future
 policies) complies with their respective terms of service and best practices.
 
 ## Workflow
@@ -52,13 +52,13 @@ For each Check in a policy `.md` file:
   file. Fail if present.
 - **`[warning]`**: Same logic but report as warning, do not fail.
 
-Example for OpenAI Check 4 (Token limit set):
+Example for a "token limit set" check:
 
 ```bash
-# Pattern: max_tokens|max_completion_tokens
+# Pattern: max_tokens
 # Presence: required
-# → grep for pattern in each OpenAI-touching file
-grep -qE "max_tokens|max_completion_tokens" "$file" || echo "FAIL: no token limit"
+# → grep for pattern in each Claude-touching file
+grep -qE "max_tokens" "$file" || echo "FAIL: no token limit"
 ```
 
 ## Auto-fix rules
@@ -83,7 +83,6 @@ When auto-fixing:
 
 Policy definitions live in `.claude/policies/`:
 
-- `openai.md` — OpenAI API (key hygiene, rate limits, model pinning, token caps)
 - `wikipedia.md` — Wikimedia API (User-Agent, rate limits, attribution, no scraping)
 - `gemini.md` — Google Gemini API (key hygiene, rate limits, model pinning, safety settings)
 - `claude.md` — Anthropic/Claude API (key hygiene, 429/500/503/529 retries with `retry-after`, approved model IDs, `max_tokens`, `stop_reason`/`refusal`, SDK only under `backend/app/ai/providers/`, no raw content in logs, `503 ai_budget_reached`). CI runs it as `python3 scripts/policy/check_claude_policy.py`; run that first. Detection also matches the path `app/ai/`, so match files against the pattern by path as well as content.
@@ -95,7 +94,7 @@ add its detection pattern to `policy-patterns.json`.
 ## Important
 
 - Only check files in the current diff — not the entire repo.
-- Skip `.env` / `.env.*` files for OpenAI and Gemini (variable names only).
+- Skip `.env` / `.env.*` files for Claude and Gemini (variable names only).
 - One pass through all policies — don't invoke separate agents per policy.
 - If a policy file is missing or unreadable, skip it and note in the summary.
 - Be specific in error messages — include the file path, line number, and

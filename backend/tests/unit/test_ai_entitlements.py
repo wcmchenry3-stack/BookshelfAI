@@ -63,7 +63,7 @@ async def test_override_returns_premium(monkeypatch):
         return Tier.PREMIUM
 
     monkeypatch.setattr(entitlements, "tier_for", premium)
-    with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
+    with patch("app.ai.gateway.AnthropicVisionProvider") as cls:
         cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         result = await run_feature(
             "scan.standard",
@@ -75,7 +75,7 @@ async def test_override_returns_premium(monkeypatch):
 
 
 async def test_gateway_result_is_free_by_default():
-    with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
+    with patch("app.ai.gateway.AnthropicVisionProvider") as cls:
         cls.return_value.identify = AsyncMock(return_value=ProviderResult([]))
         result = await run_feature(
             "scan.standard",
@@ -111,7 +111,7 @@ def test_scan_ignores_forged_client_tier(client):
 
     with (
         patch("app.api.scan.run_feature", new=spy),
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
         patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),

@@ -75,7 +75,7 @@ def _reset_jwks_caches():
 
 @pytest.fixture(scope="session", autouse=True)
 def _block_real_ai_providers():
-    """Cost guard (#584): any request to a real Anthropic or OpenAI API host
+    """Cost guard (#584): any request to a real Anthropic API host
     is blocked for the whole run (``tests/_network_guard.py``)."""
     from tests import _network_guard
 

@@ -317,7 +317,6 @@ def main(argv: list[str] | None = None) -> int:
         "CLAMAV_ENABLED": "false",
         "ANTHROPIC_API_KEY": "perf-fake-key",
         "AI_ANTHROPIC_BASE_URL": stub_url,
-        "OPENAI_API_KEY": "",
         "OPEN_LIBRARY_BASE_URL": stub_url,
         "RATE_LIMIT_SCAN": "100000/minute",
         "AI_SETTINGS_CACHE_TTL_SECONDS": str(TTL_S),

@@ -508,7 +508,7 @@ class TestScanRecordsFromBeforeTheFix:
             fingerprint="c" * 64,
             feature="scan.standard",
             tier="free",
-            model="gpt-4o-mini",
+            model="claude-haiku-5-5",
             candidates=scan_records.serialise_candidates([DOCTORED]),
             enrichment=[self._legacy_item()],
             ai_done=True,

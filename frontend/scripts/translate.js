@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 /* eslint-env node */
 /**
- * Translate English locale files to all supported languages using OpenAI.
+ * Translate English locale files to all supported languages using Claude.
+ *
+ * Dev-only tool: it runs on a developer's machine and calls the Anthropic
+ * Messages API directly over HTTPS (no SDK, no app code). It is never part of
+ * the app or CI. Model calls made by the app itself go through the backend AI
+ * gateway (backend/app/ai/gateway.py), not through here.
  *
  * Usage:
  *   node scripts/translate.js --locale es --namespace scan
@@ -9,7 +14,8 @@
  *   node scripts/translate.js --locale es --namespace scan --dry-run  # preview only
  *   node scripts/translate.js --all                                   # all locales × namespaces
  *
- * Requires OPENAI_API_KEY in env.
+ * Requires ANTHROPIC_API_KEY in env. Uses the pinned model below
+ * (claude-sonnet-5-5; no sampling parameters: this model rejects them).
  */
 
 const fs = require('fs');
@@ -83,25 +89,30 @@ if (!runAll && (!targetLocale || !targetNamespace)) {
   process.exit(1);
 }
 
-if (!process.env.OPENAI_API_KEY) {
-  console.error('Error: OPENAI_API_KEY is not set');
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.error('Error: ANTHROPIC_API_KEY is not set');
   process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI helpers
+// Claude helpers
 // ---------------------------------------------------------------------------
 
-function openaiRequest(body) {
+const MODEL = 'claude-sonnet-5-5';
+// Room for 20 translated strings plus the model's own reasoning.
+const MAX_TOKENS = 16000;
+
+function claudeRequest(body) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
     const options = {
-      hostname: 'api.openai.com',
-      path: '/v1/chat/completions',
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
         'Content-Length': Buffer.byteLength(data),
       },
     };
@@ -113,7 +124,7 @@ function openaiRequest(body) {
         try {
           resolve(JSON.parse(body));
         } catch (_e) {
-          reject(new Error(`JSON parse error: ${body}`));
+          reject(new Error(`JSON parse error (HTTP ${res.statusCode})`));
         }
       });
     });
@@ -162,21 +173,36 @@ ${metaContext || 'No additional context'}
 English source:
 ${JSON.stringify(keyValuePairs, null, 2)}`;
 
-  const response = await openaiRequest({
-    model: 'gpt-4o',
+  const response = await claudeRequest({
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    // Translation needs little reasoning; keep the calls quick and cheap.
+    output_config: { effort: 'low' },
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.2,
-    response_format: { type: 'json_object' },
   });
 
-  if (response.error) {
-    throw new Error(`OpenAI error: ${JSON.stringify(response.error)}`);
+  if (response.type === 'error' || response.error) {
+    throw new Error(`Claude error: ${JSON.stringify(response.error)}`);
   }
+  if (response.stop_reason === 'refusal') throw new Error('Claude declined the request');
+  if (response.stop_reason === 'max_tokens') throw new Error('Claude reply was cut off');
 
-  const content = response.choices?.[0]?.message?.content;
-  if (!content) throw new Error('Empty response from OpenAI');
+  const content = (response.content || [])
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('');
+  if (!content) throw new Error('Empty response from Claude');
 
-  return JSON.parse(content);
+  return JSON.parse(extractJson(content));
+}
+
+// Claude has no JSON mode here, so accept a bare object or one wrapped in a
+// code fence or a sentence: take the text from the first "{" to the last "}".
+function extractJson(text) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end < start) throw new Error('No JSON object in Claude reply');
+  return text.slice(start, end + 1);
 }
 
 // ---------------------------------------------------------------------------

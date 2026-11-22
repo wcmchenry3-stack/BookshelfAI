@@ -35,7 +35,7 @@ backend/
 │   │   └── providers/         Provider adapters (only package allowed to call a provider)
 │   │       ├── _common.py         Reply parsing shared by the adapters (ISBNs, confidence, logging)
 │   │       ├── base.py            VisionProvider protocol
-│   │       └── openai_vision.py   OpenAI vision book identifier
+│   │       └── anthropic_vision.py   Claude vision book identifier
 │   ├── api/               HTTP routers (endpoints)
 │   │   ├── auth.py
 │   │   ├── books.py
@@ -154,7 +154,7 @@ frontend/
 ├── android/               Native Android project (bare Expo prebuild)
 ├── ios/                   Native iOS project (bare Expo prebuild)
 ├── scripts/
-│   └── translate.js               i18n workflow helper
+│   └── translate.js               i18n workflow helper (dev-only, calls Claude)
 ├── app.json               Expo config
 ├── babel.config.js
 ├── jest.setup.ts

@@ -28,8 +28,7 @@ class ProviderTimeoutError(ScanUnavailableError):
 
 class ProviderConnectError(ScanUnavailableError):
     """The connection to the provider was never established, so nothing was
-    billed. A ``ScanUnavailableError``, so ``/scan`` refunds it exactly as it
-    does ``httpx.ConnectError`` from the OpenAI adapter (#532)."""
+    billed. A ``ScanUnavailableError``, so ``/scan`` refunds it (#532)."""
 
 
 @dataclass(frozen=True)
@@ -45,7 +44,7 @@ class ProviderResult:
     - ``cache_read_tokens``: prompt tokens served from the provider's prompt
       cache;
     - ``cache_write_tokens``: prompt tokens written to the provider's cache
-      (0 for OpenAI, which does not bill cache writes separately).
+      (the 5-minute TTL write tokens, billed at 1.25x input).
 
     A missing or garbled usage block gives zeros; it never raises.
     """
@@ -67,10 +66,7 @@ class VisionProvider(Protocol):
     Raises ``ProviderTimeoutError`` (a ``ScanUnavailableError``) when the
     provider times out and ``ScanUnavailableError`` when it returns an HTTP
     error. A connection that was never established raises
-    ``httpx.ConnectError`` (OpenAI, propagated as-is; a connect or pool
-    timeout, where nothing was billed, is raised as ``httpx.ConnectError``
-    too, while a read or write timeout is a ``ProviderTimeoutError``) or
-    ``ProviderConnectError`` (Claude); both are refunded.
+    ``ProviderConnectError``, which is refunded.
     """
 
     async def identify(self, image_bytes: bytes) -> ProviderResult: ...

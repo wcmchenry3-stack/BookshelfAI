@@ -16,14 +16,14 @@ import os
 import re
 import sys
 
-# A reason like "SCAN_MODEL='bogus' is not an allowed ..." would echo the value.
+# A reason like "SCAN_MAX_TOKENS='bogus' is not a valid ..." would echo the value.
 _QUOTED_VALUE = re.compile(r"=(?:'[^']*'|\"[^\"]*\")")
 
 
 _TOKEN_SPLIT = re.compile(r"""[\s'"`,;:=()\[\]{}<>]+""")
 _MIN_SECRET_FRAGMENT = 4
 
-# Variable names in a message (SCAN_MODEL, ENVIRONMENT) are what the reader
+# Variable names in a message (SCAN_MAX_TOKENS, ENVIRONMENT) are what the reader
 # needs; they are never redacted.
 _VARIABLE_NAME = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|ENVIRONMENT")
 

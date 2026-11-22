@@ -50,9 +50,9 @@ def test_the_runner_reaches_providers_through_the_gateway():
     "leak",
     [
         "import anthropic\n",
-        "from openai import AsyncOpenAI\n",
+        "from litellm import completion\n",
         "from app.ai.providers.anthropic_vision import AnthropicVisionProvider\n",
-        "import app.ai.providers.openai_vision\n",
+        "import app.ai.providers.anthropic_vision\n",
     ],
 )
 def test_checker_catches_a_leak_in_an_eval_like_tree(tmp_path, leak):

@@ -131,7 +131,7 @@ async def test_retried_settle_with_nothing_to_spend_moves_once(limits_db, monkey
                 call_id=uuid.uuid4(),
                 user_id=user_id,
                 feature="scan.standard",
-                model="gpt-4o-mini",
+                model="claude-haiku-5-5",
                 status="ok",
                 input_tokens=0,
                 output_tokens=0,

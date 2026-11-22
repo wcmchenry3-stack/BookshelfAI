@@ -1,8 +1,8 @@
 """Cost guard (#584): no test may send a request to a real AI provider.
 
 ``install()`` wraps the request method of the default HTTP transports of
-``httpx`` (the OpenAI adapter's client) and ``httpx2`` (the Anthropic SDK's
-client), sync and async. A request to an Anthropic or OpenAI API host raises
+``httpx`` and ``httpx2`` (the Anthropic SDK's client), sync and async. A
+request to an Anthropic API host raises
 :class:`RealProviderCallBlocked` before anything is sent, and is recorded in
 :data:`attempts` so ``tests/conftest.py`` fails the test even if something
 swallowed the exception. Requests to any other host, and clients built on a
@@ -20,8 +20,8 @@ from unittest.mock import patch
 import httpx
 import httpx2
 
-BLOCKED_HOSTS = frozenset({"api.anthropic.com", "api.openai.com"})
-BLOCKED_DOMAINS = ("anthropic.com", "openai.com")
+BLOCKED_HOSTS = frozenset({"api.anthropic.com"})
+BLOCKED_DOMAINS = ("anthropic.com",)
 
 # Every blocked request, as "METHOD host"; reset by the conftest fixture.
 attempts: list[str] = []

@@ -12,7 +12,6 @@ from pydantic_settings import (
 )
 
 from app.ai.models_allowlist import (
-    ALLOWED_MODELS,
     MAX_TOKENS_BOUNDS,
     TIMEOUT_S_BOUNDS,
 )
@@ -194,11 +193,9 @@ class Settings(EmailSettings, BaseSettings):
     allowed_emails: str = ""
 
     # External APIs
-    openai_api_key: str = ""
-    # Claude provider (#532). Only needed when a feature's ai_settings
-    # provider is "anthropic" (the registry default is "openai"). Without it
-    # such a feature answers 503 scan_unavailable (refunded); boot never
-    # fails over it. A secret: never logged, scrubbed from Sentry events.
+    # Claude, the only AI provider (#532, #538). Without it a scan answers
+    # 503 scan_unavailable (refunded); boot never fails over it. A secret:
+    # never logged, scrubbed from Sentry events.
     anthropic_api_key: str = ""
     # Base URL of the Anthropic API for the Claude adapter (AI_ANTHROPIC_BASE_URL),
     # read once at boot. Unset (the default) means the host pinned in
@@ -208,10 +205,9 @@ class Settings(EmailSettings, BaseSettings):
     # production any value fails boot, so it can never send the API key and
     # photos to another host.
     ai_anthropic_base_url: str = ""
-    openai_max_tokens: int = 512
     # Multi-book scan: one photo can hold up to scan_max_books covers or spines.
-    # The JSON for 15 books needs far more room than openai_max_tokens allows,
-    # and high-detail images take longer to process, hence separate knobs.
+    # The JSON for 15 books needs far more room than a single-book reply, and
+    # high-detail images take longer to process, hence separate knobs.
     scan_max_books: int = 15
     scan_max_tokens: int = Field(
         default=2048, ge=MAX_TOKENS_BOUNDS[0], le=MAX_TOKENS_BOUNDS[1]
@@ -219,13 +215,12 @@ class Settings(EmailSettings, BaseSettings):
     scan_timeout_seconds: float = Field(
         default=45.0, ge=TIMEOUT_S_BOUNDS[0], le=TIMEOUT_S_BOUNDS[1]
     )
-    # SCAN_MODEL / SCAN_ENHANCED_MODEL are the registry defaults and seed the
-    # ai_settings rows scan.standard.model / scan.enhanced.model.
-    scan_model: str = "gpt-4o-mini"
-    # "Enhanced" scan — a stronger model a Premium user can opt into when the
-    # standard scan misses books. Premium-only (#533); it uses the shared
-    # daily allowance (there is no monthly allowance, #582).
-    scan_enhanced_model: str = "gpt-4o"
+    # The models are not settings: the registry (app/ai/registry.py) is their
+    # only source, and they seed the ai_settings rows scan.standard.model /
+    # scan.enhanced.model. The "enhanced" scan is a stronger model a Premium
+    # user can opt into when the standard scan misses books. Premium-only
+    # (#533); it uses the shared daily allowance (there is no monthly
+    # allowance, #582).
     # Kill switches for /scan. INITIAL DEFAULTS ONLY: since #526 they seed the
     # ai_settings rows scan.standard.enabled / scan.enhanced.enabled on first
     # boot, and after that the DB row is the source of truth (change it with
@@ -393,16 +388,6 @@ class Settings(EmailSettings, BaseSettings):
     def no_wildcard_origins(cls, v: list[str]) -> list[str]:
         if "*" in v:
             raise ValueError("Wildcard '*' is not permitted in CORS_ORIGINS")
-        return v
-
-    @field_validator("scan_model", "scan_enhanced_model")
-    @classmethod
-    def allowed_openai_model(cls, v: str, info) -> str:
-        if v not in ALLOWED_MODELS["openai"]:
-            raise ValueError(
-                f"{info.field_name.upper()}={v!r} is not an allowed OpenAI model; "
-                f"allowed: {', '.join(sorted(ALLOWED_MODELS['openai']))}"
-            )
         return v
 
     @field_validator("origin_auth_header")

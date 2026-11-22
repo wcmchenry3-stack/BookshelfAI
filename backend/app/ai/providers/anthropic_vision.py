@@ -7,13 +7,11 @@ client reaches it.
 
 The request:
 
-- the system prompt is the OpenAI adapter's ``SYSTEM_PROMPT``, word for word,
-  so accuracy comparisons between providers stay meaningful; it carries a
-  ``cache_control`` breakpoint (5-minute TTL). The prompt is about 300
-  tokens, under these models' 512-token minimum cacheable prefix, so the
-  breakpoint is most likely a no-op (no error; ``cache_creation_input_tokens``
-  stays 0). Confirm on staging from the ledger's cache token columns before
-  counting on cache savings;
+- the system prompt is ``SYSTEM_PROMPT`` (below); it carries a
+  ``cache_control`` breakpoint (5-minute TTL). The cached prefix is about
+  900 tokens and is reused: on dev (2026-11-22) the ledger showed
+  ``cache_write_tokens = 907`` on the first scan and ``cache_read_tokens =
+  907`` on the next;
 - structured output (``output_config.format``, a JSON schema for
   ``{"books": [{title, author, confidence, isbn_13, isbn_10}]}``). The schema
   states ``maxItems = scan_max_books``; the API does not enforce array-size
@@ -50,7 +48,7 @@ After that, or on any other 4xx/5xx, it raises ``ScanUnavailableError``
 never established raises ``ProviderConnectError`` (both refunded). A
 connection that dropped mid-request propagates as the SDK's
 ``APIConnectionError`` (the reservation is kept: the call may have been
-billed), as an ``httpx`` transport error does in the OpenAI adapter.
+billed).
 
 Logging: only lengths, a SHA-256 prefix, stop reasons, HTTP status codes and
 error types. Never the model's text, the image or the API key.
@@ -85,12 +83,32 @@ from app.ai.providers.base import (
     ProviderResult,
     ProviderTimeoutError,
 )
-from app.ai.providers.openai_vision import SYSTEM_PROMPT
 from app.ai.registry import FeatureSpec
 from app.core.config import settings
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
 
 logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """You are a book identification assistant.
+You will be shown a photo that may contain one book or many: a single cover, a stack of covers, or a shelf of book spines.
+Identify EVERY distinct book you can read in the photo, up to {max_books} books.
+
+Rules:
+- Each physical book appears at most once. Do not list the same book twice.
+- Read spine text carefully; spines are often rotated 90 degrees.
+- Skip a book entirely if you cannot read enough of its title to identify it. Never invent books.
+- Order books as they appear (left to right, then top to bottom).
+
+For each book return:
+- title: string
+- author: string
+- confidence: float between 0 and 1 (how sure you are of this identification)
+- isbn_13: string or null (only if a 13-digit ISBN is printed and legible in the photo)
+- isbn_10: string or null (only if a 10-digit ISBN is printed and legible in the photo)
+
+Give an ISBN only when you can read it on that book in the photo; otherwise use null (most photos show no ISBN). Never guess or recall an ISBN from memory: the book is looked up by its title and author.
+Return ONLY a JSON object of the form {{"books": [...]}}. Return {{"books": []}} if no book is readable. Example:
+{{"books":[{{"title":"Dune","author":"Frank Herbert","confidence":0.97,"isbn_13":null,"isbn_10":null}}]}}"""
 
 # The Anthropic API host. Always passed to the client explicitly, so the SDK's
 # own reading of ANTHROPIC_BASE_URL never applies. ``settings.ai_anthropic_base_url``
@@ -169,9 +187,7 @@ class _Book(BaseModel):
     @classmethod
     def _confidence(cls, value: Any) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            # Any non-number (a string, null, a list) is 0.5 here; the OpenAI
-            # adapter parses a numeric string and treats the rest as broken.
-            # The difference is intentional until #795 decides.
+            # Any non-number (a string, null, a list) is 0.5 (#795).
             return 0.5
         return clamp_confidence(value)
 

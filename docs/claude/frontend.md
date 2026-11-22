@@ -227,12 +227,12 @@ t(`status.${item.status}`);
 #### Adding a new language
 
 1. Add locale object to `LOCALES` in `src/i18n/locales.ts`
-2. Run translate script for each namespace:
+2. Run the translate script for each namespace (dev-only; it calls the Claude Messages API with `ANTHROPIC_API_KEY`, model `claude-sonnet-5-5`, and never runs in CI or the app; flags: `--locale`, `--namespace`, `--all`, `--force`, `--dry-run`):
    ```bash
    cd frontend
-   OPENAI_API_KEY=... node scripts/translate.js --locale <code> --namespace <ns>
+   ANTHROPIC_API_KEY=... node scripts/translate.js --locale <code> --namespace <ns>
    # or all namespaces at once for one locale:
-   OPENAI_API_KEY=... node scripts/translate.js --locale <code> --namespace common && ...
+   ANTHROPIC_API_KEY=... node scripts/translate.js --locale <code> --namespace common && ...
    ```
 3. Add 9 static imports (one per namespace) to `src/i18n/i18n.ts` and add locale entry to `resources`
 4. If RTL (ar/he), add to `RTL_LOCALES` in `locales.ts`

@@ -8,7 +8,6 @@ behaviour is in tests/integration/test_scan_records_db.py."""
 import asyncio
 import hashlib
 import io
-import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -157,7 +156,7 @@ def _row(**changes) -> ScanRecord:
         "fingerprint": "a" * 64,
         "feature": "scan.standard",
         "tier": "free",
-        "model": "gpt-4o-mini",
+        "model": "claude-haiku-5-5",
         "candidates": scan_records.serialise_candidates([DUNE]),
         "enrichment": scan_records.serialise_books([DUNE_BOOK]),
         "ai_done": True,
@@ -485,7 +484,7 @@ class _Downstream:
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich_cls,
         patch("app.api.scan.DeduplicationService") as dedup_cls,
     ):
@@ -551,36 +550,19 @@ class TestNewPhoto:
         # The normal path charged one unit.
         assert store.count() == 1
 
-    def test_out_of_range_openai_confidence_still_saves_the_record(
+    def test_out_of_range_confidence_still_saves_the_record(
         self, client, store, records, provider
     ):
-        """#754: the real OpenAI adapter (HTTP mocked, the gateway's provider
+        """#754: the real Claude adapter (SDK mocked, the gateway's provider
         class swapped for it) clamps confidence 1.5 to 1.0, so the record is
         valid and saved."""
-        from app.ai.providers.openai_vision import OpenAIVisionProvider
+        from app.ai.providers.anthropic_vision import AnthropicVisionProvider
+        from tests._claude_fake import fake_claude, message
 
         book = {"title": "Dune", "author": "Frank Herbert", "confidence": 1.5}
-        reply = {
-            "choices": [
-                {
-                    "message": {"content": json.dumps({"books": [book]})},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        }
-        http_resp = MagicMock()
-        http_resp.raise_for_status = MagicMock()
-        http_resp.json.return_value = reply
-        http = MagicMock()
-        http.post = AsyncMock(return_value=http_resp)
-        http.__aenter__ = AsyncMock(return_value=http)
-        http.__aexit__ = AsyncMock(return_value=False)
-        real = OpenAIVisionProvider(FEATURES["scan.standard"])
+        real = AnthropicVisionProvider(FEATURES["scan.standard"])
         provider.identify.side_effect = real.identify
-        with patch(
-            "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=http
-        ):
+        with fake_claude(message(books=[book])):
             resp = _post(client)
         assert resp.status_code == 200
         row = records.only()
@@ -662,7 +644,7 @@ class TestFinishedRepeat:
         self, client, store, records, provider
     ):
         _post(client)
-        ai_settings.reset_cache({"scan.standard.model": "gpt-4o"})
+        ai_settings.reset_cache({"scan.standard.model": "claude-sonnet-5-5"})
         resp = _post(client)
         assert resp.json()["repeat"] is True
         assert provider.identify.await_count == 1

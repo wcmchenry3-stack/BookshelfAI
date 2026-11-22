@@ -2,7 +2,6 @@
 ``switch`` CLI that writes provider and model together, and the price-card
 guard."""
 
-import dataclasses
 import logging
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
@@ -18,7 +17,6 @@ from app.ai.registry import (
     FeatureSpecError,
     default_model,
 )
-from app.core.config import settings
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -29,20 +27,22 @@ class TestProviderModels:
     def test_each_scan_feature_has_a_model_per_provider(self):
         assert set(PROVIDER_MODELS) == set(FEATURES)
         for models in PROVIDER_MODELS.values():
-            assert set(models) == {"openai", "anthropic"}
+            assert set(models) == {"anthropic"}
 
-    def test_openai_models_are_the_env_defaults(self):
-        assert default_model("scan.standard", "openai") == settings.scan_model
-        assert default_model("scan.enhanced", "openai") == settings.scan_enhanced_model
+    def test_anthropic_models_are_the_registry_defaults(self):
+        assert default_model("scan.standard", "anthropic") == (
+            FEATURES["scan.standard"].model
+        )
+        assert default_model("scan.enhanced", "anthropic") == (
+            FEATURES["scan.enhanced"].model
+        )
 
     def test_unknown_provider_has_no_default(self):
         with pytest.raises(FeatureSpecError):
             default_model("scan.standard", "gemini")
 
     def test_import_time_check_rejects_a_bad_model(self):
-        bad = {
-            "scan.standard": {"openai": settings.scan_model, "anthropic": "claude-x"}
-        }
+        bad = {"scan.standard": {"anthropic": "claude-x"}}
         with (
             patch.object(registry, "PROVIDER_MODELS", bad),
             pytest.raises(FeatureSpecError),
@@ -50,7 +50,7 @@ class TestProviderModels:
             registry._validate_provider_models()
 
     def test_import_time_check_rejects_disagreement_with_the_default(self):
-        bad = {"scan.standard": {"openai": "gpt-4o", "anthropic": "claude-haiku-5-5"}}
+        bad = {"scan.standard": {"anthropic": "claude-sonnet-5-5"}}
         with (
             patch.object(registry, "PROVIDER_MODELS", bad),
             pytest.raises(FeatureSpecError, match="disagrees"),
@@ -78,13 +78,14 @@ class TestReadingAnthropicRows:
             ai_settings.reset_cache()
         assert (spec.provider, spec.model) == ("anthropic", "claude-haiku-5-5")
         # Everything else stays the registry's.
-        assert dataclasses.replace(
-            spec, provider="openai", model=settings.scan_model
-        ) == (FEATURES["scan.standard"])
+        assert spec == FEATURES["scan.standard"]
 
-    def test_anthropic_provider_with_an_openai_model_falls_back(self):
+    def test_anthropic_provider_with_a_foreign_model_falls_back(self):
         current = ai_settings.AISettings(
-            {"scan.standard.provider": "anthropic", "scan.standard.model": "gpt-4o"}
+            {
+                "scan.standard.provider": "anthropic",
+                "scan.standard.model": "other-model",
+            }
         )
         spec = current.spec_for(FEATURES["scan.standard"])
         assert spec == FEATURES["scan.standard"]
@@ -101,8 +102,6 @@ class TestValidateSwitch:
         [
             ("scan.standard", "anthropic", "claude-haiku-5-5"),
             ("scan.enhanced", "anthropic", "claude-sonnet-5-5"),
-            ("scan.standard", "openai", "gpt-4o-mini"),
-            ("scan.enhanced", "openai", "gpt-4o"),
         ],
     )
     def test_default_model_per_provider(self, feature, provider, model):
@@ -116,8 +115,8 @@ class TestValidateSwitch:
     @pytest.mark.parametrize(
         ("feature", "provider", "model"),
         [
-            ("scan.standard", "anthropic", "gpt-4o"),
-            ("scan.standard", "openai", "claude-haiku-5-5"),
+            ("scan.standard", "anthropic", "other-model"),
+            ("scan.standard", "other-provider", "claude-haiku-5-5"),
             ("scan.standard", "anthropic", "claude-haiku-5-5-latest"),
             ("scan.standard", "gemini", None),
             ("scan.premium", "anthropic", None),
@@ -165,10 +164,6 @@ class TestSwitchCLI:
         out = capsys.readouterr().out
         assert '"anthropic"' in out and '"claude-haiku-5-5"' in out
 
-    def test_switch_back_to_openai(self, cli_db):
-        assert ai_settings.main(["switch", "scan.enhanced", "openai"]) == 0
-        assert [w["value"] for w in _writes(cli_db)] == ["openai", "gpt-4o"]
-
     def test_switch_with_model(self, cli_db):
         argv = ["switch", "scan.standard", "anthropic", "--model", "claude-sonnet-5-5"]
         assert ai_settings.main(argv) == 0
@@ -177,7 +172,7 @@ class TestSwitchCLI:
     @pytest.mark.parametrize(
         "argv",
         [
-            ["switch", "scan.standard", "anthropic", "--model", "gpt-4o"],
+            ["switch", "scan.standard", "anthropic", "--model", "other-model"],
             ["switch", "scan.standard", "anthropic", "--model", "claude-3"],
         ],
     )
@@ -188,17 +183,15 @@ class TestSwitchCLI:
 
     @pytest.mark.parametrize(
         "argv",
-        [["switch", "scan.standard", "gemini"], ["switch", "scan.premium", "openai"]],
+        [
+            ["switch", "scan.standard", "gemini"],
+            ["switch", "scan.premium", "anthropic"],
+        ],
     )
     def test_unknown_choices_rejected(self, cli_db, argv):
         with pytest.raises(SystemExit):
             ai_settings.main(argv)
         cli_db.execute.assert_not_awaited()
-
-    def test_set_provider_alone_points_to_switch(self, cli_db, capsys):
-        assert ai_settings.main(["set", "scan.standard.provider", "anthropic"]) == 2
-        cli_db.execute.assert_not_awaited()
-        assert "use `switch" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

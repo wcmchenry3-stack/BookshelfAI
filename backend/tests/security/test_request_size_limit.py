@@ -87,7 +87,7 @@ def scan_app():
         patch("app.api.scan._reserve_scan_quota", new=AsyncMock()) as reserve,
         patch("app.api.scan._refund_scan_quota", new=AsyncMock()),
         patch("app.api.scan._release_scan_lease", new=AsyncMock()),
-        patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),
     ):

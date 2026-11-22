@@ -478,7 +478,7 @@ class TestScanFlow:
             lh.capture() as cap,
             store.installed(),
             records.installed(),
-            patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
             patch("app.api.scan.EnrichmentService") as enrich,
             patch("app.api.scan.ledger.record", AsyncMock()),
         ):

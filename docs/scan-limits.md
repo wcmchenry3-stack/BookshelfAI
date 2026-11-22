@@ -7,7 +7,7 @@ The AI gateway write-up (#541, `AI-GATEWAY.md`, not written yet) will link here 
 ## How to read and change these
 
 - **See everything, grouped by area, with each key's current value, default and bounds:**
-  `cd backend && python -m app.ai.settings list` (from a shell with the service's `DATABASE_URL`; the Render shell already opens in `backend/`, so skip the `cd` there). One key: `get <key>`.
+  `cd backend && python -m app.ai.settings list` (from a shell with the service's `DATABASE_URL`, e.g. the Render shell, which opens at the repo root, `~/project/src`). One key: `get <key>`.
 - **Change an `ai_settings` key:** `python -m app.ai.settings set <key> <value> --by <you>`. The value is validated against the bounds below and the change reaches every process within `AI_SETTINGS_CACHE_TTL_SECONDS` (30 s). No deploy, no restart. A provider and its model are changed together with `switch <feature> <provider>`.
 - **Env seeds only apply on first boot.** For every key with an env var in the tables, the env var (or the code default) only creates the `ai_settings` row when it is missing. After that the row is the source of truth and changing the env var does nothing. A key whose row is missing or invalid falls back to the same env/code default; an invalid `*.enabled` row fails closed (treated as `false`).
 - **Needs a deploy or restart:** anything not marked `ai_settings` in the tables below: the `rate_limit_*` settings and `unverified_books_per_user_max` / `SCAN_NORMALISE_CONCURRENCY` / the cache TTLs (env, read at startup, restart), and every constant in code (body caps, 5 MB image cap, JPEG settings, lease grace). The client-side values (retry schedule, offline queue, retention) ship with the app, so they need an app release.

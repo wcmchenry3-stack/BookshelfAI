@@ -189,7 +189,7 @@ class TestScanUploadValidation:
 
         with (
             patch(
-                "app.ai.providers.openai_vision.OpenAIVisionProvider.identify",
+                "app.ai.providers.anthropic_vision.AnthropicVisionProvider.identify",
                 new_callable=AsyncMock,
                 return_value=ProviderResult([]),
             ),

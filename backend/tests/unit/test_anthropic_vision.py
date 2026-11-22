@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import logging
+import types
 from unittest.mock import AsyncMock, patch
 
 import anthropic
@@ -14,13 +15,13 @@ from app.ai.providers import anthropic_vision
 from app.ai.providers.anthropic_vision import (
     ANTHROPIC_BASE_URL,
     MAX_RETRIES,
+    SYSTEM_PROMPT,
     AnthropicVisionProvider,
     backoff_delay,
     output_schema,
     parse_reply,
 )
 from app.ai.providers.base import ProviderConnectError, ProviderTimeoutError
-from app.ai.providers.openai_vision import SYSTEM_PROMPT
 from app.ai.registry import FEATURES, PROVIDER_MODELS, default_model
 from app.core.config import settings
 from app.services.book_identifier import ScanUnavailableError
@@ -110,8 +111,10 @@ class TestModelIds:
         assert default_model("scan.standard", "anthropic") == "claude-haiku-5-5"
         assert default_model("scan.enhanced", "anthropic") == "claude-sonnet-5-5"
 
-    def test_default_provider_is_still_openai(self):
-        assert {s.provider for s in FEATURES.values()} == {"openai"}
+    def test_default_provider_is_anthropic(self):
+        assert {s.provider for s in FEATURES.values()} == {"anthropic"}
+        assert FEATURES["scan.standard"].model == "claude-haiku-5-5"
+        assert FEATURES["scan.enhanced"].model == "claude-sonnet-5-5"
 
     def test_effort_per_tier(self):
         assert FEATURES["scan.standard"].effort == "low"
@@ -120,13 +123,16 @@ class TestModelIds:
     @pytest.mark.parametrize("model", sorted(APPROVED_ANTHROPIC_MODELS))
     def test_every_anthropic_model_is_priced_with_cache_writes(self, model):
         price = prices.price_for(model, prices.CURRENT_PRICE_VERSION)
-        # Claude bills cache writes (1.25x input), unlike OpenAI.
+        # Claude bills cache writes (1.25x input).
         assert price.cache_write == price.input * 5 // 4
         assert price.cache_read == price.input // 10
 
     def test_rejects_non_anthropic_spec(self):
+        # FeatureSpec cannot be built with another provider any more (the
+        # allow-list has only "anthropic"), so stand one in.
+        foreign = types.SimpleNamespace(name="scan.standard", provider="other")
         with pytest.raises(ValueError):
-            AnthropicVisionProvider(FEATURES["scan.standard"])
+            AnthropicVisionProvider(foreign)
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +154,7 @@ class TestRequest:
             assert absent not in kwargs
         assert [m["role"] for m in kwargs["messages"]] == ["user"]
 
-    async def test_system_prompt_is_the_openai_wording_and_cached(self, provider):
+    async def test_system_prompt_is_cached(self, provider):
         with fake_claude(message()) as (_cls, create):
             await provider.identify(IMAGE)
 
@@ -499,7 +505,7 @@ class TestRetries:
 
     async def test_dropped_connection_propagates(self, provider, clock):
         # May have been billed: not a ScanUnavailableError, so /scan keeps
-        # the reservation (as an httpx transport error does for OpenAI).
+        # the reservation.
         with (
             pytest.raises(anthropic.APIConnectionError) as exc_info,
             fake_claude(dropped_error()),
