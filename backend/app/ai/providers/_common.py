@@ -1,23 +1,19 @@
-"""Reply parsing shared by the vision adapters (#814).
+"""Reply parsing helpers for the vision adapter (#814).
 
-Each adapter (``anthropic_vision``, ``openai_vision``) keeps its own rules
-where they differ on purpose; only the pieces that were word for word the
-same live here:
+Kept in their own module so the adapter stays readable:
 
 - the title/author length limit and the structural "broken item" check
   (:func:`has_broken_text`);
 - confidence clamping to 0-1 (:func:`clamp_confidence`). What counts as a
-  confidence differs by adapter and stays in each adapter: Claude gives 0.5
-  for anything that is not a number, OpenAI parses a numeric string and
-  treats any other non-number as broken. The difference is intentional
-  until #795 decides; do not unify it here;
+  confidence stays in the adapter: ``anthropic_vision`` gives 0.5 for
+  anything that is not a number;
 - ISBN cleaning (:func:`clean_isbn_13`, :func:`clean_isbn_10`, #746);
 - token counts (:func:`token_count`);
 - the de-duplicating candidate loop (:func:`collect_candidates`).
 
-Each adapter keeps its own content-free log wrapper (``_log_content``,
-``_log_unparseable``): ``tests/unit/test_claude_policy.py`` checks the
-Claude adapter's wrapper in place.
+The adapter keeps its own content-free log wrapper (``_log_content``,
+``_log_unparseable``): ``tests/unit/test_claude_policy.py`` checks it in
+place.
 """
 
 import math
@@ -38,8 +34,8 @@ MAX_TEXT_LENGTH = 500
 # ---------------------------------------------------------------------------
 
 # A vision model can invent an ISBN: it looks right but fails the check digit.
-# Such a value wastes provider lookups and can point at the wrong book, so both
-# adapters drop it (the book itself is kept).
+# Such a value wastes provider lookups and can point at the wrong book, so the
+# adapter drops it (the book itself is kept).
 _ISBN_SEPARATORS = re.compile(r"[\s-]")
 
 

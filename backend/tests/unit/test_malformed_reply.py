@@ -1,9 +1,8 @@
-"""Malformed provider replies (#572): both adapters report ``malformed`` for a
+"""Malformed provider replies (#572): the adapter reports ``malformed`` for a
 200 whose reply is missing, not JSON, of the wrong shape, a non-empty list in
 which every item is structurally broken, or that ended on an unexpected stop
-reason. Schema-valid items keep each adapter's handling from before #572
-(Claude drops an empty or whitespace title or author; OpenAI keeps them), so
-such a reply is ``ok``. A genuine ``{"books": []}`` stays ``ok`` with no
+reason. Schema-valid items keep the handling from before #572 (Claude drops
+an empty or whitespace title or author), so such a reply is ``ok``. A genuine ``{"books": []}`` stays ``ok`` with no
 candidates. A reply cut off by the token limit with no book is reported as
 ``malformed`` by the gateway. SDK / HTTP mocked; never a real model."""
 
@@ -21,7 +20,6 @@ from app.ai.providers.anthropic_vision import (
     parse_reply,
 )
 from app.ai.providers.base import ProviderResult
-from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FEATURES, default_model
 from app.services.book_identifier import BookCandidate
 from tests._claude_fake import fake_claude, message
@@ -29,7 +27,7 @@ from tests._claude_fake import fake_claude, message
 IMAGE = b"\xff\xd8\xff-fake-jpeg"
 SECRET = "Zxq Secret Shelf Title"
 DUNE = {"title": "Dune", "author": "Frank Herbert", "confidence": 0.9}
-# Items that break the requested structure for both adapters: not an object,
+# Items that break the requested structure: not an object,
 # or a title or author missing or not a string.
 BAD_ITEMS = [
     {"title": "T"},
@@ -42,8 +40,7 @@ BAD_ITEMS = [
     [],
 ]
 
-# Shapes that are malformed for both adapters (the text of an end_turn / stop
-# reply).
+# Shapes that are malformed (the text of an end_turn reply).
 MALFORMED_TEXT = {
     "not_json": f"Sorry, I cannot read {SECRET}.",
     "cut_json": f'{{"books": [{{"title": "{SECRET}", "auth',
@@ -58,11 +55,6 @@ MALFORMED_TEXT = {
     "every_item_invalid": json.dumps({"books": BAD_ITEMS}),
     "one_invalid_item": json.dumps({"books": [{"title": SECRET}]}),
 }
-
-
-# ---------------------------------------------------------------------------
-# Claude
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -170,119 +162,6 @@ class TestClaude:
 
 
 # ---------------------------------------------------------------------------
-# OpenAI
-# ---------------------------------------------------------------------------
-
-
-def _openai_body(content, finish_reason="stop", **message_fields):
-    return {
-        "choices": [
-            {
-                "message": {"content": content, **message_fields},
-                "finish_reason": finish_reason,
-            }
-        ],
-        "usage": {"prompt_tokens": 1_000, "completion_tokens": 40},
-    }
-
-
-async def _openai(body):
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = body
-    client = MagicMock()
-    client.post = AsyncMock(return_value=resp)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-    with patch("app.ai.providers.openai_vision.httpx.AsyncClient", return_value=client):
-        return await OpenAIVisionProvider(FEATURES["scan.standard"]).identify(IMAGE)
-
-
-class TestOpenAI:
-    @pytest.mark.parametrize("text", MALFORMED_TEXT.values(), ids=MALFORMED_TEXT)
-    async def test_malformed_content(self, text, caplog):
-        with caplog.at_level(logging.DEBUG):
-            result = await _openai(_openai_body(text))
-        assert result.outcome == "malformed"
-        assert result.candidates == []
-        assert (result.input_tokens, result.output_tokens) == (1_000, 40)
-        assert SECRET not in caplog.text and "Zxq" not in caplog.text
-
-    async def test_every_item_invalid_in_a_bare_list_is_malformed(self):
-        result = await _openai(_openai_body(json.dumps(BAD_ITEMS)))
-        assert result.outcome == "malformed"
-
-    @pytest.mark.parametrize(
-        "body",
-        [
-            _openai_body(None),
-            _openai_body(["not", "text"]),
-            {"choices": []},
-            {"usage": {"prompt_tokens": 5}},
-            None,
-        ],
-        ids=[
-            "content_null",
-            "content_not_text",
-            "no_choices",
-            "no_choices_key",
-            "no_body",
-        ],
-    )
-    async def test_missing_content_is_malformed(self, body):
-        result = await _openai(body)
-        assert (result.outcome, result.candidates) == ("malformed", [])
-
-    @pytest.mark.parametrize("finish_reason", ["tool_calls", "function_call", "x"])
-    async def test_unexpected_finish_reason_is_malformed(self, finish_reason, caplog):
-        body = _openai_body(
-            json.dumps({"books": [{**DUNE, "title": SECRET}]}), finish_reason
-        )
-        with caplog.at_level(logging.DEBUG):
-            result = await _openai(body)
-        assert (result.outcome, result.candidates) == ("malformed", [])
-        assert result.input_tokens == 1_000
-        assert SECRET not in caplog.text
-
-    @pytest.mark.parametrize("content", ['{"books": []}', "[]", ' {"books": [] } '])
-    async def test_genuine_empty_list_is_ok(self, content):
-        result = await _openai(_openai_body(content))
-        assert (result.outcome, result.candidates) == ("ok", [])
-
-    async def test_missing_finish_reason_is_judged_on_the_content(self):
-        body = _openai_body(json.dumps({"books": [DUNE]}), finish_reason=None)
-        result = await _openai(body)
-        assert result.outcome == "ok"
-        assert [c.title for c in result.candidates] == ["Dune"]
-
-    async def test_some_items_valid_is_ok_with_the_valid_ones(self):
-        result = await _openai(_openai_body(json.dumps({"books": [*BAD_ITEMS, DUNE]})))
-        assert result.outcome == "ok"
-        assert [c.title for c in result.candidates] == ["Dune"]
-
-    async def test_refusal_unchanged(self):
-        result = await _openai(_openai_body(None, refusal="I can't help with that."))
-        assert (result.outcome, result.candidates) == ("refused", [])
-
-    async def test_truncated_with_no_books_is_truncated_here(self):
-        """The gateway turns it into ``malformed`` (see TestTruncatedNoBooks)."""
-        result = await _openai(_openai_body('{"books": [{"title": "Du', "length"))
-        assert (result.outcome, result.candidates) == ("truncated", [])
-
-    async def test_empty_author_is_still_a_candidate(self):
-        """As before #572: a title-only lookup, not a malformed reply."""
-        body = _openai_body(json.dumps({"books": [{"title": "Dune", "author": ""}]}))
-        result = await _openai(body)
-        assert result.outcome == "ok"
-        assert [(c.title, c.author) for c in result.candidates] == [("Dune", "")]
-
-    async def test_a_confidence_that_is_not_a_number_is_broken(self):
-        item = {"title": "Dune", "author": "A", "confidence": "high"}
-        result = await _openai(_openai_body(json.dumps({"books": [item]})))
-        assert (result.outcome, result.candidates) == ("malformed", [])
-
-
-# ---------------------------------------------------------------------------
 # Old vs new parser: the candidates are unchanged (#572 review)
 # ---------------------------------------------------------------------------
 
@@ -295,28 +174,16 @@ _MIXED = [
     DUNE,
 ]
 
-# fixture -> (items, Claude's candidates, OpenAI's candidates), as
-# (title, author) pairs; None is malformed (no candidates, a 503). Every
-# non-None value is what the parser on ``dev`` before #572 returned; where
-# the old parser returned [] for a reply that is now malformed, the
-# candidates are the same (none). The old OpenAI parser crashed on a null
-# author (in the de-duplication), now that item is broken and dropped. Since
-# #746 OpenAI also drops an empty or whitespace title (it kept it before).
-# Since #754 OpenAI treats an over-500-character title as broken, like Claude.
+# fixture -> (items, the candidates), as (title, author) pairs; None is
+# malformed (no candidates, a 503). Every non-None value is what the parser on
+# ``dev`` before #572 returned; where the old parser returned [] for a reply
+# that is now malformed, the candidates are the same (none).
 COMPARISON = {
-    "empty_author": ([{"title": "Dune", "author": ""}], [], [("Dune", "")]),
-    "whitespace_title": (
-        [{"title": "   ", "author": "Frank Herbert"}],
-        [],
-        [],  # #746: an empty or whitespace title is dropped
-    ),
-    "title_over_500": ([{"title": _LONG, "author": "A"}], None, None),
-    "null_author": ([{"title": "Dune", "author": None}], None, None),
-    "mixed": (
-        _MIXED,
-        [("Dune", "Frank Herbert")],
-        [("Dune", ""), ("Dune", "Frank Herbert")],  # #746: blank title dropped
-    ),
+    "empty_author": ([{"title": "Dune", "author": ""}], []),
+    "whitespace_title": ([{"title": "   ", "author": "Frank Herbert"}], []),
+    "title_over_500": ([{"title": _LONG, "author": "A"}], None),
+    "null_author": ([{"title": "Dune", "author": None}], None),
+    "mixed": (_MIXED, [("Dune", "Frank Herbert")]),
 }
 
 
@@ -327,29 +194,18 @@ def _pairs(candidates: list[BookCandidate] | None):
 
 
 @pytest.mark.parametrize(
-    ("items", "claude_expected", "openai_expected"),
+    ("items", "expected"),
     COMPARISON.values(),
     ids=COMPARISON,
 )
 class TestOldVsNewParser:
-    def test_claude(self, items, claude_expected, openai_expected):
+    def test_candidates(self, items, expected):
         text = json.dumps({"books": items})
-        assert _pairs(parse_reply(text, "end_turn", 20)) == claude_expected
+        assert _pairs(parse_reply(text, "end_turn", 20)) == expected
 
-    def test_openai(self, items, claude_expected, openai_expected):
-        provider = OpenAIVisionProvider(FEATURES["scan.standard"])
-        text = json.dumps({"books": items})
-        assert _pairs(provider._parse_reply(text, "stop", 20)) == openai_expected
-
-    async def test_claude_outcome(
-        self, claude, items, claude_expected, openai_expected
-    ):
+    async def test_outcome(self, claude, items, expected):
         result = await _claude(claude, message(json.dumps({"books": items})))
-        assert result.outcome == ("malformed" if claude_expected is None else "ok")
-
-    async def test_openai_outcome(self, items, claude_expected, openai_expected):
-        result = await _openai(_openai_body(json.dumps({"books": items})))
-        assert result.outcome == ("malformed" if openai_expected is None else "ok")
+        assert result.outcome == ("malformed" if expected is None else "ok")
 
 
 # ---------------------------------------------------------------------------
@@ -418,24 +274,3 @@ class TestTruncatedNoBooks:
         assert result.provider == "anthropic"
         assert (result.outcome, [c.title for c in result.candidates]) == expected
         assert result.input_tokens == 1_200  # billed, kept for the ledger
-
-    async def test_openai_through_the_gateway(self):
-        from app.ai import settings as ai_settings
-
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = _openai_body('{"books": [{"title": "Du', "length")
-        client = MagicMock()
-        client.post = AsyncMock(return_value=resp)
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        result = await self._run(
-            "scan.standard",
-            ai_settings.AISettings({}),
-            patch(
-                "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=client
-            ),
-        )
-        assert result.provider == "openai"
-        assert (result.outcome, result.candidates) == ("malformed", [])
-        assert result.input_tokens == 1_000

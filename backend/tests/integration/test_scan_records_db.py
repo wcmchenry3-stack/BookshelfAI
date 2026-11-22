@@ -104,7 +104,7 @@ class _Provider:
         self.calls += 1
         return ProviderResult([DUNE] if self.books else [], outcome=self.outcome)
 
-    def patch(self, cls="OpenAIVisionProvider"):
+    def patch(self, cls="AnthropicVisionProvider"):
         mock = MagicMock()
         mock.return_value.identify = self.identify
         return patch(f"app.ai.gateway.{cls}", mock)
@@ -417,20 +417,20 @@ class TestKeyIsUserAndFingerprintOnly:
     ):
         factory, make_user = sessions
         user_id = await make_user()
-        openai, claude = _Provider(), _Provider()
-        with openai.patch(), claude.patch("AnthropicVisionProvider"):
+        provider = _Provider()
+        with provider.patch():
             await _scan(factory, user_id)
             ai_settings.reset_cache(
                 {
                     "scan.standard.provider": "anthropic",
-                    "scan.standard.model": "claude-haiku-5-5",
+                    "scan.standard.model": "claude-sonnet-5-5",
                 }
             )
             resp = await _scan(factory, user_id)
-        assert (openai.calls, claude.calls) == (1, 0)
+        assert provider.calls == 1
         assert resp.repeat is True
         (row,) = await _rows(factory, user_id)
-        assert row.model != "claude-haiku-5-5"  # the model that produced it
+        assert row.model != "claude-sonnet-5-5"  # the model that produced it
 
     async def test_another_users_record_is_never_served(self, sessions, downstream):
         factory, make_user = sessions

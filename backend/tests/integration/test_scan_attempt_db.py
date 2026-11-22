@@ -139,7 +139,7 @@ def _migration_cycle(connection) -> None:
             AIUsage.__table__.insert().values(
                 call_id=uuid.uuid4(),
                 feature="test.migration_0014",
-                model="gpt-4o-mini",
+                model="claude-haiku-5-5",
                 price_version=CURRENT_PRICE_VERSION,
                 input_tokens=0,
                 output_tokens=0,

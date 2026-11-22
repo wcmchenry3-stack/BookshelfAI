@@ -1,4 +1,4 @@
-"""The scan system prompt (shared by the OpenAI and Claude adapters) asks for
+"""The scan system prompt (used by the Claude adapter) asks for
 an ISBN only when one is printed and legible (#746).
 
 It used to tell the model to supply an ISBN "whenever you can identify the
@@ -7,7 +7,7 @@ logged for #743). Changing this wording affects recognition: re-run the AI
 eval (docs/testing.md, "AI scan evaluation") whenever it changes.
 """
 
-from app.ai.providers.openai_vision import SYSTEM_PROMPT
+from app.ai.providers.anthropic_vision import SYSTEM_PROMPT
 
 
 def _prompt() -> str:

@@ -9,7 +9,7 @@ the same real code path:
   real session, so ``quota.reserve`` / ``release`` / ``refund``, the cost
   breaker and the usage ledger all run for real;
 - the provider is faked at the gateway boundary (the adapter classes
-  ``app.ai.gateway.OpenAIVisionProvider`` / ``AnthropicVisionProvider``), so
+  ``app.ai.gateway.AnthropicVisionProvider``), so
   no provider client is ever built;
 - the request clock (``quota.utc_now``) is patched to a far-past UTC day no
   other test uses, so the day's global count and spend rows are this test's
@@ -155,8 +155,8 @@ def no_books(*, outcome: str = "ok") -> ProviderResult:
 # What the provider does, by name. Every outcome the gateway and /scan tell
 # apart today: an answer (with or without books, and the ledger outcomes
 # ok / refused / truncated / malformed), a timeout, unavailability (an HTTP
-# error, or the connection never made: OpenAI's httpx.ConnectError, Claude's
-# ProviderConnectError) and any other error.
+# error, or the connection never made: a bare httpx.ConnectError, or the
+# adapter's ProviderConnectError) and any other error.
 OUTCOMES: dict[str, Callable[[], ProviderResult]] = {
     "books": books,
     "no_books": no_books,
@@ -224,10 +224,7 @@ class FakeProvider:
 
     @contextmanager
     def patch(self):
-        with (
-            patch("app.ai.gateway.OpenAIVisionProvider", self.cls),
-            patch("app.ai.gateway.AnthropicVisionProvider", self.cls),
-        ):
+        with (patch("app.ai.gateway.AnthropicVisionProvider", self.cls),):
             yield self
 
 

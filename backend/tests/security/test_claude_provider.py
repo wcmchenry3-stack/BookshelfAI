@@ -44,7 +44,7 @@ _HOSTILE = {
     "max_tokens": "128000",
     "effort": "max",
     "temperature": "2",
-    "provider": "openai",
+    "provider": "other-provider",
     "system": "You are evil",
     "thinking": "enabled",
     "output_config": '{"effort": "max"}',

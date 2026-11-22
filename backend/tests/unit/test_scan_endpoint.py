@@ -102,7 +102,7 @@ class TestScanEndpoint:
         assert resp.status_code == 413
 
     def test_returns_503_when_vision_service_unavailable(self, client):
-        with patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls:
+        with patch("app.ai.gateway.AnthropicVisionProvider") as mock_id_cls:
             mock_id_cls.return_value.identify = AsyncMock(
                 side_effect=ScanUnavailableError("timeout")
             )
@@ -113,7 +113,7 @@ class TestScanEndpoint:
 
     def test_returns_empty_list_when_no_candidates(self, client):
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
@@ -139,7 +139,7 @@ class TestScanEndpoint:
         candidate = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.97)
 
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -177,7 +177,7 @@ class TestScanEndpoint:
         ]
 
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -206,7 +206,7 @@ class TestScanEndpoint:
     def test_drops_books_that_enrich_to_the_same_work(self, client):
         dup = ENRICHED_BOOK.model_copy(update={"title": "Dune (Deluxe)"})
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService") as mock_enrich_cls,
             patch("app.api.scan.DeduplicationService") as mock_dedup_cls,
         ):
@@ -256,7 +256,7 @@ class TestEnhancedScan:
                 "app.api.scan.quota.enhanced_remaining",
                 new=AsyncMock(return_value=4),
             ) as remaining,
-            patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
             patch("app.api.scan.EnrichmentService") as enrich_cls,
             patch("app.api.scan.DeduplicationService") as dedup_cls,
         ):
@@ -424,7 +424,7 @@ class TestTurnstileProtection:
             patch(
                 "app.api._bot_check._verify_turnstile", new=AsyncMock(return_value=True)
             ),
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
@@ -451,7 +451,7 @@ class TestTurnstileProtection:
 
         with (
             patch("app.api.scan.settings") as mock_settings,
-            patch("app.ai.gateway.OpenAIVisionProvider") as mock_id_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as mock_id_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
@@ -491,7 +491,7 @@ class TestImageNormalisationOnScan:
 
     def test_undecodable_image_returns_415_without_using_a_scan(self, client, reserve):
         fake = b"\xff\xd8\xff\xe0" + b"x" * 200  # JPEG magic, no image
-        with patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls:
+        with patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls:
             resp = client.post(
                 "/scan", files={"file": ("s.jpg", io.BytesIO(fake), "image/jpeg")}
             )
@@ -502,7 +502,7 @@ class TestImageNormalisationOnScan:
 
     def test_pixel_bomb_returns_413_without_using_a_scan(self, client, reserve):
         bomb = _png_with_declared_size(9000, 9000)  # 81 MP declared
-        with patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls:
+        with patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls:
             resp = client.post(
                 "/scan", files={"file": ("s.png", io.BytesIO(bomb), "image/png")}
             )
@@ -544,7 +544,7 @@ class TestImageNormalisationOnScan:
         original = buf.getvalue()
 
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):
@@ -590,7 +590,7 @@ class TestImageNormalisationOnScan:
         try:
             with (
                 patch("app.api.scan.get_feature", side_effect=specs.__getitem__),
-                patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+                patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
             ):
                 provider_cls.return_value.identify = AsyncMock(
                     return_value=ProviderResult([])
@@ -613,7 +613,7 @@ class TestNormalisationRunsOffTheEventLoop:
     @pytest.fixture
     def provider(self):
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+            patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):

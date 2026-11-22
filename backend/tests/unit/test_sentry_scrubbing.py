@@ -64,7 +64,7 @@ class TestDenylist:
             "jwt_private_key",
             "google_client_secret",
             "turnstile_secret_key",
-            "openai_api_key",
+            "anthropic_api_key",
             "google_books_api_key",
             "test_auth_secret",
             "sentry_dsn",

@@ -157,9 +157,9 @@ class TestSpecFor:
 
     def test_registry_rejected_model_is_ignored_but_kill_switch_still_applies(self):
         spec = get_feature("scan.standard")
-        # An Anthropic model is not allowed on the OpenAI provider.
+        # A model outside the allow-list is rejected by the registry.
         rows = {
-            "scan.standard.model": "claude-sonnet-5-5",
+            "scan.standard.model": "other-model",
             "scan.standard.enabled": False,
         }
         out = ai_settings.AISettings(rows).spec_for(spec)

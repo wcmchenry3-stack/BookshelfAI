@@ -96,7 +96,7 @@ def client():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as provider_cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as provider_cls,
         patch("app.api.scan.EnrichmentService"),
         patch("app.api.scan.DeduplicationService"),
         patch("app.api.scan._reserve_scan_quota", new=AsyncMock()),
@@ -509,7 +509,7 @@ class TestKillSwitchesFromTable:
 
 class TestOverridesReachRunFeature:
     async def test_model_override_changes_the_model_used(self, provider):
-        ai_settings.reset_cache({"scan.standard.model": "gpt-4o-2024-11-20"})
+        ai_settings.reset_cache({"scan.standard.model": "claude-sonnet-5-5"})
         result = await run_feature(
             "scan.standard",
             user=USER,
@@ -517,17 +517,17 @@ class TestOverridesReachRunFeature:
             payload=VisionPayload(image_bytes=b"x"),
         )
         spec = provider.call_args.args[0]
-        assert spec.model == "gpt-4o-2024-11-20"
-        assert result.model == "gpt-4o-2024-11-20"
+        assert spec.model == "claude-sonnet-5-5"
+        assert result.model == "claude-sonnet-5-5"
         # Only the model changed; the registry itself is untouched.
         assert spec.max_tokens == FEATURES["scan.standard"].max_tokens
-        assert FEATURES["scan.standard"].model == "gpt-4o-mini"
+        assert FEATURES["scan.standard"].model == "claude-haiku-5-5"
 
     def test_override_reaches_the_provider_through_scan(self, client, provider):
-        ai_settings.reset_cache({"scan.enhanced.model": "gpt-4o-mini"})
+        ai_settings.reset_cache({"scan.enhanced.model": "claude-haiku-5-5"})
         resp = client.post("/scan", files=_file(), data={"enhanced": "true"})
         assert resp.status_code == 200
-        assert provider.call_args.args[0].model == "gpt-4o-mini"
+        assert provider.call_args.args[0].model == "claude-haiku-5-5"
         assert provider.call_args.args[0].name == "scan.enhanced"
 
     async def test_no_override_uses_registry_spec(self, provider):
@@ -547,17 +547,17 @@ class TestReadOncePerScan:
         # TTL 0 so the cache cannot hide a second read.
         with (
             patch.object(ai_settings.settings, "ai_settings_cache_ttl_seconds", 0),
-            _loader({"scan.standard.model": "gpt-4o"}, {}) as load,
+            _loader({"scan.standard.model": "claude-sonnet-5-5"}, {}) as load,
         ):
             resp = client.post("/scan", files=_file())
         assert resp.status_code == 200
         assert load.await_count == 1
-        assert provider.call_args.args[0].model == "gpt-4o"
+        assert provider.call_args.args[0].model == "claude-sonnet-5-5"
 
     async def test_run_feature_with_snapshot_skips_the_read(
         self, provider, empty_cache
     ):
-        snapshot = ai_settings.AISettings({"scan.standard.model": "gpt-4o"})
+        snapshot = ai_settings.AISettings({"scan.standard.model": "claude-sonnet-5-5"})
         with _loader({}) as load:
             result = await run_feature(
                 "scan.standard",
@@ -567,7 +567,7 @@ class TestReadOncePerScan:
                 settings_snapshot=snapshot,
             )
         load.assert_not_awaited()
-        assert result.model == "gpt-4o"
+        assert result.model == "claude-sonnet-5-5"
 
     async def test_run_feature_snapshot_kill_switch_enforced(self, provider):
         snapshot = ai_settings.AISettings({"scan.enhanced.enabled": False})
@@ -611,10 +611,10 @@ class TestMaxImagePixelsFeedsSanitize:
 _VALID = {
     "scan.standard.enabled": [True, False],
     "scan.enhanced.enabled": [True, False],
-    "scan.standard.provider": ["openai"],
-    "scan.enhanced.provider": ["openai"],
-    "scan.standard.model": ["gpt-4o-mini", "gpt-4o"],
-    "scan.enhanced.model": ["gpt-4o", "gpt-4o-2024-08-06"],
+    "scan.standard.provider": ["anthropic"],
+    "scan.enhanced.provider": ["anthropic"],
+    "scan.standard.model": ["claude-haiku-5-5", "claude-sonnet-5-5"],
+    "scan.enhanced.model": ["claude-sonnet-5-5", "claude-haiku-5-5"],
     "scan.max_image_pixels": [1_000_000, 40_000_000, 100_000_000],
     # #528 allowance keys and the global ceiling.
     "scan.global_daily_limit": [1, 2000, 1_000_000],
@@ -639,9 +639,9 @@ _VALID = {
 _INVALID = {
     "scan.standard.enabled": ["true", 1, 0, None, "yes"],
     "scan.enhanced.enabled": ["false", 0, None],
-    "scan.standard.provider": ["anthropic", "", None, 1, "OPENAI"],
+    "scan.standard.provider": ["other-provider", "", None, 1, "ANTHROPIC"],
     "scan.enhanced.provider": ["gemini", None],
-    "scan.standard.model": ["gpt-5", "", None, 4, "x" * 200, "gpt-4o "],
+    "scan.standard.model": ["claude-9", "", None, 4, "x" * 200, "claude-haiku-5-5 "],
     "scan.enhanced.model": ["claude-3", None],
     "scan.max_image_pixels": [999_999, 100_000_001, 0, -1, True, 1e7, "4e7", None],
     "scan.global_daily_limit": [0, -1, 1_000_001, True, 2.5, "2000", None],
@@ -763,7 +763,7 @@ class TestBounds:
             ai_settings.validate_write("scan.premium.enabled", True, {})
 
     def test_unknown_key_ignored_on_read(self):
-        ai_settings.reset_cache({"scan.premium.model": "gpt-5"})
+        ai_settings.reset_cache({"scan.premium.model": "claude-9"})
         assert dict(ai_settings._cache.rows) == {}
 
     @pytest.mark.parametrize(
@@ -793,7 +793,7 @@ class TestBounds:
 
 
 _TWO_PROVIDERS = {
-    "openai": frozenset({"gpt-4o-mini", "gpt-4o"}),
+    "anthropic": frozenset({"claude-haiku-5-5", "claude-sonnet-5-5"}),
     "other": frozenset({"other-1"}),
 }
 
@@ -806,7 +806,7 @@ class TestAllowList:
             patch.object(ai_settings.sentry_sdk, "capture_message") as capture,
             caplog.at_level(logging.WARNING, logger="app.ai.settings"),
         ):
-            ai_settings.reset_cache({"scan.enhanced.model": "gpt-5-turbo-max"})
+            ai_settings.reset_cache({"scan.enhanced.model": "claude-turbo-max"})
         await run_feature(
             "scan.enhanced",
             user=USER,
@@ -816,18 +816,20 @@ class TestAllowList:
         assert provider.call_args.args[0].model == FEATURES["scan.enhanced"].model
         assert "ignoring scan.enhanced.model" in caplog.text
         # The stored value is never echoed into logs or Sentry.
-        assert "gpt-5-turbo-max" not in caplog.text
-        assert "gpt-5-turbo-max" not in str(capture.call_args)
+        assert "claude-turbo-max" not in caplog.text
+        assert "claude-turbo-max" not in str(capture.call_args)
 
     def test_model_must_match_its_provider_on_write(self):
         with (
             patch.object(ai_settings, "ALLOWED_MODELS", _TWO_PROVIDERS),
-            patch.object(ai_settings, "_ALL_MODELS", frozenset({"other-1", "gpt-4o"})),
+            patch.object(
+                ai_settings, "_ALL_MODELS", frozenset({"other-1", "claude-sonnet-5-5"})
+            ),
         ):
             # other-1 is allow-listed, but not for the registry's provider.
             with pytest.raises(ai_settings.AISettingValueError, match="allow-list"):
                 ai_settings.validate_write("scan.standard.model", "other-1", {})
-            # Switching provider while the model is an OpenAI one is refused.
+            # Switching provider while the model is an Anthropic one is refused.
             with pytest.raises(ai_settings.AISettingValueError, match="allow-list"):
                 ai_settings.validate_write("scan.standard.provider", "other", {})
             # Allowed once the pair matches.
@@ -843,13 +845,18 @@ class TestAllowList:
     def test_mismatched_pair_ignored_on_read(self):
         with (
             patch.object(ai_settings, "ALLOWED_MODELS", _TWO_PROVIDERS),
-            patch.object(ai_settings, "_ALL_MODELS", frozenset({"other-1", "gpt-4o"})),
+            patch.object(
+                ai_settings, "_ALL_MODELS", frozenset({"other-1", "claude-sonnet-5-5"})
+            ),
         ):
-            # Model valid for openai but provider says "other": the model is
-            # dropped, and the registry default (gpt-4o-mini) is not allowed
+            # Model valid for anthropic but provider says "other": the model is
+            # dropped, and the registry default (claude-haiku-5-5) is not allowed
             # for "other" either, so the provider falls back too.
             ai_settings.reset_cache(
-                {"scan.standard.provider": "other", "scan.standard.model": "gpt-4o"}
+                {
+                    "scan.standard.provider": "other",
+                    "scan.standard.model": "claude-sonnet-5-5",
+                }
             )
             rows = dict(ai_settings._cache.rows)
         assert rows == {}
@@ -884,8 +891,8 @@ class TestSeeding:
         assert values == {
             "scan.standard.enabled": False,
             "scan.enhanced.enabled": True,
-            "scan.standard.provider": "openai",
-            "scan.enhanced.provider": "openai",
+            "scan.standard.provider": "anthropic",
+            "scan.enhanced.provider": "anthropic",
             "scan.standard.model": FEATURES["scan.standard"].model,
             "scan.enhanced.model": FEATURES["scan.enhanced"].model,
             "scan.max_image_pixels": 2_000_000,
@@ -1048,9 +1055,11 @@ class TestCLI:
         assert _written(cli_db)["value"] is False
 
         monkeypatch.delenv("USER")
-        assert ai_settings.main(["set", "scan.enhanced.model", "gpt-4o"]) == 0
+        assert (
+            ai_settings.main(["set", "scan.enhanced.model", "claude-sonnet-5-5"]) == 0
+        )
         assert _written(cli_db)["updated_by"] == "cli"
-        assert _written(cli_db)["value"] == "gpt-4o"
+        assert _written(cli_db)["value"] == "claude-sonnet-5-5"
 
     @pytest.mark.parametrize(
         "argv",
@@ -1058,8 +1067,8 @@ class TestCLI:
             ["set", "scan.max_image_pixels", "999999"],
             ["set", "scan.max_image_pixels", "abc"],
             ["set", "scan.standard.enabled", "yes"],
-            ["set", "scan.enhanced.model", "gpt-5"],
-            ["set", "scan.standard.provider", "anthropic"],
+            ["set", "scan.enhanced.model", "claude-9"],
+            ["set", "scan.standard.provider", "other-provider"],
         ],
     )
     def test_set_rejects_bad_value_without_touching_db(self, cli_db, argv, capsys):
@@ -1096,12 +1105,12 @@ class TestCLI:
 
     def test_get_and_list(self, cli_db, capsys):
         cli_db.stored = {
-            "scan.enhanced.model": FakeRow("scan.enhanced.model", "gpt-4o-mini"),
+            "scan.enhanced.model": FakeRow("scan.enhanced.model", "claude-haiku-5-5"),
             "scan.max_image_pixels": FakeRow("scan.max_image_pixels", 5),
         }
         assert ai_settings.main(["get", "scan.enhanced.model"]) == 0
         out = capsys.readouterr().out
-        assert 'scan.enhanced.model = "gpt-4o-mini"' in out
+        assert 'scan.enhanced.model = "claude-haiku-5-5"' in out
         assert "by seed" in out
 
         assert ai_settings.main(["list"]) == 0
@@ -1174,7 +1183,7 @@ class TestCLI:
         )
 
     def test_updated_by_control_characters_are_replaced(self, cli_db, capsys):
-        row = FakeRow("scan.enhanced.model", "gpt-4o")
+        row = FakeRow("scan.enhanced.model", "claude-sonnet-5-5")
         row.updated_by = "ev\x1b[2Jil\nx"
         cli_db.stored = {"scan.enhanced.model": row}
         assert ai_settings.main(["get", "scan.enhanced.model"]) == 0
@@ -1186,8 +1195,8 @@ class TestCLI:
     def test_parse_cli_value(self):
         assert ai_settings.parse_cli_value("true") is True
         assert ai_settings.parse_cli_value("40000000") == 40_000_000
-        assert ai_settings.parse_cli_value("gpt-4o") == "gpt-4o"
-        assert ai_settings.parse_cli_value('"gpt-4o"') == "gpt-4o"
+        assert ai_settings.parse_cli_value("claude-sonnet-5-5") == "claude-sonnet-5-5"
+        assert ai_settings.parse_cli_value('"claude-sonnet-5-5"') == "claude-sonnet-5-5"
 
 
 class TestLoadRowsTransactionChoice:

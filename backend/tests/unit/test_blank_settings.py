@@ -20,8 +20,6 @@ from app.core.config import BlankSettingError, Settings
 _MANAGED = (
     "ENVIRONMENT",
     "TRUSTED_HOSTS",
-    "SCAN_MODEL",
-    "SCAN_ENHANCED_MODEL",
     "SCAN_MAX_TOKENS",
     "SCAN_TIMEOUT_SECONDS",
     "DATABASE_URL",
@@ -43,8 +41,6 @@ def env(monkeypatch):
 @pytest.mark.parametrize(
     "name,attr,default",
     [
-        ("SCAN_MODEL", "scan_model", "gpt-4o-mini"),
-        ("SCAN_ENHANCED_MODEL", "scan_enhanced_model", "gpt-4o"),
         ("SCAN_MAX_TOKENS", "scan_max_tokens", 2048),
         ("SCAN_TIMEOUT_SECONDS", "scan_timeout_seconds", 45.0),
     ],
@@ -56,9 +52,9 @@ def test_blank_scan_setting_gives_default(env, name, attr, default):
 
 def test_blank_in_env_file_gives_default(env, tmp_path):
     f = tmp_path / ".env"
-    f.write_text("SCAN_MODEL=\nSCAN_MAX_TOKENS=\n")
+    f.write_text("SCAN_TIMEOUT_SECONDS=\nSCAN_MAX_TOKENS=\n")
     s = Settings(_env_file=str(f))
-    assert s.scan_model == "gpt-4o-mini"
+    assert s.scan_timeout_seconds == 45.0
     assert s.scan_max_tokens == 2048
 
 
@@ -81,21 +77,20 @@ def test_blank_jwt_key_in_production_still_fails_hardened_check(env):
 
 @pytest.mark.security
 def test_invalid_non_blank_value_still_fails(env):
-    env.setenv("SCAN_MODEL", "bogus")
+    env.setenv("SCAN_MAX_TOKENS", "bogus")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
 
 
 @pytest.mark.security
 def test_two_bad_values_are_both_named_and_secret_hidden(env):
-    env.setenv("SCAN_MODEL", "bogus")
+    env.setenv("SCAN_TIMEOUT_SECONDS", "bogus")
     env.setenv("SCAN_MAX_TOKENS", "abc")
     env.setenv("ORIGIN_AUTH_SECRET", "short-secret-value")
     with pytest.raises(ValidationError) as exc:
         Settings(_env_file=None)
     text = str(exc.value)
-    assert "scan_model" in text and "scan_max_tokens" in text
-    assert "SCAN_MODEL" in text
+    assert "scan_timeout_seconds" in text and "scan_max_tokens" in text
     assert "short-secret-value" not in text
 
 
@@ -156,7 +151,7 @@ _DB = "postgresql://u:p@localhost:5432/db"
 
 def test_check_ok_on_valid_environment():
     r = _run_check(
-        {"DATABASE_URL": _DB, "SCAN_MODEL": "", "TURNSTILE_REQUIRED": "false"}
+        {"DATABASE_URL": _DB, "SCAN_MAX_TOKENS": "", "TURNSTILE_REQUIRED": "false"}
     )
     assert r.returncode == 0
     assert r.stdout.strip() == "OK"
@@ -168,16 +163,16 @@ def test_check_fails_on_invalid_environment_and_prints_no_values():
     r = _run_check(
         {
             "DATABASE_URL": _DB,
-            "SCAN_MODEL": "bogus-model-name",
+            "SCAN_MAX_TOKENS": "bogus-token-count",
             "ORIGIN_AUTH_SECRET": secret,
             "ENVIRONMENT": "production",
         }
     )
     assert r.returncode == 1
     out = r.stdout + r.stderr
-    assert "SCAN_MODEL" in out
+    assert "SCAN_MAX_TOKENS" in out
     assert "ORIGIN_AUTH_SECRET" in out
-    assert "bogus-model-name" not in out
+    assert "bogus-token-count" not in out
     assert secret not in out
     assert "postgresql://" not in out
 
@@ -290,7 +285,7 @@ def test_reason_redacts_fragments_of_raw_values(monkeypatch):
 
     monkeypatch.setattr(config_check, "_raw_values", ["xx-hunter2-secret-yy"])
     out = config_check._reason(
-        "SCAN_MODEL must differ from hunter2-secret (ENVIRONMENT ok)"
+        "SCAN_MAX_TOKENS must differ from hunter2-secret (ENVIRONMENT ok)"
     )
     assert "hunter2-secret" not in out
-    assert "SCAN_MODEL" in out and "ENVIRONMENT" in out
+    assert "SCAN_MAX_TOKENS" in out and "ENVIRONMENT" in out

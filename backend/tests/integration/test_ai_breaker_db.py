@@ -54,9 +54,9 @@ MIGRATION = (
 )
 EST = get_feature("scan.standard").est_cost_ceiling_micros
 DUNE = BookCandidate(title="Dune", author="F", confidence=0.9)
-# 1,000 * 0.15 + 500 * 0.60 + 2,000 * 0.075 = 600 micros on gpt-4o-mini
+# 1,000 * 0.10 + 500 * 0.50 + 2,000 * 0.01 = 370 micros on claude-haiku-5-5
 USAGE = {"input_tokens": 1_000, "output_tokens": 500, "cache_read_tokens": 2_000}
-USAGE_COST = 600
+USAGE_COST = 370
 
 
 def _jpeg() -> bytes:
@@ -170,7 +170,7 @@ def downstream():
 def _provider(**kwargs):
     cls = MagicMock()
     cls.return_value.identify = AsyncMock(**kwargs)
-    return patch("app.ai.gateway.OpenAIVisionProvider", cls), cls
+    return patch("app.ai.gateway.AnthropicVisionProvider", cls), cls
 
 
 def _ceiling(micros: int, **rows) -> None:
@@ -221,9 +221,9 @@ class TestPrimitives:
         async with factory() as db:
             await breaker.reserve(db, day, EST, 10**9, enforce=True)
             await breaker.reserve(db, day, EST, 10**9, enforce=True)
-            assert await breaker.settle(db, day, EST, 600) == (600, EST, 0)
+            assert await breaker.settle(db, day, EST, 370) == (370, EST, 0)
             await db.commit()
-        assert await _totals(factory, day) == (EST, 600, 0)
+        assert await _totals(factory, day) == (EST, 370, 0)
 
     async def test_release_and_settle_never_go_below_zero(self, env):
         factory, _, make_day = env
@@ -312,7 +312,7 @@ class TestScan:
                 await asyncio.sleep(0.01)
             gate.set()
 
-        with _on(day), patch("app.ai.gateway.OpenAIVisionProvider", cls):
+        with _on(day), patch("app.ai.gateway.AnthropicVisionProvider", cls):
             tasks = [asyncio.create_task(one(u)) for u in users]
             await asyncio.wait_for(release_when_done(tasks), 20)
             outcomes = await asyncio.gather(*tasks)
@@ -428,12 +428,12 @@ class TestScan:
                 call_id=uuid.uuid4(),
                 user_id=user_id,
                 feature="scan.standard",
-                model="gpt-4o-mini",
+                model="claude-haiku-5-5",
                 status="ok",
                 **USAGE,
             )
             settlement = breaker.Settlement(
-                USAGE_COST, "scan.standard", "gpt-4o-mini", "ok"
+                USAGE_COST, "scan.standard", "claude-haiku-5-5", "ok"
             )
             await quota.release(db, reservation, row, settlement)
             assert await _totals(factory, day) == (EST, USAGE_COST, 0)

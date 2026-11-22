@@ -89,15 +89,15 @@ async def test_scan_writes_one_malformed_row_with_real_usage(limits_db, downstre
         ).scalars()
         assert await session.get(AIInflight, user_id) is None
     assert row.status == "malformed"
-    assert (row.feature, row.model) == ("scan.standard", "gpt-4o-mini")
+    assert (row.feature, row.model) == ("scan.standard", "claude-haiku-5-5")
     assert (row.input_tokens, row.output_tokens, row.cache_read_tokens) == (
         1_000,
         500,
         2_000,
     )
-    # 1,000 * 0.15 + 500 * 0.60 + 2,000 * 0.075 = 600 micros, settled too.
-    assert row.cost_micros == 600
-    assert await db.spend(day) == (0, 600)
+    # 1,000 * 0.10 + 500 * 0.50 + 2,000 * 0.01 = 370 micros, settled too.
+    assert row.cost_micros == 370
+    assert await db.spend(day) == (0, 370)
     counters = await db.counters(user_id, day)
     assert (counters.daily, counters.monthly) == (0, 0)
 
@@ -119,7 +119,7 @@ async def test_check_constraints_accept_malformed_and_it_rolls_up():
                     call_id=uuid.uuid4(),
                     user_id=None,
                     feature=feature,
-                    model="gpt-4o-mini",
+                    model="claude-haiku-5-5",
                     status="malformed",
                     input_tokens=1_000,
                     output_tokens=500,
@@ -151,7 +151,7 @@ async def test_check_constraints_accept_malformed_and_it_rolls_up():
                     insert(AIUsage).values(
                         call_id=uuid.uuid4(),
                         feature=feature,
-                        model="gpt-4o-mini",
+                        model="claude-haiku-5-5",
                         price_version=CURRENT_PRICE_VERSION,
                         input_tokens=0,
                         output_tokens=0,
@@ -224,7 +224,7 @@ def _usage_row(feature: str, status: str, created_at: datetime | None = None):
     values = {
         "call_id": uuid.uuid4(),
         "feature": feature,
-        "model": "gpt-4o-mini",
+        "model": "claude-haiku-5-5",
         "price_version": CURRENT_PRICE_VERSION,
         "input_tokens": 1_000,
         "output_tokens": 500,

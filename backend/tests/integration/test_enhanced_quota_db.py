@@ -120,7 +120,7 @@ class _Provider:
     def patch(self):
         cls = MagicMock()
         cls.return_value.identify = self.identify
-        return patch("app.ai.gateway.OpenAIVisionProvider", cls)
+        return patch("app.ai.gateway.AnthropicVisionProvider", cls)
 
 
 @pytest.fixture

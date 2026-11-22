@@ -16,9 +16,9 @@ from app.ai.gateway import (
     run_feature,
 )
 from app.ai.providers.base import ProviderResult
-from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FEATURES, UnknownFeatureError
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
+from tests._claude_fake import fake_claude, message
 
 USER = MagicMock(name="user")
 DB = MagicMock(name="db")
@@ -28,14 +28,14 @@ CANDIDATE = BookCandidate(title="Dune", author="Frank Herbert", confidence=0.9)
 
 @pytest.fixture
 def provider_cls():
-    with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
+    with patch("app.ai.gateway.AnthropicVisionProvider") as cls:
         cls.return_value.identify = AsyncMock(return_value=ProviderResult([CANDIDATE]))
         yield cls
 
 
 @pytest.mark.parametrize(
     ("feature", "model"),
-    [("scan.standard", "gpt-4o-mini"), ("scan.enhanced", "gpt-4o")],
+    [("scan.standard", "claude-haiku-5-5"), ("scan.enhanced", "claude-sonnet-5-5")],
 )
 async def test_feature_routes_to_registry_model(provider_cls, feature, model):
     result = await run_feature(feature, user=USER, db=DB, payload=PAYLOAD)
@@ -45,7 +45,7 @@ async def test_feature_routes_to_registry_model(provider_cls, feature, model):
     provider_cls.return_value.identify.assert_awaited_once_with(b"img")
     assert result == AIResult(
         feature=feature,
-        provider="openai",
+        provider="anthropic",
         model=model,
         candidates=[CANDIDATE],
         tier=Tier.FREE,
@@ -53,25 +53,16 @@ async def test_feature_routes_to_registry_model(provider_cls, feature, model):
 
 
 async def test_real_provider_receives_spec_model_and_limits():
-    """The adapter sends the registry's model, max_tokens and timeout."""
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"choices": [{"message": {"content": '{"books": []}'}}]}
-    client = MagicMock()
-    client.post = AsyncMock(return_value=resp)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
+    """The adapter sends the registry's model and max_tokens."""
     spec = FEATURES["scan.enhanced"]
-    with patch(
-        "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=client
-    ) as client_cls:
+    with fake_claude(message(books=[])) as (_client_cls, create):
         result = await run_feature("scan.enhanced", user=USER, db=DB, payload=PAYLOAD)
 
     assert result.candidates == []
-    client_cls.assert_called_once_with(timeout=spec.timeout_s)
-    body = client.post.call_args.kwargs["json"]
-    assert body["model"] == spec.model
-    assert body["max_tokens"] == spec.max_tokens
+    assert result.provider == "anthropic"
+    kwargs = create.call_args.kwargs
+    assert kwargs["model"] == spec.model == "claude-sonnet-5-5"
+    assert kwargs["max_tokens"] == spec.max_tokens
 
 
 @pytest.mark.parametrize("name", ["scan.premium", "", "scan.standard "])
@@ -115,12 +106,6 @@ def test_unknown_provider_has_no_adapter():
     spec = MagicMock(provider="acme")
     with pytest.raises(ValueError):
         gateway._build_provider(spec)
-
-
-def test_openai_adapter_rejects_non_openai_spec():
-    spec = MagicMock(provider="acme", name="x")
-    with pytest.raises(ValueError):
-        OpenAIVisionProvider(spec)
 
 
 def _fast(spec, timeout_s: float):

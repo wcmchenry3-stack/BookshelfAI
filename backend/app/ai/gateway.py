@@ -21,7 +21,6 @@ from app.ai.providers.base import (
     ProviderTimeoutError,
     VisionProvider,
 )
-from app.ai.providers.openai_vision import OpenAIVisionProvider
 from app.ai.registry import FeatureSpec, get_feature
 from app.models.user import User
 from app.services.book_identifier import BookCandidate, ScanUnavailableError
@@ -74,8 +73,6 @@ def reported_outcome(provided: ProviderResult) -> ProviderOutcome:
 def _build_provider(spec: FeatureSpec) -> VisionProvider:
     # Looked up at call time (not cached in a dict) so tests can patch the
     # provider class at this module's boundary.
-    if spec.provider == "openai":
-        return OpenAIVisionProvider(spec)
     if spec.provider == "anthropic":
         return AnthropicVisionProvider(spec)
     # Unreachable while the registry validates providers; fail closed anyway.
@@ -117,7 +114,7 @@ async def run_feature(
     ``FeatureDisabledError`` when the feature is switched off (in the registry
     or in ``ai_settings``), ``AISettingsUnavailableError`` when the settings
     cannot be read and nothing recent enough is cached, and whatever the provider raises
-    (``ScanUnavailableError``, ``httpx.ConnectError``).
+    (``ScanUnavailableError``, ``ProviderConnectError``).
 
     The whole provider call is bounded by the spec's ``timeout_s`` (an
     overall deadline, on top of the provider client's own per-phase HTTP

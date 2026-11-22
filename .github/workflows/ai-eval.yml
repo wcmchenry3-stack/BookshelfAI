@@ -7,7 +7,7 @@ name: AI eval (labelled scan photos)
 # owner, and "Prevent self-review" if available; only THEN add the secrets.
 # Without those rules, anyone with write access could dispatch an edited
 # copy of this workflow from another branch and exfiltrate the provider
-# keys and the R2 credential. See backend/eval/README.md ("Owner setup").
+# key and the R2 credential. See backend/eval/README.md ("Owner setup").
 
 # Labelled evaluation of one scan model (#536, epic #524): every photo in the
 # owner's private R2 dataset goes through the provider adapter and is scored
@@ -27,7 +27,7 @@ name: AI eval (labelled scan photos)
 # 5xx is unchanged.
 #
 # Secrets live in the `ai-eval` environment only (see backend/eval/README.md
-# for the owner setup): the provider API keys and a READ-ONLY R2 credential
+# for the owner setup): the Anthropic API key and a READ-ONLY R2 credential
 # scoped to the dataset bucket. Nothing here prints them, and only the
 # aggregate JSON report (no images, titles, keys or bucket names) is
 # uploaded.
@@ -50,8 +50,6 @@ on:
         options:
           - claude-haiku-5-5
           - claude-sonnet-5-5
-          - gpt-4o-mini
-          - gpt-4o
       spend_cap_usd:
         description: Hard spend cap for this run, in US dollars (at most 100; the runner refuses more)
         type: string
@@ -89,7 +87,6 @@ jobs:
           MODEL: ${{ inputs.model }}
           SPEND_CAP_USD: ${{ inputs.spend_cap_usd }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AI_EVAL_R2_ENDPOINT: ${{ secrets.AI_EVAL_R2_ENDPOINT }}
           AI_EVAL_R2_BUCKET: ${{ secrets.AI_EVAL_R2_BUCKET }}
           AI_EVAL_R2_ACCESS_KEY_ID: ${{ secrets.AI_EVAL_R2_ACCESS_KEY_ID }}

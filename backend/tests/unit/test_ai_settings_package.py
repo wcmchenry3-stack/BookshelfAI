@@ -261,9 +261,12 @@ def test_a_patch_on_the_package_reaches_sibling_modules():
     # definitions.py's defaults read the package's tunables and registry.
     with patch.object(ai_settings, "DEFAULT_SCAN_REQUESTS_PER_USER_DAILY", 7):
         assert ai_settings.AISettings({}).scan_requests_per_user_daily == 7
-    fake = SimpleNamespace(provider="openai", model="gpt-4o")
+    fake = SimpleNamespace(provider="anthropic", model="claude-sonnet-5-5")
     with patch.object(ai_settings, "get_feature", lambda name: fake):
-        assert ai_settings.DEFINITIONS["scan.standard.model"].default() == "gpt-4o"
+        assert (
+            ai_settings.DEFINITIONS["scan.standard.model"].default()
+            == "claude-sonnet-5-5"
+        )
     # cache.py calls validation.py's _sanitise_rows and the package clock.
     with (
         patch.object(ai_settings, "_sanitise_rows", lambda rows: {"k": 1}),

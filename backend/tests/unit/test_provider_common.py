@@ -1,4 +1,4 @@
-"""The reply-parsing helpers shared by the vision adapters (#814,
+"""The reply-parsing helpers used by the vision adapter (#814,
 ``app/ai/providers/_common.py``)."""
 
 import json
@@ -15,8 +15,6 @@ from app.ai.providers._common import (
     token_count,
 )
 from app.ai.providers.anthropic_vision import parse_reply
-from app.ai.providers.openai_vision import OpenAIVisionProvider
-from app.ai.registry import FEATURES
 from app.services.book_identifier import BookCandidate
 
 
@@ -152,10 +150,10 @@ class TestCollectCandidates:
         assert _collect([]) == ([], 0)
 
 
-# Recorded replies -> (Claude's candidates, OpenAI's candidates) as
-# (title, author, confidence, isbn_13, isbn_10); None is malformed. Every
-# expected value is what each adapter's own parser returned on ``dev``
-# before the helpers moved to ``_common`` (#814), so the move changed nothing.
+# Recorded replies -> the candidates the adapter's parser returns, as
+# (title, author, confidence, isbn_13, isbn_10). Every expected value is what
+# the parser returned on ``dev`` before the helpers moved to ``_common``
+# (#814), so the move changed nothing.
 _ISBN_13 = "9780306406157"
 _ISBN_10 = "0306406152"
 ADAPTER_REPLIES = {
@@ -176,10 +174,6 @@ ADAPTER_REPLIES = {
             ("Dune", "Frank Herbert", 0.9, _ISBN_13, _ISBN_10),
             ("Emma", "Jane Austen", 0.4, None, None),
         ],
-        [
-            ("Dune", "Frank Herbert", 0.9, _ISBN_13, _ISBN_10),
-            ("Emma", "Jane Austen", 0.4, None, None),
-        ],
     ),
     "invented_isbns_dropped_book_kept": (
         {
@@ -193,7 +187,6 @@ ADAPTER_REPLIES = {
                 }
             ]
         },
-        [("Dune", "Frank Herbert", 0.8, None, None)],
         [("Dune", "Frank Herbert", 0.8, None, None)],
     ),
     "confidence_clamped": (
@@ -211,16 +204,8 @@ ADAPTER_REPLIES = {
             ("C", "X", 0.5, None, None),
             ("D", "X", 0.5, None, None),
         ],
-        [
-            ("A", "X", 1.0, None, None),
-            ("B", "X", 0.0, None, None),
-            ("C", "X", 0.5, None, None),
-            ("D", "X", 0.5, None, None),
-        ],
     ),
-    # #795, intentionally unresolved: Claude gives any non-number 0.5;
-    # OpenAI parses a numeric string and treats any other non-number as
-    # broken.
+    # #795: any non-number confidence is 0.5.
     "non_numeric_confidence_795": (
         {
             "books": [
@@ -234,12 +219,10 @@ ADAPTER_REPLIES = {
             ("B", "X", 0.5, None, None),
             ("C", "X", 0.5, None, None),
         ],
-        [("A", "X", 0.9, None, None)],
     ),
     "only_non_numeric_confidence_795": (
         {"books": [{"title": "B", "author": "X", "confidence": "high"}]},
         [("B", "X", 0.5, None, None)],
-        None,
     ),
     "duplicates": (
         {
@@ -249,7 +232,6 @@ ADAPTER_REPLIES = {
                 {"title": " Dune ", "author": "Frank Herbert", "confidence": 0.3},
             ]
         },
-        [("Dune", "Frank Herbert", 0.9, None, None)],
         [("Dune", "Frank Herbert", 0.9, None, None)],
     ),
 }
@@ -265,24 +247,14 @@ def _claude(reply: dict, max_books: int = 20):
     return _rows(parse_reply(json.dumps(reply), "end_turn", max_books))
 
 
-def _openai(reply: dict, max_books: int = 20):
-    provider = OpenAIVisionProvider(FEATURES["scan.standard"])
-    return _rows(provider._parse_reply(json.dumps(reply), "stop", max_books))
-
-
 @pytest.mark.parametrize(
-    ("reply", "claude_expected", "openai_expected"),
+    ("reply", "claude_expected"),
     ADAPTER_REPLIES.values(),
     ids=ADAPTER_REPLIES,
 )
-class TestAdaptersUnchanged:
-    def test_claude(self, reply, claude_expected, openai_expected):
+class TestAdapterUnchanged:
+    def test_claude(self, reply, claude_expected):
         assert _claude(reply) == claude_expected
 
-    def test_openai(self, reply, claude_expected, openai_expected):
-        assert _openai(reply) == openai_expected
-
-    def test_max_books_caps_both(self, reply, claude_expected, openai_expected):
+    def test_max_books_caps(self, reply, claude_expected):
         assert _claude(reply, 1) == claude_expected[:1]
-        if openai_expected is not None:
-            assert _openai(reply, 1) == openai_expected[:1]

@@ -101,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--provider",
         default=None,
-        help="anthropic or openai (default: the provider whose allow-list has the model)",
+        help="the provider (only anthropic; default: the provider whose allow-list has the model)",
     )
     ap.add_argument(
         "--spend-cap-usd",

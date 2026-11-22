@@ -4,7 +4,9 @@ The usage ledger (``app.ai.ledger``) prices every provider call from this
 table, keyed by ``(model, price_version)``. Each row stores the version it was
 priced under, so a price change is a new version: add rows under a new
 ``CURRENT_PRICE_VERSION`` and keep the old rows, so old ledger rows can still
-be explained.
+be explained. (The rows of the retired provider were removed in #538: a
+price is used only when a call is written, and ``ai_usage`` rows store the
+resulting ``cost_micros``, so no stored row needs them.)
 
 Prices are public list prices, not secrets. They are in micro-dollars (one US
 dollar is 1,000,000 micros) per one million tokens, so they stay integers.
@@ -50,19 +52,6 @@ TOKENS_PER_PRICE_UNIT = 1_000_000
 
 CURRENT_PRICE_VERSION = "2026-10"
 
-# Source: OpenAI API pricing page (https://openai.com/api/pricing), standard
-# tier, per 1M tokens. Verify against the pricing page before changing; a
-# change is a new price_version, never an edit of an existing row.
-#   gpt-4o-mini: input $0.15, cached input $0.075, output $0.60
-#   gpt-4o:      input $2.50, cached input $1.25,  output $10.00
-# OpenAI does not bill prompt-cache writes separately, so cache_write is 0.
-_GPT_4O_MINI = ModelPrice(
-    input=150_000, output=600_000, cache_read=75_000, cache_write=0
-)
-_GPT_4O = ModelPrice(
-    input=2_500_000, output=10_000_000, cache_read=1_250_000, cache_write=0
-)
-
 # Source: Anthropic list prices as given by the claude-api skill (models table
 # cached 2026-10-06), first-party API, per 1M tokens. Cache writes are the
 # 5-minute TTL rate (1.25x input), the only TTL the adapter uses; cache reads
@@ -86,11 +75,6 @@ _CLAUDE_SONNET_5_5 = ModelPrice(
 
 PRICES: MappingProxyType[tuple[str, str], ModelPrice] = MappingProxyType(
     {
-        ("gpt-4o-mini", "2026-10"): _GPT_4O_MINI,
-        ("gpt-4o-mini-2024-07-18", "2026-10"): _GPT_4O_MINI,
-        ("gpt-4o", "2026-10"): _GPT_4O,
-        ("gpt-4o-2024-08-06", "2026-10"): _GPT_4O,
-        ("gpt-4o-2024-11-20", "2026-10"): _GPT_4O,
         ("claude-haiku-5-5", "2026-10"): _CLAUDE_HAIKU_5_5,
         ("claude-sonnet-5-5", "2026-10"): _CLAUDE_SONNET_5_5,
     }

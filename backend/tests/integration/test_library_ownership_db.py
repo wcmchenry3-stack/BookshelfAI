@@ -129,7 +129,7 @@ async def env():
         patch.object(
             GoogleBooksService, "search_query", AsyncMock(return_value=[volume])
         ),
-        patch("app.ai.gateway.OpenAIVisionProvider", provider),
+        patch("app.ai.gateway.AnthropicVisionProvider", provider),
         patch.object(settings, "turnstile_required", False),
     ):
         yield factory, make_user, ids, shown

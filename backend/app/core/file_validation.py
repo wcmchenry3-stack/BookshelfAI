@@ -3,7 +3,7 @@
 Extension and Content-Type headers are both client-supplied and can be spoofed.
 This module verifies that the actual file content matches the declared format,
 catching polyglot files and content/extension mismatches before bytes are
-forwarded to downstream services (e.g. OpenAI Vision API).
+forwarded to downstream services (e.g. the Claude vision API).
 
 Note on EXIF/metadata: images from mobile cameras may embed GPS coordinates and
 other metadata. Uploads are never forwarded as-is: after this check,

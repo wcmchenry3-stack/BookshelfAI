@@ -47,7 +47,7 @@ def _run(script, cases, *, cap_usd=10.0, spec=HAIKU, clock=None, image=None, **k
 
 def test_provider_defaults_from_the_model():
     assert runner.infer_provider("claude-sonnet-5-5") == "anthropic"
-    assert runner.infer_provider("gpt-4o-mini") == "openai"
+    assert runner.infer_provider("claude-haiku-5-5") == "anthropic"
     with pytest.raises(EvalError, match="unknown model"):
         runner.infer_provider("claude-made-up")
 
@@ -65,7 +65,7 @@ def test_spec_keeps_the_registry_limits():
     "feature, model, provider",
     [
         ("scan.bogus", "claude-haiku-5-5", None),
-        ("scan.standard", "claude-haiku-5-5", "openai"),
+        ("scan.standard", "claude-haiku-5-5", "other"),
     ],
 )
 def test_invalid_spec_is_refused(feature, model, provider):
@@ -93,8 +93,7 @@ def _worst_usage_cost(model, prompt_tokens, output_tokens):
 _PUBLISHED = [
     ("claude-haiku-5-5", 1568, 1568, 3279),
     ("claude-sonnet-5-5", 1568, 1176, 2459),
-    ("gpt-4o", 1568, 768, 85 + 170 * 8),
-    ("gpt-4o-mini", 1568, 768, 2833 + 5667 * 8),
+    ("claude-haiku-5-5", 1568, 768, 1606),
 ]
 
 
@@ -122,28 +121,29 @@ def _png(w, h):
     return buf.getvalue()
 
 
-def test_cap_is_never_exceeded_on_gpt_4o_mini_at_the_max_long_edge():
-    # gpt-4o-mini at high detail: a 1568 x 768 photo is 8 tiles, 48,169
-    # image tokens (2,833 + 5,667 x 8). With max_tokens = 8,192 every call
-    # really bills (48,169 + 2,000) x $0.15/M + 8,192 x $0.60/M = 12,441
-    # micros. A $0.06 cap fits 4 such calls (49,764) but not 5 (62,205).
+def test_cap_is_never_exceeded_at_the_max_long_edge():
+    # Haiku 5.5: a 1568 x 768 photo is 1,606 image tokens. With max_tokens =
+    # 8,192 every call really bills (1,606 + 2,000) x $0.10/M + 8,192 x
+    # $0.50/M = 4,457 micros. The standard feature's admission estimate is at
+    # least its 10,000 micro ceiling, so a $0.025 cap fits 4 such calls
+    # (17,828 spent; the 5th needs 17,828 + 10,000 > 25,000).
     spec = replace(
-        runner.resolve_spec("scan.standard", "gpt-4o-mini"), max_tokens=8_192
+        runner.resolve_spec("scan.standard", "claude-haiku-5-5"), max_tokens=8_192
     )
     worst = f.result(
         [("Dune", "Frank Herbert")],
-        input_tokens=48_169 + 2_000,
+        input_tokens=1_606 + 2_000,
         output_tokens=8_192,
     )
     cases = [f.case(i) for i in range(1, 8)]
     report, provider, _ = _run(
-        [worst] * len(cases), cases, cap_usd=0.06, spec=spec, image=_png(1568, 768)
+        [worst] * len(cases), cases, cap_usd=0.025, spec=spec, image=_png(1568, 768)
     )
-    assert report["cost"]["total_usd"] <= 0.06
+    assert report["cost"]["total_usd"] <= 0.025
     assert report["spend_cap"]["counted_usd"] <= report["spend_cap"]["cap_usd"]
     assert len(provider.images) == 4
     assert report["spend_cap"]["stopped_by_cap"] is True
-    assert report["spend_cap"]["largest_call_bound_used_usd"] >= 0.012441
+    assert report["spend_cap"]["largest_call_bound_used_usd"] >= 0.004457
 
 
 @pytest.mark.parametrize("bad", [0, -1, math.nan, math.inf, True, "10"])

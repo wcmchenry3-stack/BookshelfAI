@@ -19,14 +19,13 @@ import app as app_package
 
 pytestmark = pytest.mark.security
 
-PROVIDER_SDKS = frozenset({"openai", "anthropic"})
+PROVIDER_SDKS = frozenset({"anthropic"})
 # Wrappers and other vendors' SDKs. Matched on the full dotted module path
 # (``google.genai`` or ``google.genai.x``), so ``google.cloud.storage`` and a
 # bare ``import google`` are not flagged.
 OTHER_SDK_MODULES = frozenset(
     {
         "litellm",
-        "langchain_openai",
         "langchain_anthropic",
         "google.genai",
         "google.generativeai",
@@ -37,11 +36,9 @@ OTHER_SDK_MODULES = frozenset(
 _ALL_SDK_MODULES = PROVIDER_SDKS | OTHER_SDK_MODULES
 # Provider API key names: settings attributes (any case) and environment keys.
 API_KEY_ATTR_RE = re.compile(
-    r"^(openai|anthropic|gemini|google|mistral|cohere)_api_key$", re.IGNORECASE
+    r"^(anthropic|gemini|google|mistral|cohere)_api_key$", re.IGNORECASE
 )
-API_KEY_ENV_RE = re.compile(
-    r"^(OPENAI|ANTHROPIC|GEMINI|GOOGLE|MISTRAL|COHERE)_API_KEY$"
-)
+API_KEY_ENV_RE = re.compile(r"^(ANTHROPIC|GEMINI|GOOGLE|MISTRAL|COHERE)_API_KEY$")
 # Only the gateway may import the provider adapters. Modules inside
 # app/ai/providers/ are skipped entirely. Other app/ai/ modules (registry,
 # models_allowlist, __init__) must not import them.
@@ -52,7 +49,7 @@ GATEWAY_FILE = Path("ai") / "gateway.py"
 API_KEY_ALLOWLIST: dict[Path, str] = {}
 # Provider API hosts. Matches any mention, so an httpx call (or a URL constant
 # later passed to one) is caught wherever it appears.
-PROVIDER_HOST_RE = re.compile(r"api\.(?:openai|anthropic)\.com", re.IGNORECASE)
+PROVIDER_HOST_RE = re.compile(r"api\.(?:anthropic)\.com", re.IGNORECASE)
 DYNAMIC_IMPORTERS = frozenset({"import_module", "__import__"})
 ALLOWED_DIR = Path("ai") / "providers"
 PROVIDERS_MODULE = "app.ai.providers"
@@ -239,10 +236,10 @@ def test_no_provider_calls_outside_ai_providers() -> None:
 
 
 def test_checker_sees_the_real_provider_when_not_allowed() -> None:
-    """Guard against a vacuous checker: the OpenAI adapter must be detected."""
+    """Guard against a vacuous checker: the Claude adapter must be detected."""
     violations = find_provider_calls(APP_ROOT, allowed=Path("does-not-exist"))
     flagged = {v.path for v in violations}
-    assert ALLOWED_DIR / "openai_vision.py" in flagged
+    assert ALLOWED_DIR / "anthropic_vision.py" in flagged
 
 
 # ---------------------------------------------------------------------------
@@ -250,21 +247,18 @@ def test_checker_sees_the_real_provider_when_not_allowed() -> None:
 # ---------------------------------------------------------------------------
 
 # Fixture text is built from PROVIDER_SDKS rather than spelled out so the org
-# OpenAI/Claude policy greps don't mistake this test for an API caller.
+# Claude policy greps don't mistake this test for an API caller.
 _HOSTS = [f"api.{sdk}.com" for sdk in sorted(PROVIDER_SDKS)]
 
 _NEW_LEAKS = [
-    "from app.core.config import settings\n\nkey = settings.openai_api_key\n",
     "from app.core.config import settings\n\nkey = settings.ANTHROPIC_API_KEY\n",
     'import os\n\nkey = os.getenv("ANTHROPIC_API_KEY")\n',
-    'import os\n\nkey = os.environ.get("OPENAI_API_KEY")\n',
     'import os\n\nkey = os.environ["GEMINI_API_KEY"]\n',
     "import litellm\n",
     "from litellm import completion\n",
     "from google.genai import Client\n",
     "import google.generativeai as genai\n",
     "from google.genai.types import Part\n",
-    "from langchain_openai import ChatOpenAI\n",
     "from langchain_anthropic import ChatAnthropic\n",
     "import mistralai\n",
     "import cohere\n",
@@ -285,11 +279,11 @@ _LEAKS = [
         for sdk in sorted(PROVIDER_SDKS)
     ],
     *[f'mod = __import__("{sdk}")\n' for sdk in sorted(PROVIDER_SDKS)],
-    "from app.ai.providers.openai_vision import OpenAIVisionProvider\n",
-    "import app.ai.providers.openai_vision\n",
+    "from app.ai.providers.anthropic_vision import AnthropicVisionProvider\n",
+    "import app.ai.providers.anthropic_vision\n",
     "from app.ai import providers\n",
-    "from ..ai.providers import openai_vision\n",
-    "from ..ai.providers.openai_vision import OpenAIVisionProvider\n",
+    "from ..ai.providers import anthropic_vision\n",
+    "from ..ai.providers.anthropic_vision import AnthropicVisionProvider\n",
     *_NEW_LEAKS,
     "def broken(:\n",
 ]
@@ -335,7 +329,7 @@ def test_gateway_inside_ai_package_may_import_providers(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "ai/gateway.py",
-        "from app.ai.providers.openai_vision import OpenAIVisionProvider\n",
+        "from app.ai.providers.anthropic_vision import AnthropicVisionProvider\n",
     )
     assert find_provider_calls(tmp_path) == []
 
@@ -344,7 +338,7 @@ def test_other_ai_module_may_not_import_providers(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "ai/batch_scan.py",
-        "from app.ai.providers.openai_vision import OpenAIVisionProvider\n",
+        "from app.ai.providers.anthropic_vision import AnthropicVisionProvider\n",
     )
     violations = find_provider_calls(tmp_path)
     assert {v.path for v in violations} == {Path("ai") / "batch_scan.py"}
@@ -367,9 +361,9 @@ def test_checker_ignores_lookalike_sdk_and_key_names(tmp_path: Path) -> None:
         "import cohere_extras\n"
         "import os\n"
         "from app.core.config import settings\n"
-        "a = settings.openai_api_key_configured\n"
-        "b = settings.my_openai_api_key\n"
-        'c = os.getenv("OPENAI_API_KEY_CONFIGURED")\n'
+        "a = settings.anthropic_api_key_configured\n"
+        "b = settings.my_anthropic_api_key\n"
+        'c = os.getenv("ANTHROPIC_API_KEY_CONFIGURED")\n'
         'd = os.getenv("SOME_OTHER_KEY")\n'
         'e = os.environ.get("PATH")\n',
     )
@@ -380,6 +374,6 @@ def test_config_field_definition_is_not_an_attribute_access(tmp_path: Path) -> N
     _write(
         tmp_path,
         "core/config.py",
-        'class Settings:\n    openai_api_key: str = ""\n',
+        'class Settings:\n    anthropic_api_key: str = ""\n',
     )
     assert find_provider_calls(tmp_path) == []

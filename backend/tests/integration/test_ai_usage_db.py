@@ -148,7 +148,7 @@ def downstream():
 def _provider(**kwargs):
     cls = MagicMock()
     cls.return_value.identify = AsyncMock(**kwargs)
-    return patch("app.ai.gateway.OpenAIVisionProvider", cls)
+    return patch("app.ai.gateway.AnthropicVisionProvider", cls)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ class TestScanWritesOneRow:
         assert len(rows) == 1
         row = rows[0]
         assert row.status == status
-        assert (row.feature, row.model) == ("scan.standard", "gpt-4o-mini")
+        assert (row.feature, row.model) == ("scan.standard", "claude-haiku-5-5")
         assert row.price_version == CURRENT_PRICE_VERSION
         if status in ("ok", "refused", "truncated"):
             assert (row.input_tokens, row.output_tokens, row.cache_read_tokens) == (
@@ -205,8 +205,8 @@ class TestScanWritesOneRow:
                 500,
                 2_000,
             )
-            # 1,000 * 0.15 + 500 * 0.60 + 2,000 * 0.075 = 600 micros
-            assert row.cost_micros == 600
+            # 1,000 * 0.10 + 500 * 0.50 + 2,000 * 0.01 = 370 micros
+            assert row.cost_micros == 370
         else:
             assert (row.input_tokens, row.output_tokens, row.cost_micros) == (0, 0, 0)
         assert row.created_at is not None
@@ -229,8 +229,8 @@ class TestScanWritesOneRow:
         (row,) = await _rows(factory, user_id=user_id)
         assert (row.feature, row.model, row.cost_micros) == (
             "scan.enhanced",
-            "gpt-4o",
-            10_000,
+            "claude-sonnet-5-5",
+            7_400,
         )
 
     async def test_refusal_before_the_provider_writes_nothing(
@@ -344,7 +344,7 @@ class TestSingleCommitSettle:
             call_id=uuid.uuid4(),
             user_id=user_id,
             feature="scan.standard",
-            model="gpt-4o-mini",
+            model="claude-haiku-5-5",
             status="ok",
             input_tokens=5,
         )
@@ -371,7 +371,7 @@ class TestSingleCommitSettle:
         cls = MagicMock()
         cls.return_value.identify = hung
         with (
-            patch("app.ai.gateway.OpenAIVisionProvider", cls),
+            patch("app.ai.gateway.AnthropicVisionProvider", cls),
             anyio.move_on_after(30) as scope,
         ):
             await _call_scan(factory, user_id)
@@ -399,7 +399,7 @@ class TestSingleCommitSettle:
             call_id=uuid.uuid4(),
             user_id=user_id,
             feature="scan.standard",
-            model="gpt-4o-mini",
+            model="claude-haiku-5-5",
             price_version=CURRENT_PRICE_VERSION,
             input_tokens=-1,  # violates ck_ai_usage_non_negative
             output_tokens=0,
@@ -441,7 +441,7 @@ async def test_deleting_a_user_nulls_user_id_and_keeps_the_row(sessions):
             db,
             user_id=user_id,
             feature=feature,
-            model="gpt-4o",
+            model="claude-sonnet-5-5",
             status="ok",
             input_tokens=10,
             output_tokens=5,
@@ -450,7 +450,7 @@ async def test_deleting_a_user_nulls_user_id_and_keeps_the_row(sessions):
         await db.commit()
     (row,) = await _rows(factory, feature=feature)
     assert row.user_id is None
-    assert (row.input_tokens, row.output_tokens, row.cost_micros) == (10, 5, 75)
+    assert (row.input_tokens, row.output_tokens, row.cost_micros) == (10, 5, 70)
 
 
 async def test_check_constraints(sessions):
@@ -458,7 +458,7 @@ async def test_check_constraints(sessions):
     feature = make_feature()
     base = {
         "feature": feature,
-        "model": "gpt-4o",
+        "model": "claude-sonnet-5-5",
         "price_version": CURRENT_PRICE_VERSION,
         "input_tokens": 0,
         "output_tokens": 0,
@@ -509,7 +509,7 @@ async def _seed(
                     call_id=uuid.uuid4(),
                     user_id=None,
                     feature=feature,
-                    model="gpt-4o",
+                    model="claude-sonnet-5-5",
                     price_version=CURRENT_PRICE_VERSION,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
@@ -647,7 +647,7 @@ class TestRollup:
                     insert(AIUsageDaily).values(
                         day=day,
                         feature=feature,
-                        model="gpt-4o",
+                        model="claude-sonnet-5-5",
                         status="ok",
                         calls=1,
                         input_tokens=1,

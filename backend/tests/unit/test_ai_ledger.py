@@ -76,14 +76,14 @@ class TestUsageInsert:
             call_id=CALL_ID,
             user_id=USER.id,
             feature="scan.enhanced",
-            model="gpt-4o",
+            model="claude-sonnet-5-5",
             status="ok",
             request_id="rid-1",
             **USAGE,
         )
         params = _params(stmt)
-        # 900 * 2.5 + 120 * 10 + 256 * 1.25 = 3,770 micros
-        assert params["cost_micros"] == 3_770
+        # 900 * 2 + 120 * 10 + 256 * 0.2 = 3,051.2 -> 3,052 micros
+        assert params["cost_micros"] == 3_052
         assert params["price_version"] == CURRENT_PRICE_VERSION
         assert params["status"] == "ok"
         assert params["request_id"] == "rid-1"
@@ -96,7 +96,7 @@ class TestUsageInsert:
                 call_id=CALL_ID,
                 user_id=None,
                 feature="scan.standard",
-                model="gpt-4o",
+                model="claude-sonnet-5-5",
                 status="ok",
             ).compile(dialect=postgresql.dialect())
         )
@@ -108,7 +108,7 @@ class TestUsageInsert:
                 call_id=CALL_ID,
                 user_id=USER.id,
                 feature="scan.standard",
-                model="gpt-4o-mini",
+                model="claude-haiku-5-5",
                 status="cache_hit",
                 **USAGE,
             )
@@ -134,7 +134,7 @@ class TestUsageInsert:
                 call_id=CALL_ID,
                 user_id=None,
                 feature="scan.standard",
-                model="gpt-4o",
+                model="claude-sonnet-5-5",
                 status="weird",
             )
 
@@ -144,7 +144,7 @@ class TestUsageInsert:
                 call_id=CALL_ID,
                 user_id=None,
                 feature="scan.standard",
-                model="gpt-4o",
+                model="claude-sonnet-5-5",
                 status="ok",
                 price_version="1999-01",
             )
@@ -152,7 +152,11 @@ class TestUsageInsert:
     async def test_record_executes_and_commits(self):
         db = AsyncMock()
         await ledger.record(
-            db, user_id=None, feature="scan.standard", model="gpt-4o", status="error"
+            db,
+            user_id=None,
+            feature="scan.standard",
+            model="claude-sonnet-5-5",
+            status="error",
         )
         db.execute.assert_awaited_once()
         db.commit.assert_awaited_once()
@@ -165,7 +169,7 @@ class TestUsageInsert:
             db,
             user_id=None,
             feature="scan.standard",
-            model="gpt-4o",
+            model="claude-sonnet-5-5",
             status="error",
             call_id=None,
         )
@@ -188,7 +192,7 @@ class TestUsageInsert:
 
 class TestGatewayCarriesUsage:
     async def test_ai_result_has_provider_usage_and_outcome(self):
-        with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
+        with patch("app.ai.gateway.AnthropicVisionProvider") as cls:
             cls.return_value.identify = AsyncMock(
                 return_value=ProviderResult([DUNE], outcome="truncated", **USAGE)
             )
@@ -216,7 +220,7 @@ class TestGatewayCarriesUsage:
             object.__setattr__(fast, "timeout_s", 0.05)
             return fast
 
-        with patch("app.ai.gateway.OpenAIVisionProvider") as cls:
+        with patch("app.ai.gateway.AnthropicVisionProvider") as cls:
             cls.return_value.identify = hung
             with pytest.raises(ProviderTimeoutError):
                 await run_feature(
@@ -365,7 +369,7 @@ def client():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
     ):
@@ -423,7 +427,7 @@ class TestScanRecordsUsage:
         row = _one(rows)
         assert row["status"] == outcome
         assert row["feature"] == "scan.standard"
-        assert row["model"] == "gpt-4o-mini"
+        assert row["model"] == "claude-haiku-5-5"
         assert row["user_id"] == USER.id
         assert {k: row[k] for k in USAGE} == USAGE
         assert row["request_id"] == resp.headers["X-Request-ID"]
@@ -438,12 +442,12 @@ class TestScanRecordsUsage:
         ):
             client.post("/scan", files=_file(), data={"enhanced": "true"})
         row = _one(rows)
-        assert (row["feature"], row["model"]) == ("scan.enhanced", "gpt-4o")
+        assert (row["feature"], row["model"]) == ("scan.enhanced", "claude-sonnet-5-5")
 
     def test_model_override_is_recorded(self, client, store, provider, rows):
-        ai_settings.reset_cache({"scan.standard.model": "gpt-4o-2024-11-20"})
+        ai_settings.reset_cache({"scan.standard.model": "claude-sonnet-5-5"})
         client.post("/scan", files=_file())
-        assert _one(rows)["model"] == "gpt-4o-2024-11-20"
+        assert _one(rows)["model"] == "claude-sonnet-5-5"
 
     def test_gateway_deadline_records_timeout(self, client, store, provider, rows):
         async def hung(_image):
@@ -460,7 +464,7 @@ class TestScanRecordsUsage:
         assert resp.json() == {"detail": "scan_unavailable"}
         row = _one(rows)
         assert row["status"] == "timeout"
-        assert row["model"] == "gpt-4o-mini"
+        assert row["model"] == "claude-haiku-5-5"
         params = _params(row["stmt"])
         assert params["input_tokens"] == params["output_tokens"] == 0
         assert params["cost_micros"] == 0

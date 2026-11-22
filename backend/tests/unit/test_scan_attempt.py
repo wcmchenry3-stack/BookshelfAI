@@ -102,7 +102,7 @@ def client():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
     ):
@@ -381,7 +381,7 @@ class TestLedgerWriter:
             call_id=uuid.uuid4(),
             user_id=None,
             feature="scan.standard",
-            model="gpt-4o-mini",
+            model="claude-haiku-5-5",
             status="ok",
             **USAGE,
         )
@@ -397,7 +397,7 @@ class TestLedgerWriter:
             db,
             user_id=None,
             feature="scan.standard",
-            model="gpt-4o-mini",
+            model="claude-haiku-5-5",
             status="cache_hit",
             attempt=5,
         )

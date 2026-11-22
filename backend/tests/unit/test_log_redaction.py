@@ -3,7 +3,7 @@
 import hashlib
 import logging
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -98,8 +98,8 @@ class TestRedactingFilter:
         assert r.getMessage() == "[REDACTED_EMAIL] 3"
 
     def test_dotted_names_not_redacted(self):
-        assert redact("app.services.chatgpt_vision v1.2.3") == (
-            "app.services.chatgpt_vision v1.2.3"
+        assert redact("app.ai.providers.anthropic_vision v1.2.3") == (
+            "app.ai.providers.anthropic_vision v1.2.3"
         )
 
     def test_never_raises(self):
@@ -140,30 +140,22 @@ class TestVisionParseFailureLogs:
         "content", ["not json SECRET-BOOK-TEXT", '"SECRET-BOOK-TEXT"']
     )
     async def test_no_content_logged(self, caplog, content):
-        from app.ai.providers import openai_vision
+        from app.ai.providers.anthropic_vision import AnthropicVisionProvider
         from app.ai.registry import FEATURES
+        from tests._claude_fake import fake_claude, message
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
-            "choices": [{"message": {"content": content}, "finish_reason": "length"}]
-        }
-        client = MagicMock()
-        client.post = AsyncMock(return_value=resp)
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
         with (
-            patch.object(openai_vision.httpx, "AsyncClient", return_value=client),
+            fake_claude(message(content, stop_reason="max_tokens")),
             caplog.at_level(logging.INFO),
         ):
-            result = await openai_vision.OpenAIVisionProvider(
-                FEATURES["scan.standard"]
-            ).identify(b"img")
+            result = await AnthropicVisionProvider(FEATURES["scan.standard"]).identify(
+                b"img"
+            )
         assert result.candidates == []
         assert "SECRET-BOOK-TEXT" not in caplog.text
         assert hashlib.sha256(content.encode()).hexdigest()[:12] in caplog.text
         assert f"length={len(content)}" in caplog.text
-        assert "finish_reason=length" in caplog.text
+        assert "stop_reason=max_tokens" in caplog.text
 
 
 class TestAuthFlowLogs:

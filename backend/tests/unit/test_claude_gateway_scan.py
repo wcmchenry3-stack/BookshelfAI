@@ -3,7 +3,7 @@
 ``scan.<feature>.provider = anthropic`` in ai_settings routes the call through
 ``AnthropicVisionProvider``; the SDK client is mocked (``tests._claude_fake``),
 never a real model. /scan records the usage ledger row (incl. Claude's cache
-write tokens) and refunds exactly as for OpenAI.
+write tokens) and refunds on any unavailability.
 """
 
 import io
@@ -96,12 +96,9 @@ def test_build_provider_picks_the_claude_adapter():
     assert isinstance(_build_provider(spec), AnthropicVisionProvider)
 
 
-async def test_default_settings_still_use_openai():
-    with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as openai_cls,
-        patch("app.ai.gateway.AnthropicVisionProvider") as claude_cls,
-    ):
-        openai_cls.return_value.identify = AsyncMock(
+async def test_default_settings_use_anthropic():
+    with patch("app.ai.gateway.AnthropicVisionProvider") as claude_cls:
+        claude_cls.return_value.identify = AsyncMock(
             return_value=MagicMock(
                 candidates=[],
                 outcome="ok",
@@ -111,15 +108,15 @@ async def test_default_settings_still_use_openai():
                 cache_write_tokens=0,
             )
         )
-        await run_feature(
+        result = await run_feature(
             "scan.standard",
             user=MagicMock(),
             db=MagicMock(),
             payload=VisionPayload(image_bytes=b"img"),
             settings_snapshot=ai_settings.AISettings({}),
         )
-    openai_cls.assert_called_once()
-    claude_cls.assert_not_called()
+    claude_cls.assert_called_once()
+    assert result.provider == "anthropic"
 
 
 # ---------------------------------------------------------------------------

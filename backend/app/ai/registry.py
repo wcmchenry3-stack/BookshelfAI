@@ -5,9 +5,9 @@ is built, and the registry is built at import, so a bad value (an unknown
 provider or model, or an out-of-bounds limit) stops the app from starting
 instead of reaching a paid provider.
 
-Values that existed before the gateway still come from ``settings`` for now
-(``SCAN_MODEL``, ``SCAN_ENHANCED_MODEL``, ``SCAN_MAX_TOKENS``,
-``SCAN_TIMEOUT_SECONDS``), so behaviour is unchanged.
+Anthropic is the only provider. The models are fixed here (Haiku 5.5 for
+standard scans, Sonnet 5.5 for enhanced, #547/#548): no env var picks them.
+``SCAN_MAX_TOKENS`` and ``SCAN_TIMEOUT_SECONDS`` still come from ``settings``.
 """
 
 from dataclasses import dataclass, replace
@@ -110,17 +110,16 @@ def build_registry(specs: list[FeatureSpec]) -> MappingProxyType[str, FeatureSpe
 # ceiling before the provider is called, and settled at the real cost after.
 # It is a rough upper estimate of one call at list prices (image tokens at
 # "high" detail plus a full max_tokens reply), so changing a feature's model
-# (env or ai_settings override), max_tokens or image size needs a new
+# (ai_settings override), max_tokens or image size needs a new
 # estimate here.
 FEATURES: MappingProxyType[str, FeatureSpec] = build_registry(
     [
         FeatureSpec(
             name="scan.standard",
-            provider="openai",
-            model=settings.scan_model,
-            # Used by the Claude adapter (output_config.effort); the OpenAI
-            # adapter ignores it. "low": a standard scan is a high-volume
-            # extraction; the enhanced scan keeps "medium" (#532).
+            provider="anthropic",
+            model="claude-haiku-5-5",
+            # Sent as output_config.effort. "low": a standard scan is a
+            # high-volume extraction; the enhanced scan keeps "medium" (#532).
             effort="low",
             max_tokens=settings.scan_max_tokens,
             max_image_long_edge_px=1568,
@@ -130,8 +129,8 @@ FEATURES: MappingProxyType[str, FeatureSpec] = build_registry(
         ),
         FeatureSpec(
             name="scan.enhanced",
-            provider="openai",
-            model=settings.scan_enhanced_model,
+            provider="anthropic",
+            model="claude-sonnet-5-5",
             effort="medium",
             max_tokens=settings.scan_max_tokens,
             max_image_long_edge_px=1568,
@@ -144,18 +143,14 @@ FEATURES: MappingProxyType[str, FeatureSpec] = build_registry(
 
 
 # The model each feature uses on each provider. The registry spec above holds
-# the default provider (openai until #536/#538); when ai_settings switches a
-# feature's provider (``python -m app.ai.settings switch``) the model is taken
+# the default provider (anthropic, the only one since #538); when ai_settings
+# names a provider (``python -m app.ai.settings switch``) the model is taken
 # from here unless one is named. Anthropic IDs are fixed IDs, never aliases
 # (#548): Haiku 5.5 for standard scans, Sonnet 5.5 for enhanced (#547).
 PROVIDER_MODELS: MappingProxyType[str, MappingProxyType[str, str]] = MappingProxyType(
     {
-        "scan.standard": MappingProxyType(
-            {"openai": settings.scan_model, "anthropic": "claude-haiku-5-5"}
-        ),
-        "scan.enhanced": MappingProxyType(
-            {"openai": settings.scan_enhanced_model, "anthropic": "claude-sonnet-5-5"}
-        ),
+        "scan.standard": MappingProxyType({"anthropic": "claude-haiku-5-5"}),
+        "scan.enhanced": MappingProxyType({"anthropic": "claude-sonnet-5-5"}),
     }
 )
 

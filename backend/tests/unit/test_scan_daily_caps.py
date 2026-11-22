@@ -81,7 +81,7 @@ def client():
 def provider():
     """Mock the vision provider and the downstream lookups."""
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as id_cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as id_cls,
         patch("app.api.scan.EnrichmentService") as enrich_cls,
         patch("app.api.scan.DeduplicationService") as dedup_cls,
     ):

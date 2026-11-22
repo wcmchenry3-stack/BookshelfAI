@@ -27,6 +27,7 @@ from app.ai.settings import AISettings
 from app.main import app
 from app.models.user import User
 from app.services.book_identifier import ScanUnavailableError
+from tests._claude_fake import connect_error, fake_claude, timeout_error
 from tests.unit._quota_fake import FakeQuotaStore
 from tests.unit._sentry_capture import captured_events
 
@@ -319,7 +320,7 @@ class TestReserveGivesTheEstimateBack:
 
 
 def _settlement(cost, status="ok"):
-    return breaker.Settlement(cost, "scan.standard", "gpt-4o-mini", status)
+    return breaker.Settlement(cost, "scan.standard", "claude-haiku-5-5", status)
 
 
 class TestSettle:
@@ -452,7 +453,7 @@ class TestAlerts:
         assert event["level"] == "warning"
         assert event["fingerprint"] == ["ai-breaker", "2026-10-21", "50"]
         assert event["tags"]["feature"] == "scan.standard"
-        assert event["tags"]["model"] == "gpt-4o-mini"
+        assert event["tags"]["model"] == "claude-haiku-5-5"
         assert event["tags"]["status"] == "ok"
         assert event["extra"]["settled_micros"] == 500_000
         assert event["extra"]["ceiling_micros"] == CEILING
@@ -663,7 +664,7 @@ def client():
 @pytest.fixture
 def provider():
     with (
-        patch("app.ai.gateway.OpenAIVisionProvider") as cls,
+        patch("app.ai.gateway.AnthropicVisionProvider") as cls,
         patch("app.api.scan.EnrichmentService") as enrich,
         patch("app.api.scan.DeduplicationService") as dedup,
     ):
@@ -709,8 +710,8 @@ class TestScanEndpoint:
         provider.return_value.identify.assert_awaited_once()
         reserved, settled = store.spend_today()
         assert reserved == 0
-        # 1,000 * 0.15 + 500 * 0.60 + 2,000 * 0.075 = 600 micros added
-        assert settled == ai_settings.settings.scan_free_daily_ceiling_micros + 600
+        # Haiku 5.5: 1,000 * 0.10 + 500 * 0.50 + 2,000 * 0.01 = 370 micros added
+        assert settled == ai_settings.settings.scan_free_daily_ceiling_micros + 370
 
     def test_estimate_is_the_features_registry_ceiling(self, client, store, provider):
         seen = []
@@ -734,7 +735,7 @@ class TestScanEndpoint:
             return_value=ProviderResult([], **USAGE)
         )
         assert client.post("/scan", files=_file()).status_code == 200
-        assert store.spend_today() == (0, 600)
+        assert store.spend_today() == (0, 370)  # Haiku 5.5, see above
 
     @pytest.mark.parametrize(
         "error",
@@ -834,47 +835,28 @@ class TestScanEndpoint:
 # ---------------------------------------------------------------------------
 
 
-def _client_raising(exc):
-    client = AsyncMock()
-    client.post = AsyncMock(side_effect=exc)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-    return patch(
-        "app.ai.providers.openai_vision.httpx.AsyncClient", return_value=client
-    )
-
-
 class TestProviderTimeoutKinds:
-    @pytest.mark.parametrize(
-        "exc", [httpx.ConnectTimeout("connect"), httpx.PoolTimeout("pool")]
-    )
-    async def test_no_connection_timeouts_are_connect_errors(self, exc):
-        from app.ai.providers.base import ProviderTimeoutError
-        from app.ai.providers.openai_vision import OpenAIVisionProvider
+    async def test_no_connection_is_a_connect_error(self):
+        from app.ai.providers.anthropic_vision import AnthropicVisionProvider
+        from app.ai.providers.base import ProviderConnectError, ProviderTimeoutError
 
-        provider = OpenAIVisionProvider(get_feature("scan.standard"))
-        with _client_raising(exc), pytest.raises(httpx.ConnectError) as raised:
+        provider = AnthropicVisionProvider(get_feature("scan.standard"))
+        with (
+            fake_claude(connect_error()),
+            pytest.raises(ProviderConnectError) as raised,
+        ):
             await provider.identify(b"img")
         assert not isinstance(raised.value, ProviderTimeoutError)
-        assert raised.value.__cause__ is exc
 
-    @pytest.mark.parametrize(
-        "exc", [httpx.ReadTimeout("read"), httpx.WriteTimeout("write")]
-    )
-    async def test_connected_timeouts_are_provider_timeouts(self, exc):
+    async def test_connected_timeouts_are_provider_timeouts(self):
+        from app.ai.providers.anthropic_vision import AnthropicVisionProvider
         from app.ai.providers.base import ProviderTimeoutError
-        from app.ai.providers.openai_vision import OpenAIVisionProvider
 
-        provider = OpenAIVisionProvider(get_feature("scan.standard"))
-        with _client_raising(exc), pytest.raises(ProviderTimeoutError):
+        provider = AnthropicVisionProvider(get_feature("scan.standard"))
+        with fake_claude(timeout_error()), pytest.raises(ProviderTimeoutError):
             await provider.identify(b"img")
 
-    @pytest.mark.parametrize(
-        "exc", [httpx.ConnectTimeout("connect"), httpx.PoolTimeout("pool")]
-    )
-    def test_no_connection_timeout_refunds_and_releases_the_estimate(
-        self, client, store, exc
-    ):
+    def test_no_connection_refunds_and_releases_the_estimate(self, client, store):
         rows = []
         real = ledger.usage_insert
 
@@ -883,7 +865,7 @@ class TestProviderTimeoutKinds:
             return real(**kw)
 
         with (
-            _client_raising(exc),
+            fake_claude(connect_error()),
             patch.object(ledger, "usage_insert", spy),
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
@@ -894,14 +876,11 @@ class TestProviderTimeoutKinds:
         assert store.spend_today() == (0, 0)
         assert store.count() == 0
 
-    @pytest.mark.parametrize(
-        "exc", [httpx.ReadTimeout("read"), httpx.WriteTimeout("write")]
-    )
     def test_connected_timeout_refunds_units_but_keeps_the_estimate(
-        self, client, store, exc
+        self, client, store
     ):
         with (
-            _client_raising(exc),
+            fake_claude(timeout_error()),
             patch("app.api.scan.EnrichmentService"),
             patch("app.api.scan.DeduplicationService"),
         ):

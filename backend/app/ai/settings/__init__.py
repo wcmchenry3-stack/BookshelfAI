@@ -87,8 +87,8 @@ that is missing, from the env (``SCAN_ENABLED``, ``SCAN_ENHANCED_ENABLED``,
 ``SCAN_PREMIUM_DAILY_LIMIT``, which seed the ``found_daily`` keys since #577,
 ``SCAN_FREE_NO_MATCH_DAILY_LIMIT``, ``SCAN_PREMIUM_NO_MATCH_DAILY_LIMIT``,
 ``SCAN_FREE_DAILY_CEILING_MICROS``), the code
-defaults above and the registry defaults (``SCAN_MODEL``,
-``SCAN_ENHANCED_MODEL``). Existing rows are never touched, so after the first
+defaults above and the registry defaults (the fixed Anthropic models in
+``app/ai/registry.py``). Existing rows are never touched, so after the first
 boot the row is the source of truth and the env vars are initial defaults
 only. A key with no row (deleted by hand, or seeding failed while the DB was
 down) falls back to that same env/registry default.
@@ -131,7 +131,7 @@ missing). ``python -m app.ai.settings list | get <key> | set <key> <value>
 [--by NAME]``. It uses the app's ``DATABASE_URL``. ``set`` validates exactly
 as above, then upserts the row with ``updated_at`` and ``updated_by`` (``--by``,
 else ``$USER``, else ``cli``). Values are parsed as JSON when possible
-(``true``, ``40000000``) and as a plain string otherwise (``gpt-4o``).
+(``true``, ``40000000``) and as a plain string otherwise (``claude-haiku-5-5``).
 
 **Switching provider.** A provider and its model are a pair, so ``set`` of a
 provider alone is refused while the stored model belongs to the other
@@ -139,8 +139,11 @@ provider. ``python -m app.ai.settings switch <feature> <provider> [--model M]
 [--by NAME]`` writes both rows in one transaction; without ``--model`` the
 model is the registry's per-provider default (``registry.PROVIDER_MODELS``:
 Haiku 5.5 for ``scan.standard``, Sonnet 5.5 for ``scan.enhanced`` on
-``anthropic``). Switching back to ``openai`` the same way restores the OpenAI
-model.
+``anthropic``). Anthropic is the only provider (the previous one was removed in #538),
+so ``switch`` is only useful to name another allow-listed Claude model. A row
+still stored for the previous provider (or one of its models) is not valid any more:
+on read it is ignored with a warning and the registry default (``anthropic``)
+is used, so such a row can never crash a request.
 
 Nothing in a request (form field, header, query, JWT claim) can reach these
 values: there is no endpoint that writes them, and readers take only a DB
