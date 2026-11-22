@@ -2,7 +2,7 @@
 
 ## Stack
 
-Expo SDK 55 · Expo Router · React Native · TypeScript · axios · expo-secure-store
+Expo SDK 58 · Expo Router · React Native · TypeScript · axios · expo-secure-store
 
 ## Running Locally
 
@@ -190,6 +190,7 @@ See [~/.claude/standards/accessibility.md](~/.claude/standards/accessibility.md)
 - Tabs: `app/(tabs)/<name>.tsx`
 - Auth: `app/(auth)/<name>.tsx`
 - Modals: `app/<name>.tsx` with `presentation: 'modal'`
+- Async (lazy) routes are **off** on every platform: `app.json` sets `["expo-router", { "asyncRoutes": false }]` (#712). The SDK 58 expo-router plugin turns them on for web by default; SDK 56 did not. With them on, the `--dev` web export used by the e2e suite names every chunk `<basename>-<md5 of ''>.js` (`@expo/metro-config` skips content hashing in dev), so the `my-books`, `settings` and `wishlist` route chunks are overwritten by the lazily loaded locale files with the same basename and those tabs crash with "Requiring unknown module". Turning lazy web routes on is a separate decision and needs that collision handled first. Guarded by `__tests__/unit/AppConfigAsyncRoutes.test.ts`.
 
 ### Internationalisation (i18n)
 
@@ -290,6 +291,12 @@ Kept: our API client's axios errors (`Network Error`, `timeout of 30000ms exceed
 
 Tests (`__tests__/unit/sentryScrub.test.ts`) use a real `BrowserClient` with a capturing transport and assert the JWT is absent from the serialized envelope; the control case shows it is present without the scrubber.
 
+### Sentry navigation tracing off, transaction scrubber (#715)
+
+`@sentry/react-native` 8 adds `expoRouterIntegration` (name `ExpoRouter`, `dist/js/integrations/default.js`) to the default integrations whenever tracing and `enableAutoPerformanceTracing` are on. Once the Expo Router navigation container exists it auto-registers `reactNavigationIntegration`, which sends navigation spans and `navigation` breadcrumbs that SDK 7 did not. **Navigation tracing is disabled on purpose (owner decision #715):** `Sentry.init` gets an `integrations` callback (`sentryIntegrations` in `lib/sentry.ts`) that filters out only the integration named `Sentry.expoRouterIntegration().name` (the SDK's own name, so a rename cannot silently re-enable it; the factory has no side effects). `tracesSampleRate`, the other tracing integrations and error reporting are unchanged. Do not re-enable it without a new owner decision. `__tests__/unit/sentryIntegrationsReal.test.ts` uses the real SDK (no mock) to prove `getDefaultIntegrations` adds that integration and the filter removes exactly it. `dataCollection.urlQueryParams` is not available in `@sentry/react-native` 8.28 init options (`dataCollection` is omitted from its option types), so query params are handled by the scrubber below.
+
+`beforeSendTransaction` (`sentryBeforeSendTransaction`) runs `scrubSentryTransaction` (`lib/sentryScrub.ts`): the same rules as events (sensitive keys, bearer/JWT/token params, fail closed, never mutates) applied to `transaction`, `tags`, `extra`, `contexts`, `request`, `breadcrumbs` and every span (`description`, `data`, `tags`). Extra, transaction-only rules: the keys `http.query`, `url.query`, `http.fragment`, `url.fragment` and `query_string` are replaced by `[Filtered]` at any depth; the query string and fragment are removed from `http(s)://` URLs inside strings and from strings that start with `/`; `local@domain.tld` becomes `[email]`. All of this is single-pass linear scanning (no backtracking regexes; `sentryScrub.test.ts` checks t(40k) < 4 x t(20k) + 50 ms for pathological inputs). Known limitation: the email local part is ASCII only (`A-Za-z0-9._%+-`).
+
 ### API error reporting (#724)
 
 `lib/api.ts`'s response interceptor calls `reportApiError` (`lib/apiErrorReporting.ts`) for every non-401 failure. It captures a sanitized `ApiError` (never the AxiosError, which carries the `Authorization` header and bodies) with tags `http.status`, `http.method`, `api.path` (template: no origin, query, UUIDs or numeric IDs -> `:id`) and `api.detail` (only for allowlisted machine codes; in practice `forbidden`, since 401 is never reported), fingerprinted by those. Once per (method, path template, status, detail) per app session (module-level Set), so Sentry volume is bounded by distinct endpoints x codes. Reported: 403 and 5xx. Not reported: network errors (no response, #701), 401 (refresh flow), 402/409/429 and other handled 4xx, handled business codes (`enhanced_requires_premium`, scan refusals). `POST /scan` is reported here like any other path: this reporter is the single owner of every 403/5xx, and ScanJobContext skips its own capture when `isReportedCentrally(err)` (it still captures no-response errors and other statuses such as 422, as a sanitized `ApiError` via `sanitizeApiError`). A `403 forbidden` (edge/origin lockdown) is not an auth failure: it never signs out, and `isServiceUnavailable(err)` selects the translated `common:serviceUnavailable` message on My Books, Wishlist and the scan failure banner. Add new allowlisted codes in `apiErrorReporting.ts` plus a case in `__tests__/unit/ApiErrorReporting.test.ts`.
@@ -303,9 +310,9 @@ Call the backend through the `api` instance in `lib/api.ts` (never bare `axios`,
 - **Sentry**: the interceptor reports only the final failure of a logical request (see "API error reporting" above); retried attempts are never reported.
 - **Handling errors**: convert with `toApiError(err)` from `lib/apiError.ts` instead of reading `err.response` by hand. It returns `{ status?, code?, retryAfterMs?, isNetworkError, isTimeout, message }`. `code` is the backend `detail` when it is a string, or `detail.code` / `detail.detail.code` when it is an object; `retryAfterMs` is the parsed, uncapped `Retry-After`. `message` is for logs only; show translated copy keyed on `status`/`code`. Existing callers still read raw axios errors (`lib/scanErrors.ts`, `lib/trash.ts`, the auth and wishlist screens); migrate them as you touch them.
 
-### Dependencies: vendored `decode-uri-component` (#779)
+### Dependencies: retired `decode-uri-component` vendor (#779, removed in #886)
 
-`expo-router` -> `query-string@7.1.3` -> `decode-uri-component@^0.2.2` is affected by CVE-2026-118664 (DoS via quadratic replacement of percent-encoded runs; fixed in 0.5.1). The fixed releases (>= 0.3) are ESM-only while `query-string@7` `require()`s the package, and expo-router (SDK 56-58) keeps `query-string@^7.1.3`, and no patched 7.x exists, so a plain override would break Metro and Jest. Instead `frontend/vendor/decode-uri-component/` holds a CommonJS port of the 0.5.1 algorithm (MIT, licence file kept; package version `0.5.1+bookshelf.0`, which semver compares equal to 0.5.1, so Trivy no longer matches the CVE range). `package.json` lists it as `"decode-uri-component": "file:./vendor/decode-uri-component"` and the `overrides` entry `"$decode-uri-component"` forces every consumer onto it (a `file:` path directly in `overrides` resolves relative to the dependent and breaks). No `patch-package` or `postinstall`. Expo SDK 56, 57 and 58 all pin `query-string@^7.1.3` (verified with `npm view`). **Removal trigger:** on each Expo SDK bump, run `npm view expo-router@<sdk> dependencies.query-string`; once it is `>=8` (or `query-string` no longer depends on `decode-uri-component <0.5.1`), delete `vendor/decode-uri-component/`, the `dependencies` entry and the `overrides` entry, then re-run `npm install`. `vendor/` is excluded from Prettier and ESLint so the file stays comparable with upstream. Tests: `__tests__/unit/QueryStringDecode.test.ts`, `__tests__/unit/RouterParamParsing.test.ts`.
+#779 vendored a CommonJS port of `decode-uri-component` 0.5.1 under `frontend/vendor/` to fix CVE-2026-118664, which reached the app through `expo-router` -> `query-string@7` and was forced onto the patched copy by an npm override. #886 removed that workaround (owner decision #884) because `expo-router` >= 58.0.20 no longer depends on `query-string`. `__tests__/unit/RouterParamParsing.test.ts` still covers Expo Router's deep-link query param parsing.
 
 ### Core UI components (`components/ui/`, #900)
 

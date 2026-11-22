@@ -85,11 +85,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-frontend
         with:
-          node-version: '20'
+          node-version: '22'
       - name: npm audit
-        # Kept at critical until Expo 51→55 upgrade resolves the bundled `send` CVE.
-        # Change to --audit-level=high after the Expo upgrade lands.
-        run: npm audit --audit-level=critical --json > npm-audit-report.json || true
+        run: npm audit --audit-level=high --json > npm-audit-report.json || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:

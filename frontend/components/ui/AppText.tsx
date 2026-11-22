@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, type TextProps } from 'react-native';
+import { Text, type TextInstance, type TextProps } from 'react-native';
 
 import { useTheme } from '../../hooks/useTheme';
 import type { ColorKey } from '../../theme/light';
@@ -12,7 +12,7 @@ import {
 
 export interface AppTextProps extends TextProps {
   /** Ref to the underlying Text (React 19 passes it as a prop). */
-  ref?: React.Ref<Text>;
+  ref?: React.Ref<TextInstance>;
   /** Named text style (#899). Defaults to `body`. */
   variant?: TextVariant;
   /** Theme colour role for the text. Defaults to `onSurface`. */

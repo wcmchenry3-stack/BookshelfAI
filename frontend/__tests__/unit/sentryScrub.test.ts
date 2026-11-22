@@ -1,9 +1,19 @@
 import { AxiosError, AxiosHeaders } from 'axios';
 import { BrowserClient, defaultStackParser } from '@sentry/browser';
 import { Scope, type Envelope } from '@sentry/core';
-import { sentryBeforeBreadcrumb, sentryBeforeSend } from '../../lib/sentry';
+import {
+  sentryBeforeBreadcrumb,
+  sentryBeforeSend,
+  sentryBeforeSendTransaction,
+} from '../../lib/sentry';
 import * as scrubModule from '../../lib/sentryScrub';
-import { redactString, scrubBreadcrumb, scrubSentryEvent } from '../../lib/sentryScrub';
+import {
+  redactEmails,
+  redactString,
+  scrubBreadcrumb,
+  scrubSentryEvent,
+  scrubSentryTransaction,
+} from '../../lib/sentryScrub';
 
 // A JWT-shaped fixture assembled at runtime, so no JWT literal sits in the source (gitleaks).
 const b64 = (text: string) => Buffer.from(text).toString('base64url');
@@ -526,5 +536,177 @@ describe('round 2 scrub rules', () => {
       };
       expect(sentryBeforeBreadcrumb(filterCrumb as never)).toBe(filterCrumb);
     });
+  });
+});
+
+describe('beforeSendTransaction scrub (#715)', () => {
+  function txn() {
+    return {
+      type: 'transaction' as const,
+      transaction: '/search?q=alice@example.com',
+      tags: { who: 'bob@example.org', route: '/books' },
+      request: { url: 'https://app.example.com/books?token=abc123&page=2#frag' },
+      contexts: {
+        trace: {
+          trace_id: 'a'.repeat(32),
+          span_id: 'b'.repeat(16),
+          data: { 'http.url': 'https://api.example.com/x?email=carol@example.com&a=1' },
+        },
+      },
+      spans: [
+        {
+          description: 'GET https://api.example.com/books?isbn=1&user=dave@example.com',
+          data: { url: '/books/1?access_token=zzz', note: 'Bearer abc.def' },
+        },
+      ],
+    };
+  }
+
+  it('strips query strings / fragments and masks emails and tokens everywhere', () => {
+    const out = sentryBeforeSendTransaction(txn() as never) as never;
+    const json = JSON.stringify(out);
+    for (const leak of ['alice@', 'bob@', 'carol@', 'dave@', 'abc123', 'zzz', 'isbn=1', 'frag']) {
+      expect(json).not.toContain(leak);
+    }
+    expect(json).toContain('[email]');
+    expect(json).toContain('https://api.example.com/books');
+    expect(json).toContain('"route":"/books"');
+  });
+
+  it('reaches the transport scrubbed when set as beforeSendTransaction on a real client', async () => {
+    const envelopes: Envelope[] = [];
+    const client = new BrowserClient({
+      dsn: 'https://pub@example.invalid/1',
+      stackParser: defaultStackParser,
+      integrations: [],
+      beforeSendTransaction: sentryBeforeSendTransaction,
+      transport: () => ({
+        send: async (env: Envelope) => {
+          envelopes.push(env);
+          return {};
+        },
+        flush: async () => true,
+      }),
+    });
+    client.init();
+    client.captureEvent(txn() as never);
+    await client.flush(1000);
+    const json = JSON.stringify(envelopes);
+    expect(json).toContain('transaction');
+    expect(json).not.toContain('alice@example.com');
+    expect(json).not.toContain('token=abc123');
+    expect(json).not.toContain('isbn=1');
+  });
+
+  it('returns a clean transaction as the same object and handles non-objects', () => {
+    const t = { type: 'transaction', transaction: '/books', tags: { a: 'b' } };
+    expect(scrubSentryTransaction(t)).toBe(t);
+    expect(scrubSentryTransaction(null)).toBeNull();
+  });
+
+  it('fails closed: drops a field it cannot read and an uncopyable transaction', () => {
+    const bad = {
+      transaction: '/x',
+      tags: new Proxy(
+        {},
+        {
+          ownKeys: () => {
+            throw new Error('x');
+          },
+          getPrototypeOf: () => null,
+        }
+      ),
+    };
+    const out = scrubSentryTransaction(bad) as Record<string, unknown>;
+    expect(out.transaction).toBe('/x');
+    expect('tags' in out).toBe(false);
+    const uncopyable = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error('x');
+        },
+      }
+    );
+    expect(scrubSentryTransaction(uncopyable)).toBeNull();
+  });
+
+  it('filters query / fragment attributes and request.query_string wholesale', () => {
+    const out = scrubSentryTransaction({
+      request: { url: 'https://x/y?a=1', query_string: 'q=my+secret+book' },
+      contexts: { trace: { data: { 'url.query': '?z=1', 'url.fragment': '#f' } } },
+      spans: [
+        {
+          data: {
+            'http.query': '?q=my+secret+book&isbn=978',
+            'http.fragment': '#me',
+            url: 'https://x/y?a=1',
+            keep: 'ok',
+          },
+        },
+      ],
+    }) as never;
+    const json = JSON.stringify(out);
+    for (const leak of ['secret', 'isbn', '#me', 'a=1', 'z=1', '#f']) {
+      expect(json).not.toContain(leak);
+    }
+    expect(json).toContain('"keep":"ok"');
+    expect(json).toContain('https://x/y"');
+  });
+
+  it('redactEmails handles edge shapes', () => {
+    expect(redactEmails('no at sign')).toBe('no at sign');
+    expect(redactEmails('a@b.co, c.d+e@f-g.org.')).toBe('[email], [email].');
+    expect(redactEmails('@ alone, x@nodot, @y.com')).toBe('@ alone, x@nodot, @y.com');
+    expect(redactEmails('a@a@a@a@a@a.com')).toContain('[email]');
+  });
+
+  it('keeps text around URLs and cuts several URLs in one string', () => {
+    const out = scrubSentryTransaction({
+      transaction: 'GET http://a/b?x=1 then https://c/d#f and xhttp://e/f?k=1 end',
+    }) as { transaction: string };
+    expect(out.transaction).toBe('GET http://a/b then https://c/d and xhttp://e/f?k=1 end');
+  });
+
+  it('matches URL schemes case-insensitively and keeps the original casing', () => {
+    const out = scrubSentryTransaction({
+      transaction: 'GET HTTPS://Api.Example.com/Books?isbn=978123#private and Http://x/Y#z',
+      spans: [{ description: 'İstanbul HTTP://h/p?q=1 ok' }],
+    }) as { transaction: string; spans: { description: string }[] };
+    expect(out.transaction).toBe('GET HTTPS://Api.Example.com/Books and Http://x/Y');
+    expect(out.spans[0].description).toBe('İstanbul HTTP://h/p ok');
+  });
+
+  describe('linear time', () => {
+    const median = (f: () => void) => {
+      const t: number[] = [];
+      for (let r = 0; r < 5; r++) {
+        const a = process.hrtime.bigint();
+        f();
+        t.push(Number(process.hrtime.bigint() - a) / 1e6);
+      }
+      return t.sort((x, y) => x - y)[2];
+    };
+    const inputs: Record<string, (n: number) => string> = {
+      dots: (n) => 'a@' + '.'.repeat(n) + 'x',
+      schemes: (n) => 'http://'.repeat(n),
+      ats: (n) => '@'.repeat(n),
+      locals: (n) => 'a'.repeat(n) + '@',
+      slashes: (n) => '/'.repeat(n),
+      query: (n) => 'https://h/' + '?'.repeat(n),
+      httpNoScheme: (n) => 'http'.repeat(n),
+    };
+    for (const [name, make] of Object.entries(inputs)) {
+      it(`transaction string scrub is linear for ${name}`, () => {
+        const run = (v: string) => () =>
+          scrubSentryTransaction({ transaction: v, spans: [{ description: v }] });
+        run(make(20000))(); // warm up
+        const t1 = median(run(make(20000)));
+        const t2 = median(run(make(40000)));
+        // Doubling n: linear ~2x, quadratic ~4x. 3x separates them; +50 ms absorbs
+        // sub-millisecond jitter on fast inputs.
+        expect(t2).toBeLessThan(3 * t1 + 50);
+      });
+    }
   });
 });

@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ * @jest-environment <rootDir>/jest/jsdomEnvironment.js
  */
 import { TurnstileTokenBroker } from '../../lib/turnstile/tokenBroker';
 import {

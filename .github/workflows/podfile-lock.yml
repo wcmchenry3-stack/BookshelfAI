@@ -1,0 +1,115 @@
+# Generates frontend/ios/Podfile.lock with CocoaPods on macOS and checks it
+# against the committed one (#713).
+#
+# Podfile.lock must come from `pod install`, never a hand edit (CLAUDE.md rules
+# 10-11). Linux dev containers have no CocoaPods, so this job is the way to get
+# a lock there: open the run log, copy everything between the
+# ===BEGIN PODFILE.LOCK=== / ===END PODFILE.LOCK=== markers (or download the
+# `Podfile.lock` artifact) into frontend/ios/Podfile.lock and commit it. The
+# job fails while the committed lock differs from the generated one, so it also
+# works as a lock-consistency check. It does not run xcodebuild
+# (ios-build-check does that). Not a required check. See docs/claude/ios-ci.md.
+name: Podfile lock
+
+on:
+  pull_request:
+    paths:
+      - frontend/ios/Podfile
+      - frontend/ios/Podfile.lock
+      - frontend/ios/Podfile.properties.json
+      - frontend/package-lock.json
+      - frontend/app.json
+      - frontend/plugins/**
+      - .github/workflows/podfile-lock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: podfile-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  podfile-lock:
+    name: Generate Podfile.lock
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-frontend
+
+      - name: Keep the committed Podfile.lock
+        working-directory: frontend/ios
+        run: |
+          if [ -f Podfile.lock ]; then
+            cp Podfile.lock "$RUNNER_TEMP/Podfile.lock.committed"
+          else
+            echo "::warning::No committed Podfile.lock"
+            : > "$RUNNER_TEMP/Podfile.lock.committed"
+          fi
+
+      # First try against the committed lock (the normal consistency check). If
+      # CocoaPods says the committed snapshot is incompatible with the Podfile
+      # (e.g. an RN/Expo SDK upgrade changes ReactNativeDependencies or
+      # hermes-engine), resolve from scratch instead, as ios-build-check does.
+      # Other failures (network) are retried against the committed lock.
+      - name: pod install
+        working-directory: frontend/ios
+        run: |
+          # Without an explicit `shell: bash`, Actions runs `bash -e` (no
+          # pipefail), so `pod install | tee` would report tee's exit code.
+          set -o pipefail
+          pod --version
+          log="$RUNNER_TEMP/pod-install.log"
+          delay=30
+          for attempt in 1 2 3; do
+            echo "=== pod install attempt $attempt ==="
+            if pod install --repo-update 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            if grep -q 'could not find compatible versions' "$log" && [ -f Podfile.lock ]; then
+              echo "::warning::The committed Podfile.lock is incompatible with the Podfile; resolving from scratch."
+              rm -f Podfile.lock
+              continue
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::pod install failed after 3 attempts"
+              exit 1
+            fi
+            echo "Retrying in ${delay}s"
+            sleep "$delay"
+            delay=$((delay * 2))
+          done
+          echo "::error::pod install failed after 3 attempts"
+          exit 1
+
+      - name: Print generated Podfile.lock
+        working-directory: frontend/ios
+        run: |
+          echo "===BEGIN PODFILE.LOCK==="
+          cat Podfile.lock
+          echo "===END PODFILE.LOCK==="
+
+      - name: Show other files pod install changed
+        working-directory: frontend/ios
+        run: git status --short -- . ':!Podfile.lock'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Podfile.lock
+          path: frontend/ios/Podfile.lock
+          retention-days: 7
+
+      - name: Compare with the committed Podfile.lock
+        working-directory: frontend/ios
+        run: |
+          if diff -u "$RUNNER_TEMP/Podfile.lock.committed" Podfile.lock; then
+            echo "Podfile.lock: committed lock matches \`pod install\` output." >> "$GITHUB_STEP_SUMMARY"
+            echo "Committed Podfile.lock matches pod install output"
+          else
+            echo "Podfile.lock: committed lock differs from \`pod install\` output. Take the generated lock from the run log (between the ===BEGIN/END PODFILE.LOCK=== markers) or the \`Podfile.lock\` artifact and commit it." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error file=frontend/ios/Podfile.lock::Committed Podfile.lock differs from pod install output. Commit the generated lock (see the log or the Podfile.lock artifact)."
+            exit 1
+          fi

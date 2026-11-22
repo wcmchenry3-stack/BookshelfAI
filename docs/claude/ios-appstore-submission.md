@@ -30,8 +30,12 @@ brew install cocoapods
 
 ```bash
 cd frontend
-npx expo prebuild --platform ios --clean
+npx expo prebuild --platform ios --no-install --no-clean
 ```
+
+> The `ios/` project is committed and carries hand edits (`ci_scripts/`,
+> `.xcode.env`, Podfile patches). Never pass `--clean`, and always pass
+> `--no-clean` (SDK 58 cleans by default); see `docs/claude/ios-ci.md`.
 
 This generates the `ios/` Xcode project from `app.json`. It will:
 - Create `ios/Bookshelf.xcworkspace`
