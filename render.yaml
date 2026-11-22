@@ -85,6 +85,11 @@ services:
         sync: false # required to verify session JWTs; never reuse dev's keypair
       - key: OPENAI_API_KEY
         sync: false # required for the ChatGPT Vision book-scan feature
+      # Claude provider (#532, #538). Needed once a feature's ai_settings
+      # provider is `anthropic`; without it those scans answer 503
+      # scan_unavailable (refunded). Boot never fails over it.
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
   # --- Production static web (branch main). autoDeploy is off — see the note
   # on bookshelf-api above; same workflow deploys both.
@@ -205,6 +210,11 @@ services:
         sync: false # required to verify session JWTs; never reuse prod's keypair
       - key: OPENAI_API_KEY
         sync: false # required for the ChatGPT Vision book-scan feature
+      # Claude provider (#532, #538). Needed once a feature's ai_settings
+      # provider is `anthropic`; without it those scans answer 503
+      # scan_unavailable (refunded). Boot never fails over it.
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
   - type: web
     name: bookshelf-web-dev

@@ -327,3 +327,12 @@ def test_api_origin_auth_secret_is_dashboard_secret(name):
     env_var = _env_var(service, "ORIGIN_AUTH_SECRET")
     assert env_var.get("sync") is False
     assert "value" not in env_var
+
+
+@pytest.mark.parametrize("name", _API_SERVICES)
+def test_api_anthropic_api_key_is_dashboard_secret(name):
+    """The Claude cutover (#538) needs the key declared on both API services."""
+    service = _service(_load_render_yaml(), name)
+    env_var = _env_var(service, "ANTHROPIC_API_KEY")
+    assert env_var.get("sync") is False
+    assert "value" not in env_var
