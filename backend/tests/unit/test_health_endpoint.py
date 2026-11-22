@@ -28,13 +28,35 @@ async def test_health_ok(app):
 
 @pytest.mark.asyncio
 async def test_health_head_ok(app):
-    """UptimeRobot (free plan) sends HEAD; must get 200, not 405."""
+    """UptimeRobot (free plan) sends HEAD; must get 200 with no body.
+
+    RFC 7231 §4.3.2: Content-Length on HEAD must equal what GET would return.
+    httpx strips the body client-side, so we verify Content-Length parity
+    rather than response.content (which is always b'' after a HEAD).
+    """
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
-        response = await client.head("/health")
+        get_response = await client.get("/health")
+        head_response = await client.head("/health")
 
-    assert response.status_code == 200
+    assert head_response.status_code == 200
+    assert head_response.content == b""
+    assert head_response.headers.get("content-length") == get_response.headers.get(
+        "content-length"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["POST", "PUT", "DELETE", "PATCH"])
+async def test_health_disallows_other_methods(app, method):
+    """Only GET and HEAD are accepted; any other method must return 405."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.request(method, "/health")
+
+    assert response.status_code == 405
 
 
 @pytest.mark.asyncio

@@ -419,6 +419,10 @@ app.include_router(user_books_router)
 app.include_router(users_router)
 
 
+# @app.api_route instead of @app.get: slowapi's @limiter.limit wrapper
+# disrupts Starlette's implicit GET→HEAD routing, causing 405 for HEAD.
+# Uptime monitors (e.g. UptimeRobot free plan) send HEAD, so we register
+# both methods explicitly.
 @app.api_route("/health", methods=["GET", "HEAD"])
 @limiter.limit(settings.rate_limit_health)
 async def health(request: Request) -> JSONResponse:
