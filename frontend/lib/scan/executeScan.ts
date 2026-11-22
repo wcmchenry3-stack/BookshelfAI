@@ -73,7 +73,8 @@ export async function executeScan(deps: ScanExecDeps, job: ScanJob): Promise<voi
 async function buildScanFormData(
   job: ScanJob,
   attempt: number,
-  turnstileToken: string | null
+  turnstileToken: string | null,
+  signal: AbortSignal
 ): Promise<FormData> {
   const formData = new FormData();
   if (job.enhanced) formData.append('enhanced', 'true');
@@ -87,7 +88,15 @@ async function buildScanFormData(
     // Browsers need a real Blob here, not the blob:/data: URL string (#796).
     // A revoked or unreadable URL makes fetch reject: that propagates to
     // runScan's catch and settles as the usual scan failure.
-    const blob = await (await fetch(job.imageUri as string)).blob();
+    // Only blob:/data: URLs are read: anything else (a bare file name, a
+    // relative URL) would fetch a same-origin page and upload its body.
+    const uri = job.imageUri ?? '';
+    if (!uri.startsWith('blob:') && !uri.startsWith('data:')) {
+      throw new Error('scan photo is not a blob or data URL');
+    }
+    const res = await fetch(uri, { signal });
+    if (!res.ok) throw new Error('scan photo could not be read');
+    const blob = await res.blob();
     formData.append('file', blob, 'scan.jpg');
   } else {
     formData.append('file', {
@@ -135,24 +144,30 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
         // Signed out while the token was being fetched: nothing is sent,
         // and the token is never used for the next account.
         if (signedOutSince() || signal.aborted) return null;
-        return api.post<ScanResponse>(
-          '/scan',
-          await buildScanFormData(job, attempt, turnstileToken),
-          {
-            signal,
-            timeout: SCAN_UPLOAD_TIMEOUT_MS,
-            transformRequest: [
-              (data: FormData, headers: AxiosRequestHeaders) => {
-                if (Platform.OS === 'web') {
-                  headers.delete('Content-Type');
-                } else {
-                  headers.set('Content-Type', 'multipart/form-data');
-                }
-                return data;
-              },
-            ],
-          }
-        );
+        let body: FormData;
+        try {
+          body = await buildScanFormData(job, attempt, turnstileToken, signal);
+        } catch (readErr) {
+          // Aborted while the photo was being read: nothing is sent.
+          if (signal.aborted) return null;
+          throw readErr;
+        }
+        // Signed out or aborted during the read: still nothing is sent.
+        if (signedOutSince() || signal.aborted) return null;
+        return api.post<ScanResponse>('/scan', body, {
+          signal,
+          timeout: SCAN_UPLOAD_TIMEOUT_MS,
+          transformRequest: [
+            (data: FormData, headers: AxiosRequestHeaders) => {
+              if (Platform.OS === 'web') {
+                headers.delete('Content-Type');
+              } else {
+                headers.set('Content-Type', 'multipart/form-data');
+              }
+              return data;
+            },
+          ],
+        });
       };
       // 429 scan_in_progress means another scan holds the user's lease:
       // wait Retry-After and retry silently, at most MAX_IN_PROGRESS_RETRIES

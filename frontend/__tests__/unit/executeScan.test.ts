@@ -424,11 +424,11 @@ describe('executeScan', () => {
     it('web: the file part is a Blob fetched from the photo URL, not the URL string', async () => {
       setOS('web');
       const blob = new Blob(['jpegbytes'], { type: 'image/jpeg' });
-      const fetchMock = jest.fn(async () => ({ blob: async () => blob }));
+      const fetchMock = jest.fn(async () => ({ ok: true, blob: async () => blob }));
       global.fetch = fetchMock as unknown as typeof fetch;
       post.mockResolvedValueOnce(okResponse);
       await executeScan(makeDeps(), makeJob({ imageUri: 'blob:http://localhost/abc' }));
-      expect(fetchMock).toHaveBeenCalledWith('blob:http://localhost/abc');
+      expect(fetchMock).toHaveBeenCalledWith('blob:http://localhost/abc', expect.anything());
       const file = (post.mock.calls[0][1] as FormData).get('file');
       expect(typeof file).not.toBe('string');
       expect(file).toBeInstanceOf(Blob);
@@ -449,6 +449,58 @@ describe('executeScan', () => {
       );
       expect(deps.showBanner).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'error', message: 'scanFailedTitle' })
+      );
+      expect(deps.updateJob).not.toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'queued' })
+      );
+      expect(deps.showBanner).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'savedOffline' })
+      );
+    });
+
+    it.each([
+      ['a non-blob/data URI', 'scan.jpg', undefined],
+      ['a non-ok response', 'blob:http://localhost/x', { ok: false }],
+    ])('web: %s fails the job and sends nothing', async (_n, uri, res) => {
+      setOS('web');
+      const fetchMock = jest.fn(async () => res);
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const deps = makeDeps();
+      await executeScan(deps, makeJob({ imageUri: uri }));
+      if (!res) expect(fetchMock).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+      expect(deps.updateJob).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'failed', error: 'network_or_server' })
+      );
+    });
+
+    it('web: signing out during the photo read sends nothing and shows no error', async () => {
+      setOS('web');
+      const deps = makeDeps();
+      global.fetch = jest.fn(async () => {
+        deps.generationRef.current += 1;
+        return { ok: true, blob: async () => new Blob(['x']) };
+      }) as unknown as typeof fetch;
+      await executeScan(deps, makeJob({ imageUri: 'blob:http://localhost/x' }));
+      expect(post).not.toHaveBeenCalled();
+      expect(deps.updateJob).not.toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'failed' })
+      );
+      expect(deps.showBanner).not.toHaveBeenCalled();
+    });
+
+    it('web: the blob read is given the abort signal', async () => {
+      setOS('web');
+      const fetchMock = jest.fn(async () => ({ ok: true, blob: async () => new Blob(['x']) }));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      post.mockResolvedValueOnce(okResponse);
+      await executeScan(makeDeps(), makeJob({ imageUri: 'blob:http://localhost/x' }));
+      expect(fetchMock).toHaveBeenCalledWith(
+        'blob:http://localhost/x',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
       );
     });
 

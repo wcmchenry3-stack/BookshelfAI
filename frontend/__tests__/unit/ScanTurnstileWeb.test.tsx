@@ -79,6 +79,7 @@ beforeEach(() => {
     },
   });
   global.fetch = jest.fn(async () => ({
+    ok: true,
     blob: async () => new Blob(['jpeg'], { type: 'image/jpeg' }),
   })) as unknown as typeof fetch;
   mockPost.mockResolvedValue({
