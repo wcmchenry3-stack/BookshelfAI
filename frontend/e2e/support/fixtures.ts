@@ -36,7 +36,12 @@ export interface KnownViolation {
   issue: string;
 }
 
-export const KNOWN_VIOLATIONS = {} satisfies Record<string, KnownViolation>;
+// No known violations today (#797). To tolerate one, add it here and pass it
+// as `known: [KNOWN_VIOLATIONS.<name>]` to `expectNoA11yViolations`:
+//   export const KNOWN_VIOLATIONS = {
+//     <name>: { rule, html, issue: '#N' },
+//   } satisfies Record<string, KnownViolation>;
+// (An empty exported object would be flagged as an unused export by knip.)
 
 type LibraryStatus = 'wishlisted' | 'purchased' | 'reading' | 'read';
 
