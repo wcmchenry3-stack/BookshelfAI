@@ -1,9 +1,11 @@
 import base64
+import hashlib
 import json
 import logging
 
 import httpx  # noqa: F401 - kept so tests can patch app.auth.google.httpx
 from authlib.jose import jwt as authlib_jwt
+from authlib.jose.errors import InvalidClaimError
 
 from app.auth.jwks_cache import JwksCache
 from app.core.config import settings
@@ -23,6 +25,37 @@ def _token_kid(id_token: str) -> str | None:
         return kid if isinstance(kid, str) else None
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _fingerprint(value: str) -> str:
+    """12-char SHA-256 prefix: lets operators compare a value without logging it."""
+    return hashlib.sha256(value.encode()).hexdigest()[:12]
+
+
+def _aud_fingerprints(aud: object) -> str:
+    """Fingerprint a token ``aud`` claim (str or list of str, per the JWT spec)."""
+    if isinstance(aud, str) and aud:
+        return _fingerprint(aud)
+    if isinstance(aud, list | tuple):
+        parts = [_fingerprint(a) for a in aud if isinstance(a, str) and a]
+        if parts:
+            return ",".join(parts)
+    return "missing"
+
+
+def _slot_fingerprint(value: str | None) -> str:
+    return _fingerprint(value) if value else "unset"
+
+
+def _log_audience_mismatch(claims: dict) -> None:
+    """Warn with fingerprints only (never raw ``aud`` / client IDs, docs/security.md)."""
+    logger.warning(
+        "Google token audience not allowed: token_aud=%s web=%s ios=%s android=%s",
+        _aud_fingerprints(claims.get("aud")),
+        _slot_fingerprint(settings.google_client_id),
+        _slot_fingerprint(settings.google_ios_client_id),
+        _slot_fingerprint(settings.google_android_client_id),
+    )
 
 
 async def verify_google_id_token(id_token: str) -> dict:
@@ -46,6 +79,11 @@ async def verify_google_id_token(id_token: str) -> dict:
         },
     )
     logger.info("Token decoded — validating claims")
-    claims.validate()
+    try:
+        claims.validate()
+    except InvalidClaimError as exc:
+        if exc.claim_name == "aud":
+            _log_audience_mismatch(claims)
+        raise
     logger.info("Claims valid")
     return dict(claims)

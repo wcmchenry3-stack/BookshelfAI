@@ -1,8 +1,11 @@
 """Unit tests for verify_google_id_token — all HTTP and JWT ops mocked."""
 
+import hashlib
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from authlib.jose.errors import InvalidClaimError
 
 from app.auth.google import verify_google_id_token
 
@@ -124,3 +127,93 @@ class TestVerifyGoogleIdToken:
             await verify_google_id_token("fake.id.token")
 
         fake_claims.validate.assert_called_once()
+
+
+WEB_ID = "web-client-id.apps.googleusercontent.com"
+IOS_ID = "ios-client-id.apps.googleusercontent.com"
+TOKEN_AUD = "wrong-token-aud.apps.googleusercontent.com"
+
+
+def _fp(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:12]
+
+
+class _RejectingClaims(_FakeClaims):
+    def __init__(self, data: dict, claim: str):
+        super().__init__(data)
+        self._claim = claim
+
+    def validate(self):
+        raise InvalidClaimError(self._claim)
+
+
+async def _verify_rejecting(data: dict, claim: str):
+    with (
+        patch("app.auth.google.httpx.AsyncClient") as mock_cls,
+        patch("app.auth.google.authlib_jwt.decode") as mock_decode,
+        patch("app.auth.google.settings") as mock_settings,
+    ):
+        mock_settings.google_client_ids = [WEB_ID, IOS_ID]
+        mock_settings.google_client_id = WEB_ID
+        mock_settings.google_ios_client_id = IOS_ID
+        mock_settings.google_android_client_id = ""
+        mock_cls.return_value = _mock_httpx_client(FAKE_JWKS)
+        mock_decode.return_value = _RejectingClaims(data, claim)
+        await verify_google_id_token("fake.id.token")
+
+
+def _record_text(record: logging.LogRecord) -> str:
+    return " ".join(
+        [record.getMessage(), str(record.msg), str(record.args), str(record.__dict__)]
+    )
+
+
+class TestAudienceMismatchDiagnostics:
+    async def test_aud_mismatch_logs_fingerprints_only(self, caplog):
+        caplog.set_level(logging.INFO, logger="app.auth.google")
+        data = {**FAKE_CLAIMS_DATA, "aud": TOKEN_AUD}
+
+        with pytest.raises(InvalidClaimError) as exc_info:
+            await _verify_rejecting(data, "aud")
+
+        assert exc_info.value.claim_name == "aud"
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        msg = warnings[0].getMessage()
+        assert f"token_aud={_fp(TOKEN_AUD)}" in msg
+        assert f"web={_fp(WEB_ID)}" in msg
+        assert f"ios={_fp(IOS_ID)}" in msg
+        assert "android=unset" in msg
+        everything = " ".join(_record_text(r) for r in caplog.records)
+        for raw in (TOKEN_AUD, WEB_ID, IOS_ID):
+            assert raw not in everything
+
+    async def test_list_valued_aud_is_fingerprinted_each(self, caplog):
+        data = {**FAKE_CLAIMS_DATA, "aud": [TOKEN_AUD, "second-aud"]}
+
+        with pytest.raises(InvalidClaimError):
+            await _verify_rejecting(data, "aud")
+
+        msg = next(
+            r for r in caplog.records if r.levelno == logging.WARNING
+        ).getMessage()
+        assert f"token_aud={_fp(TOKEN_AUD)},{_fp('second-aud')}" in msg
+        assert TOKEN_AUD not in msg and "second-aud" not in msg
+
+    async def test_missing_aud_logged_as_missing(self, caplog):
+        data = {k: v for k, v in FAKE_CLAIMS_DATA.items() if k != "aud"}
+
+        with pytest.raises(InvalidClaimError):
+            await _verify_rejecting(data, "aud")
+
+        msg = next(
+            r for r in caplog.records if r.levelno == logging.WARNING
+        ).getMessage()
+        assert "token_aud=missing" in msg
+
+    async def test_non_aud_claim_error_reraised_without_audience_warning(self, caplog):
+        with pytest.raises(InvalidClaimError) as exc_info:
+            await _verify_rejecting(dict(FAKE_CLAIMS_DATA), "iss")
+
+        assert exc_info.value.claim_name == "iss"
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
