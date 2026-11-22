@@ -22,6 +22,12 @@
     "reading": "قيد القراءة",
     "read": "مقروء"
   },
+  "rowStatus": {
+    "wishlisted": "قائمة الرغبات",
+    "purchased": "تم الشراء",
+    "reading": "قيد القراءة",
+    "read": "مقروء"
+  },
   "status": {
     "wishlisted": "قائمة الرغبات",
     "purchased": "تم الشراء",

@@ -22,6 +22,12 @@
     "reading": "読書中",
     "read": "読了"
   },
+  "rowStatus": {
+    "wishlisted": "ウィッシュリスト",
+    "purchased": "購入済み",
+    "reading": "読書中",
+    "read": "読了"
+  },
   "status": {
     "wishlisted": "ウィッシュリスト",
     "purchased": "購入済み",

@@ -89,7 +89,7 @@ function BookGridCellBase<T extends LibraryBook>({
           maxFontSizeMultiplier={GRID_MAX_FONT_SCALE}
           style={styles.status}
         >
-          {t(`statusTab.${item.status}`)}
+          {t(`rowStatus.${item.status}`)}
         </AppText>
       </View>
     </Pressable>

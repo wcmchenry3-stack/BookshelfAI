@@ -22,6 +22,12 @@
     "reading": "읽는 중",
     "read": "읽음"
   },
+  "rowStatus": {
+    "wishlisted": "위시리스트",
+    "purchased": "구매함",
+    "reading": "읽는 중",
+    "read": "읽음"
+  },
   "status": {
     "wishlisted": "위시리스트",
     "purchased": "구매함",

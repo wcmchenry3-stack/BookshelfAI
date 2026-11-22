@@ -22,6 +22,12 @@
     "reading": "קורא",
     "read": "נקרא"
   },
+  "rowStatus": {
+    "wishlisted": "רשימת משאלות",
+    "purchased": "נרכש",
+    "reading": "קורא",
+    "read": "נקרא"
+  },
   "status": {
     "wishlisted": "ברשימת משאלות",
     "purchased": "נרכש",

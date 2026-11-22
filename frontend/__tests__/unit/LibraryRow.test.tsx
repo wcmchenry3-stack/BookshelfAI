@@ -7,9 +7,14 @@ import {
   LibraryRowSeparator,
   ROW_MIN_HEIGHT,
 } from '../../components/library/LibraryRow';
-import { ROW_DIVIDER_INSET, type LibraryBook } from '../../components/library/libraryShared';
+import {
+  ROW_DIVIDER_INSET,
+  bookA11yLabel,
+  type LibraryBook,
+} from '../../components/library/libraryShared';
 import { IconButton } from '../../components/ui/IconButton';
 import { lightTheme } from '../../theme/light';
+import i18n from 'i18next';
 
 jest.mock('../../hooks/useTheme', () => require('../helpers/screenMocks').themeModule());
 
@@ -249,5 +254,35 @@ describe('LibraryRow metaText (#932)', () => {
     const text = getByTestId('book-row-text');
     expect(text.props.accessible).toBe(true);
     expect(text.props.accessibilityLabel).toBe('Dune, Frank Herbert. Soon');
+  });
+});
+
+describe('LibraryRow singular status wording (#939)', () => {
+  function override(rowStatus: Record<string, string>, statusTab: Record<string, string>) {
+    i18n.addResourceBundle('en', 'my-books', { rowStatus, statusTab }, true, true);
+  }
+  afterEach(() => {
+    override(
+      { wishlisted: 'Wishlist', reading: 'Reading' },
+      { wishlisted: 'Wishlist', reading: 'Reading' }
+    );
+  });
+
+  it('reads the status from my-books:rowStatus, not the chip strings (statusTab)', async () => {
+    override({ wishlisted: 'Singular wish' }, { wishlisted: 'Chip wish' });
+    const { getByText, queryByText } = await render(<LibraryRow item={makeItem()} />);
+    expect(getByText('Singular wish · 1965')).toBeTruthy();
+    expect(queryByText(/Chip wish/)).toBeNull();
+  });
+
+  it('uses the singular status in the spoken label of a book (bookA11yLabel)', () => {
+    override({ reading: 'Singular reading' }, { reading: 'Chip reading' });
+    const t = i18n.getFixedT('en', 'my-books');
+    const label = bookA11yLabel(t, {
+      status: 'reading',
+      book: { title: 'Dune', author: 'Frank Herbert' },
+    });
+    expect(label).toContain('Singular reading');
+    expect(label).not.toContain('Chip reading');
   });
 });

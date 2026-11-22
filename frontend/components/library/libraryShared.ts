@@ -109,7 +109,7 @@ export function bookA11yLabel(
 ): string {
   return t(item.unverified ? 'bookCardUnverifiedA11y' : 'bookCardA11y', {
     title: item.book.title,
-    status: t(`statusTab.${item.status}`),
+    status: t(`rowStatus.${item.status}`),
     author: item.book.author,
   });
 }
