@@ -353,3 +353,27 @@ class TestGoogleClientIdWarnings:
         msgs = [r.getMessage() for r in caplog.records]
         assert any(m.startswith("GOOGLE_ANDROID_CLIENT_ID is unset") for m in msgs)
         assert "secret-id" not in " ".join(msgs)
+
+
+class TestEmailReplyTo:
+    _DB = "postgresql+asyncpg://u:p@localhost/db"
+
+    def test_default(self):
+        assert (
+            Settings(database_url=self._DB).email_reply_to == "support@buffingchi.com"
+        )
+
+    def test_empty_allowed(self):
+        assert Settings(database_url=self._DB, email_reply_to="").email_reply_to == ""
+
+    def test_strips_whitespace(self):
+        s = Settings(database_url=self._DB, email_reply_to=" a@b.com ")
+        assert s.email_reply_to == "a@b.com"
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["nope", "Name <a@b.com>", "a@b.com, c@d.com", "a@b.com\r\nBcc: x@y.com"],
+    )
+    def test_rejects_non_plain_address(self, bad):
+        with pytest.raises(ValidationError):
+            Settings(database_url=self._DB, email_reply_to=bad)
