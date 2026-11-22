@@ -61,6 +61,21 @@ Rules: a helper holds setup, never an assertion about the behaviour under test, 
 
 Integration tests can live in any folder (`tests/integration/`, `tests/limits/`, `tests/security/`, `tests/unit/`); the marker, not the folder, decides. The `test-migrations` job runs `pytest -m integration tests -q -rs` (all folders), so the summary line shows how many ran and `-rs` lists every skip. It also sets `REQUIRE_DB_TESTS=1`: with that variable set, `tests/_db_guard.py` makes `conftest.py` abort the run with an error if `DATABASE_URL` is missing or the dummy URL, so a mass skip can never pass (#760). `tests/unit/test_db_guard.py` covers the guard.
 
+**Event loops and the app's DB pool (#833)** — `app.core.database.engine` is one module-level engine, but each `TestClient` or `asyncio.run` test gets its own short-lived event loop, and an asyncpg connection is bound to the loop that opened it. The autouse fixture `_drop_stale_db_pool_connections` in `tests/conftest.py` calls `engine.sync_engine.dispose(close=False)` before and after every test, so a connection left pooled by one test is never reused after its loop closed. Without it, a full DB-backed run logged "Exception terminating connection ... Event loop is closed", which Sentry captured as an extra event and broke `test_real_sentry_event_has_no_secret_token_or_header_value`. `tests/integration/test_db_pool_loop_isolation.py` covers it (two ordered tests).
+
+**Full DB-backed run on a local scratch Postgres** (what CI's `test-migrations` does, but for the whole suite):
+
+```bash
+# Postgres 16 on a scratch port; initdb refuses to run as root, so use a non-root user
+initdb -D /var/tmp/pg/data && pg_ctl -D /var/tmp/pg/data -o "-p 55432 -k /var/tmp/pg" -l /var/tmp/pg/pg.log start
+psql -h /var/tmp/pg -p 55432 -d postgres \
+  -c "CREATE ROLE test SUPERUSER LOGIN PASSWORD 'test'" -c "CREATE DATABASE test OWNER test" \
+  -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'test'"   # migration 0028 needs this role
+cd backend
+export DATABASE_URL=postgresql+asyncpg://test:test@localhost:55432/test REQUIRE_DB_TESTS=1
+alembic upgrade head && python -m pytest tests/ -q
+```
+
 ### Running
 
 ```bash
