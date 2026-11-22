@@ -12,7 +12,8 @@
 - Reuse after the window revokes every refresh row, bumps token_version and
   sends one Sentry warning.
 - The cleanup purge deletes expired and revoked-unrotated rows in batches and
-  keeps rotated ones; deleting a successor nulls the pointer to it. It skips,
+  keeps rotated ones, at most batch x max batches per run (#672); deleting a
+  successor nulls the pointer to it. It skips,
   rather than waits for, a row whose predecessor a replay has locked.
 
 Needs DATABASE_URL pointing at a Postgres database.
@@ -547,6 +548,52 @@ async def test_purge_keeps_rotated_rows_and_nulls_pointers(env):
     assert {"rotated", "live"} <= kept
     assert "logged-out" not in kept and "expired" not in kept
     assert rows[rotated.jti].replaced_by_id is None
+
+
+async def test_purge_is_bounded_per_run_and_the_rest_goes_next_run(env):
+    """#672 (storage G7): a run deletes at most PURGE_BATCH_SIZE x
+    PURGE_MAX_BATCHES rows however many are expired (after an outage, say);
+    the remainder goes on the next run, and live rows are never touched."""
+    factory, _client, make_user, _ = env
+    user, _access, _refresh = await make_user()
+    now = datetime.now(UTC)
+    batch, max_batches, seeded = 2, 3, 8
+
+    def row(tag, expires_at):
+        return RefreshToken(
+            id=uuid.uuid4(),
+            jti=f"{user.id}-{tag}",
+            user_id=user.id,
+            expires_at=expires_at,
+        )
+
+    async with factory() as db:
+        db.add_all(
+            [row(f"old-{n}", now - timedelta(days=1)) for n in range(seeded)]
+            + [row("live", now + timedelta(days=1))]
+        )
+        await db.commit()
+
+    async def expired_left() -> int:
+        rows = await _rows(factory, user.id)
+        return sum(1 for jti in rows if "-old-" in jti)
+
+    with (
+        patch.object(refresh_family, "PURGE_BATCH_SIZE", batch),
+        patch.object(refresh_family, "PURGE_MAX_BATCHES", max_batches),
+    ):
+        async with factory() as db:
+            deleted = await refresh_family.purge_refresh_tokens(db)
+    # More than batch x max are expired, so the run stops exactly at the cap
+    # (other tests' expired rows may use some of it).
+    assert deleted == batch * max_batches
+    assert await expired_left() >= seeded - batch * max_batches
+
+    # The next runs (default bounds) clear the remainder; live rows stay.
+    async with factory() as db:
+        await refresh_family.purge_refresh_tokens(db)
+    assert await expired_left() == 0
+    assert f"{user.id}-live" in await _rows(factory, user.id)
 
 
 async def test_purge_skips_a_row_whose_predecessor_a_replay_holds(env):
