@@ -2,13 +2,13 @@
 
 Personal mobile + web app for scanning book covers with your camera, identifying them via AI vision, and tracking your reading collection through **wishlisted → purchased → reading → read**.
 
-Point your camera at a book, the app identifies it (OpenAI `gpt-4o-mini` vision + Google Books enrichment), you pick the right candidate, and it lands in your wishlist. One codebase ships to iOS, Android, and web.
+Point your camera at a book, the app identifies it (Claude vision + Google Books enrichment), you pick the right candidate, and it lands in your wishlist. One codebase ships to iOS, Android, and web.
 
 ## Stack
 
 **Frontend** — Expo SDK 55 · React Native 0.83 · Expo Router · TypeScript · i18next (10 locales) · Sentry
 **Backend** — FastAPI · SQLAlchemy (async) · Alembic · PostgreSQL · slowapi rate limiting · JWT (RS256) auth via Google OAuth
-**External** — OpenAI Vision · Google Books API · Open Library · Cloudflare (Turnstile + WAF) · Sentry
+**External** — Anthropic Claude vision · Google Books API · Open Library · Cloudflare (Turnstile + WAF) · Sentry
 **Infra** — Render (backend + Postgres) · Xcode Cloud (iOS) · local Gradle → Play Console (Android) · GitHub Actions CI
 
 ## Repo map
@@ -33,7 +33,7 @@ Full end-to-end setup is in [`docs/getting-started.md`](docs/getting-started.md)
 # 1. Backend
 cd backend && python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env      # fill in Google OAuth, Google Books, OpenAI, Sentry keys
+cp .env.example .env      # fill in Google OAuth, Google Books, Anthropic, Sentry keys
 psql -d bookshelf -c "CREATE ROLE bookshelf_app LOGIN PASSWORD 'dev'"   # once per cluster; migration 0028 needs it (#696)
 alembic upgrade head
 uvicorn app.main:app --reload
@@ -62,7 +62,7 @@ npx expo start            # press i for iOS sim, a for Android, w for web
 | [`docs/features.md`](docs/features.md) | User-facing features, scan flow + auth flow sequence diagrams |
 | [`docs/data-model.md`](docs/data-model.md) | ER diagram, entity reference, book-dedup strategy |
 | [`docs/api.md`](docs/api.md) | REST endpoint reference with examples and error codes |
-| [`docs/integrations.md`](docs/integrations.md) | Google OAuth / Books / OpenAI / Open Library / Sentry / Cloudflare / Render |
+| [`docs/integrations.md`](docs/integrations.md) | Google OAuth / Books / Anthropic / Open Library / Sentry / Cloudflare / Render |
 | [`docs/storage-and-retention.md`](docs/storage-and-retention.md) | What the phone and the database keep and for how long: caps, purges, growth at 100 / 1,000 / 10,000 users, open gaps |
 | [`docs/scan-limits.md`](docs/scan-limits.md) | Every scan limit and dial in one place: defaults, bounds, settings, what the user sees, where each is counted |
 | [`docs/deployment.md`](docs/deployment.md) | Render config, env vars, release process, rollback |

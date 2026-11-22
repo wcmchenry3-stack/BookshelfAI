@@ -124,8 +124,7 @@ Comma-separated list of emails permitted to authenticate. Single-user lockdown b
 
 ### External APIs
 ```bash
-OPENAI_API_KEY=sk-...                    # https://platform.openai.com/api-keys
-# ANTHROPIC_API_KEY=sk-ant-...           # only once a scan feature is switched to anthropic (#532)
+ANTHROPIC_API_KEY=sk-ant-...             # https://console.anthropic.com (book scans; without it /scan answers 503, the app still boots)
 # AI_ANTHROPIC_BASE_URL=                    # leave unset: only the load run (backend/perf/) sets it, to a local fake; localhost only, boot fails with any value in staging/production (#539)
 GOOGLE_BOOKS_API_KEY=AIza...             # Google Cloud → Books API → credentials
 OPEN_LIBRARY_BASE_URL=https://openlibrary.org  # leave as-is
@@ -253,7 +252,8 @@ First-time Android build also needs a debug keystore — see [android-ci.md](cla
 | Sign-in fails with 401 | email not in `ALLOWED_EMAILS` | add to `.env`, restart uvicorn |
 | Sign-in fails with 409 `account_conflict` | the email belongs to an account with a different Google subject | see "Resolving a sign-in `account_conflict` (409)" in [`RENDER.md`](RENDER.md#resolving-a-sign-in-account_conflict-409) |
 | Sign-in fails with `Invalid audience` | frontend client ID doesn't match backend's list | ensure all three `GOOGLE_*_CLIENT_ID` vars match between `.env` files |
-| `/scan` returns 500 | `OPENAI_API_KEY` missing or invalid | Check OpenAI dashboard; key needs Vision access |
+| `/scan` returns 503 `scan_unavailable` | `ANTHROPIC_API_KEY` missing or invalid | Check the key in the Anthropic console; the backend log has an error line |
+| Backend refuses to start with `Extra inputs are not permitted` | a `.env` line for a removed setting (#538: the old provider's key or `SCAN_MODEL`) | delete that line; see "Upgrade notes" in [`deployment.md`](deployment.md) |
 | Scanned book has no cover | Google Books / Open Library rate-limited or offline | Retry; both APIs have rolling limits |
 | iOS sim black screen | Metro not bundling | kill `npx expo start`, restart, press `i` again |
 | Android build fails at `:app:configureCMakeDebug` | wrong JDK | `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` |

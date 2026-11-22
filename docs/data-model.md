@@ -417,7 +417,7 @@ The AI usage ledger: one row per paid provider call (#530). Counts and cost only
 | `input_tokens` | int, not null, ≥ 0 | prompt tokens billed at the full input price (excludes cached tokens) |
 | `output_tokens` | int, not null, ≥ 0 | completion tokens |
 | `cache_read_tokens` | int, not null, ≥ 0 | prompt tokens served from the provider's cache |
-| `cache_write_tokens` | int, not null, ≥ 0 | prompt tokens written to the provider's cache (0 for OpenAI) |
+| `cache_write_tokens` | int, not null, ≥ 0 | prompt tokens written to the provider's cache (the 5-minute TTL cache writes, billed at 1.25x input) |
 | `cost_micros` | bigint, not null, ≥ 0 | cost in micro-dollars (1,000,000 = $1), each count × its list price, rounded up |
 | `status` | varchar(16), not null, check | `ok`, `refused` (a `refusal` or content filter), `truncated` (the provider answered), `malformed` (#572: the provider answered HTTP 200 and billed the call, but the reply was missing, not JSON, the wrong shape, a non-empty list in which every item was structurally broken, ended on an unexpected stop reason, or was cut off by the token limit before a single complete book; the real tokens and cost are recorded and settled, the user's units are refunded and the client gets `503 scan_unavailable`; added to the CHECK by migration 0013), `timeout`, `refunded` (unavailable or never reached; the quota was refunded), `error` (anything else, including a cancelled request; the quota was kept), `cache_hit` (a repeat served from a scan record, #585: no provider call, 0 tokens, cost always 0) |
 | `request_id` | varchar(64), nullable | the server-generated `X-Request-ID`; never client-supplied |
