@@ -85,6 +85,11 @@ NODE22_BIN="$NODE_HOME/bin/node"
 echo "export NODE_BINARY=\"$NODE22_BIN\"" > "$CI_PRIMARY_REPOSITORY_PATH/frontend/ios/.xcode.env.local"
 echo "INFO: wrote .xcode.env.local → NODE_BINARY=$NODE22_BIN"
 
+# Point non-release builds (anything but `main` / tags) at the dev backend (#973).
+# Release-config archives otherwise inline the prod values from .env.production.
+"$CI_PRIMARY_REPOSITORY_PATH/frontend/ios/ci_scripts/select_app_env.sh" \
+  "$CI_PRIMARY_REPOSITORY_PATH/frontend"
+
 # Install Node.js dependencies (required for React Native pod scripts)
 cd "$CI_PRIMARY_REPOSITORY_PATH/frontend"
 retry 3 10 npm ci

@@ -108,6 +108,13 @@ The bundle/build jobs are conditional (`detect-changes`; path lists in `docs/tes
 
 All runtime env vars live in `frontend/.env.production` (committed) and
 `frontend/.env.local` (gitignored, for local dev). There is no `eas.json`.
+A local `./gradlew assembleRelease`/`bundleRelease` loads `.env.production`, so it
+talks to the **prod** API. iOS Xcode Cloud builds from `dev` override this with a
+generated `.env.production.local` (see `ios-ci.md` § Which backend a build talks to);
+to point a local Android release build at dev, create that file by hand.
+**Never build a Play Store AAB with `frontend/.env.production.local` present** —
+Gradle's bundling step would inline the dev API. Check with
+`ls frontend/.env.production.local` (it must not exist) before `bundleRelease`.
 
 ## Key files
 
