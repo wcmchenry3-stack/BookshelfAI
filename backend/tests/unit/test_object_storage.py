@@ -215,3 +215,9 @@ def test_from_settings_is_none_until_both_settings_are_set():
     ):
         storage = object_storage.from_settings()
     assert storage is not None and storage.bucket == "my-bucket"
+
+
+async def test_list_pages_with_an_offset():
+    rec = Recorder(httpx.Response(200, json=[]))
+    assert await _storage(rec).list("exports", limit=10, offset=30) == []
+    assert json.loads(rec.requests[0].content)["offset"] == 30

@@ -61,7 +61,7 @@ class AccountExport(IdMixin, UserOwnedMixin, CreatedAtMixin, Base):
     passed (or 7 days after ``created_at`` for a row that never got one).
     ``user_id`` is ``ON DELETE CASCADE``; the object itself is not, so
     account deletion (#291) must delete it first, and the cleanup's storage
-    sweep removes any object older than 8 days in any case. ~150 bytes per
+    sweep removes any object older than 8 days that no row points at. ~150 bytes per
     row; at most one row per user per day, each kept 7 days.
     """
 

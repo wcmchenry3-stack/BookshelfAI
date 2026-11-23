@@ -121,7 +121,10 @@ class FakeSupabase:
         if op == "upload":
             name = path.removeprefix(f"/object/{BUCKET}/")
             assert request.headers["x-upsert"] == "true"
-            self.objects[name] = (request.content, self.now)
+            # Like Supabase, an overwrite (x-upsert) keeps the object's
+            # first created_at, which is what the age-based sweep reads.
+            created = self.objects.get(name, (None, self.now))[1]
+            self.objects[name] = (request.content, created)
             return httpx.Response(200, json={"Key": name})
         if op == "sign":
             name = path.removeprefix(f"/object/sign/{BUCKET}/")
@@ -138,7 +141,8 @@ class FakeSupabase:
             for name in json.loads(request.content)["prefixes"]:
                 self.objects.pop(name, None)
             return httpx.Response(200, json=[])
-        prefix = json.loads(request.content)["prefix"] + "/"
+        body = json.loads(request.content)
+        prefix = body["prefix"] + "/"
         listed = sorted(
             (
                 (created, name.removeprefix(prefix))
@@ -148,7 +152,10 @@ class FakeSupabase:
         )
         return httpx.Response(
             200,
-            json=[{"name": n, "id": n, "created_at": c.isoformat()} for c, n in listed],
+            json=[
+                {"name": n, "id": n, "created_at": c.isoformat()}
+                for c, n in listed[body["offset"] : body["offset"] + body["limit"]]
+            ],
         )
 
     def download(self, url: str) -> int:
@@ -318,7 +325,7 @@ async def test_a_request_is_queued_then_delivered_by_email(env):
     assert await env.run_worker() == 1
     (row,) = await _exports(env.factory, uid)
     assert row.status == "ready" and row.error_code is None
-    assert row.object_path == f"exports/{row.id}.json"
+    assert row.object_path.startswith(f"exports/{row.id}-")
     assert row.expires_at - row.completed_at < timedelta(days=7, seconds=5)
     assert row.expires_at - row.completed_at > timedelta(days=6, hours=23)
     assert env.supabase.sign_requests == [604_800]
@@ -782,7 +789,10 @@ async def test_the_sweep_deletes_old_files_no_row_knows(env, monkeypatch):
     objects["exports/recent.json"] = (b"{}", now - timedelta(days=2))
     objects["other/old.json"] = (b"{}", now - timedelta(days=30))
     monkeypatch.setattr(account_export_purge, "PURGE_BATCH_SIZE", 1)
-    swept = await account_export_purge.sweep_orphans(env.supabase.storage(), now)
+    async with env.factory() as db:
+        swept = await account_export_purge.sweep_orphans(
+            env.supabase.storage(), db, now
+        )
     assert swept == 1
     assert sorted(objects) == ["exports/recent.json", "other/old.json"]
 
@@ -1240,3 +1250,153 @@ async def test_the_purge_skips_a_row_a_worker_is_claiming(env):
         await worker.rollback()
     assert len(await _exports(env.factory, uid)) == 1
     assert path in env.supabase.objects
+
+
+# ── Review round 3 ───────────────────────────────────────────────────────────
+
+
+async def test_the_fake_keeps_created_at_on_an_overwrite(env):
+    storage = env.supabase.storage()
+    then = env.supabase.now
+    await storage.upload("exports/x.json", b"1", "application/json")
+    env.supabase.now = then + timedelta(days=9)
+    await storage.upload("exports/x.json", b"2", "application/json")
+    assert env.supabase.objects["exports/x.json"] == (b"2", then)
+
+
+async def test_a_refreshed_old_export_survives_the_sweep(env, monkeypatch):
+    """An export that sat in emailing for 8 days is re-signed: it gets a new
+    file (not an overwrite that would keep the first created_at), the old
+    one is deleted, and the sweep 9 days in keeps the live file while it
+    deletes a true orphan."""
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    env.resend.status = 503
+    await env.run_worker()
+    (first,) = await _exports(env.factory, uid)
+    assert first.status == "emailing"
+
+    env.resend.status = 200
+    _at(monkeypatch, env, first.expires_at - timedelta(minutes=30))
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert row.status == "ready" and row.object_path != first.object_path
+    assert first.object_path not in env.supabase.objects  # replaced, deleted
+
+    orphan = f"exports/{uuid.uuid4()}-1.json"
+    env.supabase.objects[orphan] = (b"{}", start)
+    # The live file is old enough for the sweep by created_at... make it so.
+    data, _ = env.supabase.objects[row.object_path]
+    env.supabase.objects[row.object_path] = (data, start)
+    sweep_at = start + timedelta(days=9)
+    async with env.factory() as db:
+        swept = await account_export_purge.sweep_orphans(
+            env.supabase.storage(), db, sweep_at
+        )
+    assert swept >= 1
+    assert orphan not in env.supabase.objects
+    assert row.object_path in env.supabase.objects
+    env.supabase.now = row.expires_at - timedelta(hours=1)
+    assert env.supabase.download(row.delivery_url) == 200
+
+
+async def test_the_sweep_pages_past_live_files(env, monkeypatch):
+    uid, _ = await env.make_user()
+    old = datetime.now(UTC) - timedelta(days=9)
+    live = f"exports/live-{uid.hex}.json"
+    orphan = f"exports/zz-orphan-{uid.hex}.json"
+    env.supabase.objects[live] = (b"{}", old - timedelta(seconds=1))
+    env.supabase.objects[orphan] = (b"{}", old)
+    async with env.factory() as db:
+        db.add(
+            AccountExport(
+                user_id=uid,
+                locale="en",
+                status="ready",
+                object_path=live,
+                expires_at=datetime.now(UTC) + timedelta(days=1),
+            )
+        )
+        await db.commit()
+    monkeypatch.setattr(account_export_purge, "PURGE_BATCH_SIZE", 1)
+    async with env.factory() as db:
+        await account_export_purge.sweep_orphans(env.supabase.storage(), db)
+    assert live in env.supabase.objects
+    assert orphan not in env.supabase.objects
+
+
+async def test_the_document_is_one_snapshot(env, monkeypatch):
+    """A trash purge commits between two section reads: the entry and its
+    unverified book are both gone. The document must still hold both (one
+    REPEATABLE READ snapshot), never an entry whose book is missing."""
+    uid, _ = await env.make_user()
+    async with env.factory() as db:
+        custom = UserCustomBook(
+            user_id=uid, title="Gone", author="Writer", deleted_at=datetime.now(UTC)
+        )
+        db.add(custom)
+        await db.flush()
+        entry = UserBook(
+            user_id=uid,
+            custom_book_id=custom.id,
+            status="wishlisted",
+            deleted_at=datetime.now(UTC),
+        )
+        db.add(entry)
+        await db.commit()
+
+    original = account_export.SECTIONS["user_books"]
+
+    async def load_then_purge(db, user_id):
+        rows = await original.load(db, user_id)
+        async with env.factory() as other:  # the purge, in its own transaction
+            await other.execute(delete(UserBook).where(UserBook.id == entry.id))
+            await other.execute(
+                delete(UserCustomBook).where(UserCustomBook.id == custom.id)
+            )
+            await other.commit()
+        return rows
+
+    monkeypatch.setitem(
+        account_export.SECTIONS,
+        "user_books",
+        account_export.Section(
+            columns=original.columns, excluded=original.excluded, load=load_then_purge
+        ),
+    )
+    doc = await account_export.build_snapshot(env.factory, uid)
+    entries = doc["tables"]["user_books"]
+    customs = {c["id"] for c in doc["tables"]["user_custom_books"]}
+    assert [e["custom_book_id"] for e in entries] == [str(custom.id)]
+    assert {e["custom_book_id"] for e in entries} <= customs
+    async with env.factory() as db:  # the purge did commit
+        assert await db.get(UserCustomBook, custom.id) is None
+
+
+async def test_the_snapshot_is_read_only_and_ended(env):
+    uid, _ = await env.make_user()
+    seen = {}
+
+    original = account_export.SECTIONS["users"]
+
+    async def probe(db, user_id):
+        conn = await db.connection()
+        seen["isolation"] = (
+            await conn.exec_driver_sql("SHOW transaction_isolation")
+        ).scalar()
+        seen["read_only"] = (
+            await conn.exec_driver_sql("SHOW transaction_read_only")
+        ).scalar()
+        return await original.load(db, user_id)
+
+    with patch.dict(
+        account_export.SECTIONS,
+        {
+            "users": account_export.Section(
+                columns=original.columns, excluded=original.excluded, load=probe
+            )
+        },
+    ):
+        await account_export.build_snapshot(env.factory, uid)
+    assert seen == {"isolation": "repeatable read", "read_only": "on"}

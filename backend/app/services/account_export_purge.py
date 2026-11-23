@@ -16,7 +16,9 @@ rows wait for the next run. Without storage only rows with no file go.
 
 :func:`sweep_orphans` then deletes any file in ``exports/`` older than
 :data:`SWEEP_AGE` (8 days), whatever the table says: an account deleted
-before its export expired (the row cascades away, the file does not).
+before its export expired (the row cascades away, the file does not), or a
+file left by a try that failed before its row recorded it. A file a row
+still points at is never swept, whatever its age.
 
 Logs counts only (the caller logs them).
 """
@@ -100,22 +102,44 @@ async def purge_expired(
     return total
 
 
-async def sweep_orphans(storage: ObjectStorage, now: datetime | None = None) -> int:
-    """Delete files in ``exports/`` older than :data:`SWEEP_AGE`; return how
+async def sweep_orphans(
+    storage: ObjectStorage, db: AsyncSession, now: datetime | None = None
+) -> int:
+    """Delete files in ``exports/`` older than :data:`SWEEP_AGE` that no
+    ``account_exports`` row points at (one lookup per page); return how
     many. Oldest first, at most :data:`SWEEP_MAX_PAGES` pages of
-    :data:`PURGE_BATCH_SIZE`."""
+    :data:`PURGE_BATCH_SIZE`; a file a row still uses is kept and skipped
+    (the next page starts after it)."""
     cutoff = (now or jobs.utcnow()) - SWEEP_AGE
     total = 0
+    offset = 0
     for _ in range(SWEEP_MAX_PAGES):
-        page = await storage.list(jobs.OBJECT_PREFIX, limit=PURGE_BATCH_SIZE)
+        page = await storage.list(
+            jobs.OBJECT_PREFIX, limit=PURGE_BATCH_SIZE, offset=offset
+        )
         old = [
             f"{jobs.OBJECT_PREFIX}/{obj.name}"
             for obj in page
             if obj.created_at is not None and obj.created_at < cutoff
         ]
+        known: set[str] = set()
         if old:
-            await storage.delete(old)
-            total += len(old)
-        if len(old) < PURGE_BATCH_SIZE:
+            known = set(
+                (
+                    await db.execute(
+                        select(AccountExport.object_path).where(
+                            AccountExport.object_path.in_(old)
+                        )
+                    )
+                ).scalars()
+            )
+            await db.rollback()
+        orphans = [path for path in old if path not in known]
+        if orphans:
+            await storage.delete(orphans)
+            total += len(orphans)
+        # Oldest first: a page with a younger file, or a short one, is the end.
+        if len(page) < PURGE_BATCH_SIZE or len(old) < len(page):
             break
+        offset += len(page) - len(orphans)
     return total

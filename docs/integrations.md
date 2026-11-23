@@ -158,7 +158,7 @@ With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client I
 
 ## Supabase Storage (account export files)
 
-**Role:** private storage of the "Export my data" files (#694): one JSON document per request at `exports/<export id>.json` in the bucket `account-exports` (`EXPORT_BUCKET`) of the same Supabase project as the database. Users download through a signed URL valid 7 days; nothing else reads the bucket. #874 (debug photos) will reuse the client.
+**Role:** private storage of the "Export my data" files (#694): one JSON document per request at `exports/<export id>-<upload ms>.json` in the bucket `account-exports` (`EXPORT_BUCKET`) of the same Supabase project as the database. Users download through a signed URL valid 7 days; nothing else reads the bucket. #874 (debug photos) will reuse the client.
 
 **Client:** `backend/app/services/object_storage.py` (`ObjectStorage`: `upload` with `x-upsert`, `signed_url`, bulk `delete`, `list`) over the Storage REST API (`<SUPABASE_URL>/storage/v1`) with httpx; no Supabase SDK.
 **Settings:** `SUPABASE_URL` (https, nothing after the host), `SUPABASE_SERVICE_ROLE_KEY` (secret, env only, sent only to `SUPABASE_URL`, never logged), `EXPORT_BUCKET` (default `account-exports`, must be private). Either of the first two unset = `from_settings()` is `None` = the export is off (`POST /account/export` answers 503 `export_not_configured`). Owner setup: [`RENDER.md`](RENDER.md#account-export-storage-supabase-storage-694).

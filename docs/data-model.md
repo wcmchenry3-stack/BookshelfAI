@@ -443,14 +443,14 @@ One row per request for a copy of the user's data (#694, migration 0034): the ex
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | UUID PK | generated; also the file name, `exports/<id>.json` (no user id in the path) |
+| `id` | UUID PK | generated; also in the file name, `exports/<id>-<upload ms>.json` (no user id in the path; every upload gets a new path, so a re-signed export never overwrites its old file, whose `created_at` Supabase would keep) |
 | `user_id` | UUID FK → `users.id`, not null, `ON DELETE CASCADE` | the requester |
 | `status` | varchar(16), not null, server default `pending`, check `ck_account_exports_status` | `pending` (queued, or waiting to retry before its link was recorded), `running` (claimed), `emailing` (the file is stored and its link recorded; the email may have gone out, so a retry re-sends the identical email and the file is kept until `expires_at`), `ready` (emailed), `failed` (gave up after 3 attempts) |
 | `locale` | varchar(16), not null | the email's language: one of the app's 13 locales, from the request body (default `en`) |
 | `attempts` | smallint, not null, default 0, check `ck_account_exports_attempts` (>= 0) | tries so far; at most 3 (`MAX_ATTEMPTS`) |
 | `claimed_at` | timestamptz, nullable | when the current or last try claimed the row: a 10-minute lease (`LEASE`); a dead run's row is taken over, and a failed try waits it out before the next |
 | `completed_at` | timestamptz, nullable | when it was emailed |
-| `object_path` | varchar(255), nullable | the file inside the bucket, set right after the upload |
+| `object_path` | varchar(255), nullable | the file inside the bucket, set right after the upload; the file it replaces (an earlier try's, or an expiring link's) is deleted then. The sweep never deletes a file a row points at |
 | `size_bytes` | bigint, nullable | the document's size |
 | `delivery_url` | text, nullable | the signed link, recorded with `expires_at` in the commit that makes the row `emailing`, before any email, so a retry sends a byte-identical email (Resend then dedupes it by its idempotency key). A bearer credential for the file until `expires_at`: it grants nothing a database reader does not already have (the file is a copy of rows in this database), stops working after 7 days, and is never logged or exported |
 | `email_accepted_at` | timestamptz, nullable | when Resend accepted the email of the recorded link, or may have (a timeout or a 5xx). Reset when a new link is signed. Resend's `409 invalid_idempotent_request` for the key counts as "already sent" only when it is set |
@@ -460,7 +460,7 @@ One row per request for a copy of the user's data (#694, migration 0034): the ex
 
 Indexes: `ix_account_exports_user_created (user_id, created_at)` for the one-a-day cap and the cascade; `ix_account_exports_open (created_at) WHERE status IN ('pending', 'running', 'emailing')` for the worker's queue; `ix_account_exports_expires_at (expires_at)` for the purge. RLS on, no policies (#677). `bookshelf_app` has `SELECT`, `INSERT`, `UPDATE`, `DELETE`, granted explicitly by the migration too.
 
-**Retention.** The daily cleanup (`app/services/account_export_purge.py`) deletes the file, then the row, once `expires_at` has passed; `failed` and never-finished rows 7 days after `created_at`, but never before their `expires_at` (a `failed` row that reached `emailing` may have delivered its link) and never while a worker holds a live lease; each batch is locked from select to delete. A row that runs out of attempts while `emailing` ends `failed` even if its last send was accepted; the user can ask again (failed exports have a cap of 3 a day), so that is accepted; then it deletes any file in `exports/` older than 8 days (`storage-and-retention.md`).
+**Retention.** The daily cleanup (`app/services/account_export_purge.py`) deletes the file, then the row, once `expires_at` has passed; `failed` and never-finished rows 7 days after `created_at`, but never before their `expires_at` (a `failed` row that reached `emailing` may have delivered its link) and never while a worker holds a live lease; each batch is locked from select to delete. A row that runs out of attempts while `emailing` ends `failed` even if its last send was accepted; the user can ask again (failed exports have a cap of 3 a day), so that is accepted; then it deletes any file in `exports/` older than 8 days that no row points at (`storage-and-retention.md`).
 
 **Volume.** About 150 bytes per row; at most one row per user per day, each kept 7 days. The files are about 1.4 MB per 1,000 books (`storage-and-retention.md`).
 

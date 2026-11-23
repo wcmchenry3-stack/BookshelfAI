@@ -69,8 +69,11 @@ class Session:
         export = self.objects.get(AccountExport)
         if export is None:
             return None
-        if stmt.column_descriptions[0]["expr"] is AccountExport:
+        expr = stmt.column_descriptions[0]["expr"]
+        if expr is AccountExport:
             return export if self.owned else None
+        if expr is AccountExport.object_path:
+            return export.object_path
         return export.id
 
     async def execute(self, stmt):
@@ -96,6 +99,9 @@ class Session:
     async def flush(self):
         pass
 
+    async def connection(self, **kwargs):
+        self.connection_options = kwargs.get("execution_options")
+
 
 def sessions_of(session):
     class _Ctx:
@@ -114,6 +120,7 @@ class Storage:
     def __init__(self, fail=()):
         self.fail = set(fail)
         self.uploaded, self.deleted, self.listing = [], [], []
+        self.offsets = []
 
     def handler(self, request):
         path = request.url.path
@@ -136,6 +143,7 @@ class Storage:
         if op == "delete":
             self.deleted.extend(json.loads(request.content)["prefixes"])
             return httpx.Response(200, json=[])
+        self.offsets.append(json.loads(request.content)["offset"])
         page, self.listing = self.listing[:1], self.listing[1:]
         return httpx.Response(200, json=page[0] if page else [])
 
@@ -242,7 +250,13 @@ def test_the_clock_is_utc():
 
 def test_object_path_has_no_user_id():
     export_id = uuid.uuid4()
-    assert jobs.object_path(export_id) == f"exports/{export_id}.json"
+    at = datetime(2026, 11, 23, 8, 0, 0, 123000, tzinfo=UTC)
+    assert jobs.object_path(export_id, at) == (
+        f"exports/{export_id}-{int(at.timestamp() * 1000)}.json"
+    )
+    assert jobs.object_path(export_id, at) != jobs.object_path(
+        export_id, at + timedelta(milliseconds=1)
+    )
 
 
 # ── Claiming ─────────────────────────────────────────────────────────────────
@@ -303,7 +317,7 @@ async def test_process_uploads_signs_records_emails_and_marks_ready(built):
     )
     assert storage.uploaded == [b'{"schema_version":1}']
     assert export.status == "ready" and export.expires_at == NOW + jobs.LINK_TTL
-    assert export.object_path == jobs.object_path(export.id)
+    assert export.object_path == jobs.object_path(export.id, NOW)
     assert export.size_bytes == len(storage.uploaded[0])
     assert export.delivery_url.startswith("https://x.supabase.co/storage/v1/")
     assert (export.completed_at, export.claimed_at) == (NOW, None)
@@ -455,9 +469,10 @@ async def test_nothing_to_do_when_the_row_or_user_is_gone(built):
     assert storage.uploaded == []
 
 
-async def test_a_lost_claim_before_emailing_sends_nothing_and_keeps_the_file(built):
-    """Another attempt took the row over while this one was uploading: it
-    writes the same path, so this one deletes nothing and emails nothing."""
+async def test_a_lost_claim_before_emailing_sends_nothing_and_drops_its_file(built):
+    """Another attempt took the row over while this one was uploading: this
+    one emails nothing, and its file (a path of its own, which the row does
+    not point at) is deleted."""
     export = _export()
     db = _db(export, owned=False)
     storage = Storage()
@@ -468,8 +483,69 @@ async def test_a_lost_claim_before_emailing_sends_nothing_and_keeps_the_file(bui
         sessions=sessions_of(db),
         email_transport=transport,
     )
-    assert sent == [] and storage.deleted == []
+    assert sent == [] and storage.deleted == [jobs.object_path(export.id, NOW)]
     assert export.status == "running" and export.delivery_url is None
+
+
+async def test_a_lost_claim_keeps_a_file_the_row_points_at(built):
+    export = _export(object_path=jobs.object_path(uuid.uuid4(), NOW))
+
+    class Recorded(Session):
+        async def execute(self, stmt):
+            if isinstance(stmt, Update):  # the takeover recorded this path
+                self.objects[AccountExport].object_path = jobs.object_path(
+                    export.id, NOW
+                )
+                return MagicMock(rowcount=0)
+            return await super().execute(stmt)
+
+    db = Recorded(get={AccountExport: export, User: _user(export.user_id)})
+    storage = Storage()
+    assert not await jobs.process(
+        _claim(export), storage.client(), sessions=sessions_of(db)
+    )
+    assert storage.deleted == []
+
+
+async def test_a_new_upload_replaces_and_deletes_the_old_file(built):
+    old = "exports/old-try.json"
+    export = _export(object_path=old)
+    storage = Storage()
+    transport, _ = resend()
+    assert await jobs.process(
+        _claim(export),
+        storage.client(),
+        sessions=sessions_of(_db(export)),
+        email_transport=transport,
+    )
+    assert export.object_path == jobs.object_path(export.id, NOW) != old
+    assert storage.deleted == [old]
+
+
+async def test_a_failed_delete_of_the_old_file_is_logged_not_fatal(built, caplog):
+    export = _export(object_path="exports/old-try.json")
+    transport, _ = resend()
+    with caplog.at_level("WARNING"):
+        assert await jobs.process(
+            _claim(export),
+            Storage({"delete"}).client(),
+            sessions=sessions_of(_db(export)),
+            email_transport=transport,
+        )
+    assert "could not delete a replaced file" in caplog.text
+
+
+async def test_the_build_reads_one_read_only_repeatable_read_snapshot(monkeypatch):
+    monkeypatch.setattr(account_export, "build", AsyncMock(return_value={"a": 1}))
+    db = Session()
+    assert await account_export.build_snapshot(sessions_of(db), uuid.uuid4()) == {
+        "a": 1
+    }
+    assert db.connection_options == {
+        "isolation_level": "REPEATABLE READ",
+        "postgresql_readonly": True,
+    }
+    assert db.rollbacks == 1  # ended before the upload
 
 
 async def test_a_row_deleted_during_the_upload_deletes_the_object(built):
@@ -485,7 +561,7 @@ async def test_a_row_deleted_during_the_upload_deletes_the_object(built):
     assert not await jobs.process(
         _claim(export), storage.client(), sessions=sessions_of(db)
     )
-    assert storage.deleted == [jobs.object_path(export.id)]
+    assert storage.deleted == [jobs.object_path(export.id, NOW)]
 
 
 @pytest.mark.parametrize(
@@ -749,31 +825,52 @@ def test_the_purge_never_matches_a_live_link_or_a_live_lease():
     assert "account_exports.claimed_at >=" in where
 
 
-async def test_sweep_deletes_old_objects_only():
+def _scalars(*values):
+    result = MagicMock()
+    result.scalars.return_value = list(values)
+    return result
+
+
+async def test_sweep_deletes_old_orphans_only():
     storage = Storage()
     old = (NOW - timedelta(days=9)).isoformat()
     new = (NOW - timedelta(days=1)).isoformat()
     storage.listing = [
         [
             {"name": "a.json", "id": "1", "created_at": old},
-            {"name": "b.json", "id": "2", "created_at": new},
-            {"name": "c.json", "id": "3"},
+            {"name": "kept.json", "id": "2", "created_at": old},
+            {"name": "b.json", "id": "3", "created_at": new},
+            {"name": "c.json", "id": "4"},
         ]
     ]
-    assert await purge.sweep_orphans(storage.client()) == 1
+    db = Session(results=[_scalars("exports/kept.json")])
+    assert await purge.sweep_orphans(storage.client(), db) == 1
     assert storage.deleted == ["exports/a.json"]
+    looked_up = str(db.executed[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "exports/a.json" in looked_up and "exports/kept.json" in looked_up
 
 
-async def test_sweep_pages_while_every_object_on_a_page_is_old(monkeypatch):
-    monkeypatch.setattr(purge, "PURGE_BATCH_SIZE", 1)
+async def test_sweep_pages_past_files_a_row_still_uses(monkeypatch):
+    monkeypatch.setattr(purge, "PURGE_BATCH_SIZE", 2)
     old = (NOW - timedelta(days=9)).isoformat()
     storage = Storage()
     storage.listing = [
-        [{"name": "a.json", "id": "1", "created_at": old}],
-        [{"name": "b.json", "id": "2", "created_at": old}],
-        [],
+        [
+            {"name": "live.json", "id": "1", "created_at": old},
+            {"name": "a.json", "id": "2", "created_at": old},
+        ],
+        [{"name": "b.json", "id": "3", "created_at": old}],
     ]
-    assert await purge.sweep_orphans(storage.client()) == 2
+    db = Session(results=[_scalars("exports/live.json"), _scalars()])
+    assert await purge.sweep_orphans(storage.client(), db) == 2
+    assert storage.deleted == ["exports/a.json", "exports/b.json"]
+    assert storage.offsets == [0, 1]  # the next page starts after the kept file
+
+
+async def test_sweep_of_an_empty_folder_looks_nothing_up():
+    db = Session()
+    assert await purge.sweep_orphans(Storage().client(), db) == 0
+    assert db.executed == []
 
 
 # ── The document's loaders ───────────────────────────────────────────────────

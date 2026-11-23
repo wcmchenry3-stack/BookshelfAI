@@ -599,6 +599,9 @@ class _ExportDb(FakeDb):
         else:
             super().add(obj)
 
+    async def connection(self, **_kwargs):
+        pass  # the build's snapshot options; nothing to emulate
+
     async def execute(self, stmt):
         from sqlalchemy.sql.dml import Update
 

@@ -153,9 +153,11 @@ class ObjectStorage:
             json={"prefixes": [p.strip("/") for p in paths]},
         )
 
-    async def list(self, prefix: str, *, limit: int = 100) -> list[StoredObject]:
+    async def list(
+        self, prefix: str, *, limit: int = 100, offset: int = 0
+    ) -> list[StoredObject]:
         """Up to ``limit`` objects directly under the folder ``prefix``,
-        oldest first. Sub-folders are skipped."""
+        oldest first, from the ``offset``-th. Sub-folders are skipped."""
         resp = await self._request(
             "list",
             "POST",
@@ -163,7 +165,7 @@ class ObjectStorage:
             json={
                 "prefix": prefix.strip("/"),
                 "limit": limit,
-                "offset": 0,
+                "offset": offset,
                 "sortBy": {"column": "created_at", "order": "asc"},
             },
         )

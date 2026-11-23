@@ -30,7 +30,10 @@ column is neither exported nor excluded, so nothing is missed silently.
 Account deletion (#291) can use the same lists.
 
 Reads only, through the ORM; values become JSON (UUIDs as strings, times
-in ISO 8601). Never logs a value.
+in ISO 8601). Never logs a value. :func:`build_snapshot` reads every section
+in one read-only ``REPEATABLE READ`` transaction, so a trash purge or a
+library edit committing mid-build cannot make the document inconsistent
+(an entry pointing at an unverified book the same file no longer has).
 """
 
 import uuid
@@ -41,7 +44,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.account_export import AccountExport
 from app.models.ai_enhanced_zero_result import AIEnhancedZeroResult
@@ -338,6 +341,29 @@ async def _catalog(db: AsyncSession, entries: Sequence[Any]) -> dict[str, list]:
         )
         editions = [_row(e, CATALOG_EDITION_COLUMNS) for e in rows.scalars()]
     return {"books": books, "editions": editions}
+
+
+async def build_snapshot(
+    sessions: async_sessionmaker[AsyncSession],
+    user_id: uuid.UUID,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """:func:`build` from one snapshot: a read-only ``REPEATABLE READ``
+    transaction, begun before the first read and ended (rolled back) before
+    this returns, so no snapshot is held while the file is uploaded. A
+    ``JobSessionLocal`` session still sets the job statement timeout at the
+    start of the transaction (its ``after_begin`` listener)."""
+    async with sessions() as db:
+        await db.connection(
+            execution_options={
+                "isolation_level": "REPEATABLE READ",
+                "postgresql_readonly": True,
+            }
+        )
+        try:
+            return await build(db, user_id, now)
+        finally:
+            await db.rollback()
 
 
 async def build(

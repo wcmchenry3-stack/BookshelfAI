@@ -19,7 +19,8 @@ taken over later) and for each (:func:`process`):
 
 1. builds the document (``app/services/account_export.py``) in a
    ``JobSessionLocal`` session (the 60 s job statement timeout), uploads it
-   to the private bucket at ``exports/<export id>.json``
+   to the private bucket at a new ``exports/<export id>-<ms>.json`` (a
+   re-signed export gets a new file; the old one is deleted)
    (``app/services/object_storage.py``) and signs a download URL valid for
    :data:`LINK_TTL` (7 days);
 2. records the path, the link and ``expires_at`` (signing time + 7 days)
@@ -136,8 +137,11 @@ def configured() -> bool:
     return object_storage.from_settings() is not None and email.configured()
 
 
-def object_path(export_id: uuid.UUID) -> str:
-    return f"{OBJECT_PREFIX}/{export_id}.json"
+def object_path(export_id: uuid.UUID, uploaded_at: datetime) -> str:
+    """A new path for every upload (Supabase keeps an object's first
+    ``created_at`` on an overwrite, so a re-signed export must not reuse its
+    old path, or the age-based sweep would delete its live file)."""
+    return f"{OBJECT_PREFIX}/{export_id}-{int(uploaded_at.timestamp() * 1000)}.json"
 
 
 def _next_allowed(recent) -> datetime | None:
@@ -289,13 +293,14 @@ async def _fenced_update(sessions: Sessions, claim: Claim, **values) -> bool:
     return (result.rowcount or 0) == 1
 
 
-async def _row_exists(sessions: Sessions, export_id: uuid.UUID) -> bool:
+async def _row_path(sessions: Sessions, export_id: uuid.UUID) -> str | None:
+    """The row's ``object_path`` (``None`` also when the row is gone)."""
     async with sessions() as db:
-        found = await db.scalar(
-            select(AccountExport.id).where(AccountExport.id == export_id)
+        path = await db.scalar(
+            select(AccountExport.object_path).where(AccountExport.id == export_id)
         )
         await db.rollback()
-    return found is not None
+    return path
 
 
 def _error_code(exc: Exception) -> str:
@@ -307,22 +312,35 @@ def _error_code(exc: Exception) -> str:
 
 
 async def _prepare(
-    sessions: Sessions, claim: Claim, user_id: uuid.UUID, storage: ObjectStorage
+    sessions: Sessions,
+    claim: Claim,
+    user_id: uuid.UUID,
+    old_path: str | None,
+    storage: ObjectStorage,
 ) -> tuple[str, datetime] | None:
-    """Build, upload and sign the file, then record the link and move the row
-    to ``emailing`` (fenced). Returns the link and its expiry, or ``None``
-    when this attempt no longer holds the row."""
-    async with sessions() as db:
-        document = await account_export.build(db, user_id)
-        await db.rollback()
+    """Build (one snapshot), upload to a new path and sign the file, then
+    record the link and move the row to ``emailing`` (fenced). The file of
+    an earlier try or link (``old_path``) is deleted once the row points at
+    the new one. Returns the link and its expiry, or ``None`` when this
+    attempt no longer holds the row."""
+    document = await account_export.build_snapshot(sessions, user_id)
     data = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode()
-    path = object_path(claim.id)
+    path = object_path(claim.id, utcnow())
     await storage.upload(path, data, CONTENT_TYPE)
     # Recorded at once, so a later failure (signing) can still delete it.
     if not await _fenced_update(
         sessions, claim, object_path=path, size_bytes=len(data)
     ):
         return await _lost(sessions, claim, path, storage)
+    if old_path and old_path != path:
+        try:
+            await storage.delete([old_path])
+        except StorageError:
+            logger.warning(
+                "account_export: could not delete a replaced file "
+                "(export_id=%s); the sweep removes it",
+                claim.id,
+            )
     signed_at = utcnow()
     url = await storage.signed_url(
         path,
@@ -347,9 +365,10 @@ async def _prepare(
 async def _lost(
     sessions: Sessions, claim: Claim, path: str, storage: ObjectStorage
 ) -> None:
-    """This attempt no longer holds the row. Another attempt writes the same
-    path, so the file is left alone unless the row is gone with its account."""
-    if not await _row_exists(sessions, claim.id):
+    """This attempt no longer holds the row. Its file (a path of its own) is
+    nobody's, unless the row still points at it (another attempt took over
+    after it was recorded; that one replaces and deletes it)."""
+    if await _row_path(sessions, claim.id) != path:
         await storage.delete([path])
 
 
@@ -424,6 +443,7 @@ async def _attempt(
             return False  # the account (and its row) went away
         to, locale, user_id = user.email, export.locale, user.id
         url, expires_at = export.delivery_url, export.expires_at
+        old_path = export.object_path
         accepted = export.email_accepted_at is not None
         await db.rollback()
     if url is None or expires_at is None or expires_at - utcnow() < MIN_LINK_LEFT:
@@ -433,7 +453,7 @@ async def _attempt(
                 "(export_id=%s)",
                 claim.id,
             )
-        prepared = await _prepare(sessions, claim, user_id, storage)
+        prepared = await _prepare(sessions, claim, user_id, old_path, storage)
         if prepared is None:
             return False
         url, expires_at = prepared

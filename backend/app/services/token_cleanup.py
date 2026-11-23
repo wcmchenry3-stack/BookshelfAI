@@ -36,7 +36,8 @@ The same daily run also purges, in bounded batches:
   hours, which are never replayed (app/services/idempotency.py, #685);
 - account exports (``account_exports`` and their files in Supabase Storage)
   whose 7-day link expired, failed or unfinished ones older than 7 days
-  (file first, then row), and any export file older than 8 days
+  (file first, then row), and any export file older than 8 days that no row
+  points at
   (app/services/account_export_purge.py, #694).
 
 Every step opens its session from ``JobSessionLocal``, so each transaction
@@ -229,7 +230,7 @@ async def _purge_account_exports() -> None:
     storage = object_storage.from_settings()
     async with JobSessionLocal() as db:
         purged = await purge_account_exports(db, storage)
-    swept = await sweep_export_objects(storage) if storage is not None else 0
+        swept = await sweep_export_objects(storage, db) if storage is not None else 0
     logger.info(
         "token_cleanup: purged %d account export(s), swept %d old export file(s)",
         purged,
