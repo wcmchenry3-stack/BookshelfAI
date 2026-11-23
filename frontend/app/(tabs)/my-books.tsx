@@ -55,6 +55,8 @@ import {
 interface UserBook {
   id: string;
   status: string;
+  /** The entry's version (#685), sent back as `If-Match` on a change. */
+  version?: number;
   rating: number | null;
   notes: string | null;
   wishlisted_at: string | null;
@@ -166,6 +168,12 @@ export default function MyBooksScreen() {
     onRemoved: (item) => {
       invalidate();
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
+      setSelected(null);
+      setActionsFor(null);
+    },
+    // Changed on another device (412, #685): the list reloads; close the
+    // sheet showing the stale copy.
+    onConflict: () => {
       setSelected(null);
       setActionsFor(null);
     },

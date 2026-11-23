@@ -79,6 +79,7 @@
   "shelfA11y_other": "正在阅读，{{count}} 本书",
   "shelfItemA11y": "{{title}}，作者 {{author}}",
   "movedToTrash": "已移到回收站。30 天内可以恢复。",
+  "changedOnAnotherDevice": "这本书已在另一台设备上更改。正在显示最新版本。",
   "viewTrash": "查看回收站",
   "trash": {
     "title": "回收站",

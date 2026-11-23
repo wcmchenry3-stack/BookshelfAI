@@ -83,6 +83,7 @@
   "shelfA11y_other": "Aktuell am Lesen, {{count}} Bücher",
   "shelfItemA11y": "{{title}}, von {{author}}",
   "movedToTrash": "In den Papierkorb verschoben. 30 Tage lang wiederherstellbar.",
+  "changedOnAnotherDevice": "Dieses Buch wurde auf einem anderen Gerät geändert. Die neueste Version wird angezeigt.",
   "viewTrash": "Papierkorb ansehen",
   "trash": {
     "title": "Papierkorb",

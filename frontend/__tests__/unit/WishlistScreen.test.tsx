@@ -251,6 +251,30 @@ describe('WishlistScreen', () => {
     await waitFor(() => expect(queryByText('Dune')).toBeNull());
   });
 
+  it('changed on another device (412, #685): closes the sheet and refetches', async () => {
+    mockDelete.mockRejectedValue(
+      Object.assign(new Error('412'), {
+        response: { status: 412, data: { detail: { code: 'version_mismatch' } } },
+      })
+    );
+    mockGet.mockResolvedValue({ data: [{ ...BOOK_1, version: 5 }] });
+    const screen = await render(<WishlistScreen />);
+    await waitFor(() => expect(screen.getByLabelText('Mark Dune as bought')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await waitFor(() => screen.getByLabelText('Remove Dune'));
+    const loads = mockGet.mock.calls.length;
+
+    await act(async () => {
+      await fireEvent.press(screen.getByLabelText('Remove Dune'));
+    });
+
+    expect(mockDelete).toHaveBeenCalledWith('/user-books/ub-1', {
+      headers: { 'If-Match': '"5"' },
+    });
+    await waitFor(() => expect(mockGet.mock.calls.length).toBe(loads + 1));
+    await waitFor(() => expect(screen.queryByLabelText('Remove Dune')).toBeNull());
+  });
+
   it('keeps the book until DELETE resolves, then removes it', async () => {
     mockGet.mockResolvedValue({ data: [BOOK_1] });
     const screen = await render(<WishlistScreen />);

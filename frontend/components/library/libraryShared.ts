@@ -41,6 +41,8 @@ export function filterByStatus<T extends { status: string }>(books: T[], status:
 export interface LibraryBook {
   id: string;
   status: string;
+  /** The entry's version (#685), sent back as `If-Match` on a change. */
+  version?: number;
   book: {
     id: string;
     title: string;

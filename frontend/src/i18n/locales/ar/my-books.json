@@ -99,6 +99,7 @@
   "shelfA11y_other": "أقرأ الآن، {{count}} كتاب",
   "shelfItemA11y": "{{title}}، تأليف {{author}}",
   "movedToTrash": "تم النقل إلى سلة المحذوفات. يمكنك استعادته خلال 30 يومًا.",
+  "changedOnAnotherDevice": "تم تغيير هذا الكتاب على جهاز آخر. نعرض الآن أحدث نسخة.",
   "viewTrash": "عرض سلة المحذوفات",
   "trash": {
     "title": "سلة المحذوفات",

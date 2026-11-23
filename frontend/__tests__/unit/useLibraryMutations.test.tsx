@@ -2,6 +2,7 @@ import { Alert } from 'react-native';
 import { act, renderHook } from '@testing-library/react-native';
 
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
+import { onLibraryChanged } from '../../lib/libraryChanged';
 
 const mockPatch = jest.fn();
 const mockDelete = jest.fn();
@@ -266,5 +267,89 @@ describe('useLibraryMutations', () => {
       await both;
     });
     expect(result.current.mutatingIds.size).toBe(0);
+  });
+});
+
+describe('entry versions (#685)', () => {
+  const VERSIONED = { id: 'ub-1', status: 'wishlisted', version: 3 };
+  const IF_MATCH = { headers: { 'If-Match': '"3"' } };
+
+  function conflict(code = 'version_mismatch') {
+    return Object.assign(new Error('Request failed with status code 412'), {
+      response: { status: 412, data: { detail: { code, current_version: 4 } }, headers: {} },
+    });
+  }
+
+  let unsubscribe: () => void = () => {};
+  const libraryChanged = jest.fn();
+  beforeEach(() => {
+    unsubscribe = onLibraryChanged(libraryChanged);
+  });
+  afterEach(() => unsubscribe());
+
+  it('sends the cached version as If-Match on PATCH and DELETE', async () => {
+    const { hook } = setup();
+    const { result } = await hook;
+
+    await act(async () => {
+      await result.current.advanceStatus(VERSIONED);
+      await result.current.removeBook(VERSIONED);
+    });
+
+    expect(mockPatch).toHaveBeenCalledWith('/user-books/ub-1', { status: 'purchased' }, IF_MATCH);
+    expect(mockDelete).toHaveBeenCalledWith('/user-books/ub-1', IF_MATCH);
+  });
+
+  it('on a 412 PATCH: shows the message, reloads, rolls nothing forward, no retry', async () => {
+    mockPatch.mockRejectedValue(conflict());
+    const onConflict = jest.fn();
+    const { hook, onAdvanced } = setup({ onConflict });
+    const { result } = await hook;
+
+    await act(async () => {
+      await result.current.advanceStatus(VERSIONED);
+    });
+
+    expect(mockShowBanner).toHaveBeenCalledWith({
+      message: 'my-books:changedOnAnotherDevice',
+      type: 'info',
+    });
+    expect(libraryChanged).toHaveBeenCalledTimes(1);
+    expect(onConflict).toHaveBeenCalledWith(VERSIONED);
+    expect(onAdvanced).not.toHaveBeenCalled();
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+    expect(result.current.mutatingIds.size).toBe(0);
+  });
+
+  it('on a 412 DELETE: shows the message and reloads instead of the trash banner', async () => {
+    mockDelete.mockRejectedValue(conflict());
+    const { hook, onRemoved } = setup({ namespace: 'wishlist' });
+    const { result } = await hook;
+
+    await act(async () => {
+      await result.current.removeBook(VERSIONED);
+    });
+
+    expect(mockShowBanner).toHaveBeenCalledTimes(1);
+    expect(mockShowBanner.mock.calls[0][0].message).toBe('my-books:changedOnAnotherDevice');
+    expect(libraryChanged).toHaveBeenCalledTimes(1);
+    expect(onRemoved).not.toHaveBeenCalled();
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats any other 412 as an ordinary failure', async () => {
+    mockPatch.mockRejectedValue(conflict('something_else'));
+    const { hook } = setup();
+    const { result } = await hook;
+
+    await act(async () => {
+      await result.current.advanceStatus(VERSIONED);
+    });
+
+    expect(Alert.alert).toHaveBeenCalledWith('common:errorTitle', 'my-books:errorUpdateStatus');
+    expect(mockShowBanner).not.toHaveBeenCalled();
+    expect(libraryChanged).not.toHaveBeenCalled();
   });
 });

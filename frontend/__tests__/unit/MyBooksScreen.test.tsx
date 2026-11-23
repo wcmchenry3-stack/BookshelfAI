@@ -285,6 +285,32 @@ describe('MyBooksScreen', () => {
     );
   });
 
+  it('changed on another device (412, #685): sends If-Match, closes the sheet and reloads', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockDelete.mockRejectedValue(
+      Object.assign(new Error('412'), {
+        response: { status: 412, data: { detail: { code: 'version_mismatch' } } },
+      })
+    );
+    mockGet.mockResolvedValue({ data: [userBookRow({ version: 2 })] });
+    const screen = await render(<MyBooksScreen />);
+    await waitFor(() => screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await fireEvent.press(screen.getByLabelText('Dune — Wishlist, by Frank Herbert'));
+    await waitFor(() => screen.getByLabelText('Remove Dune'));
+    const loads = mockGet.mock.calls.length;
+
+    await act(async () => {
+      await fireEvent.press(screen.getByLabelText('Remove Dune'));
+    });
+
+    expect(mockDelete).toHaveBeenCalledWith('/user-books/ub-1', {
+      headers: { 'If-Match': '"2"' },
+    });
+    expect(alertSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockGet.mock.calls.length).toBe(loads + 1));
+    await waitFor(() => expect(screen.queryByLabelText('Remove Dune')).toBeNull());
+  });
+
   it('keeps the book and alerts when DELETE fails', async () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockDelete.mockRejectedValue(new Error('Network error'));
