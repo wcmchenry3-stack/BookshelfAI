@@ -104,7 +104,11 @@ async def register_device(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="attestation_not_configured",
         )
-    if not verify_nonce(body.nonce, current_user.id, settings.attestation_nonce_secret):
+    # Read once, before any commit or rollback: get_current_user shares this
+    # session, and a rollback expires current_user, so touching it afterwards
+    # would lazy-load on an async session (MissingGreenlet, a 500).
+    user_id = current_user.id
+    if not verify_nonce(body.nonce, user_id, settings.attestation_nonce_secret):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="invalid_nonce",
@@ -129,12 +133,12 @@ async def register_device(
     # overwrite (counter back to 0) would re-open every old assertion. The
     # same key again is a client retry after a lost response: same answer,
     # row unchanged. A different key under this key_id is refused.
-    existing = await _ios_key(db, current_user.id, key_id)
+    existing = await _ios_key(db, user_id, key_id)
     if existing is None:
         db.add(
             DeviceKey(
                 id=uuid.uuid4(),
-                user_id=current_user.id,
+                user_id=user_id,
                 platform="ios",
                 key_id=key_id,
                 public_key_cbor=result.public_key_cbor,
@@ -146,11 +150,9 @@ async def register_device(
         except IntegrityError:
             # A concurrent registration of the same key_id won the insert.
             await db.rollback()
-            existing = await _ios_key(db, current_user.id, key_id)
+            existing = await _ios_key(db, user_id, key_id)
         else:
-            logger.info(
-                "device_key registered user=%s key_id=%.16s", current_user.id, key_id
-            )
+            logger.info("device_key registered user=%s key_id=%.16s", user_id, key_id)
             return RegisterResponse(registered=True)
     if existing is None or existing.public_key_cbor != result.public_key_cbor:
         raise _attestation_invalid()

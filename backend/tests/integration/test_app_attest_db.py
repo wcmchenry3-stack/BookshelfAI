@@ -25,6 +25,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import _bot_check
+from app.api import attestation as attestation_api
 from app.api.attestation import get_apple_verifier
 from app.auth.jwt import create_access_token
 from app.core.app_attest import LiveAppleAttestVerifier
@@ -196,6 +197,60 @@ async def test_reregistering_never_resets_the_counter(env):
     assert row.key_id == device.key_id
     assert row.counter == 1
     assert await _scan_check(factory, uid, device, scan_nonce, assertion) is False
+
+
+@pytest.mark.parametrize(
+    ("winner", "status"),
+    [("same_key", 200), ("other_key", 400), ("android_row", 400)],
+)
+async def test_register_losing_the_insert_race(env, monkeypatch, winner, status):
+    """Another registration commits the row between this request's existence
+    check and its insert, so the insert hits uq_device_keys_user_key and the
+    IntegrityError branch (rollback, re-read, compare) runs for real."""
+    factory, client, auth, uid, device = env
+    if winner == "same_key":
+        winner_key = device.public_key_cbor
+    else:
+        winner_key = Device(device.pki).public_key_cbor
+    original = attestation_api._ios_key
+    calls = []
+
+    async def _check_then_lose_race(db, user_id, key_id):
+        calls.append(key_id)
+        if len(calls) == 1:
+            async with factory() as other:
+                other.add(
+                    DeviceKey(
+                        id=uuid.uuid4(),
+                        user_id=uid,
+                        platform="android" if winner == "android_row" else "ios",
+                        key_id=key_id,
+                        public_key_cbor=winner_key,
+                        counter=5,
+                    )
+                )
+                await other.commit()
+            return None
+        return await original(db, user_id, key_id)
+
+    monkeypatch.setattr(attestation_api, "_ios_key", _check_then_lose_race)
+    nonce = issue_nonce(uid, _SECRET)
+    resp = await client.post(
+        "/attestation/register",
+        json={
+            "key_id": device.key_id,
+            "attestation_b64": device.attestation(nonce),
+            "nonce": nonce,
+        },
+        headers=auth,
+    )
+    assert resp.status_code == status, resp.text
+    if status == 400:
+        assert resp.json()["detail"] == "attestation_invalid"
+    assert len(calls) == 2  # the existence check, then the re-read
+    row = await _stored(factory, uid)  # scalar_one: exactly one row
+    assert row.public_key_cbor == winner_key
+    assert row.counter == 5
 
 
 async def test_assertion_with_any_key_id_spelling_finds_the_row(env):
