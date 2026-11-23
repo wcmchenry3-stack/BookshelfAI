@@ -16,7 +16,16 @@ const WEB_ENV_TESTS = [
   '<rootDir>/__tests__/unit/ScanTurnstileWeb.test.tsx',
 ];
 
+// Reanimated and gesture-handler under Jest (#935), as their docs set them up:
+//  - the resolver loads the web builds of Reanimated and Worklets (the native
+//    builds need a JSI runtime Jest does not have);
+//  - gesture-handler's jestSetup mocks its native module and detectors, which
+//    the web builds would otherwise reach (`getUIRuntimeHolder is not supported
+//    on web`). It runs before the test framework, as its docs ask.
+const GESTURE_HANDLER_SETUP = require.resolve('react-native-gesture-handler/jestSetup');
+
 const shared = {
+  resolver: 'react-native-reanimated/jest/resolver',
   modulePaths: ['<rootDir>/node_modules/expo/node_modules'],
   setupFilesAfterEnv: ['./jest.setup.ts'],
   transformIgnorePatterns: [
@@ -49,6 +58,8 @@ module.exports = {
       displayName: 'native',
       preset: 'jest-expo',
       ...shared,
+      // Jest appends these to the preset's setupFiles.
+      setupFiles: [GESTURE_HANDLER_SETUP],
       testPathIgnorePatterns: ['/node_modules/', '<rootDir>/__tests__/helpers/', ...WEB_ENV_TESTS],
     },
     {
@@ -56,9 +67,12 @@ module.exports = {
       ...expoPreset,
       ...shared,
       testEnvironment: require.resolve('./jest/jsdomEnvironment.js'),
-      setupFiles: expoPreset.setupFiles.map((file) =>
-        isReactNativeSetup(file) ? require.resolve('./jest/rnSetupJsdom.js') : file
-      ),
+      setupFiles: [
+        ...expoPreset.setupFiles.map((file) =>
+          isReactNativeSetup(file) ? require.resolve('./jest/rnSetupJsdom.js') : file
+        ),
+        GESTURE_HANDLER_SETUP,
+      ],
       testMatch: WEB_ENV_TESTS,
     },
   ],

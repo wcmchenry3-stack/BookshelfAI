@@ -28,5 +28,9 @@
   "rowHint": "اضغط لعرض التفاصيل أو إزالته",
   "errorLoadWishlist": "تعذر تحميل القائمة.",
   "errorUpdateStatus": "تعذر تحديث الحالة.",
-  "errorRemoveBook": "تعذر إزالة الكتاب."
+  "errorRemoveBook": "تعذر إزالة الكتاب.",
+  "swipeHint": "اسحب كتابًا إلى اليسار لإزالته",
+  "swipeHintRtl": "اسحب كتابًا إلى اليمين لإزالته",
+  "a11yActionRemove": "إزالة",
+  "swipeRemoveA11y": "إزالة {{title}} من قائمة الرغبات"
 }

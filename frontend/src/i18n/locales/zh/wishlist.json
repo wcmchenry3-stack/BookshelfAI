@@ -23,5 +23,9 @@
   "rowHint": "点击查看详情或移除",
   "errorLoadWishlist": "无法加载愿望清单。",
   "errorUpdateStatus": "无法更新状态。",
-  "errorRemoveBook": "无法移除书籍。"
+  "errorRemoveBook": "无法移除书籍。",
+  "swipeHint": "向左滑动图书即可移除",
+  "swipeHintRtl": "向右滑动图书即可移除",
+  "a11yActionRemove": "移除",
+  "swipeRemoveA11y": "从心愿单中移除{{title}}"
 }

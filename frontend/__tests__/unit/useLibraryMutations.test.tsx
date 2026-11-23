@@ -113,7 +113,7 @@ describe('useLibraryMutations', () => {
       const { hook, onAdvanced } = setup();
       const { result } = await hook;
 
-      let first: Promise<void> = Promise.resolve();
+      let first: Promise<unknown> = Promise.resolve();
       await act(async () => {
         // Both presses are handled before a re-render, as with a fast double tap.
         first = result.current.advanceStatus(ITEM);
@@ -194,7 +194,7 @@ describe('useLibraryMutations', () => {
       const { hook, onRemoved } = setup();
       const { result } = await hook;
 
-      let first: Promise<void> = Promise.resolve();
+      let first: Promise<unknown> = Promise.resolve();
       await act(async () => {
         first = result.current.removeBook(ITEM);
         await result.current.removeBook(ITEM);
@@ -224,6 +224,46 @@ describe('useLibraryMutations', () => {
       expect(mockShowBanner).not.toHaveBeenCalled();
       expect(onRemoved).not.toHaveBeenCalled();
       expect(result.current.mutatingIds.size).toBe(0);
+    });
+
+    it('resolves true only when the server removed the book (#935)', async () => {
+      const { hook } = setup();
+      const { result } = await hook;
+      const outcomes: boolean[] = [];
+
+      await act(async () => {
+        outcomes.push(await result.current.removeBook(ITEM));
+      });
+      mockDelete.mockRejectedValueOnce(new Error('boom'));
+      await act(async () => {
+        outcomes.push(await result.current.removeBook(ITEM));
+      });
+
+      let resolveDelete: (v: unknown) => void = () => {};
+      mockDelete.mockReturnValueOnce(new Promise((r) => (resolveDelete = r)));
+      let first: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        first = result.current.removeBook(ITEM);
+        // Already in flight: refused at once.
+        outcomes.push(await result.current.removeBook(ITEM));
+      });
+      await act(async () => {
+        resolveDelete({});
+        outcomes.push(await first);
+      });
+
+      expect(outcomes).toEqual([true, false, false, true]);
+    });
+
+    it('resolves false offline', async () => {
+      mockOnline = false;
+      const { hook } = setup();
+      const { result } = await hook;
+      let outcome: boolean | undefined;
+      await act(async () => {
+        outcome = await result.current.removeBook(ITEM);
+      });
+      expect(outcome).toBe(false);
     });
   });
 
@@ -337,6 +377,17 @@ describe('entry versions (#685)', () => {
     expect(onRemoved).not.toHaveBeenCalled();
     expect(Alert.alert).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it('a 412 DELETE resolves false: the book was not removed (#935)', async () => {
+    mockDelete.mockRejectedValue(conflict());
+    const { hook } = setup({ namespace: 'wishlist' });
+    const { result } = await hook;
+    let outcome: boolean | undefined;
+    await act(async () => {
+      outcome = await result.current.removeBook(VERSIONED);
+    });
+    expect(outcome).toBe(false);
   });
 
   it('treats any other 412 as an ordinary failure', async () => {

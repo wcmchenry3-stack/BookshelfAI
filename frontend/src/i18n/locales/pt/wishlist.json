@@ -24,5 +24,9 @@
   "rowHint": "Toque para ver detalhes ou remover",
   "errorLoadWishlist": "Não foi possível carregar a lista.",
   "errorUpdateStatus": "Não foi possível atualizar o status.",
-  "errorRemoveBook": "Não foi possível remover o livro."
+  "errorRemoveBook": "Não foi possível remover o livro.",
+  "swipeHint": "Deslize um livro para a esquerda para removê-lo",
+  "swipeHintRtl": "Deslize um livro para a direita para removê-lo",
+  "a11yActionRemove": "Remover",
+  "swipeRemoveA11y": "Remover {{title}} da lista de desejos"
 }

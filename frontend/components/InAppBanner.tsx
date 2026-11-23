@@ -1,18 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { usePathname } from 'expo-router';
-import {
-  AccessibilityInfo,
-  Animated,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBanner } from '../hooks/useBanner';
+import { useScreenReaderEnabled } from '../hooks/useScreenReaderEnabled';
 import { useTheme } from '../hooks/useTheme';
 import { fontFor } from '../theme/typography';
 
@@ -32,27 +25,8 @@ export function InAppBanner() {
   const translateY = useRef(new Animated.Value(-SLIDE_DISTANCE)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathname = usePathname();
-  const [screenReaderOn, setScreenReaderOn] = useState(false);
-
-  useEffect(() => {
-    // react-native-web always reports a screen reader as on, which would make
-    // every action banner sticky: only query and subscribe on native.
-    if (Platform.OS === 'web') return;
-    let alive = true;
-    let sawEvent = false;
-    AccessibilityInfo.isScreenReaderEnabled()
-      // A late query result must not overwrite a newer change event.
-      .then((on) => alive && !sawEvent && setScreenReaderOn(on))
-      .catch(() => {});
-    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', (on) => {
-      sawEvent = true;
-      setScreenReaderOn(on);
-    });
-    return () => {
-      alive = false;
-      sub.remove();
-    };
-  }, []);
+  // A banner with actions stays up while a screen reader is on (native only).
+  const screenReaderOn = useScreenReaderEnabled();
 
   // A banner never follows the user to another tab or screen (#909).
   const lastPathRef = useRef(pathname);

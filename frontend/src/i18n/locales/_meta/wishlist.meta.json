@@ -103,5 +103,25 @@
     "description": "Accessibility hint of a wishlist row: tapping opens details, where the book can be removed",
     "tone": "informative",
     "characterLimit": 50
+  },
+  "swipeHint": {
+    "description": "Footer hint under the Wishlist list on iOS and Android, hidden while a screen reader runs, when the layout is left-to-right: swiping a row LEFT reveals Remove. Always says left, whatever the language's direction.",
+    "tone": "informative",
+    "characterLimit": 50
+  },
+  "swipeHintRtl": {
+    "description": "The same footer hint when the layout is right-to-left (the device mirrors the app): swiping a row RIGHT reveals Remove. Always says right, whatever the language's direction.",
+    "tone": "informative",
+    "characterLimit": 50
+  },
+  "a11yActionRemove": {
+    "description": "Name of the screen-reader custom action on a wishlist row (VoiceOver Actions rotor, TalkBack actions menu) and the visible text of the red swipe panel; moves the book to the Trash",
+    "tone": "action",
+    "characterLimit": 15
+  },
+  "swipeRemoveA11y": {
+    "description": "Spoken label of the red Remove button revealed by swiping a wishlist row",
+    "tone": "action",
+    "placeholders": ["{{title}}"]
   }
 }

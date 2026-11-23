@@ -24,5 +24,9 @@
   "rowHint": "Tap to see details or remove it",
   "errorLoadWishlist": "Could not load wishlist.",
   "errorUpdateStatus": "Could not update status.",
-  "errorRemoveBook": "Could not remove book."
+  "errorRemoveBook": "Could not remove book.",
+  "swipeHint": "Swipe left on a book to remove it",
+  "swipeHintRtl": "Swipe right on a book to remove it",
+  "a11yActionRemove": "Remove",
+  "swipeRemoveA11y": "Remove {{title}} from wishlist"
 }
