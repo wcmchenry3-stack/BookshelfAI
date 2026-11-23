@@ -1,4 +1,6 @@
-from sqlalchemy import CheckConstraint, Index, Integer, String, text
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -37,3 +39,23 @@ class User(IdMixin, TimestampMixin, Base):
     # The user's "Open on" screen (#913): one of DEFAULT_TABS, or NULL for
     # the default (Scan). Set only through PATCH /users/me/preferences.
     default_tab: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Consent to send scan photos to the AI provider (#1023). Both set only
+    # by POST / DELETE /users/me/ai-consent, from the server's clock (never
+    # the client's): ``ai_consent_at`` is when consent was last given,
+    # ``ai_consent_withdrawn_at`` when it was last withdrawn. Both are kept, so
+    # the row says when each happened; see ``ai_consent``. Goes with the
+    # account row on deletion.
+    ai_consent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ai_consent_withdrawn_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    @property
+    def ai_consent(self) -> bool:
+        """Whether the user's consent stands: given, and not withdrawn since."""
+        if self.ai_consent_at is None:
+            return False
+        withdrawn = self.ai_consent_withdrawn_at
+        return withdrawn is None or withdrawn < self.ai_consent_at

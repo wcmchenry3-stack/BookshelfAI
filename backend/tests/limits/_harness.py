@@ -241,6 +241,14 @@ def as_tier(tier: Tier):
         yield
 
 
+@contextmanager
+def ai_consent_required(on: bool):
+    """``AI_CONSENT_REQUIRED`` (#1023) for the scan: an env setting, so it
+    is patched on ``settings`` rather than stored in ``ai_settings``."""
+    with patch.object(settings, "ai_consent_required", on):
+        yield
+
+
 def use_settings(rows: Mapping[str, Any]) -> None:
     """Fill the ai_settings cache as if ``rows`` were just read (the same
     hook every scan test uses)."""
@@ -411,6 +419,19 @@ class LimitsDb:
                     units_used=units,
                 )
             )
+            await db.commit()
+
+    async def set_ai_consent(self, user_id, consent: str) -> None:
+        """The user's AI consent (#1023): ``none`` (as made), ``given``
+        or ``withdrawn`` (given, then withdrawn)."""
+        if consent == "none":
+            return
+        given = datetime(2020, 1, 1, tzinfo=UTC)
+        async with self.factory() as db:
+            user = await db.get(User, user_id)
+            user.ai_consent_at = given
+            if consent == "withdrawn":
+                user.ai_consent_withdrawn_at = given + timedelta(days=1)
             await db.commit()
 
     async def seed_spend(self, day: date, *, settled: int) -> None:

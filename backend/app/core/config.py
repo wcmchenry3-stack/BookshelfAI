@@ -296,6 +296,14 @@ class Settings(EmailSettings, BaseSettings):
     # valid assertion/token; Turnstile is still accepted as a fallback for web.
     # Set ATTESTATION_REQUIRED=false (the default) until native clients ship.
     attestation_required: bool = False
+
+    # Consent to send scan photos to the AI provider (#1023, Apple 5.1.2(i)).
+    # ai_consent_required=true: POST /scan refuses a user who has not given
+    # consent (or withdrew it) with 403 ai_consent_required, before any count,
+    # quota or provider call. Rollout A: the app records consent first
+    # (POST /users/me/ai-consent), so this stays false (the default) until that
+    # app release is out, then the owner turns it on without a code change.
+    ai_consent_required: bool = False
     # HMAC secret for stateless nonces (generate: openssl rand -hex 32).
     # Required when any attestation endpoint is called.
     attestation_nonce_secret: str = ""

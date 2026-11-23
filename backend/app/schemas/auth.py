@@ -47,6 +47,22 @@ class UserRead(BaseModel):
     avatar_url: str | None = None
     created_at: datetime
     default_tab: DefaultTab | None = None
+    # Consent to send scan photos to the AI provider (#1023): whether it
+    # stands, and when it was last given and last withdrawn.
+    ai_consent: bool = False
+    ai_consent_at: datetime | None = None
+    ai_consent_withdrawn_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class AiConsentRead(BaseModel):
+    """Returned by POST and DELETE /users/me/ai-consent (#1023): the state
+    after the request. Both timestamps are the server's."""
+
+    ai_consent: bool
+    ai_consent_at: datetime | None = None
+    ai_consent_withdrawn_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
