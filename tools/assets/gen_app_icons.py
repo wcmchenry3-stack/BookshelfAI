@@ -16,7 +16,7 @@ Writes (`frontend/`):
 
 Icons show the mark without the ring and the wordmark (unreadable at 48 px) in the bold style (C);
 the monochrome layer uses the solid silhouette (B); the splash and logo show the whole mark.
-The native splash resources (Android `splashscreen_logo`, `splashscreen_background`, iOS `SplashScreenLegacy`,
+The native splash resources (Android `splashscreen_logo`, `splashscreen_background`, iOS `SplashScreenLogo`,
 `SplashScreenBackground`, storyboard) are not written here: `expo prebuild` generates them from the
 `expo-splash-screen` plugin config in app.json, which points at `assets/splash-icon.png`.
 
@@ -27,12 +27,11 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import re
 import sys
 from pathlib import Path
 
-from draw_logo import CREAM, NAVY, mark_shapes, render, render_mask, ts_module
+from draw_logo import NAVY, mark_shapes, render, render_mask, ts_module
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
@@ -176,7 +175,7 @@ def text_edits() -> dict[Path, str]:
     s = app.read_text()
     # Targeted edits, so the rest of the file keeps its formatting.
     s = re.sub(
-        r'\["expo-splash-screen",.*?\n      \]',
+        r'\[\s*"expo-splash-screen",.*?\n\s*\]',
         lambda m: re.sub(r'("backgroundColor": )"[^"]*"', rf'\g<1>"{navy}"', m.group(0)),
         s,
         flags=re.S,

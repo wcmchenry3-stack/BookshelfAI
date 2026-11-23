@@ -79,3 +79,17 @@ def test_splash_colour_is_navy_in_app_json():
 def test_size_budgets():
     for name in ("icon", "adaptive-icon", "monochrome-icon", "splash-icon"):
         assert (g.ASSETS / f"{name}.png").stat().st_size <= 500 * 1024, name
+
+
+def test_text_edits_rewrite_the_splash_plugin_colours(monkeypatch):
+    """A stale splash colour in app.json is put back by the generator (and so caught by --check)."""
+    app = g.FRONTEND / "app.json"
+    real = app.read_text()
+    stale = real.replace('"backgroundColor": "#263250"', '"backgroundColor": "#000000"')
+    assert stale != real
+    real_read = type(app).read_text
+    monkeypatch.setattr(type(app), "read_text", lambda self, *a, **k: stale if self == app else real_read(self, *a, **k))
+    plugin = next(p for p in json.loads(g.text_edits()[app])["expo"]["plugins"] if isinstance(p, list) and p[0] == "expo-splash-screen")
+    navy = g._hex(g.NAVY)
+    assert plugin[1]["backgroundColor"] == navy
+    assert plugin[1]["dark"]["backgroundColor"] == navy
