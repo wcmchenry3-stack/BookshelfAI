@@ -146,7 +146,11 @@
       },
       "package": "com.buffingchi.bookshelf",
       "versionCode": 1,
-      "permissions": ["CAMERA"]
+      "permissions": ["CAMERA"],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -154,11 +158,13 @@
     },
     "plugins": [
       ["expo-router", { "asyncRoutes": false }],
-      "expo-secure-store",
+      ["expo-secure-store", { "faceIDPermission": false }],
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Bookshelf to use the camera to scan book covers."
+          "cameraPermission": "Allow Bookshelf to use the camera to scan book covers.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ],
       "./plugins/withSentryDebugFilesNodeEnv",
