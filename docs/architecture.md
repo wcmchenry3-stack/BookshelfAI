@@ -33,6 +33,10 @@ flowchart LR
     GoogleBooks["Google Books"]
     OpenLib["Open Library"]
     Sentry["Sentry"]
+    Storage["Supabase Storage
+(private export files)"]
+    Resend["Resend
+(transactional email)"]
   end
 
   iOS -- HTTPS --> DNS
@@ -45,6 +49,8 @@ flowchart LR
   API -- enrich metadata --> GoogleBooks
   API -- work_id lookup --> OpenLib
   API -- errors + traces --> Sentry
+  API -- export file, signed link --> Storage
+  API -- export link email --> Resend
   iOS -. Turnstile token (hidden WebView) .-> Turnstile
   Android -. Turnstile token (hidden WebView) .-> Turnstile
   Web -. Turnstile token (invisible widget) .-> Turnstile
@@ -56,7 +62,8 @@ flowchart LR
 - **Cloudflare**: DNS + WAF for `bookshelfapi.buffingchi.com`, and Turnstile for `POST /scan` (#740): each client gets a fresh token per scan request from an invisible widget (a hidden `react-native-webview` on iOS/Android, Cloudflare's script on web), sends it as `cf-turnstile-response`, and the API verifies it with siteverify when `TURNSTILE_REQUIRED=true` (production runs `false` until the site key ships; see [`security.md` → Turnstile on /scan](security.md#turnstile-on-scan)). Bot Fight Mode is on; health-check CI bypasses this entirely by hitting the Render origin directly (see [ADR: CI health checks bypass Cloudflare](#adr-ci-health-checks-bypass-cloudflare)).
 - **Backend** (FastAPI on Render): Python 3.12, async end-to-end (SQLAlchemy async sessions, httpx for outbound). Auto-deploys from `dev` per `render.yaml`.
 - **Database**: production runs on Supabase Postgres and dev on the persistent Supabase branch `dev`, both reached through the Supabase session pooler (port 5432) via `DATABASE_URL` (the Render Postgres `bookshelf-db` dev used before is suspended). The app connects as the least-privilege `bookshelf_app` role (DML on app tables, `USAGE` on sequences, `BYPASSRLS`, no DDL; migration 0028, #696); Alembic runs as the owner through `MIGRATION_DATABASE_URL`. Request connections run with `statement_timeout` = `STATEMENT_TIMEOUT_MS` (5 s): a cancelled query returns `503 {"detail": "db_timeout"}` with `Retry-After`, logs the path and sends one Sentry warning; the daily purge jobs use `STATEMENT_TIMEOUT_JOB_MS` (60 s). See [RENDER.md → Database role](RENDER.md#database-role). Nightly encrypted backups: see [backups](backups.md).
-- **External APIs**: called server-side only from the FastAPI backend — the frontend never holds Anthropic or Google Books keys.
+- **External APIs**: called server-side only from the FastAPI backend — the frontend never holds Anthropic, Google Books, Supabase or Resend keys.
+- **Background tasks** (started in the FastAPI lifespan in `app/main.py`, cancelled on shutdown, in-process on each instance): the daily cleanup (`app/services/token_cleanup.py`: every purge, including the account export files) and the **account export worker** (`app/services/account_export_jobs.py:run_worker`, #694). The worker's queue is the `account_exports` table, so nothing is lost on a restart or a deploy: `POST /account/export` inserts a `pending` row and wakes the worker on that instance, and every instance also polls every 5 minutes. A pass claims rows with `FOR UPDATE SKIP LOCKED` and a 10-minute lease, builds the JSON document (`app/services/account_export.py`), uploads it and signs a 7-day link (`app/services/object_storage.py`, Supabase Storage), records the link (`emailing`), emails it (`app/services/email.py`, Resend, with an idempotency key) and marks the row `ready`. Every write after the claim is fenced on the attempt's `claimed_at`. Its sessions come from `JobSessionLocal` (job statement timeout). See [integrations.md](integrations.md#supabase-storage-account-export-files).
 
 ## Request lifecycle
 

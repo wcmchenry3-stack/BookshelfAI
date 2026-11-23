@@ -29,13 +29,31 @@ SENDER_NAME = "Bookshelf"
 TIMEOUT_S = 15.0
 
 
+# Resend's 409 ``name`` when an ``Idempotency-Key`` it already accepted comes
+# back with a different payload: the first request was sent.
+KEY_ALREADY_USED = "invalid_idempotent_request"
+
+
 class EmailError(Exception):
     """Sending failed; ``status`` is the HTTP status, or ``None`` for a
-    transport error or timeout."""
+    transport error or timeout. ``code`` is Resend's error ``name`` (e.g.
+    :data:`KEY_ALREADY_USED`) when the reply carried one."""
 
-    def __init__(self, status: int | None) -> None:
+    def __init__(self, status: int | None, code: str | None = None) -> None:
         super().__init__(f"email send failed (status={status})")
         self.status = status
+        self.code = code
+
+
+def _error_name(resp: httpx.Response | None) -> str | None:
+    """Resend's machine-readable error ``name``; never the message."""
+    if resp is None:
+        return None
+    try:
+        name = resp.json().get("name")
+    except (ValueError, AttributeError):
+        return None
+    return name if isinstance(name, str) and len(name) <= 64 else None
 
 
 @dataclass(frozen=True)
@@ -76,4 +94,4 @@ async def send(
                 client, "email send", "POST", API_URL, json=payload, headers=headers
             )
         except RequestFailed as exc:
-            raise EmailError(exc.status) from None
+            raise EmailError(exc.status, _error_name(exc.response)) from None

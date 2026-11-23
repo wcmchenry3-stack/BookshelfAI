@@ -24,8 +24,8 @@ A keyed write goes through these steps, all on the request's own session
    :data:`PENDING_LEASE`), the listener raises :class:`KeyLostError` and
    the endpoint's commit fails, so the old request can never apply its
    write after the new one.
-3. :func:`complete`: stores the response (status, body, ETag / Location)
-   on the row (``complete``), so a retry replays it.
+3. :func:`complete`: stores the response (status, body, ETag / Location /
+   Retry-After) on the row (``complete``), so a retry replays it.
 4. :func:`release`: deletes the row after a 5xx or an exception, but only
    while it is still ``pending`` (nothing committed), so a retry runs the
    request again instead of replaying a failure.
@@ -74,7 +74,9 @@ KEY_TTL: Final = timedelta(hours=24)
 PENDING_LEASE: Final = timedelta(minutes=2)
 # Response headers kept for a replay; every other header is the server's
 # own (request id, security headers) and is set afresh on the replay.
-REPLAYED_HEADERS: Final = ("etag", "location")
+# Retry-After goes with a stored refusal that carries one (409 export_limit,
+# #694); a replay repeats the first answer, so it is the value sent then.
+REPLAYED_HEADERS: Final = ("etag", "location", "retry-after")
 
 PURGE_BATCH_SIZE: Final = 1_000
 PURGE_MAX_BATCHES: Final = 200

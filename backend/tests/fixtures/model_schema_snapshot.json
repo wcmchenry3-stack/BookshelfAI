@@ -2414,6 +2414,18 @@
         "foreign_keys": []
       },
       {
+        "name": "delivery_url",
+        "type": "TEXT",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
         "name": "expires_at",
         "type": "TIMESTAMP WITH TIME ZONE",
         "nullable": true,
@@ -2452,7 +2464,7 @@
     ],
     "indexes": [
       "CREATE INDEX ix_account_exports_expires_at ON account_exports (expires_at)",
-      "CREATE INDEX ix_account_exports_open ON account_exports (created_at) WHERE status IN ('pending', 'running')",
+      "CREATE INDEX ix_account_exports_open ON account_exports (created_at) WHERE status IN ('pending', 'running', 'emailing')",
       "CREATE INDEX ix_account_exports_user_created ON account_exports (user_id, created_at)"
     ],
     "constraints": [

@@ -102,6 +102,32 @@ describe('Settings Export my data row (#694)', () => {
     expect(banner.message).toBe('You can export once a day. Try again in 1 hour.');
   });
 
+  it('on the daily cap without Retry-After: reads retry_after from the body', async () => {
+    const banner = await confirmAndAnswer(() =>
+      Promise.reject(httpError(409, { code: 'export_limit', retry_after: 10_800 }))
+    );
+    expect(banner.message).toBe('You can export once a day. Try again in 3 hours.');
+  });
+
+  it('prefers the Retry-After header over the body', async () => {
+    const banner = await confirmAndAnswer(() =>
+      Promise.reject(
+        httpError(409, { code: 'export_limit', retry_after: 10_800 }, { 'retry-after': '3600' })
+      )
+    );
+    expect(banner.message).toMatch(/in 1 hour\./);
+  });
+
+  it.each([['not a number'], [-5]])(
+    'ignores an unusable body retry_after (%s)',
+    async (retryAfter) => {
+      const banner = await confirmAndAnswer(() =>
+        Promise.reject(httpError(409, { code: 'export_limit', retry_after: retryAfter }))
+      );
+      expect(banner.message).toMatch(/24 hours/);
+    }
+  );
+
   it('on the daily cap without Retry-After: assumes the whole day', async () => {
     const banner = await confirmAndAnswer(() =>
       Promise.reject(httpError(409, { code: 'export_limit' }))

@@ -2,9 +2,10 @@
 
 Request (``POST /account/export``, :func:`request_export`): under the user's
 row lock (the cap must not let two concurrent requests through), refuse when
-the user asked within :data:`CAP_WINDOW` (24 h, :class:`ExportLimited` with
-the seconds until the next one is allowed), else insert a ``pending``
-``account_exports`` row. Nothing heavy runs in the request.
+the user has an export inside :data:`CAP_WINDOW` (24 h) that did not fail
+(:class:`ExportLimited` with the seconds until the next one is allowed; a
+``failed`` export emailed nothing, so it does not count), else insert a
+``pending`` ``account_exports`` row. Nothing heavy runs in the request.
 
 Worker (:func:`run_worker`, started from the app lifespan): wakes when a
 request was queued on this instance (:func:`wake`) and every
@@ -15,22 +16,39 @@ the same row; a claim is a lease of :data:`LEASE`, so a run that died is
 taken over later) and for each (:func:`process`):
 
 1. builds the document (``app/services/account_export.py``) in a
-   ``JobSessionLocal`` session (the 60 s job statement timeout);
-2. uploads it to the private bucket at ``exports/<export id>.json``
-   (``app/services/object_storage.py``) and records the path;
-3. signs a download URL valid for :data:`LINK_TTL` (7 days) and emails it
-   to the account's address in the request's language
-   (``app/services/export_email.py``, ``app/services/email.py``, with
-   ``account-export-<id>`` as Resend's idempotency key);
-4. marks the row ``ready`` with ``expires_at`` = signing time + 7 days.
+   ``JobSessionLocal`` session (the 60 s job statement timeout), uploads it
+   to the private bucket at ``exports/<export id>.json``
+   (``app/services/object_storage.py``) and signs a download URL valid for
+   :data:`LINK_TTL` (7 days);
+2. records the path, the link and ``expires_at`` (signing time + 7 days)
+   and moves the row to ``emailing``, in one commit, before any email;
+3. emails the recorded link to the account's address in the request's
+   language (``app/services/export_email.py``, ``app/services/email.py``)
+   with ``account-export-<id>`` as Resend's idempotency key;
+4. marks the row ``ready``.
 
-A failed attempt goes back to ``pending`` with an ``error_code`` and waits
-out the lease before the next try; after :data:`MAX_ATTEMPTS` it is
-``failed`` and its object (if any) deleted. Nothing is emailed for a failure.
+Delivery is idempotent: a retry of an ``emailing`` row re-renders the same
+email from the recorded link, which Resend (same key, same payload, within
+24 h) does not send again; its 409 ``invalid_idempotent_request`` (the key
+went out with another payload, e.g. a changed address) counts as sent. A
+lost response, a failed final commit or a kill before it ends with one
+email and the row ``ready`` at the next attempt.
+
+Every write of an attempt after its claim is fenced: it applies only while
+the row is still ``running`` / ``emailing`` with this attempt's
+``claimed_at`` (:class:`Claim`), so an attempt whose lease was taken over
+cannot reopen, fail or finish the row, nor delete its file.
+
+A failed attempt keeps an ``error_code`` and waits out the lease before the
+next try: a row that had not reached ``emailing`` goes back to ``pending``,
+an ``emailing`` row stays ``emailing``. After :data:`MAX_ATTEMPTS` it is
+``failed``; its file is deleted only if it never reached ``emailing``
+(otherwise a delivered link keeps working until ``expires_at``).
 
 Purge (:func:`purge_expired`, from the daily cleanup in
 ``app/services/token_cleanup.py``): for rows whose link expired, failed or
-never-finished rows older than 7 days, deletes the objects first and then
+never-finished rows older than 7 days (and past ``expires_at`` when they
+have one), deletes the objects first and then
 the rows, in bounded batches. :func:`sweep_orphans` then deletes any object
 older than :data:`SWEEP_AGE` (8 days) left in ``exports/``, which covers an
 account deleted before its export expired (the row cascades away, the
@@ -49,14 +67,17 @@ import json
 import logging
 import math
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import JobSessionLocal
 from app.models.account_export import (
+    OPEN_STATUSES,
+    STATUS_EMAILING,
     STATUS_FAILED,
     STATUS_PENDING,
     STATUS_READY,
@@ -131,6 +152,8 @@ async def request_export(
         .where(
             AccountExport.user_id == user.id,
             AccountExport.created_at > now - CAP_WINDOW,
+            # A failed export emailed nothing: the user may ask again at once.
+            AccountExport.status != STATUS_FAILED,
         )
         .order_by(AccountExport.created_at.desc())
         .limit(1)
@@ -176,7 +199,7 @@ def _open_condition(now: datetime):
     """Rows the worker may take: not finished, and not held by a live lease
     (a failed try waits out the lease before the next)."""
     return and_(
-        AccountExport.status.in_((STATUS_PENDING, STATUS_RUNNING)),
+        AccountExport.status.in_(OPEN_STATUSES),
         or_(
             AccountExport.claimed_at.is_(None),
             AccountExport.claimed_at < now - LEASE,
@@ -184,9 +207,28 @@ def _open_condition(now: datetime):
     )
 
 
-async def claim_next(db: AsyncSession, now: datetime | None = None) -> uuid.UUID | None:
+@dataclass(frozen=True)
+class Claim:
+    """One attempt's hold on a row: the row, and the ``claimed_at`` this
+    attempt wrote. Every later write of the attempt is fenced on both, so an
+    attempt whose lease was taken over can no longer change the row."""
+
+    id: uuid.UUID
+    claimed_at: datetime
+
+
+def _owned(claim: Claim):
+    return and_(
+        AccountExport.id == claim.id,
+        AccountExport.status.in_((STATUS_RUNNING, STATUS_EMAILING)),
+        AccountExport.claimed_at == claim.claimed_at,
+    )
+
+
+async def claim_next(db: AsyncSession, now: datetime | None = None) -> Claim | None:
     """Claim the oldest open row (commits); ``None`` when there is none. A
-    row out of attempts is marked ``failed`` instead and the next is tried."""
+    row out of attempts is marked ``failed`` instead and the next is tried.
+    An ``emailing`` row stays ``emailing`` (its email may have gone out)."""
     now = now or utcnow()
     while True:
         export = await db.scalar(
@@ -200,6 +242,8 @@ async def claim_next(db: AsyncSession, now: datetime | None = None) -> uuid.UUID
             await db.commit()
             return None
         if export.attempts >= MAX_ATTEMPTS:
+            # An emailing row keeps its file: the purge removes it after
+            # expires_at, so a link that may have been delivered still works.
             export.status = STATUS_FAILED
             export.claimed_at = None
             export.error_code = export.error_code or "attempts_exhausted"
@@ -210,11 +254,35 @@ async def claim_next(db: AsyncSession, now: datetime | None = None) -> uuid.UUID
                 export.user_id,
             )
             continue
-        export.status = STATUS_RUNNING
+        if export.status != STATUS_EMAILING:
+            export.status = STATUS_RUNNING
         export.claimed_at = now
         export.attempts += 1
         await db.commit()
-        return export.id
+        return Claim(export.id, now)
+
+
+async def _fenced_update(sessions: Sessions, claim: Claim, **values) -> bool:
+    """Apply ``values`` only while ``claim`` still holds the row; True when it
+    did (one row changed)."""
+    async with sessions() as db:
+        result = await db.execute(
+            update(AccountExport)
+            .where(_owned(claim))
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+    return (result.rowcount or 0) == 1
+
+
+async def _row_exists(sessions: Sessions, export_id: uuid.UUID) -> bool:
+    async with sessions() as db:
+        found = await db.scalar(
+            select(AccountExport.id).where(AccountExport.id == export_id)
+        )
+        await db.rollback()
+    return found is not None
 
 
 def _error_code(exc: Exception) -> str:
@@ -222,35 +290,26 @@ def _error_code(exc: Exception) -> str:
         return f"storage_{exc.operation}_{exc.status or 'unreachable'}"
     if isinstance(exc, EmailError):
         return f"email_{exc.status or 'unreachable'}"
-    return "build_failed"
+    return "unexpected_error"
 
 
-async def _attempt(
-    sessions: Sessions,
-    export_id: uuid.UUID,
-    storage: ObjectStorage,
-    email_transport: httpx.AsyncBaseTransport | None,
-) -> bool:
-    """One try; True when delivered (or nothing is left to deliver)."""
+async def _prepare(
+    sessions: Sessions, claim: Claim, user_id: uuid.UUID, storage: ObjectStorage
+) -> tuple[str, datetime] | None:
+    """Build, upload and sign the file, then record the link and move the row
+    to ``emailing`` (fenced). Returns the link and its expiry, or ``None``
+    when this attempt no longer holds the row."""
     async with sessions() as db:
-        export = await db.get(AccountExport, export_id)
-        user = await db.get(User, export.user_id) if export else None
-        if export is None or user is None:
-            return True  # the account (and its row) went away
-        document = await account_export.build(db, user.id)
-        to, locale = user.email, export.locale
+        document = await account_export.build(db, user_id)
         await db.rollback()
     data = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode()
-    path = object_path(export_id)
+    path = object_path(claim.id)
     await storage.upload(path, data, CONTENT_TYPE)
-    async with sessions() as db:
-        export = await db.get(AccountExport, export_id)
-        if export is None:
-            await storage.delete([path])
-            return True
-        export.object_path = path
-        export.size_bytes = len(data)
-        await db.commit()
+    # Recorded at once, so a later failure (signing) can still delete it.
+    if not await _fenced_update(
+        sessions, claim, object_path=path, size_bytes=len(data)
+    ):
+        return await _lost(sessions, claim, path, storage)
     signed_at = utcnow()
     url = await storage.signed_url(
         path,
@@ -258,86 +317,162 @@ async def _attempt(
         download_name=f"bookshelf-export-{signed_at:%Y-%m-%d}.json",
     )
     expires_at = signed_at + LINK_TTL
-    message = export_email.render(locale, to, url, expires_at)
-    await email.send(
-        message,
-        idempotency_key=f"account-export-{export_id}",
-        transport=email_transport,
+    # From this commit on an email may go out, so the file is kept until
+    # expires_at whatever happens next.
+    if await _fenced_update(
+        sessions,
+        claim,
+        status=STATUS_EMAILING,
+        delivery_url=url,
+        expires_at=expires_at,
+    ):
+        return url, expires_at
+    return await _lost(sessions, claim, path, storage)
+
+
+async def _lost(
+    sessions: Sessions, claim: Claim, path: str, storage: ObjectStorage
+) -> None:
+    """This attempt no longer holds the row. Another attempt writes the same
+    path, so the file is left alone unless the row is gone with its account."""
+    if not await _row_exists(sessions, claim.id):
+        await storage.delete([path])
+
+
+async def _send(
+    claim: Claim,
+    message: email.Message,
+    transport: httpx.AsyncBaseTransport | None,
+) -> None:
+    """Send the email once per export: the same key and the same payload on
+    every retry, so Resend sends it once. A 409 for a key it accepted with a
+    different payload (the address changed meanwhile) means the first one
+    went out."""
+    try:
+        await email.send(
+            message, idempotency_key=f"account-export-{claim.id}", transport=transport
+        )
+    except EmailError as exc:
+        if exc.code != email.KEY_ALREADY_USED:
+            raise
+        logger.info(
+            "account_export: email already sent under this key (export_id=%s)",
+            claim.id,
+        )
+
+
+async def _mark_ready(sessions: Sessions, claim: Claim) -> bool:
+    return await _fenced_update(
+        sessions,
+        claim,
+        status=STATUS_READY,
+        completed_at=utcnow(),
+        claimed_at=None,
+        error_code=None,
     )
+
+
+async def _attempt(
+    sessions: Sessions,
+    claim: Claim,
+    storage: ObjectStorage,
+    email_transport: httpx.AsyncBaseTransport | None,
+) -> bool:
+    """One try. True when this attempt delivered the export; False when there
+    is nothing left for it to do (the row went away, or another attempt holds
+    it). Raises on a storage, email or build failure."""
     async with sessions() as db:
-        export = await db.get(AccountExport, export_id)
-        if export is not None:
-            export.status = STATUS_READY
-            export.completed_at = utcnow()
-            export.expires_at = expires_at
-            export.claimed_at = None
-            export.error_code = None
-            await db.commit()
-    return True
+        export = await db.get(AccountExport, claim.id)
+        user = await db.get(User, export.user_id) if export else None
+        if export is None or user is None:
+            return False  # the account (and its row) went away
+        to, locale, user_id = user.email, export.locale, user.id
+        url, expires_at = export.delivery_url, export.expires_at
+        await db.rollback()
+    if url is None or expires_at is None:
+        prepared = await _prepare(sessions, claim, user_id, storage)
+        if prepared is None:
+            return False
+        url, expires_at = prepared
+    await _send(
+        claim, export_email.render(locale, to, url, expires_at), email_transport
+    )
+    return await _mark_ready(sessions, claim)
 
 
 async def _record_failure(
-    sessions: Sessions, export_id: uuid.UUID, code: str, storage: ObjectStorage
+    sessions: Sessions, claim: Claim, code: str, storage: ObjectStorage
 ) -> None:
+    """Record a failed try, fenced on ``claim``: a stale attempt changes
+    nothing. Before the link was recorded the row goes back to ``pending``;
+    an ``emailing`` row stays ``emailing``; either waits out the lease. The
+    last attempt marks it ``failed`` and deletes the file only if no email
+    can have gone out."""
     async with sessions() as db:
-        export = await db.get(AccountExport, export_id, with_for_update=True)
+        export = await db.scalar(
+            select(AccountExport).where(_owned(claim)).with_for_update()
+        )
         if export is None:
+            await db.rollback()
             return
         export.error_code = code
         final = export.attempts >= MAX_ATTEMPTS
+        emailing = export.status == STATUS_EMAILING
         user_id, path = export.user_id, export.object_path
         if final:
             export.status = STATUS_FAILED
             export.claimed_at = None
-        else:
-            # Back in the queue; claimed_at stays, so it waits out the lease.
+        elif not emailing:
             export.status = STATUS_PENDING
         await db.commit()
-    if final:
-        logger.error(
-            "account_export: failed for good (export_id=%s user_id=%s code=%s)",
-            export_id,
-            user_id,
-            code,
-        )
-        if path:
-            try:
-                await storage.delete([path])
-            except StorageError:
-                logger.warning(
-                    "account_export: could not delete a failed export's object "
-                    "(export_id=%s); the purge retries",
-                    export_id,
-                )
+    if not final:
+        return
+    logger.error(
+        "account_export: failed for good (export_id=%s user_id=%s code=%s)",
+        claim.id,
+        user_id,
+        code,
+    )
+    if path and not emailing:
+        try:
+            await storage.delete([path])
+        except StorageError:
+            logger.warning(
+                "account_export: could not delete a failed export's object "
+                "(export_id=%s); the purge retries",
+                claim.id,
+            )
 
 
 async def process(
-    export_id: uuid.UUID,
+    claim: Claim,
     storage: ObjectStorage,
     *,
     sessions: Sessions = JobSessionLocal,
     email_transport: httpx.AsyncBaseTransport | None = None,
 ) -> bool:
-    """Deliver one claimed export; True on success. Never raises except
-    ``asyncio.CancelledError``."""
+    """Deliver one claimed export; True when this attempt delivered it. Never
+    raises except ``asyncio.CancelledError`` (which leaves the row to be
+    taken over after the lease)."""
     try:
-        await _attempt(sessions, export_id, storage, email_transport)
+        delivered = await _attempt(sessions, claim, storage, email_transport)
     except (StorageError, EmailError) as exc:
         code = _error_code(exc)
         logger.warning(
-            "account_export: attempt failed (export_id=%s code=%s)", export_id, code
+            "account_export: attempt failed (export_id=%s code=%s)", claim.id, code
         )
     except Exception:
-        code = "build_failed"
-        logger.exception("account_export: attempt failed (export_id=%s)", export_id)
+        code = "unexpected_error"
+        logger.exception("account_export: attempt failed (export_id=%s)", claim.id)
     else:
-        logger.info("account_export: delivered (export_id=%s)", export_id)
-        return True
+        if delivered:
+            logger.info("account_export: delivered (export_id=%s)", claim.id)
+        return delivered
     try:
-        await _record_failure(sessions, export_id, code, storage)
+        await _record_failure(sessions, claim, code, storage)
     except Exception:
         logger.exception(
-            "account_export: could not record a failure (export_id=%s)", export_id
+            "account_export: could not record a failure (export_id=%s)", claim.id
         )
     return False
 
@@ -356,11 +491,11 @@ async def process_pending(
     tried = 0
     for _ in range(MAX_PER_PASS):
         async with sessions() as db:
-            export_id = await claim_next(db)
-        if export_id is None:
+            claim = await claim_next(db)
+        if claim is None:
             break
         await process(
-            export_id, storage, sessions=sessions, email_transport=email_transport
+            claim, storage, sessions=sessions, email_transport=email_transport
         )
         tried += 1
     return tried
@@ -395,6 +530,8 @@ def _expired_condition(now: datetime):
         and_(
             AccountExport.status != STATUS_READY,
             AccountExport.created_at < now - STALE_AFTER,
+            # An email may have gone out: keep the file while its link works.
+            or_(AccountExport.expires_at.is_(None), AccountExport.expires_at < now),
         ),
     )
 

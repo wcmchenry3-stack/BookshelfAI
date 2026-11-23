@@ -156,6 +156,27 @@ Zone has Bot Fight Mode enabled — it 403s GitHub Actions runner IPs (Azure ran
 
 With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client IP from a single valid `CF-Connecting-IP` header so slowapi keys rate limits by the real client, not Cloudflare's edge IP. `ORIGIN_AUTH_SECRET` turns on the origin lockdown, so only requests that came through the edge (plus `/health`) reach the API. See [security.md → Client IP and origin lockdown](security.md#client-ip-and-origin-lockdown).
 
+## Supabase Storage (account export files)
+
+**Role:** private storage of the "Export my data" files (#694): one JSON document per request at `exports/<export id>.json` in the bucket `account-exports` (`EXPORT_BUCKET`) of the same Supabase project as the database. Users download through a signed URL valid 7 days; nothing else reads the bucket. #874 (debug photos) will reuse the client.
+
+**Client:** `backend/app/services/object_storage.py` (`ObjectStorage`: `upload` with `x-upsert`, `signed_url`, bulk `delete`, `list`) over the Storage REST API (`<SUPABASE_URL>/storage/v1`) with httpx; no Supabase SDK.
+**Settings:** `SUPABASE_URL` (https, nothing after the host), `SUPABASE_SERVICE_ROLE_KEY` (secret, env only, sent only to `SUPABASE_URL`, never logged), `EXPORT_BUCKET` (default `account-exports`, must be private). Either of the first two unset = `from_settings()` is `None` = the export is off (`POST /account/export` answers 503 `export_not_configured`). Owner setup: [`RENDER.md`](RENDER.md#account-export-storage-supabase-storage-694).
+**Failure behaviour:** 15 s timeout per request, 3 tries (a transport error, a timeout, a 429 or a 5xx is retried after 0.5 s, then 1 s; any other status is final), then `StorageError` carrying the operation and status only (never the URL, the key or a token). The export worker records it as `storage_<operation>_<status>` and retries the export after its 10-minute lease, at most 3 attempts; the daily purge keeps rows whose file it could not delete for the next run.
+**Limits:** at most one export per user per 24 h (failed ones excepted), each about 1.4 MB per 1,000 books, kept 7 days; a bulk delete takes at most 1,000 paths and the purge sends at most 100 per call. Storage use against the plan: [`storage-and-retention.md`](storage-and-retention.md#account-export-files-supabase-storage).
+**Tests:** `httpx.MockTransport` only (`tests/unit/test_object_storage.py`; a fake bucket with signed-token expiry in `tests/integration/test_account_export_db.py`).
+
+## Resend (transactional email)
+
+**Role:** sends the account export's link (#694), from `Bookshelf <EMAIL_FROM>` on the verified domain `mail.buffingchi.com`, `Reply-To: EMAIL_REPLY_TO` (#678). The first email the backend sends; account deletion (#291) will reuse the sender.
+
+**Client:** `backend/app/services/email.py` (`send(Message, idempotency_key=...)`), `POST https://api.resend.com/emails` with httpx, HTML and text bodies. Localised strings: `backend/app/email_locales/<locale>.json` (the app's 13 locales).
+**Settings:** `RESEND_API_KEY` (secret, env only; unset = `email.configured()` false = the export is off), `EMAIL_FROM` (default `noreply@mail.buffingchi.com`), `EMAIL_REPLY_TO`. Domain and key setup: [`RENDER.md`](RENDER.md#email-resend).
+**Idempotency:** every send carries `Idempotency-Key: account-export-<export id>`. Resend answers a repeat with the same key and payload within 24 hours with the first response and sends nothing; the same key with a different payload is `409 invalid_idempotent_request`, which the worker reads as "already sent". The worker records the signed link before the first send and rebuilds the identical email on a retry, so an email whose response was lost is never sent twice.
+**Failure behaviour:** 15 s timeout, the same 3 tries as storage, then `EmailError` with the status and Resend's error `name` only (never the address, the subject or a body). The export stays `emailing` and is retried after the lease.
+**Limits:** one email per export, at most one export per user per day. Resend's own rate and monthly limits depend on the plan; at this volume they are not reached.
+**Tests:** `httpx.MockTransport` only (`tests/unit/test_email_service.py`; a fake honouring `Idempotency-Key` in `tests/integration/test_account_export_db.py`).
+
 ## Render
 
 **Role:** backend hosting (FastAPI + Postgres). Auto-deploys from the `dev` branch.
@@ -182,6 +203,7 @@ With `TRUSTED_PROXY_MODE=cloudflare`, `app/core/client_ip.py` takes the client I
 - `ALLOWED_EMAILS`
 - `ANTHROPIC_API_KEY`
 - `GOOGLE_BOOKS_API_KEY`
+- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (account export storage, #694) and `RESEND_API_KEY` (email)
 - `SENTRY_DSN`
 - `TURNSTILE_SECRET_KEY`
 

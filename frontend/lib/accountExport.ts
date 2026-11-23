@@ -55,6 +55,19 @@ export function exportLocale(language: string | undefined): string {
   return base && SERVER_LOCALES.includes(base) ? base : 'en';
 }
 
+/** `detail.retry_after` (seconds) of a cap refusal, in ms, when it is a number. */
+function bodyRetryAfterMs(err: unknown): number | undefined {
+  const data = (err as { response?: { data?: { detail?: unknown } } } | null)?.response?.data;
+  const seconds = (data?.detail as { retry_after?: unknown } | null | undefined)?.retry_after;
+  return typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0
+    ? seconds * 1000
+    : undefined;
+}
+
+/**
+ * Hours until the next export: from `Retry-After`, else the body's
+ * `retry_after` (a proxy may drop the header), else the whole window.
+ */
 function hoursUntil(retryAfterMs: number | undefined): number {
   if (retryAfterMs === undefined || !Number.isFinite(retryAfterMs)) return CAP_WINDOW_HOURS;
   return Math.max(1, Math.ceil(retryAfterMs / HOUR_MS));
@@ -71,7 +84,7 @@ export async function requestAccountExport(
     if (isIdempotencyOutcomeUnknown(err)) return { kind: 'queued' };
     const { status, code, retryAfterMs } = toApiError(err);
     if (status === 409 && code === 'export_limit') {
-      return { kind: 'limited', hours: hoursUntil(retryAfterMs) };
+      return { kind: 'limited', hours: hoursUntil(retryAfterMs ?? bodyRetryAfterMs(err)) };
     }
     if (status === 503 && code === 'export_not_configured') return { kind: 'unavailable' };
     return { kind: 'failed' };

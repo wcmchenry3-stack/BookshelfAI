@@ -91,3 +91,31 @@ def test_configured_follows_the_api_key():
     assert email.configured()
     with patch.object(settings, "resend_api_key", ""):
         assert not email.configured()
+
+
+@pytest.mark.parametrize(
+    ("reply", "code"),
+    [
+        (
+            httpx.Response(409, json={"name": "invalid_idempotent_request"}),
+            "invalid_idempotent_request",
+        ),
+        (httpx.Response(409, json={"name": 3}), None),
+        (httpx.Response(409, json=["not", "an", "object"]), None),
+        (httpx.Response(409, content=b"<html>"), None),
+        (httpx.Response(409, json={"name": "x" * 65}), None),
+    ],
+)
+async def test_the_error_carries_resends_name_only(reply, code):
+    transport, _ = _transport(reply)
+    with pytest.raises(EmailError) as exc_info:
+        await email.send(MESSAGE, idempotency_key="k", transport=transport)
+    assert (exc_info.value.status, exc_info.value.code) == (409, code)
+    assert email.KEY_ALREADY_USED == "invalid_idempotent_request"
+
+
+async def test_a_transport_failure_has_no_name():
+    transport, _ = _transport(*(httpx.ReadTimeout("slow") for _ in range(3)))
+    with pytest.raises(EmailError) as exc_info:
+        await email.send(MESSAGE, idempotency_key="k", transport=transport)
+    assert exc_info.value.code is None

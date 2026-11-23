@@ -162,15 +162,31 @@ class FakeSupabase:
 
 @dataclass
 class FakeResend:
+    """Resend as it treats ``Idempotency-Key``: the first request with a key
+    is sent (``sent``); the same key with the same payload is answered with
+    the first response and sends nothing; the same key with another payload
+    is ``409 invalid_idempotent_request``. ``status`` refuses before that;
+    ``timeout_after_accept`` sends (or dedupes) and then times out, as when
+    the response is lost."""
+
     sent: list[dict] = field(default_factory=list)
+    keys: dict[str, bytes] = field(default_factory=dict)
     status: int = 200
+    timeout_after_accept: bool = False
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.status != 200:
             return httpx.Response(self.status)
-        self.sent.append(
-            {"key": request.headers["idempotency-key"], **json.loads(request.content)}
-        )
+        key = request.headers["idempotency-key"]
+        if key in self.keys and self.keys[key] != request.content:
+            return httpx.Response(
+                409, json={"statusCode": 409, "name": "invalid_idempotent_request"}
+            )
+        if key not in self.keys:
+            self.keys[key] = request.content
+            self.sent.append({"key": key, **json.loads(request.content)})
+        if self.timeout_after_accept:
+            raise httpx.ReadTimeout("response lost")
         return httpx.Response(200, json={"id": f"email-{len(self.sent)}"})
 
     def transport(self) -> httpx.MockTransport:
@@ -542,7 +558,9 @@ async def test_an_email_failure_is_retried_and_sends_once(env, monkeypatch):
     _at(monkeypatch, env, start)
     await env.run_worker()
     (row,) = await _exports(env.factory, uid)
-    assert (row.status, row.error_code) == ("pending", "email_500")
+    # The link was recorded before the send: the row waits as emailing.
+    assert (row.status, row.error_code) == ("emailing", "email_500")
+    assert row.delivery_url and row.object_path in env.supabase.objects
     env.resend.status = 200
     _at(monkeypatch, env, start + account_export_jobs.LEASE + timedelta(seconds=1))
     await env.run_worker()
@@ -611,7 +629,7 @@ async def test_two_workers_never_claim_the_same_row(env):
         async with env.factory() as db:
             return await account_export_jobs.claim_next(db)
 
-    claimed = [c for c in await asyncio.gather(*(claim() for _ in range(6))) if c]
+    claimed = [c.id for c in await asyncio.gather(*(claim() for _ in range(6))) if c]
     assert len(claimed) == len(set(claimed)) >= 3
 
 
@@ -619,11 +637,11 @@ async def test_an_account_deleted_before_its_export_ran(env):
     uid, auth = await env.make_user()
     await env.client.post("/account/export", headers=auth)
     async with env.factory() as db:
-        export_id = await account_export_jobs.claim_next(db)
+        claim = await account_export_jobs.claim_next(db)
         await db.execute(delete(User).where(User.id == uid))
         await db.commit()
-    assert await account_export_jobs.process(
-        export_id, env.supabase.storage(), sessions=env.factory
+    assert not await account_export_jobs.process(
+        claim, env.supabase.storage(), sessions=env.factory
     )
     assert env.supabase.objects == {} and env.resend.sent == []
 
@@ -882,3 +900,196 @@ def _half_applied(connection) -> None:
 
 async def test_migration_0034_resumes_after_a_half_applied_upgrade():
     await run_rolled_back(_half_applied)
+
+
+# ── Durable, idempotent delivery (review round 1) ────────────────────────────
+
+
+async def _queued(env) -> tuple[uuid.UUID, dict]:
+    uid, auth = await env.make_user()
+    resp = await env.client.post("/account/export", headers=auth)
+    assert resp.status_code == 202, resp.text
+    return uid, auth
+
+
+def _after_lease(monkeypatch, env, start: datetime, n: int = 1) -> None:
+    _at(
+        monkeypatch, env, start + (account_export_jobs.LEASE + timedelta(seconds=1)) * n
+    )
+
+
+async def _assert_delivered_once(env, uid) -> None:
+    (row,) = await _exports(env.factory, uid)
+    assert row.status == "ready", (row.status, row.error_code)
+    assert len(env.resend.sent) == 1
+    link = _link(env.resend.sent[0])
+    assert link == row.delivery_url
+    assert env.supabase.download(link) == 200
+
+
+async def test_email_accepted_but_the_final_commit_fails(env, monkeypatch):
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    real = account_export_jobs._mark_ready
+
+    async def lost_commit(*_a, **_k):
+        raise OSError("connection reset during commit")
+
+    monkeypatch.setattr(account_export_jobs, "_mark_ready", lost_commit)
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert (row.status, row.error_code) == ("emailing", "unexpected_error")
+    assert len(env.resend.sent) == 1
+
+    monkeypatch.setattr(account_export_jobs, "_mark_ready", real)
+    _after_lease(monkeypatch, env, start)
+    assert await env.run_worker() == 1
+    await _assert_delivered_once(env, uid)
+
+
+async def test_email_accepted_but_every_try_times_out(env, monkeypatch):
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    env.resend.timeout_after_accept = True
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert (row.status, row.error_code) == ("emailing", "email_unreachable")
+    assert len(env.resend.sent) == 1
+
+    env.resend.timeout_after_accept = False
+    _after_lease(monkeypatch, env, start)
+    await env.run_worker()
+    await _assert_delivered_once(env, uid)
+
+
+async def test_cancelled_between_the_send_and_the_commit(env, monkeypatch):
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    real = account_export_jobs._mark_ready
+
+    async def shutdown(*_a, **_k):
+        raise asyncio.CancelledError  # SIGTERM: the task is cancelled
+
+    monkeypatch.setattr(account_export_jobs, "_mark_ready", shutdown)
+    with pytest.raises(asyncio.CancelledError):
+        await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert row.status == "emailing" and row.claimed_at is not None
+
+    monkeypatch.setattr(account_export_jobs, "_mark_ready", real)
+    _after_lease(monkeypatch, env, start)
+    await env.run_worker()
+    await _assert_delivered_once(env, uid)
+
+
+async def test_a_changed_address_after_the_send_counts_as_sent(env, monkeypatch):
+    """Resend refuses the key with a different payload (409): the first
+    email went out, so the row is ready and nothing more is sent."""
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    env.resend.timeout_after_accept = True
+    await env.run_worker()
+    env.resend.timeout_after_accept = False
+    async with env.factory() as db:
+        user = await db.get(User, uid)
+        user.email = f"new-{uid}@example.com"
+        await db.commit()
+    _after_lease(monkeypatch, env, start)
+    await env.run_worker()
+    await _assert_delivered_once(env, uid)
+    assert env.resend.sent[0]["to"] == [f"{uid}@example.com"]
+
+
+async def test_failing_for_good_after_the_link_was_recorded_keeps_the_file(
+    env, monkeypatch
+):
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    env.resend.status = 500
+    for n in range(account_export_jobs.MAX_ATTEMPTS):
+        _after_lease(monkeypatch, env, start, n)
+        await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert row.status == "failed"
+    assert row.object_path in env.supabase.objects  # kept until expires_at
+
+    async with env.factory() as db:
+        await account_export_jobs.purge_expired(
+            db, env.supabase.storage(), start + timedelta(days=7, hours=-1)
+        )
+    assert row.object_path in env.supabase.objects
+    async with env.factory() as db:
+        await account_export_jobs.purge_expired(
+            db, env.supabase.storage(), row.expires_at + timedelta(seconds=1)
+        )
+    assert row.object_path not in env.supabase.objects
+    assert await _exports(env.factory, uid) == []
+
+
+async def test_a_stale_attempt_cannot_touch_a_row_another_attempt_finished(
+    env, monkeypatch
+):
+    """Fencing: attempt A's lease runs out, B takes the row over and
+    delivers it; A, still running, can neither fail, reopen, finish nor
+    delete anything."""
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    async with env.factory() as db:
+        stale = await account_export_jobs.claim_next(db, start)
+    async with env.factory() as db:
+        fresh = await account_export_jobs.claim_next(
+            db, start + account_export_jobs.LEASE + timedelta(seconds=1)
+        )
+    assert stale.id == fresh.id and stale.claimed_at != fresh.claimed_at
+    assert await account_export_jobs.process(
+        fresh,
+        env.supabase.storage(),
+        sessions=env.factory,
+        email_transport=env.resend.transport(),
+    )
+    (done,) = await _exports(env.factory, uid)
+
+    # A's failure is not recorded, and the file is not deleted.
+    await account_export_jobs._record_failure(
+        env.factory, stale, "storage_upload_500", env.supabase.storage()
+    )
+    # A's delivery cannot record a link or send a second email.
+    assert not await account_export_jobs.process(
+        stale,
+        env.supabase.storage(),
+        sessions=env.factory,
+        email_transport=env.resend.transport(),
+    )
+    (row,) = await _exports(env.factory, uid)
+    assert (row.status, row.error_code) == ("ready", None)
+    assert row.delivery_url == done.delivery_url
+    assert done.object_path in env.supabase.objects
+    assert len(env.resend.sent) == 1
+
+
+async def test_a_failed_export_does_not_count_toward_the_cap(env):
+    uid, auth = await env.make_user()
+    async with env.factory() as db:
+        db.add(AccountExport(user_id=uid, locale="en", status="failed"))
+        await db.commit()
+    resp = await env.client.post("/account/export", headers=auth)
+    assert resp.status_code == 202, resp.text
+    again = await env.client.post("/account/export", headers=auth)
+    assert again.status_code == 409
+
+
+async def test_a_replayed_cap_refusal_keeps_retry_after(env):
+    _, auth = await env.make_user()
+    assert (await env.client.post("/account/export", headers=auth)).status_code == 202
+    keyed = {**auth, HEADER: str(uuid.uuid4())}
+    first = await env.client.post("/account/export", headers=keyed)
+    replay = await env.client.post("/account/export", headers=keyed)
+    assert first.status_code == replay.status_code == 409
+    assert replay.headers[REPLAYED_HEADER] == "true"
+    assert replay.headers["retry-after"] == first.headers["retry-after"]
+    assert replay.json() == first.json()

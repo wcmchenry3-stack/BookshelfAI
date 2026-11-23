@@ -266,6 +266,7 @@ SECTIONS: dict[str, Section] = {
             "attempts": "internal worker state",
             "claimed_at": "internal worker state",
             "object_path": "internal storage location",
+            "delivery_url": "the signed link itself, a credential (it was emailed)",
             "size_bytes": "internal",
             "error_code": "internal worker state",
         },

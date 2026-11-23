@@ -14,7 +14,8 @@ release never reads or writes it.
                   deletion #291 deletes it, and the daily storage sweep
                   removes any object older than 8 days)
     status        VARCHAR(16) NOT NULL DEFAULT 'pending', CHECK
-                  ``ck_account_exports_status``: pending, running, ready,
+                  ``ck_account_exports_status``: pending, running, emailing
+                  (link recorded, the email may have gone out), ready,
                   failed
     locale        VARCHAR(16) NOT NULL, the language of the email
     attempts      SMALLINT NOT NULL DEFAULT 0, CHECK
@@ -23,13 +24,16 @@ release never reads or writes it.
     completed_at  TIMESTAMPTZ
     object_path   VARCHAR(255), the object inside the private bucket
     size_bytes    BIGINT, the JSON document's size
+    delivery_url  TEXT, the signed link (a credential until expires_at),
+                  kept so a retry re-sends the identical email
     expires_at    TIMESTAMPTZ, when the signed link stops working
     error_code    VARCHAR(64), a fixed code, never a message
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 
   Indexes: ``ix_account_exports_user_created`` (user_id, created_at) for the
   one-a-day cap and the cascade scan; ``ix_account_exports_open``
-  (created_at) WHERE status IN ('pending', 'running') for the worker;
+  (created_at) WHERE status IN ('pending', 'running', 'emailing') for the
+  worker;
   ``ix_account_exports_expires_at`` for the 7-day purge.
 
 - RLS enabled, no policies (#677), like every table.
@@ -68,13 +72,13 @@ _APP_ROLE = "bookshelf_app"
 _LOCK_TIMEOUT = "5s"
 # Kept literal (not imported from the model) so the migration stays what it
 # was when written.
-_STATUSES = ("pending", "running", "ready", "failed")
+_STATUSES = ("pending", "running", "emailing", "ready", "failed")
 _INDEXES = (
     ("ix_account_exports_user_created", ["user_id", "created_at"], None),
     (
         "ix_account_exports_open",
         ["created_at"],
-        "status IN ('pending', 'running')",
+        "status IN ('pending', 'running', 'emailing')",
     ),
     ("ix_account_exports_expires_at", ["expires_at"], None),
 )
@@ -97,6 +101,7 @@ def _create_table() -> None:
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("object_path", sa.String(255), nullable=True),
         sa.Column("size_bytes", sa.BigInteger, nullable=True),
+        sa.Column("delivery_url", sa.Text, nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error_code", sa.String(64), nullable=True),
         sa.Column(

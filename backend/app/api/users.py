@@ -9,7 +9,8 @@ from the access token (``get_current_user``), never from the request. ``GET
 ``POST /account/export`` (``account_router``) queues an export and answers
 ``202``; the worker (``app/services/account_export_jobs.py``) builds the JSON
 file and emails a link valid for 7 days to the account's address. One export
-per user per 24 hours: a second request inside the window is ``409`` with
+per user per 24 hours (a failed one does not count): a second request
+inside the window is ``409`` with
 ``{"code": "export_limit", "retry_after": <seconds>}`` and ``Retry-After``
 (409, not 429, so the app's retry layer leaves it alone). Until Supabase
 Storage and Resend are configured it is ``503 export_not_configured``. The

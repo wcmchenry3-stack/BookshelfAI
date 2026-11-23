@@ -23,11 +23,16 @@ _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 class RequestFailed(Exception):
     """Every try failed. ``status`` is the last HTTP status, or ``None`` when
-    the last try got no response (transport error, timeout)."""
+    the last try got no response (transport error, timeout). ``response`` is
+    that last response, for a caller that reads a machine code from it;
+    never log it."""
 
-    def __init__(self, status: int | None) -> None:
+    def __init__(
+        self, status: int | None, response: httpx.Response | None = None
+    ) -> None:
         super().__init__(f"request failed (status={status})")
         self.status = status
+        self.response = response
 
 
 async def send_with_retries(
@@ -35,12 +40,14 @@ async def send_with_retries(
 ) -> httpx.Response:
     """The first 2xx response, or :class:`RequestFailed`."""
     status: int | None = None
+    last: httpx.Response | None = None
     for attempt in range(1, ATTEMPTS + 1):
         try:
             resp = await client.request(method, url, **kwargs)
         except httpx.HTTPError as exc:
-            status, retry, reason = None, True, type(exc).__name__
+            status, retry, reason, last = None, True, type(exc).__name__, None
         else:
+            last = resp
             if resp.is_success:
                 return resp
             status = resp.status_code
@@ -49,4 +56,4 @@ async def send_with_retries(
             break
         logger.warning("%s: retry %d/%d (%s)", label, attempt, ATTEMPTS - 1, reason)
         await asyncio.sleep(BACKOFF_S * 2 ** (attempt - 1))
-    raise RequestFailed(status)
+    raise RequestFailed(status, last)

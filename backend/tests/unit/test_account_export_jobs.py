@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy.sql.dml import Update
 
 from app.core.config import settings
 from app.models.account_export import AccountExport
@@ -40,12 +41,18 @@ def _fast(monkeypatch):
 
 
 class Session:
-    """Scripted answers; records commits, rollbacks and executed statements."""
+    """Scripted answers; records commits, rollbacks and executed statements.
 
-    def __init__(self, *, get=None, scalars=(), results=()):
+    A fenced ``UPDATE`` of ``account_exports`` applies its values to the
+    ``AccountExport`` object in ``get`` while ``owned`` is true (the attempt
+    still holds the row) and reports one row; otherwise none. ``scalar`` on
+    the export entity returns that object while owned, on its id the id."""
+
+    def __init__(self, *, get=None, scalars=(), results=(), owned=True):
         self.objects = get or {}
         self.scalars = list(scalars)
         self.results = list(results)
+        self.owned = owned
         self.executed = []
         self.commits = 0
         self.rollbacks = 0
@@ -54,11 +61,25 @@ class Session:
     async def get(self, model, _pk, **_kw):
         return self.objects.get(model)
 
-    async def scalar(self, _stmt):
-        return self.scalars.pop(0) if self.scalars else None
+    async def scalar(self, stmt):
+        if self.scalars:
+            return self.scalars.pop(0)
+        export = self.objects.get(AccountExport)
+        if export is None:
+            return None
+        if stmt.column_descriptions[0]["expr"] is AccountExport:
+            return export if self.owned else None
+        return export.id
 
     async def execute(self, stmt):
         self.executed.append(stmt)
+        if isinstance(stmt, Update):
+            export = self.objects.get(AccountExport)
+            if export is None or not self.owned:
+                return MagicMock(rowcount=0)
+            for column, bind in stmt._values.items():
+                setattr(export, column.key, bind.value)
+            return MagicMock(rowcount=1)
         return self.results.pop(0) if self.results else MagicMock(rowcount=0)
 
     async def commit(self):
@@ -125,12 +146,12 @@ class Storage:
         )
 
 
-def resend(status=200):
+def resend(status=200, body=None):
     sent = []
 
     def handler(request):
         sent.append(json.loads(request.content))
-        return httpx.Response(status)
+        return httpx.Response(status, json=body)
 
     return httpx.MockTransport(handler), sent
 
@@ -145,6 +166,8 @@ def _export(**kw) -> AccountExport:
         "claimed_at": NOW,
         "created_at": NOW,
         "object_path": None,
+        "delivery_url": None,
+        "expires_at": None,
         "error_code": None,
     }
     values.update(kw)
@@ -200,9 +223,15 @@ def test_object_path_has_no_user_id():
 async def test_claim_takes_the_oldest_open_row():
     row = _export(status="pending", attempts=0, claimed_at=None)
     db = Session(scalars=[row])
-    assert await jobs.claim_next(db) == row.id
+    assert await jobs.claim_next(db) == jobs.Claim(row.id, NOW)
     assert (row.status, row.attempts, row.claimed_at) == ("running", 1, NOW)
     assert db.commits == 1
+
+
+async def test_claim_keeps_an_emailing_row_emailing():
+    row = _export(status="emailing", attempts=1, claimed_at=NOW - timedelta(hours=1))
+    assert await jobs.claim_next(Session(scalars=[row])) == jobs.Claim(row.id, NOW)
+    assert (row.status, row.attempts) == ("emailing", 2)
 
 
 async def test_claim_fails_an_exhausted_row_and_moves_on(caplog):
@@ -225,71 +254,154 @@ async def test_claim_fails_an_exhausted_row_and_moves_on(caplog):
 # ── Delivery and failures ────────────────────────────────────────────────────
 
 
-async def test_process_uploads_signs_emails_and_marks_ready(built):
+def _claim(export) -> jobs.Claim:
+    return jobs.Claim(export.id, export.claimed_at)
+
+
+def _db(export, **kw) -> Session:
+    return Session(get={AccountExport: export, User: _user(export.user_id)}, **kw)
+
+
+async def test_process_uploads_signs_records_emails_and_marks_ready(built):
     export = _export()
-    db = Session(get={AccountExport: export, User: _user(export.user_id)})
+    db = _db(export)
     storage = Storage()
     transport, sent = resend()
     assert await jobs.process(
-        export.id, storage.client(), sessions=sessions_of(db), email_transport=transport
+        _claim(export),
+        storage.client(),
+        sessions=sessions_of(db),
+        email_transport=transport,
     )
     assert storage.uploaded == [b'{"schema_version":1}']
     assert export.status == "ready" and export.expires_at == NOW + jobs.LINK_TTL
     assert export.object_path == jobs.object_path(export.id)
     assert export.size_bytes == len(storage.uploaded[0])
+    assert export.delivery_url.startswith("https://x.supabase.co/storage/v1/")
+    assert (export.completed_at, export.claimed_at) == (NOW, None)
     assert sent[0]["to"] == ["reader@example.com"]
+    assert export.delivery_url in sent[0]["text"]
     assert "download=bookshelf-export-2026-11-23.json" in sent[0]["text"]
+
+
+async def test_an_emailing_row_resends_the_recorded_link_without_rebuilding(
+    monkeypatch,
+):
+    build = AsyncMock()
+    monkeypatch.setattr(account_export, "build", build)
+    url = "https://x.supabase.co/storage/v1/object/sign/b/x?token=recorded"
+    export = _export(
+        status="emailing", delivery_url=url, expires_at=NOW + timedelta(days=6)
+    )
+    storage = Storage()
+    transport, sent = resend()
+    assert await jobs.process(
+        _claim(export),
+        storage.client(),
+        sessions=sessions_of(_db(export)),
+        email_transport=transport,
+    )
+    build.assert_not_awaited()
+    assert storage.uploaded == []
+    assert url in sent[0]["text"]
+    assert export.status == "ready"
+
+
+async def test_a_reused_key_means_the_email_already_went_out(built, caplog):
+    export = _export(status="emailing", delivery_url="https://x/s?t=1", expires_at=NOW)
+    transport, _ = resend(409, {"name": "invalid_idempotent_request"})
+    with caplog.at_level("INFO"):
+        assert await jobs.process(
+            _claim(export),
+            Storage().client(),
+            sessions=sessions_of(_db(export)),
+            email_transport=transport,
+        )
+    assert export.status == "ready"
+    assert "already sent" in caplog.text
+
+
+async def test_another_409_from_resend_is_a_failure(built):
+    export = _export(status="emailing", delivery_url="https://x/s?t=1", expires_at=NOW)
+    transport, _ = resend(409, {"name": "concurrent_idempotent_requests"})
+    assert not await jobs.process(
+        _claim(export),
+        Storage().client(),
+        sessions=sessions_of(_db(export)),
+        email_transport=transport,
+    )
+    assert (export.status, export.error_code) == ("emailing", "email_409")
 
 
 async def test_nothing_to_do_when_the_row_or_user_is_gone(built):
     storage = Storage()
-    assert await jobs.process(
-        uuid.uuid4(), storage.client(), sessions=sessions_of(Session())
+    claim = jobs.Claim(uuid.uuid4(), NOW)
+    assert not await jobs.process(
+        claim, storage.client(), sessions=sessions_of(Session())
     )
     export = _export()
     db = Session(get={AccountExport: export})
-    assert await jobs.process(export.id, storage.client(), sessions=sessions_of(db))
+    assert not await jobs.process(
+        _claim(export), storage.client(), sessions=sessions_of(db)
+    )
     assert storage.uploaded == []
+
+
+async def test_a_lost_claim_before_emailing_sends_nothing_and_keeps_the_file(built):
+    """Another attempt took the row over while this one was uploading: it
+    writes the same path, so this one deletes nothing and emails nothing."""
+    export = _export()
+    db = _db(export, owned=False)
+    storage = Storage()
+    transport, sent = resend()
+    assert not await jobs.process(
+        _claim(export),
+        storage.client(),
+        sessions=sessions_of(db),
+        email_transport=transport,
+    )
+    assert sent == [] and storage.deleted == []
+    assert export.status == "running" and export.delivery_url is None
 
 
 async def test_a_row_deleted_during_the_upload_deletes_the_object(built):
     export = _export()
-    db = Session(get={AccountExport: export, User: _user(export.user_id)})
 
     class Vanishing(Session):
-        calls = 0
+        async def scalar(self, stmt):
+            return None  # the row is gone when the upload finishes
 
-        async def get(self, model, pk, **kw):
-            Vanishing.calls += 1
-            return None if Vanishing.calls > 2 else await super().get(model, pk)
-
-    db = Vanishing(get=db.objects)
+    db = Vanishing(get={AccountExport: export, User: _user(export.user_id)})
+    db.owned = False
     storage = Storage()
-    assert await jobs.process(export.id, storage.client(), sessions=sessions_of(db))
+    assert not await jobs.process(
+        _claim(export), storage.client(), sessions=sessions_of(db)
+    )
     assert storage.deleted == [jobs.object_path(export.id)]
 
 
 @pytest.mark.parametrize(
-    ("fail", "email_status", "code"),
+    ("fail", "email_status", "code", "status"),
     [
-        ({"upload"}, 200, "storage_upload_500"),
-        ({"sign"}, 200, "storage_sign_500"),
-        (set(), 503, "email_503"),
+        ({"upload"}, 200, "storage_upload_500", "pending"),
+        ({"sign"}, 200, "storage_sign_500", "pending"),
+        (set(), 503, "email_503", "emailing"),
     ],
 )
-async def test_a_failed_attempt_goes_back_to_the_queue(built, fail, email_status, code):
+async def test_a_failed_attempt_goes_back_to_the_queue(
+    built, fail, email_status, code, status
+):
     export = _export(attempts=1)
-    db = Session(get={AccountExport: export, User: _user(export.user_id)})
     transport, _ = resend(email_status)
     ok = await jobs.process(
-        export.id,
+        _claim(export),
         Storage(fail).client(),
-        sessions=sessions_of(db),
+        sessions=sessions_of(_db(export)),
         email_transport=transport,
     )
     assert not ok
     assert (export.status, export.error_code, export.claimed_at) == (
-        "pending",
+        status,
         code,
         NOW,
     )
@@ -298,7 +410,7 @@ async def test_a_failed_attempt_goes_back_to_the_queue(built, fail, email_status
 def test_error_codes():
     assert jobs._error_code(StorageError("list", None)) == "storage_list_unreachable"
     assert jobs._error_code(EmailError(None)) == "email_unreachable"
-    assert jobs._error_code(ValueError()) == "build_failed"
+    assert jobs._error_code(ValueError()) == "unexpected_error"
 
 
 async def test_the_last_attempt_fails_for_good_and_deletes_the_object(
@@ -308,15 +420,14 @@ async def test_the_last_attempt_fails_for_good_and_deletes_the_object(
         account_export, "build", AsyncMock(side_effect=RuntimeError("bug"))
     )
     export = _export(attempts=jobs.MAX_ATTEMPTS, object_path="exports/old.json")
-    db = Session(get={AccountExport: export, User: _user(export.user_id)})
     storage = Storage()
     with caplog.at_level("WARNING"):
         assert not await jobs.process(
-            export.id, storage.client(), sessions=sessions_of(db)
+            _claim(export), storage.client(), sessions=sessions_of(_db(export))
         )
     assert (export.status, export.error_code, export.claimed_at) == (
         "failed",
-        "build_failed",
+        "unexpected_error",
         None,
     )
     assert storage.deleted == ["exports/old.json"]
@@ -324,12 +435,49 @@ async def test_the_last_attempt_fails_for_good_and_deletes_the_object(
     assert "reader@example.com" not in caplog.text
 
 
+async def test_the_last_attempt_keeps_the_file_once_an_email_may_have_gone(built):
+    export = _export(
+        status="emailing",
+        attempts=jobs.MAX_ATTEMPTS,
+        object_path="exports/x.json",
+        delivery_url="https://x/s?t=1",
+        expires_at=NOW + timedelta(days=7),
+    )
+    transport, _ = resend(500)
+    storage = Storage()
+    await jobs.process(
+        _claim(export),
+        storage.client(),
+        sessions=sessions_of(_db(export)),
+        email_transport=transport,
+    )
+    assert export.status == "failed"
+    assert storage.deleted == []
+
+
+async def test_a_stale_attempt_never_records_its_failure(built):
+    """Fencing: once another attempt holds (or finished) the row, a failure
+    of this one changes nothing and deletes nothing."""
+    export = _export(
+        status="ready", attempts=jobs.MAX_ATTEMPTS, object_path="exports/x.json"
+    )
+    storage = Storage({"upload"})
+    await jobs.process(
+        _claim(export),
+        storage.client(),
+        sessions=sessions_of(_db(export, owned=False)),
+    )
+    assert (export.status, export.error_code) == ("ready", None)
+    assert storage.deleted == []
+
+
 async def test_a_failed_cleanup_of_the_object_is_logged(built, caplog):
     export = _export(attempts=jobs.MAX_ATTEMPTS, object_path="exports/x.json")
-    db = Session(get={AccountExport: export, User: _user(export.user_id)})
     with caplog.at_level("WARNING"):
         await jobs.process(
-            export.id, Storage({"sign", "delete"}).client(), sessions=sessions_of(db)
+            _claim(export),
+            Storage({"sign", "delete"}).client(),
+            sessions=sessions_of(_db(export)),
         )
     assert export.status == "failed"
     assert "could not delete a failed export's object" in caplog.text
@@ -337,23 +485,17 @@ async def test_a_failed_cleanup_of_the_object_is_logged(built, caplog):
 
 async def test_recording_a_failure_never_raises(built, caplog):
     class Broken(Session):
-        async def get(self, model, pk, **kw):
-            if kw.get("with_for_update"):
-                raise OSError("db gone")
-            return await super().get(model, pk)
+        async def scalar(self, stmt):
+            raise OSError("db gone")
 
     export = _export()
     db = Broken(get={AccountExport: export, User: _user(export.user_id)})
     with caplog.at_level("ERROR"):
         ok = await jobs.process(
-            export.id, Storage({"upload"}).client(), sessions=sessions_of(db)
+            _claim(export), Storage({"upload"}).client(), sessions=sessions_of(db)
         )
     assert not ok
     assert "could not record a failure" in caplog.text
-    # The row vanished before the failure was recorded: nothing to do.
-    await jobs._record_failure(
-        sessions_of(Session()), export.id, "x", Storage().client()
-    )
 
 
 # ── The worker ───────────────────────────────────────────────────────────────
@@ -376,7 +518,7 @@ async def test_process_pending_is_off_while_unconfigured():
 
 
 async def test_process_pending_works_through_the_queue(configured, monkeypatch):
-    ids = [uuid.uuid4(), uuid.uuid4()]
+    ids = [jobs.Claim(uuid.uuid4(), NOW), jobs.Claim(uuid.uuid4(), NOW)]
     claims = iter([*ids, None])
     monkeypatch.setattr(
         jobs, "claim_next", AsyncMock(side_effect=lambda db: next(claims))

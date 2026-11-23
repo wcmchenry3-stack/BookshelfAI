@@ -574,7 +574,8 @@ class TestAiConsentFlow:
 
 class _ExportDb(FakeDb):
     """``FakeDb`` plus what the account export (#694) reads and writes: the
-    cap lookup (``scalar``) and the export row (``get`` / ``add``)."""
+    cap lookup (``scalar``), the export row (``get`` / ``add``) and the
+    worker's fenced updates of it (applied to the row)."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -597,6 +598,14 @@ class _ExportDb(FakeDb):
             self.export = obj
         else:
             super().add(obj)
+
+    async def execute(self, stmt):
+        from sqlalchemy.sql.dml import Update
+
+        if isinstance(stmt, Update) and self.export is not None:
+            for column, bind in stmt._values.items():
+                setattr(self.export, column.key, bind.value)
+        return await super().execute(stmt)
 
 
 class TestAccountExportFlow:
@@ -662,9 +671,11 @@ class TestAccountExportFlow:
                 auth = {"Authorization": f"Bearer {tokens['access_token']}"}
                 resp = client.post("/account/export", headers=auth)
                 assert resp.status_code == 202, resp.text
+                # As claim_next leaves it.
+                db.export.status, db.export.claimed_at = "running", NOW
                 delivered = asyncio.run(
                     account_export_jobs.process(
-                        db.export.id,
+                        account_export_jobs.Claim(db.export.id, NOW),
                         storage,
                         sessions=_Sessions,
                         email_transport=httpx.MockTransport(resend),
