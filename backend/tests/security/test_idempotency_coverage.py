@@ -45,6 +45,7 @@ KEYED = {
     "PATCH /users/me/preferences",
     "POST /users/me/ai-consent",
     "DELETE /users/me/ai-consent",
+    "POST /account/export",
 }
 
 

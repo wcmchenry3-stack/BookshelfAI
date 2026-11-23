@@ -27,6 +27,7 @@ from app.api.books import router as books_router
 from app.api.scan import MAX_SCAN_REQUEST_BYTES, SCAN_UPLOAD_PATH
 from app.api.scan import router as scan_router
 from app.api.user_books import router as user_books_router
+from app.api.users import account_router
 from app.api.users import router as users_router
 from app.core import catalog_token
 from app.core.config import check_turnstile_configured, settings
@@ -36,6 +37,7 @@ from app.core.limiter import limiter
 from app.core.logging import configure_logging, new_request_id, request_id_var
 from app.core.origin_auth import OriginAuthMiddleware
 from app.core.sentry_context import SentryContextMiddleware, sentry_privacy_options
+from app.services.account_export_jobs import run_worker as run_export_worker
 from app.services.token_cleanup import cleanup_expired_tokens
 
 configure_logging()
@@ -255,12 +257,16 @@ async def lifespan(app: FastAPI):
     # DATABASE_URL is switched. Never raises.
     await log_db_role()
     cleanup_task = asyncio.create_task(cleanup_expired_tokens())
+    # Account exports (#694): picks up queued exports, including any left
+    # by a previous process. Does nothing while exports are not configured.
+    export_task = asyncio.create_task(run_export_worker())
     yield
-    cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+    for task in (cleanup_task, export_task):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -425,6 +431,7 @@ class _HealthExemptTrustedHost(TrustedHostMiddleware):
 if settings.is_hardened:
     app.add_middleware(_HealthExemptTrustedHost, allowed_hosts=settings.trusted_hosts)
 
+app.include_router(account_router)
 app.include_router(attestation_router)
 app.include_router(auth_router)
 app.include_router(books_router)

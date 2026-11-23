@@ -336,3 +336,16 @@ def test_api_anthropic_api_key_is_dashboard_secret(name):
     env_var = _env_var(service, "ANTHROPIC_API_KEY")
     assert env_var.get("sync") is False
     assert "value" not in env_var
+
+
+@pytest.mark.parametrize("name", _API_SERVICES)
+@pytest.mark.parametrize(
+    "key", ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "RESEND_API_KEY"]
+)
+def test_api_account_export_settings_are_dashboard_secrets(name, key):
+    """The account export (#694) reads these on both API services; the keys
+    are secrets and the URL names the project, so none is a literal."""
+    service = _service(_load_render_yaml(), name)
+    env_var = _env_var(service, key)
+    assert env_var.get("sync") is False
+    assert "value" not in env_var

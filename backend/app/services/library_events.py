@@ -20,6 +20,9 @@ Free text (:data:`FREE_TEXT_FIELDS`: notes and the title / author / cover
 overrides) is recorded as :data:`CHANGED` only, never its value. Values are
 JSON: UUIDs as strings, timestamps in ISO 8601.
 
+:func:`history` reads a user's events for the account export (#694), so
+the export does not import ``LibraryEvent`` itself.
+
 This module only inserts. Nothing in the app updates an event, and only
 ``app/services/library_events_retention.py`` deletes them
 (``tests/security/test_library_events_append_only.py``).
@@ -29,7 +32,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.ledger import current_request_id
@@ -163,3 +166,13 @@ async def record_purged(
             for user_book_id, user_id in rows
         ],
     )
+
+
+async def history(db: AsyncSession, user_id: uuid.UUID) -> list[LibraryEvent]:
+    """Every event of ``user_id``, oldest first (the account export, #694)."""
+    rows = await db.execute(
+        select(LibraryEvent)
+        .where(LibraryEvent.user_id == user_id)
+        .order_by(LibraryEvent.created_at, LibraryEvent.id)
+    )
+    return list(rows.scalars())

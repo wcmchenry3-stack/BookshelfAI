@@ -1,0 +1,11 @@
+{
+  "account_export": {
+    "subject": "你的 Bookshelf 数据导出",
+    "heading": "你的数据导出已准备好",
+    "intro": "这是你申请的 Bookshelf 数据副本：你的书库、扫描记录和账户信息，都在一个 JSON 文件中。",
+    "button": "下载你的数据",
+    "expires": "此链接在 {expires} 之前有效。之后链接将失效，文件也会被删除。",
+    "fallback": "如果按钮无法使用，请将此链接复制到浏览器中：",
+    "not_you": "如果这不是你申请的，请回复此邮件，我们会进行核查。"
+  }
+}

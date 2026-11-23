@@ -16,6 +16,7 @@ ignore = [
 # name, so vulture cannot see the call; ignore them by decorator.
 ignore_decorators = [
   "@router.*",
+  "@account_router.*",  # the second router in app/api/users.py (#694)
   "@app.*",
   "@field_validator",
   "@model_validator",
@@ -41,6 +42,8 @@ ignore_names = [
   "daily_taken",  # AIInflight column, read by name via FLAG_DAILY in ai/quota.py
   "wishlisted_at",  # UserBook column, serialized in the user_book response schema
   "unverified",  # UserBook property, read through the response schema's from_attributes
+  "completed_at",  # AccountExport column (#694): set by the worker, exported by name (account_export.SECTIONS)
+  "size_bytes",  # AccountExport column (#694): set by the worker; write-only, for support and the storage estimate
   # --- API response / request schema fields the client relies on ---
   "token_type",  # TokenResponse field of the OAuth-style auth response
   "expires_in",  # TokenResponse field of the auth response (seconds)
@@ -56,7 +59,6 @@ ignore_names = [
   "scan_free_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
   "scan_premium_no_match_daily_limit",  # read by getattr(settings, f"scan_{tier}_no_match_daily_limit") in ai/settings.py
   "async_migration_database_url",  # read by alembic/env.py (vulture scans app/ only) (#696)
-  "email_reply_to",  # EMAIL_REPLY_TO (#678): read by the Resend sender, which lands with the account-deletion/export stories; remove then
   # --- Test seam ---
   "reset_cache",  # ai/settings.py cache reset, called from tests/ (vulture scans app/ only)
   # --- PENDING OWNER DECISION (#830): unread settings ---

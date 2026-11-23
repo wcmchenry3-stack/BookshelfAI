@@ -172,8 +172,8 @@ def test_purge_jobs_open_job_sessions():
 
     source = inspect.getsource(token_cleanup)
     assert "AsyncSessionLocal" not in source
-    # Nine steps since the idempotency key purge (#685).
-    assert source.count("async with JobSessionLocal() as db:") == 9
+    # Ten steps since the account export purge (#694).
+    assert source.count("async with JobSessionLocal() as db:") == 10
 
 
 # --- startup role log ----------------------------------------------------------

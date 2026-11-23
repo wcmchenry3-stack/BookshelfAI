@@ -1,0 +1,11 @@
+{
+  "account_export": {
+    "subject": "Tu exportación de datos de Bookshelf",
+    "heading": "Tu exportación de datos está lista",
+    "intro": "Aquí tienes la copia de tus datos de Bookshelf que pediste: tu biblioteca, tu historial de escaneos y los datos de tu cuenta, en un archivo JSON.",
+    "button": "Descargar tus datos",
+    "expires": "Este enlace funciona hasta el {expires}. Después dejará de funcionar y el archivo se eliminará.",
+    "fallback": "Si el botón no funciona, copia este enlace en tu navegador:",
+    "not_you": "Si no lo pediste, responde a este correo y lo revisaremos."
+  }
+}
