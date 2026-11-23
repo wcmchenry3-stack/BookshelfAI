@@ -1,5 +1,7 @@
 """The icon, launcher and splash rasters match the recipe, and stay inside the platform safe zones."""
 
+import json
+
 import gen_app_icons as g
 import math
 
@@ -45,12 +47,6 @@ def test_adaptive_background_is_navy_and_foreground_transparent():
     assert '"backgroundColor": "%s"' % g._hex(g.NAVY) in (g.FRONTEND / "app.json").read_text()
 
 
-def test_ios_storyboard_splash_colour_matches():
-    sb = (g.FRONTEND / "ios/BookShelfAI/SplashScreen.storyboard").read_text()
-    r, gr, b = (f"{v / 255:.14f}" for v in g.NAVY)
-    assert f'blue="{b}" green="{gr}" red="{r}"' in sb
-
-
 def test_monochrome_layer_is_declared():
     for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
         assert "ic_launcher_monochrome" in (g.RES / "mipmap-anydpi-v26" / name).read_text()
@@ -64,18 +60,22 @@ def test_every_density_is_written():
     for d, px in g.MIPMAP_LEGACY.items():
         assert Image.open(g.RES / f"mipmap-{d}/ic_launcher.webp").size == (px, px)
         assert Image.open(g.RES / f"mipmap-{d}/ic_launcher_round.webp").size == (px, px)
-    for d, px in g.SPLASH_LOGO.items():
-        assert Image.open(g.RES / f"drawable-{d}/splashscreen_logo.png").size == (px, px)
 
 
-def test_splash_is_navy_with_the_mark_centred():
-    img = Image.open(g.ASSETS / "splash.png").convert("RGB")
-    assert img.size == (g.SPLASH_W, g.SPLASH_H)
-    assert img.getpixel((5, 5)) == g.NAVY
-    assert img.getpixel((g.SPLASH_W // 2, 5)) == g.NAVY
-    assert "#263250" in (g.RES / "values/colors.xml").read_text()
+def test_splash_icon_is_the_mark_on_transparent():
+    img = Image.open(g.ASSETS / "splash-icon.png").convert("RGBA")
+    assert img.size == (g.SPLASH_ICON_SIDE, g.SPLASH_ICON_SIDE)
+    assert img.getpixel((2, 2))[3] == 0
+    assert img.getchannel("A").getbbox() is not None
+
+
+def test_splash_colour_is_navy_in_app_json():
+    block = json.loads((g.FRONTEND / "app.json").read_text())["expo"]["plugins"]
+    cfg = next(p[1] for p in block if isinstance(p, list) and p[0] == "expo-splash-screen")
+    assert cfg["backgroundColor"] == g._hex(g.NAVY)
+    assert cfg["dark"]["backgroundColor"] == g._hex(g.NAVY)
 
 
 def test_size_budgets():
-    for name in ("icon", "adaptive-icon", "monochrome-icon", "splash"):
+    for name in ("icon", "adaptive-icon", "monochrome-icon", "splash-icon"):
         assert (g.ASSETS / f"{name}.png").stat().st_size <= 500 * 1024, name
