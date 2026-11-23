@@ -188,8 +188,19 @@ class FakeResend:
     # Keep the key of a request refused with ``status`` (as Stripe does), so
     # its later reuse with another payload is a 409 although nothing was sent.
     keep_key_on_refusal: bool = False
+    # Replies for the next requests, one per try, before the normal rules:
+    # "timeout_after_accept", "429" or "409_concurrent" (Resend: another
+    # request with the key is in flight).
+    script: list[str] = field(default_factory=list)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        step = self.script.pop(0) if self.script else None
+        if step == "429":
+            return httpx.Response(429)
+        if step == "409_concurrent":
+            return httpx.Response(
+                409, json={"statusCode": 409, "name": "concurrent_idempotent_requests"}
+            )
         if self.status != 200:
             if self.keep_key_on_refusal:
                 self.keys.setdefault(
@@ -204,7 +215,7 @@ class FakeResend:
         if key not in self.keys:
             self.keys[key] = request.content
             self.sent.append({"key": key, **json.loads(request.content)})
-        if self.timeout_after_accept:
+        if self.timeout_after_accept or step == "timeout_after_accept":
             raise httpx.ReadTimeout("response lost")
         return httpx.Response(200, json={"id": f"email-{len(self.sent)}"})
 
@@ -752,8 +763,8 @@ async def test_a_storage_failure_keeps_the_rows(env):
         await db.commit()
     env.supabase.fail.add("delete")
     async with env.factory() as db:
-        with pytest.raises(Exception):  # noqa: B017 - the cleanup step logs it
-            await account_export_purge.purge_expired(db, env.supabase.storage())
+        # Logged, not raised (#1058): the cleanup step still runs the sweep.
+        assert await account_export_purge.purge_expired(db, env.supabase.storage()) == 0
     assert len(await _exports(env.factory, uid)) == 1
 
 
@@ -1224,32 +1235,125 @@ async def test_the_purge_never_deletes_a_file_someone_can_still_use(env):
         assert f"exports/{name}-{uid.hex}.json" in env.supabase.objects
 
 
-async def test_the_purge_skips_a_row_a_worker_is_claiming(env):
-    """The batch is locked (FOR UPDATE SKIP LOCKED): a row a worker holds
-    locked while claiming it is neither picked nor deleted, nor its file."""
+async def test_a_stale_open_row_is_failed_not_claimed_then_purged(env):
+    """The worker's rows and the purge's are disjoint (#1058): a row older
+    than STALE_AFTER is never claimed (it is marked failed, its file kept),
+    so the purge can delete it without holding a lock."""
     uid, _ = await env.make_user()
     now = datetime.now(UTC)
-    path = f"exports/claiming-{uid.hex}.json"
+    path = f"exports/stale-{uid.hex}.json"
     env.supabase.objects[path] = (b"{}", now - timedelta(days=8))
     async with env.factory() as db:
-        row = AccountExport(
-            user_id=uid,
-            locale="en",
-            status="pending",
-            created_at=now - timedelta(days=8),
-            object_path=path,
+        db.add(
+            AccountExport(
+                user_id=uid,
+                locale="en",
+                status="pending",
+                created_at=now - timedelta(days=8),
+                object_path=path,
+            )
         )
-        db.add(row)
         await db.commit()
-    async with env.factory() as worker:
-        await worker.execute(
-            select(AccountExport).where(AccountExport.id == row.id).with_for_update()
-        )
-        async with env.factory() as db:
-            await account_export_purge.purge_expired(db, env.supabase.storage(), now)
-        await worker.rollback()
-    assert len(await _exports(env.factory, uid)) == 1
+    async with env.factory() as db:
+        assert await account_export_jobs.claim_next(db, now) is None
+    (row,) = await _exports(env.factory, uid)
+    assert (row.status, row.error_code, row.attempts) == ("failed", "stale", 0)
     assert path in env.supabase.objects
+    async with env.factory() as db:
+        purged = await account_export_purge.purge_expired(
+            db, env.supabase.storage(), now
+        )
+    assert purged == 1
+    assert await _exports(env.factory, uid) == []
+    assert path not in env.supabase.objects
+
+
+async def test_the_purge_holds_no_transaction_across_a_storage_call(env):
+    """While the storage delete is in flight the purge's session is not in a
+    transaction and no connection is idle in one (no row lock held)."""
+    uid, _ = await env.make_user()
+    now = datetime.now(UTC)
+    async with env.factory() as db:
+        for i in range(3):
+            path = f"exports/held-{i}-{uid.hex}.json"
+            env.supabase.objects[path] = (b"{}", now - timedelta(days=8))
+            db.add(
+                AccountExport(
+                    user_id=uid,
+                    locale="en",
+                    status="ready",
+                    expires_at=now - timedelta(days=1),
+                    object_path=path,
+                )
+            )
+        await db.commit()
+    activity = sa.table(
+        "pg_stat_activity",
+        sa.column("state"),
+        sa.column("pid"),
+        sa.column("datname"),
+    )
+    seen: list[tuple[bool, int]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            async with env.factory() as probe:
+                idle = await probe.scalar(
+                    select(sa.func.count())
+                    .select_from(activity)
+                    .where(
+                        activity.c.state == "idle in transaction",
+                        activity.c.datname == sa.func.current_database(),
+                    )
+                )
+            seen.append((purge_db.in_transaction(), idle))
+        return env.supabase.handler(request)
+
+    storage = ObjectStorage(BASE, KEY, BUCKET, transport=httpx.MockTransport(handler))
+    async with env.factory() as purge_db:
+        purged = await account_export_purge.purge_expired(purge_db, storage)
+    assert purged >= 3
+    assert seen and all(in_tx is False and idle == 0 for in_tx, idle in seen)
+
+
+async def test_a_purge_storage_failure_still_lets_the_sweep_run(env, monkeypatch):
+    """token_cleanup's step: the purge logs a storage failure and stops, then
+    the sweep runs and deletes the orphan."""
+    from app.services import token_cleanup
+
+    uid, _ = await env.make_user()
+    now = datetime.now(UTC)
+    old = now - timedelta(days=9)
+    env.supabase.objects["exports/kept.json"] = (b"{}", old)
+    env.supabase.objects["exports/orphan.json"] = (b"{}", old)
+    async with env.factory() as db:
+        db.add(
+            AccountExport(
+                user_id=uid,
+                locale="en",
+                status="ready",
+                expires_at=now - timedelta(days=1),
+                object_path="exports/kept.json",
+            )
+        )
+        await db.commit()
+    failures = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # The purge's delete (three tries) fails; the sweep's goes through.
+        if request.method == "DELETE" and failures[0] < 3:
+            failures[0] += 1
+            return httpx.Response(500)
+        return env.supabase.handler(request)
+
+    storage = ObjectStorage(BASE, KEY, BUCKET, transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(token_cleanup, "JobSessionLocal", env.factory)
+    monkeypatch.setattr(token_cleanup.object_storage, "from_settings", lambda: storage)
+    await token_cleanup._purge_account_exports()
+    assert failures[0] == 3
+    assert len(await _exports(env.factory, uid)) == 1
+    assert "exports/kept.json" in env.supabase.objects  # a row still uses it
+    assert "exports/orphan.json" not in env.supabase.objects  # swept
 
 
 # ── Review round 3 ───────────────────────────────────────────────────────────
@@ -1400,3 +1504,44 @@ async def test_the_snapshot_is_read_only_and_ended(env):
     ):
         await account_export.build_snapshot(env.factory, uid)
     assert seen == {"isolation": "repeatable read", "read_only": "on"}
+
+
+# ── Account export follow-ups (#1058) ────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "last, tries", [("429", 3), ("409_concurrent", 2)]  # a 409 is not retried
+)
+async def test_an_earlier_try_that_may_have_been_accepted_sets_the_flag(
+    env, monkeypatch, last, tries
+):
+    """Try 1 times out after Resend accepted the email, tries 2 and 3 are
+    refused (429, or 409 key in flight): the flag is still set, so a changed
+    address later ends ready (409 invalid_idempotent_request), not failed."""
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    env.resend.script = ["timeout_after_accept", *[last] * (tries - 1)]
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    expected = "email_429" if last == "429" else "email_409"
+    assert (row.status, row.error_code) == ("emailing", expected)
+    assert row.email_accepted_at is not None
+    assert len(env.resend.sent) == 1
+
+    async with env.factory() as db:
+        user = await db.get(User, uid)
+        user.email = f"changed-{uid}@example.com"
+        await db.commit()
+    _after_lease(monkeypatch, env, start)
+    await env.run_worker()
+    await _assert_delivered_once(env, uid)
+
+
+async def test_a_refusal_on_every_try_does_not_set_the_flag(env, monkeypatch):
+    uid, _ = await _queued(env)
+    _at(monkeypatch, env, datetime.now(UTC))
+    env.resend.script = ["429", "429", "429"]
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert (row.status, row.email_accepted_at) == ("emailing", None)

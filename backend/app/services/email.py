@@ -32,17 +32,29 @@ TIMEOUT_S = 15.0
 # Resend's 409 ``name`` when an ``Idempotency-Key`` it already accepted comes
 # back with a different payload: the first request was sent.
 KEY_ALREADY_USED = "invalid_idempotent_request"
+# Resend's 409 ``name`` while another request with the same key is still in
+# flight: that request may be the one that sends the email.
+KEY_IN_FLIGHT = "concurrent_idempotent_requests"
 
 
 class EmailError(Exception):
     """Sending failed; ``status`` is the HTTP status, or ``None`` for a
     transport error or timeout. ``code`` is Resend's error ``name`` (e.g.
-    :data:`KEY_ALREADY_USED`) when the reply carried one."""
+    :data:`KEY_ALREADY_USED`) when the reply carried one. ``maybe_accepted``
+    is True when Resend may have accepted the email on any try: no response
+    or a 5xx on any try (not only the last), or a 409
+    :data:`KEY_IN_FLIGHT`."""
 
-    def __init__(self, status: int | None, code: str | None = None) -> None:
+    def __init__(
+        self,
+        status: int | None,
+        code: str | None = None,
+        maybe_accepted: bool = False,
+    ) -> None:
         super().__init__(f"email send failed (status={status})")
         self.status = status
         self.code = code
+        self.maybe_accepted = maybe_accepted
 
 
 def _error_name(resp: httpx.Response | None) -> str | None:
@@ -94,4 +106,7 @@ async def send(
                 client, "email send", "POST", API_URL, json=payload, headers=headers
             )
         except RequestFailed as exc:
-            raise EmailError(exc.status, _error_name(exc.response)) from None
+            code = _error_name(exc.response)
+            raise EmailError(
+                exc.status, code, exc.maybe_accepted or code == KEY_IN_FLIGHT
+            ) from None

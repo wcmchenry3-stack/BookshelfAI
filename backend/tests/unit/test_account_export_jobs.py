@@ -790,10 +790,10 @@ async def test_purge_deletes_objects_then_rows_in_batches(monkeypatch):
     storage = Storage()
     assert await purge.purge_expired(db, storage.client()) == 3
     assert storage.deleted == ["exports/a.json", "exports/c.json"]
-    # The rows stay locked across the storage call: one commit per batch.
-    assert db.commits == 2 and db.rollbacks == 0
-    locked = str(db.executed[0].compile(dialect=postgresql.dialect()))
-    assert "FOR UPDATE SKIP LOCKED" in locked
+    # No lock, and the read's transaction ends before each storage call (#1058).
+    assert db.commits == 2 and db.rollbacks == 2
+    select_sql = str(db.executed[0].compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" not in select_sql
 
 
 async def test_purge_stops_on_an_empty_batch_and_needs_no_storage_without_objects():
@@ -806,10 +806,11 @@ async def test_purge_stops_on_an_empty_batch_and_needs_no_storage_without_object
     assert "object_path IS NULL" in where
 
 
-async def test_a_storage_failure_rolls_the_batch_back():
+async def test_a_storage_failure_is_logged_and_keeps_the_rows(caplog):
     db = Session(results=[_rows((uuid.uuid4(), "exports/a.json"))])
-    with pytest.raises(StorageError):
-        await purge.purge_expired(db, Storage({"delete"}).client())
+    with caplog.at_level("WARNING", logger=purge.logger.name):
+        assert await purge.purge_expired(db, Storage({"delete"}).client()) == 0
+    assert "purge could not delete" in caplog.text
     assert db.rollbacks == 1 and db.commits == 0
     assert len(db.executed) == 1  # no row delete
 
