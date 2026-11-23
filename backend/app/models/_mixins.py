@@ -7,7 +7,8 @@ in the table.
 
 Column order: SQLAlchemy puts a mixin's columns after the class's own
 columns unless ``sort_order`` says otherwise. ``id`` (-2) and ``user_id``
-(-1) sort first, ``created_at`` (1) and ``updated_at`` (2) last, and the
+(-1) sort first, ``created_at`` (1) and ``updated_at`` (2) last (then ``version`` (3), where
+migration 0032 added it), and the
 daily key's ``day``, ``feature``, ``model`` (-3 to -1) first, which is where
 every table using them declared them before the mixins existed.
 ``tests/unit/test_model_schema_snapshot.py`` pins the result.
@@ -17,7 +18,7 @@ import uuid
 from datetime import date, datetime
 from typing import ClassVar
 
-from sqlalchemy import Date, DateTime, ForeignKey, String, func
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, event, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
@@ -66,6 +67,35 @@ class CreatedAtMixin:
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, sort_order=1
     )
+
+
+def _version_id_col(cls) -> dict:
+    return {"version_id_col": cls.__table__.c.version}
+
+
+class VersionedMixin:
+    """``version`` for optimistic concurrency (#685): 1 for a new row, bumped
+    by the ORM on every UPDATE, which it writes as ``UPDATE ... WHERE id = ?
+    AND version = ?`` (``version_id_col``); one that matches no row raises
+    ``StaleDataError``. A bulk ``update()`` does not bump it, so change
+    versioned rows through the ORM. Sorted last (3), where migration 0032
+    added it to the tables.
+
+    A new object reads as version 1 from construction (the value its INSERT
+    writes), so a response built from it before a flush is valid."""
+
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1"), sort_order=3
+    )
+
+    __mapper_args__ = declared_attr.directive(_version_id_col)
+
+
+def _start_at_version_one(_target, _args, kwargs) -> None:
+    kwargs.setdefault("version", 1)
+
+
+event.listen(VersionedMixin, "init", _start_at_version_one, propagate=True)
 
 
 class TimestampMixin(CreatedAtMixin):

@@ -79,6 +79,7 @@
   "shelfA11y_other": "読書中、{{count}}冊",
   "shelfItemA11y": "{{title}}、{{author}}著",
   "movedToTrash": "ゴミ箱に移動しました。30日以内なら元に戻せます。",
+  "changedOnAnotherDevice": "この本は別のデバイスで変更されました。最新の内容を表示しています。",
   "viewTrash": "ゴミ箱を見る",
   "trash": {
     "title": "ゴミ箱",

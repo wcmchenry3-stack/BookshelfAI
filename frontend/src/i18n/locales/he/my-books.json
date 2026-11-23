@@ -91,6 +91,7 @@
   "shelfA11y_other": "קורא עכשיו, {{count}} ספרים",
   "shelfItemA11y": "{{title}}, מאת {{author}}",
   "movedToTrash": "הועבר לפח. אפשר לשחזר אותו תוך 30 יום.",
+  "changedOnAnotherDevice": "הספר הזה שונה במכשיר אחר. מוצגת הגרסה העדכנית.",
   "viewTrash": "הצגת הפח",
   "trash": {
     "title": "פח",

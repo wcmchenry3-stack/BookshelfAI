@@ -36,11 +36,12 @@ Common status codes:
 
 | Code | Meaning | Typical causes |
 |---|---|---|
-| 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware) |
+| 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware), malformed `If-Match` (`invalid_if_match`, #685) |
 | 401 | Unauthorized | missing / invalid / expired access token, access token issued before #689 (`token_outdated`, refresh and retry), invalid refresh token, session revoked by sign out of all devices (`token_revoked`), rotated refresh token replayed (`refresh_reused`) |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`), a scan without AI consent while `AI_CONSENT_REQUIRED` is on (`ai_consent_required`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), and other per-endpoint conflicts |
+| 412 | Precondition Failed | `If-Match` on `PATCH` / `DELETE /user-books/{id}` names an older version of the entry (`{"detail": {"code": "version_mismatch", "current_version": N}}`, #685; see [Entry versions](#entry-versions-etag-if-match-and-412-685)) |
 | 413 | Payload Too Large | request body > 6 MB on `POST /scan` or > 10 MB elsewhere, with or without `Content-Length` (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
 | 415 | Unsupported Media Type | file extension / MIME / magic bytes mismatch on upload, or an image that cannot be decoded (`image_undecodable`) |
 | 402 | Payment Required | not returned by `/scan` since #582 (there is no monthly limit; older servers sent `scan_limit_reached` / `enhanced_limit_reached`) |
@@ -462,6 +463,23 @@ Auth required (`401` without a valid access token). Rate limit: `rate_limit_read
 
 ## User books
 
+### Entry versions: `ETag`, `If-Match` and 412 (#685)
+
+Every library entry has a `version` (an integer, 1 for a new entry) that the server bumps on every change to it: a `PATCH` that changes something, `DELETE`, restore, and `POST /purchased` promoting it. A `PATCH` that changes nothing keeps the version.
+
+- **`version` in the body.** Every `UserBookRead` (`GET /user-books`, `GET /user-books/trash` and every single-entry response) carries `version`.
+- **`ETag` header.** Every response that returns one entry (`POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH /user-books/{id}`, `POST /user-books/{id}/restore`) also sends it as a strong entity tag: `ETag: "3"`. Lists do not. `ETag` is listed in `Access-Control-Expose-Headers` and `If-Match` in the allowed request headers, so browser clients can use both cross-origin.
+- **`If-Match` on writes.** `PATCH` and `DELETE /user-books/{id}` take an optional `If-Match` header with the ETag the client last read:
+  - `"3"` or `W/"3"` (a proxy may weaken an ETag when it compresses a response), a comma-separated list of them, or `*` (any version): the write goes ahead when one matches the entry's current version.
+  - None matches: **`412 Precondition Failed`**, nothing written, body `{"detail": {"code": "version_mismatch", "current_version": 4}}` and `ETag: "4"`. The client should re-read the entry and let the user decide; it must not retry the same write with the new version on its own.
+  - Missing: accepted, with no check, so app builds from before #685 keep working. The server logs it at info level with the user id only. A later release may make it required.
+  - Malformed (empty, unquoted, not a decimal version, more than nine digits): **`400 invalid_if_match`**, checked before the database is read, so nothing is written.
+- **Order of checks.** Auth (`401`), then a malformed `If-Match` (`400`), then the entry lookup (`404` for an entry that does not exist, is in the trash or is another user's, whatever `If-Match` says, so a `412` never reveals another user's entry), then the version (`412`), then the endpoint's own checks (`422` ...).
+- **Concurrency.** The entry is read `FOR UPDATE` before the version is compared, so two writers holding the same version are serialised: the first wins and the second gets `412` with the first one's version. The ORM's `UPDATE ... WHERE id = ? AND version = ?` is a second guard; if it ever matches no row, the answer is the same `412` with `current_version: null` (no `ETag`).
+- **Not checked.** `POST /user-books/{id}/restore` takes no `If-Match` (a trashed entry cannot be edited, so there is no concurrent edit to lose; a restore conflict is already `409 restore_conflict`). `POST /wishlist`, `POST /wishlist/unverified` and `POST /purchased` take none either: they are keyed by book, not by entry, and refuse a duplicate on their own. There is no bulk library write endpoint.
+
+---
+
 ### `POST /wishlist` — add book to wishlist
 
 Finds the `Book` by `open_library_work_id`, then `google_books_id`, and the `Edition` by the first edition's `isbn_13`; then inserts a `UserBook` with `status=wishlisted` and `wishlisted_at=now()`.
@@ -493,10 +511,11 @@ Finds the `Book` by `open_library_work_id`, then `google_books_id`, and the `Edi
 
 The `EnrichedBook` returned by `/scan` or `/books/search`, posted back as received (extra fields such as `confidence` are ignored). `catalog_token` is optional in the schema (at most 256 characters) but required to create a catalog entry.
 
-**Response `201`:** the new `UserBook` joined with its `Book` and (optional) `Edition`:
+**Response `201`:** the new `UserBook` joined with its `Book` and (optional) `Edition`, with `ETag: "1"` (#685):
 ```json
 {
   "id": "...",
+  "version": 1,
   "status": "wishlisted",
   "wishlisted_at": "2026-04-05T10:30:00Z",
   "purchased_at": null, "started_at": null, "finished_at": null,
@@ -637,10 +656,14 @@ Partial update. When `status` transitions, the corresponding timestamp column is
 - `title_override`, `author_override`: 1–500 characters after trimming, no control characters and no Unicode format characters (bidi controls such as U+202E, zero-width characters)
 - `cover_url_override`: trimmed; then at most 2048 characters, no control characters, whitespace or format characters inside it, `https` only, with a host that is not `localhost` or an IP address in a private or reserved range. The host is not resolved: the server never fetches the override (only the owner's app shows it), so a DNS step would only block the server (`POST /wishlist`'s `cover_url` is checked the same way since #747)
 
-**Response `200`:** the updated `UserBookRead`.
+**Headers:** `If-Match: "<version>"` (optional for now, #685): see [Entry versions](#entry-versions-etag-if-match-and-412-685).
+
+**Response `200`:** the updated `UserBookRead`, with `ETag: "<version>"`.
 
 **Errors:**
+- `400 invalid_if_match` — `If-Match` is malformed; nothing is written
 - `404` — `user_book_id` not found, in the trash (#683) or belongs to another user
+- `412 version_mismatch` — the entry changed since the `If-Match` version (`detail.current_version` and `ETag` give the current one); nothing is written
 - `422` — `rating` out of range, or an invalid override (too long, blank, control characters, an unsafe `cover_url_override`)
 - `422 overrides_not_supported` — overrides sent for an unverified entry (#616), which is already the user's own data and never has a cover; nothing is written
 
@@ -654,10 +677,14 @@ Since #683 this is a **soft delete**: the entry gets `deleted_at = now()` (and, 
 **Rate limit:** `rate_limit_writes`
 **Source:** `backend/app/api/user_books.py:delete_user_book`
 
+**Headers:** `If-Match: "<version>"` (optional for now, #685): see [Entry versions](#entry-versions-etag-if-match-and-412-685). The delete bumps the version.
+
 **Response `204`:** empty body.
 
 **Errors:**
+- `400 invalid_if_match` — `If-Match` is malformed; nothing is trashed
 - `404` — not found, already in the trash, or belongs to another user. Deleting twice is a `404` the second time, not a second `204`
+- `412 version_mismatch` — the entry changed since the `If-Match` version; nothing is trashed
 - `422` — `user_book_id` is not a UUID
 
 ---
@@ -684,7 +711,7 @@ Clears `deleted_at` on the entry (and on its `user_custom_books` row for an unve
 **Rate limit:** `rate_limit_writes`
 **Source:** `backend/app/api/user_books.py:restore_user_book`
 
-**Response `200`:** the restored `UserBookRead`.
+**Response `200`:** the restored `UserBookRead`, with `ETag: "<version>"` (the restore bumps the version, #685). Restore takes no `If-Match`.
 
 **Errors** (nothing is written on any of them):
 - `404` — not found, not in the trash (a live entry), or belongs to another user

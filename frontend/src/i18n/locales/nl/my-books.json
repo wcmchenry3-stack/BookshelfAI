@@ -83,6 +83,7 @@
   "shelfA11y_other": "Nu aan het lezen, {{count}} boeken",
   "shelfItemA11y": "{{title}}, door {{author}}",
   "movedToTrash": "Naar de prullenbak verplaatst. Je kunt het 30 dagen herstellen.",
+  "changedOnAnotherDevice": "Dit boek is op een ander apparaat gewijzigd. De nieuwste versie wordt getoond.",
   "viewTrash": "Prullenbak bekijken",
   "trash": {
     "title": "Prullenbak",

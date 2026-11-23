@@ -83,6 +83,7 @@
   "shelfA11y_other": "Lendo agora, {{count}} livros",
   "shelfItemA11y": "{{title}}, de {{author}}",
   "movedToTrash": "Movido para a lixeira. Você pode restaurar em até 30 dias.",
+  "changedOnAnotherDevice": "Este livro foi alterado em outro dispositivo. Mostrando a versão mais recente.",
   "viewTrash": "Ver lixeira",
   "trash": {
     "title": "Lixeira",

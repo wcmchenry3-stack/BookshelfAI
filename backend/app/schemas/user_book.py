@@ -302,6 +302,10 @@ class UserBookRead(BaseModel):
     rating: int | None = None
     created_at: datetime
     updated_at: datetime
+    # The entry's version (#685): bumped on every change, also sent as the
+    # single-entry ``ETag``. Send it back as ``If-Match: "<version>"`` on
+    # PATCH / DELETE.
+    version: int
     # True for the user's own unverified entry (#616): ``book`` then carries
     # the entry's id, title and author only (no provider IDs, cover or
     # editions) and ``unverified_isbn_13`` the ISBN the user typed, if any.

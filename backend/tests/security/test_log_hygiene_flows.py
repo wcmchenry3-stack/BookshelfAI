@@ -432,6 +432,44 @@ class TestLibraryFlows:
             assert db.user_book.deleted_at is None
         _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
 
+    def test_stale_and_missing_if_match(self, db):
+        """#685: a refused stale write (412) and an accepted one without
+        If-Match log the user id only, never a token or email."""
+        client = TestClient(app)
+        db.book = Book(
+            id=uuid.uuid4(),
+            open_library_work_id=WORK,
+            title="Dune",
+            author="Frank Herbert",
+            language="en",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        with lh.capture() as cap:
+            tokens = _sign_in(client).json()
+            auth = {"Authorization": f"Bearer {tokens['access_token']}"}
+            with patch(
+                "app.services.wishlist.WishlistService._find_or_create_edition",
+                AsyncMock(return_value=None),
+            ):
+                added = client.post(
+                    "/wishlist",
+                    headers=auth,
+                    json={
+                        "open_library_work_id": WORK,
+                        "title": "Dune",
+                        "author": "Frank Herbert",
+                        "editions": [],
+                    },
+                )
+            assert added.status_code == 201, added.text
+            path = f"/user-books/{added.json()['id']}"
+            stale = client.delete(path, headers={**auth, "If-Match": '"9"'})
+            assert stale.status_code == 412, stale.text
+            deleted = client.delete(path, headers=auth)
+            assert deleted.status_code == 204, deleted.text
+        _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
+
     def test_server_error_reaches_sentry_without_pii(self, db):
         client = TestClient(app, raise_server_exceptions=False)
         with lh.capture() as cap:

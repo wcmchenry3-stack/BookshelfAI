@@ -537,9 +537,11 @@ async def test_restore_brings_the_entry_back_intact(env):
     await _delete(env, alice, entry)
 
     restored = await _restore(env, alice, entry)
-    assert restored.model_dump(exclude={"updated_at"}) == before.model_dump(
-        exclude={"updated_at"}
+    # The version moves on with each write (#685): the delete and the restore.
+    assert restored.model_dump(exclude={"updated_at", "version"}) == before.model_dump(
+        exclude={"updated_at", "version"}
     )
+    assert restored.version == before.version + 2
     assert restored.book.title == "Dune (my copy)"
     assert restored.edition.id == edition.id
     assert await _trash(env, alice) == []

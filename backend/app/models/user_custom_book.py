@@ -4,7 +4,12 @@ from sqlalchemy import CheckConstraint, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
-from app.models._mixins import IdMixin, TimestampMixin, UserOwnedMixin
+from app.models._mixins import (
+    IdMixin,
+    TimestampMixin,
+    UserOwnedMixin,
+    VersionedMixin,
+)
 
 # Field limits, shared with the request schema (app/schemas/user_book.py) and
 # enforced again by the table's check constraints. The title and author limits
@@ -13,7 +18,7 @@ TITLE_MAX = 500
 AUTHOR_MAX = 500
 
 
-class UserCustomBook(IdMixin, UserOwnedMixin, TimestampMixin, Base):
+class UserCustomBook(IdMixin, UserOwnedMixin, TimestampMixin, VersionedMixin, Base):
     """A book the user added themselves because neither Open Library nor
     Google Books found it: an **unverified** entry (#616).
 

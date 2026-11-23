@@ -115,6 +115,21 @@ describe('API error reporting (#724)', () => {
     expect(mockCapture).not.toHaveBeenCalled();
   });
 
+  it('neither captures nor retries a 412 version_mismatch (#685)', async () => {
+    let calls = 0;
+    respondWith(412, { code: 'version_mismatch', current_version: 2 });
+    const reject = api.defaults.adapter as (c: unknown) => Promise<never>;
+    api.defaults.adapter = async (config) => {
+      calls += 1;
+      return reject(config);
+    };
+    const headers = { 'If-Match': '"1"' };
+    await expect(api.patch('/user-books/ub-1', {}, { headers })).rejects.toBeTruthy();
+    await expect(api.delete('/user-books/ub-1', { headers })).rejects.toBeTruthy();
+    expect(calls).toBe(2);
+    expect(mockCapture).not.toHaveBeenCalled();
+  });
+
   it('does not capture network errors (no response)', async () => {
     api.defaults.adapter = async () => {
       throw Object.assign(new Error('Network Error'), { isAxiosError: true });

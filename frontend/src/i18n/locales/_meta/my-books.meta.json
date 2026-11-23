@@ -309,6 +309,11 @@
     "tone": "neutral",
     "placeholders": ["{{title}}", "{{author}}"]
   },
+  "changedOnAnotherDevice": {
+    "description": "Banner when a status change or removal was refused because the book was changed on another device since this list was loaded; the list then reloads",
+    "tone": "neutral",
+    "characterLimit": 100
+  },
   "movedToTrash": {
     "description": "Banner after a library entry is moved to the trash; says it can be restored within 30 days",
     "tone": "neutral",

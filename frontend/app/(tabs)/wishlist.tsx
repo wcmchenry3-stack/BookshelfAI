@@ -85,6 +85,9 @@ export default function WishlistScreen() {
       setBooks((prev) => prev.filter((b) => b.id !== item.id));
       setSelected(null);
     },
+    // Changed on another device (412, #685): the list reloads; close the
+    // sheet showing the stale copy.
+    onConflict: () => setSelected(null),
   });
 
   async function fetchWishlist() {

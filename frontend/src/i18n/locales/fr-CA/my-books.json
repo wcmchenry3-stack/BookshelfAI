@@ -83,6 +83,7 @@
   "shelfA11y_other": "En cours de lecture, {{count}} livres",
   "shelfItemA11y": "{{title}}, de {{author}}",
   "movedToTrash": "Déplacé dans la corbeille. Vous pouvez le restaurer pendant 30 jours.",
+  "changedOnAnotherDevice": "Ce livre a été modifié sur un autre appareil. La version la plus récente est affichée.",
   "viewTrash": "Voir la corbeille",
   "trash": {
     "title": "Corbeille",

@@ -18,7 +18,12 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.models._mixins import IdMixin, TimestampMixin, UserOwnedMixin
+from app.models._mixins import (
+    IdMixin,
+    TimestampMixin,
+    UserOwnedMixin,
+    VersionedMixin,
+)
 
 if TYPE_CHECKING:
     from app.models.book import Book
@@ -43,7 +48,7 @@ OVERRIDE_COLUMNS = {
 }
 
 
-class UserBook(IdMixin, UserOwnedMixin, TimestampMixin, Base):
+class UserBook(IdMixin, UserOwnedMixin, TimestampMixin, VersionedMixin, Base):
     __tablename__ = "user_books"
     user_id_indexed = True
     __table_args__ = (

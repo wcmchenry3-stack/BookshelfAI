@@ -157,6 +157,7 @@ def test_any_custom_book_id_that_is_set_marks_an_unverified_entry():
         rating=None,
         created_at=NOW,
         updated_at=NOW,
+        version=1,
     )
     out = UserBookRead.model_validate(row)
     assert out.unverified is True and out.book.title == "Pond Notes"
@@ -197,6 +198,7 @@ def test_row_fields_follow_the_schema():
         rating=5,
         created_at=NOW,
         updated_at=NOW,
+        version=1,
         marker="seen",
         # No user overrides (#682).
         title_override=None,

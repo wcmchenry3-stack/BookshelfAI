@@ -50,7 +50,10 @@ def test_every_tracked_field_is_a_user_books_column():
 # user_books columns an event deliberately does not record (keys and
 # bookkeeping timestamps). A new column must be added to TRACKED_FIELDS
 # or here.
-UNTRACKED_COLUMNS = frozenset({"id", "user_id", "created_at", "updated_at"})
+UNTRACKED_COLUMNS = frozenset(
+    # version: the optimistic-concurrency counter (#685), bumped by every change.
+    {"id", "user_id", "created_at", "updated_at", "version"}
+)
 # Text columns whose values are fixed codes, not something the user typed.
 STRUCTURED_STRINGS = frozenset({"status"})
 

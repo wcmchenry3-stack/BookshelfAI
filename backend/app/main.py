@@ -382,11 +382,19 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+    # If-Match: library entry writes (#685); without it here a browser's
+    # preflight would refuse every PATCH / DELETE the web app sends.
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-Request-ID",
+        "If-Match",
+    ],
     # Lets web clients read the scan 429s' Retry-After (daily_scan_limit,
     # scan_in_progress, enhanced_throttled) instead of falling back to
-    # approximations.
-    expose_headers=["Retry-After"],
+    # approximations, and a library entry's ETag (#685).
+    expose_headers=["Retry-After", "ETag"],
 )
 # RequestSizeLimitMiddleware runs before CORS/headers to drop oversized bodies
 # early. It is pure ASGI and counts the body bytes as they arrive, so it caps
