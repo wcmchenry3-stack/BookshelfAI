@@ -11,6 +11,8 @@ test.describe('Scan upload', () => {
     expectNoA11yViolations,
   }) => {
     await backend.forgetScans();
+    // #1023: start without AI consent, so the prompt is part of the flow.
+    await backend.withdrawAiConsent();
     const callsBefore = await backend.providerCalls();
     await signIn();
     await page.getByRole('tab', { name: 'Scan a book' }).click();
@@ -26,6 +28,12 @@ test.describe('Scan upload', () => {
       mimeType: 'image/jpeg',
       buffer: SHELF_PHOTO,
     });
+
+    // #1023: the photo is not sent until the user agrees to AI scanning.
+    await expect(page.getByRole('heading', { name: 'Scanning uses AI' })).toBeVisible();
+    expect(await backend.providerCalls()).toBe(callsBefore);
+    await expectNoA11yViolations('AI consent prompt');
+    await page.getByRole('button', { name: 'Continue' }).click();
 
     const progress = page.getByRole('progressbar', {
       name: 'Reading your books and looking up matches…',

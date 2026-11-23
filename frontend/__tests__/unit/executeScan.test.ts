@@ -60,6 +60,14 @@ function makeDeps(over: Partial<ScanExecDeps> = {}): ScanExecDeps {
     stopDrainRef: { current: 'none' },
     getTurnstileTokenRef: { current: async () => null },
     turnstileConfiguredRef: { current: true },
+    // #1023: consent stands (the consent cases override it).
+    aiConsentRef: {
+      current: {
+        check: jest.fn(async () => true),
+        ensure: jest.fn(async () => true),
+        markRequired: jest.fn(),
+      },
+    },
     ...over,
   };
 }

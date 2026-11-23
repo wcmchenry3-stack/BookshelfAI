@@ -110,5 +110,13 @@
   "addItYourself": "自分で追加",
   "unverifiedSavedMessage": "{{title}}を「未確認」としてウィッシュリストに追加しました。",
   "scanInProgress": "本を読み取り、一致する情報を探しています…",
-  "searchInProgress": "検索中…"
+  "searchInProgress": "検索中…",
+  "aiConsentTitle": "スキャンには AI を使います",
+  "aiConsentBody": "本を識別するため、Bookshelf は写真を AI プロバイダーの Anthropic に送信します。写真は保存されません。保存するのはフィンガープリントと見つかった本のリストだけで、期間は 30 日です。",
+  "aiConsentPrivacy": "プライバシーポリシー",
+  "aiConsentPrivacyHint": "ブラウザでプライバシーポリシーを開きます",
+  "aiConsentContinue": "続ける",
+  "aiConsentNotNow": "今はしない",
+  "aiConsentSaveFailed": "選択を保存できませんでした。接続を確認して、もう一度お試しください。",
+  "queueStateConsent": "AI の利用への同意待ち"
 }

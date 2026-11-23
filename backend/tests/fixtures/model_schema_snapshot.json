@@ -1894,6 +1894,30 @@
         "foreign_keys": []
       },
       {
+        "name": "ai_consent_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "ai_consent_withdrawn_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
         "name": "created_at",
         "type": "TIMESTAMP WITH TIME ZONE",
         "nullable": false,

@@ -17,5 +17,14 @@
   "openOnWishlist": "רשימת משאלות",
   "openOnMyBooks": "הספרים שלי",
   "openOnCancel": "ביטול",
-  "openOnSaveFailed": "לא ניתן לשמור את הבחירה. נסה שוב."
+  "openOnSaveFailed": "לא ניתן לשמור את הבחירה. נסה שוב.",
+  "aiConsent": "סריקת תמונות ב-AI",
+  "aiConsentA11y": "סריקת תמונות ב-AI: {{value}}",
+  "aiConsentOn": "מותר",
+  "aiConsentOff": "לא מותר",
+  "aiConsentOffHint": "נשאל אותך לפני הסריקה הבאה.",
+  "aiConsentWithdraw": "ביטול הסכמה",
+  "aiConsentWithdrawHint": "מפסיק לשלוח תמונות סריקה ל-Anthropic עד שתאשר שוב",
+  "aiConsentWithdrawn": "סריקה ב-AI כבויה. נשאל אותך לפני הסריקה הבאה.",
+  "aiConsentWithdrawFailed": "לא ניתן לבטל את ההסכמה. בדוק את החיבור ונסה שוב."
 }

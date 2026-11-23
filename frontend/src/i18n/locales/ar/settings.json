@@ -17,5 +17,14 @@
   "openOnWishlist": "قائمة الرغبات",
   "openOnMyBooks": "كتبي",
   "openOnCancel": "إلغاء",
-  "openOnSaveFailed": "تعذّر حفظ اختيارك. حاول مرة أخرى."
+  "openOnSaveFailed": "تعذّر حفظ اختيارك. حاول مرة أخرى.",
+  "aiConsent": "مسح الصور بالذكاء الاصطناعي",
+  "aiConsentA11y": "مسح الصور بالذكاء الاصطناعي: {{value}}",
+  "aiConsentOn": "مسموح",
+  "aiConsentOff": "غير مسموح",
+  "aiConsentOffHint": "سنسألك قبل المسح التالي.",
+  "aiConsentWithdraw": "سحب الموافقة",
+  "aiConsentWithdrawHint": "يوقف إرسال صور المسح إلى Anthropic حتى تسمح بذلك مجددًا",
+  "aiConsentWithdrawn": "المسح بالذكاء الاصطناعي متوقف. سنسألك قبل المسح التالي.",
+  "aiConsentWithdrawFailed": "تعذّر سحب الموافقة. تحقّق من الاتصال وحاول مرة أخرى."
 }

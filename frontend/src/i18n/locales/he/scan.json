@@ -113,5 +113,13 @@
   "addItYourself": "הוסף בעצמך",
   "unverifiedSavedMessage": "{{title}} נוסף לרשימת המשאלות כלא מאומת.",
   "scanInProgress": "קוראים את הספרים שלך ומחפשים התאמות…",
-  "searchInProgress": "מחפשים…"
+  "searchInProgress": "מחפשים…",
+  "aiConsentTitle": "הסריקה משתמשת ב-AI",
+  "aiConsentBody": "כדי לזהות את הספרים שלך, Bookshelf שולחת את התמונה ל-Anthropic, ספקית AI. התמונות לא נשמרות; אנחנו שומרים רק טביעת אצבע ואת רשימת הספרים שנמצאו, למשך 30 יום.",
+  "aiConsentPrivacy": "מדיניות הפרטיות",
+  "aiConsentPrivacyHint": "פותח את מדיניות הפרטיות בדפדפן",
+  "aiConsentContinue": "המשך",
+  "aiConsentNotNow": "לא עכשיו",
+  "aiConsentSaveFailed": "לא ניתן לשמור את הבחירה. בדוק את החיבור ונסה שוב.",
+  "queueStateConsent": "ממתין להסכמה לשימוש ב-AI"
 }

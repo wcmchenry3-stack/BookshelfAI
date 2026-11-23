@@ -113,5 +113,13 @@
   "addItYourself": "Добавить самому",
   "unverifiedSavedMessage": "«{{title}}» добавлена в список желаний без проверки.",
   "scanInProgress": "Читаем ваши книги и ищем совпадения…",
-  "searchInProgress": "Поиск…"
+  "searchInProgress": "Поиск…",
+  "aiConsentTitle": "Сканирование использует ИИ",
+  "aiConsentBody": "Чтобы распознать ваши книги, Bookshelf отправляет фото в Anthropic — поставщику ИИ. Фото не хранятся: мы сохраняем только отпечаток и список найденных книг на 30 дней.",
+  "aiConsentPrivacy": "Политика конфиденциальности",
+  "aiConsentPrivacyHint": "Открывает политику конфиденциальности в браузере",
+  "aiConsentContinue": "Продолжить",
+  "aiConsentNotNow": "Не сейчас",
+  "aiConsentSaveFailed": "Не удалось сохранить выбор. Проверьте подключение и попробуйте ещё раз.",
+  "queueStateConsent": "Ждёт согласия на ИИ"
 }

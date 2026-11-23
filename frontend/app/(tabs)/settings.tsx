@@ -12,6 +12,7 @@ import { useScanUsage } from '../../hooks/useScanUsage';
 import { noMatchRemainingToday, remainingToday } from '../../components/ScanStatusPanel';
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
 import { OpenOnSetting } from '../../components/OpenOnSetting';
+import { AiConsentSetting } from '../../components/AiConsentSetting';
 import { useFeedback } from '../../components/FeedbackWidget/FeedbackContext';
 import { openTrash } from '../../lib/trash';
 import { fontFor } from '../../theme/typography';
@@ -93,6 +94,7 @@ export default function SettingsScreen() {
       ) : null}
       <ThemeToggleButton />
       <OpenOnSetting />
+      <AiConsentSetting />
       <Pressable
         onPress={openTrash}
         style={styles.trash}

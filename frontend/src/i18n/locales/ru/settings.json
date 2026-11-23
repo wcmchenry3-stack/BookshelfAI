@@ -17,5 +17,14 @@
   "openOnWishlist": "Желаемое",
   "openOnMyBooks": "Мои книги",
   "openOnCancel": "Отмена",
-  "openOnSaveFailed": "Не удалось сохранить выбор. Попробуйте ещё раз."
+  "openOnSaveFailed": "Не удалось сохранить выбор. Попробуйте ещё раз.",
+  "aiConsent": "Сканирование фото с ИИ",
+  "aiConsentA11y": "Сканирование фото с ИИ: {{value}}",
+  "aiConsentOn": "Разрешено",
+  "aiConsentOff": "Не разрешено",
+  "aiConsentOffHint": "Мы спросим перед следующим сканированием.",
+  "aiConsentWithdraw": "Отозвать",
+  "aiConsentWithdrawHint": "Прекращает отправку фото в Anthropic, пока вы снова не разрешите",
+  "aiConsentWithdrawn": "Сканирование с ИИ выключено. Мы спросим перед следующим.",
+  "aiConsentWithdrawFailed": "Не удалось отозвать. Проверьте подключение и попробуйте ещё раз."
 }

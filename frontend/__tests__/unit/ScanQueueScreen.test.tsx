@@ -138,6 +138,13 @@ describe('scan queue screen (#605)', () => {
     expect(hasTopPadding(getByText('No photos are waiting.'), TEST_INSET_TOP)).toBe(true);
   });
 
+  it('a photo held for AI consent says so (#1023)', async () => {
+    const { getByText } = await renderScreen([
+      job('held', { status: 'queued', error: 'ai_consent' }),
+    ]);
+    expect(getByText('Waiting for AI consent')).toBeTruthy();
+  });
+
   it('lists waiting photos with their state and failed photos with Retry and Delete', async () => {
     const next = NOW + 600_000;
     const { getByTestId, getByText, getAllByLabelText, queryByText, getAllByText } =

@@ -32,6 +32,7 @@ Everyone is Free until purchases exist (#583). A scan needs a found unit before 
 
 | Limit | What it limits | Applies to | Default | Setting | Bounds | User sees when hit | Tracked in |
 |---|---|---|---|---|---|---|---|
+| AI consent (#1023) | A user who has not agreed (or withdrew) that scan photos go to the AI provider | everyone | off | `AI_CONSENT_REQUIRED` env var (not `ai_settings`; rollout A: on once the app release with the prompt is out) | `true` / `false` | `403 ai_consent_required`, right after the kill switches and before the request count, so nothing is counted, reserved or sent (a repeat too); the app shows its consent prompt | `users.ai_consent_at`, `users.ai_consent_withdrawn_at` |
 | `/scan` requests per day | Every authenticated `/scan` request past the kill switches (new photo or repeat, allowed or refused later; nothing is given back) | everyone | 100 | `scan.requests_per_user_daily` (#586) | 1..10,000 | `429 scan_requests_daily_limit` with `Retry-After` to UTC midnight; UI `scan:requestsDailyLimit` | `ai_quota`, feature `scan.requests` (not an AI call, not in the global count) |
 | `/scan` per minute | Request rate on `POST /scan`, per client | everyone | `10/minute` | `rate_limit_scan` (env `RATE_LIMIT_SCAN`) | slowapi rate string | `429` with slowapi's own body (no `detail` code) | in-memory limiter |
 | Auth per minute | `/auth/google`, `/auth/refresh`, `/auth/logout` | everyone | `5/minute` | `rate_limit_auth` | rate string | `429` (slowapi) | in-memory limiter |

@@ -17,5 +17,14 @@
   "openOnWishlist": "Wishlist",
   "openOnMyBooks": "My Books",
   "openOnCancel": "Cancel",
-  "openOnSaveFailed": "Couldn't save your choice. Try again."
+  "openOnSaveFailed": "Couldn't save your choice. Try again.",
+  "aiConsent": "AI photo scanning",
+  "aiConsentA11y": "AI photo scanning: {{value}}",
+  "aiConsentOn": "Allowed",
+  "aiConsentOff": "Not allowed",
+  "aiConsentOffHint": "You'll be asked before your next scan.",
+  "aiConsentWithdraw": "Withdraw",
+  "aiConsentWithdrawHint": "Stops sending scan photos to Anthropic until you allow it again",
+  "aiConsentWithdrawn": "AI scanning is off. You'll be asked before your next scan.",
+  "aiConsentWithdrawFailed": "Couldn't withdraw. Check your connection and try again."
 }

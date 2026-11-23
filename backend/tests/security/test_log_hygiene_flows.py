@@ -144,7 +144,7 @@ class FakeDb:
     async def rollback(self):
         pass
 
-    async def refresh(self, obj, attrs=None):
+    async def refresh(self, obj, attrs=None, **_options):
         if isinstance(obj, UserBook):
             obj.id = obj.id or uuid.uuid4()
             obj.created_at = obj.updated_at = NOW
@@ -453,6 +453,23 @@ class TestLibraryFlows:
         ]
         assert errors, "no Sentry exception event captured for the failing request"
         _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
+
+
+class TestAiConsentFlow:
+    def test_grant_and_withdraw(self, db):
+        """#1023: giving and withdrawing consent logs the user id only."""
+        client = TestClient(app)
+        with lh.capture() as cap:
+            access = _sign_in(client).json()["access_token"]
+            auth = {"Authorization": f"Bearer {access}"}
+            assert client.post("/users/me/ai-consent", headers=auth).status_code == 200
+            assert (
+                client.delete("/users/me/ai-consent", headers=auth).status_code == 200
+            )
+        assert db.user.ai_consent_at is not None
+        assert db.user.ai_consent is False
+        assert "AI consent withdrawn" in "\n".join(cap.log_texts)
+        _clean(cap, tokens=[access])
 
 
 class TestScanFlow:

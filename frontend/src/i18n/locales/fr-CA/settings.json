@@ -17,5 +17,14 @@
   "openOnWishlist": "Souhaits",
   "openOnMyBooks": "Mes Livres",
   "openOnCancel": "Annuler",
-  "openOnSaveFailed": "Impossible d'enregistrer ton choix. Réessaie."
+  "openOnSaveFailed": "Impossible d'enregistrer ton choix. Réessaie.",
+  "aiConsent": "Scan de photos par IA",
+  "aiConsentA11y": "Scan de photos par IA : {{value}}",
+  "aiConsentOn": "Autorisé",
+  "aiConsentOff": "Non autorisé",
+  "aiConsentOffHint": "On te le demandera avant ton prochain scan.",
+  "aiConsentWithdraw": "Retirer",
+  "aiConsentWithdrawHint": "Arrête l'envoi des photos de scan à Anthropic jusqu'à ce que tu l'autorises de nouveau",
+  "aiConsentWithdrawn": "Le scan par IA est désactivé. On te le demandera avant ton prochain scan.",
+  "aiConsentWithdrawFailed": "Impossible de retirer ton accord. Vérifie ta connexion et réessaie."
 }

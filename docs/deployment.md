@@ -119,6 +119,7 @@ All settings are read from the environment by `Settings` in `backend/app/core/co
 | `SCAN_TIMEOUT_SECONDS` | optional | `45` | 1-120 | blank = default |
 | `SCAN_ENABLED`, `SCAN_ENHANCED_ENABLED` | optional | `true` | `true`/`false` | blank = default (`true`; blank never disables) |
 | `TURNSTILE_REQUIRED` | optional | `true` | `true`/`false` | blank = default (`true`) |
+| `AI_CONSENT_REQUIRED` | optional | `false` | `true`/`false`; `true` = `POST /scan` refuses a user without AI consent (`403 ai_consent_required`, #1023). Rollout A: leave `false` until the app release with the consent prompt is out, then set `true` on `bookshelf-api-dev`, check a scan, then `bookshelf-api` (a restart, no release) | blank = default (`false`) |
 | `ORIGIN_AUTH_SECRET` | optional | empty (check off) | 32+ printable ASCII characters | blank = unset (check off) |
 | `AI_ANTHROPIC_BASE_URL` | must stay unset | empty | local host only; any value fails boot when hardened | blank = unset |
 

@@ -1,6 +1,7 @@
 import { openScanQueue } from '../scanQueueNav';
 import { Sentry } from '../sentry';
 import {
+  AI_CONSENT_ERROR,
   enhancedRefusalMessage,
   isTurnstileCode,
   MAX_SCAN_ATTEMPTS,
@@ -62,6 +63,33 @@ export function handleScanRefusal(deps: ScanExecDeps, job: ScanJob, state: ScanU
   deps.updateJob(job.id, {
     status: 'queued',
     error: state.kind,
+    retryCount: 0,
+    attempts: undefined,
+    nextAttemptAt: undefined,
+  });
+}
+
+/**
+ * A photo that may not be uploaded yet: AI consent does not stand (#1023).
+ * Like a refusal it goes back in the queue (no failure, no Sentry event) and
+ * this drain sends no more photos; ScanJobProvider drains again once consent
+ * is given. An enhanced re-scan gets its standard books back instead.
+ */
+export function holdForAiConsent(deps: ScanExecDeps, job: ScanJob) {
+  deps.stopDrainRef.current = 'images';
+  Sentry.addBreadcrumb({
+    category: 'scan',
+    message: 'Scan waits for AI consent',
+    level: 'info',
+    data: { jobId: job.id },
+  });
+  if (job.enhanced && job.results?.length) {
+    restorePriorResults(deps, job, { enhanced: false }, null, 'info');
+    return;
+  }
+  deps.updateJob(job.id, {
+    status: 'queued',
+    error: AI_CONSENT_ERROR,
     retryCount: 0,
     attempts: undefined,
     nextAttemptAt: undefined,
@@ -217,6 +245,8 @@ export function shouldBumpUsageOnError(job: ScanJob, err: unknown, uiState: Scan
     uiState.kind !== 'in_progress' &&
     uiState.kind !== 'enhanced_refused' &&
     // #586: refused before anything was taken; the counters are unchanged.
-    uiState.kind !== 'requests_daily_limit'
+    uiState.kind !== 'requests_daily_limit' &&
+    // #1023: refused before the request count.
+    uiState.kind !== 'ai_consent_required'
   );
 }

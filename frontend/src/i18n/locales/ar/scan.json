@@ -115,5 +115,13 @@
   "addItYourself": "أضِفه بنفسك",
   "unverifiedSavedMessage": "تمت إضافة {{title}} إلى قائمة رغباتك بعلامة «غير موثّق».",
   "scanInProgress": "جارٍ قراءة كتبك والبحث عن النتائج المطابقة…",
-  "searchInProgress": "جارٍ البحث…"
+  "searchInProgress": "جارٍ البحث…",
+  "aiConsentTitle": "المسح يستخدم الذكاء الاصطناعي",
+  "aiConsentBody": "للتعرّف على كتبك، يرسل Bookshelf صورتك إلى Anthropic، وهي جهة تقدّم خدمات الذكاء الاصطناعي. لا نحتفظ بالصور؛ نحتفظ فقط ببصمة وقائمة الكتب التي عُثر عليها لمدة 30 يومًا.",
+  "aiConsentPrivacy": "سياسة الخصوصية",
+  "aiConsentPrivacyHint": "يفتح سياسة الخصوصية في المتصفح",
+  "aiConsentContinue": "متابعة",
+  "aiConsentNotNow": "ليس الآن",
+  "aiConsentSaveFailed": "تعذّر حفظ اختيارك. تحقّق من الاتصال وحاول مرة أخرى.",
+  "queueStateConsent": "بانتظار موافقتك على الذكاء الاصطناعي"
 }

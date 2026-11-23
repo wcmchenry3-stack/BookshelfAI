@@ -89,5 +89,48 @@
     "description": "Error banner when the Open on choice could not be saved; the old value is restored",
     "tone": "neutral",
     "characterLimit": 80
+  },
+  "aiConsent": {
+    "description": "Settings row label: whether scan photos may go to the AI provider",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "aiConsentA11y": {
+    "description": "Screen-reader label for the AI scanning row; {{value}} is Allowed / Not allowed",
+    "tone": "neutral"
+  },
+  "aiConsentOn": {
+    "description": "Value of the AI scanning row when consent is given",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "aiConsentOff": {
+    "description": "Value of the AI scanning row when consent is not given",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "aiConsentOffHint": {
+    "description": "Hint under the AI scanning row when consent is not given",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "aiConsentWithdraw": {
+    "description": "Button that withdraws consent to AI scanning",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "aiConsentWithdrawHint": {
+    "description": "Screen-reader hint for the withdraw button",
+    "tone": "neutral"
+  },
+  "aiConsentWithdrawn": {
+    "description": "Banner after consent to AI scanning was withdrawn",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "aiConsentWithdrawFailed": {
+    "description": "Banner when withdrawing consent failed",
+    "tone": "neutral",
+    "characterLimit": 90
   }
 }

@@ -38,7 +38,7 @@ Common status codes:
 |---|---|---|
 | 400 | Bad Request | validation failure, missing Turnstile token, malformed `Content-Length` header (middleware) |
 | 401 | Unauthorized | missing / invalid / expired access token, access token issued before #689 (`token_outdated`, refresh and retry), invalid refresh token, session revoked by sign out of all devices (`token_revoked`), rotated refresh token replayed (`refresh_reused`) |
-| 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`) |
+| 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`), a scan without AI consent while `AI_CONSENT_REQUIRED` is on (`ai_consent_required`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
 | 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), and other per-endpoint conflicts |
 | 413 | Payload Too Large | request body > 6 MB on `POST /scan` or > 10 MB elsewhere, with or without `Content-Length` (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
@@ -57,7 +57,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all` |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
-| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences` |
+| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences`, `POST` / `DELETE /users/me/ai-consent` |
 | `rate_limit_reads` | 120/min | `GET /user-books`, `GET /user-books/trash`, `GET /auth/me`, `GET /scan/usage` |
 | `rate_limit_health` | 60/min | `GET` / `HEAD /health`, `GET` / `HEAD /health/db` |
 
@@ -204,11 +204,16 @@ curl -X POST https://bookshelfapi.buffingchi.com/auth/logout-all \
   "display_name": "You",
   "avatar_url": "https://lh3.googleusercontent.com/...",
   "created_at": "2026-03-15T12:00:00Z",
-  "default_tab": null
+  "default_tab": null,
+  "ai_consent": false,
+  "ai_consent_at": null,
+  "ai_consent_withdrawn_at": null
 }
 ```
 
 `default_tab` (#913) is the "Open on" screen: `"scan"`, `"wishlist"`, `"my-books"`, or `null` (never set; the app opens on Scan). Every existing user has `null`.
+
+`ai_consent` (#1023) is whether the user's consent to send scan photos to the AI provider stands; `ai_consent_at` / `ai_consent_withdrawn_at` are when it was last given and last withdrawn (server time, `null` if never). Every user from before migration 0031 has `false` and two `null`s.
 
 **Example:**
 ```bash
@@ -255,6 +260,34 @@ curl -X PATCH https://bookshelfapi.buffingchi.com/users/me/preferences \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"default_tab": "my-books"}'
+```
+
+### `POST /users/me/ai-consent` — give consent to AI scanning
+
+**Auth:** required (Bearer access token)
+**Rate limit:** `rate_limit_writes`
+**Source:** `backend/app/api/users.py:grant_ai_consent`
+
+Records that the signed-in user agrees that scan photos are sent to the AI provider (#1023, Apple 5.1.2(i)). No body: anything sent is ignored, and the time is the server's (a client timestamp is never stored). Changes only the caller's row. Idempotent: if consent already stands, nothing changes and the first time is kept.
+
+**Response `200`:** the state after the request.
+```json
+{ "ai_consent": true, "ai_consent_at": "2026-11-22T10:00:00Z", "ai_consent_withdrawn_at": null }
+```
+
+**Errors:** `401` (no, bad or revoked access token); `429` (over `rate_limit_writes`).
+
+### `DELETE /users/me/ai-consent` — withdraw consent to AI scanning
+
+**Auth:** required (Bearer access token)
+**Rate limit:** `rate_limit_writes`
+**Source:** `backend/app/api/users.py:withdraw_ai_consent`
+
+Withdraws it at once (#1023): the app asks again before the next scan, and with `AI_CONSENT_REQUIRED` on `POST /scan` refuses until consent is given again. `ai_consent_at` is kept; `ai_consent_withdrawn_at` is set to the server's time. Idempotent: without consent nothing changes. Same response and errors as `POST`.
+
+```bash
+curl -X POST https://bookshelfapi.buffingchi.com/users/me/ai-consent \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 ---
@@ -361,6 +394,7 @@ Only the requesting user's library counts. It is checked on every response (new 
 - `415` — bad extension / MIME / magic bytes
 - `415` — the image cannot be fully decoded as JPEG, PNG, WebP or HEIC/HEIF (`detail: "image_undecodable"`)
 - `422` — a form field fails validation (FastAPI's standard body, `detail[].loc` names the field), e.g. `attempt` not an integer or outside 1–6 (#603), or `enhanced` not a boolean. Sent before the handler runs (after authentication), so the request is not counted against `scan.requests_per_user_daily` (#586) and nothing is reserved or recorded
+- `403` — no AI consent (`detail: "ai_consent_required"`, #1023), only while `AI_CONSENT_REQUIRED` is on (default off). Checked right after the kill switches, before the request count and everything else: nothing is counted, reserved or sent, and a repeat is refused too. The app shows its consent prompt again
 - `403` — `enhanced=true` from a user who is not Premium (`detail: "enhanced_requires_premium"`, #533). The tier is decided on the server (`entitlements.tier_for`); nothing is reserved and no provider is called
 - No `402`. There is no monthly limit (#582), so `402 scan_limit_reached` (monthly allowance) and `402 enhanced_limit_reached` (Premium enhanced monthly allowance) are never sent. Clients should still treat an unexpected `402` from an older server as a generic failure.
 - `429` — the user has made today's allowed number of `/scan` requests (`detail: "scan_requests_daily_limit"`, #586). Every authenticated request that gets past the kill switches counts, whatever happens next: a new photo, a repeat served from a scan record, a request refused later (Turnstile, a bad upload, the allowance, `scan_in_progress`, ...) or a provider failure; nothing is given back. The limit is the `ai_settings` key `scan.requests_per_user_daily` (default 100, 1..10,000). It is checked right after the kill switches, before Turnstile, the upload, the scan-record lookup, the allowance and the provider, and the refused request is not counted. `Retry-After` gives the seconds until the next UTC midnight, when the count resets. Distinct from the per-minute rate limit's `429` (10 a minute, slowapi's own body, no `detail` code) and from `daily_scan_limit` (scans that reached the AI). Repeats are free (#585), so this is what stops a client hammering `/scan` (decision #573 point 3)
@@ -384,14 +418,14 @@ So a user's provider calls per day never exceed found + no-match. Only real prov
 
 Enhanced scans (#533) are Premium-only. An enhanced scan uses the shared daily unit and nothing else (#582; a per-model daily Sonnet counter comes with #583), so the daily allowance is what limits enhanced scans. When the provider answered but returned no books, the scan stays counted as a found scan (no move to no-match, #577) and is recorded (table `ai_enhanced_zero_results`) as long as the user has fewer than `scan.enhanced.zero_result_threshold` (default 3) such recorded scans in the last `scan.enhanced.zero_result_window_hours` (default 24, sliding); the count reaching the threshold sends one Sentry warning per user per window. At or above the threshold, `scan.enhanced.zero_result_action` decides: `charge` (default) records nothing more until the window clears; `throttle` refuses further enhanced scans (`429 enhanced_throttled`). Threshold 0: with `charge` nothing is recorded; with `throttle` every enhanced scan is refused. The daily unit is counted for every scan, empty or not. A provider error, timeout or malformed reply (#572) is never an empty scan: nothing is recorded. None of these settings can be read or changed by a client.
 
-Check order: AI settings read (`ai_unavailable`) → kill switches → per-user daily request count (`scan_requests_daily_limit`, #586) → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → scan-record lookup (#585) → entitlement (tier; `enhanced_requires_premium` for a non-Premium enhanced scan) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → zero-result throttle (`enhanced_throttled`, enhanced with action `throttle` only) → found allowance (`daily_scan_limit`) → vision provider → (a standard no-match) the move to the no-match allowance, in the settle. Every refusal gives back what was already taken (the cost estimate, the lease, the daily reservation) and happens before the provider is called. A scan counts toward the found allowance once it reaches the provider; a standard scan that finds no book moves to the no-match allowance while it has room (#577); it is refunded only when the provider is unavailable or its reply was malformed (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan.
+Check order: AI settings read (`ai_unavailable`) → kill switches → AI consent (`ai_consent_required`, #1023, only with `AI_CONSENT_REQUIRED` on) → per-user daily request count (`scan_requests_daily_limit`, #586) → Turnstile → file validation (extension/MIME → capped read → magic bytes → ClamAV) → image normalisation → scan-record lookup (#585) → entitlement (tier; `enhanced_requires_premium` for a non-Premium enhanced scan) → global daily capacity (`scan_capacity`) → daily cost ceiling (`ai_budget_reached`, Free only) → in-flight lease (`scan_in_progress`) → zero-result throttle (`enhanced_throttled`, enhanced with action `throttle` only) → found allowance (`daily_scan_limit`) → vision provider → (a standard no-match) the move to the no-match allowance, in the settle. Every refusal gives back what was already taken (the cost estimate, the lease, the daily reservation) and happens before the provider is called. A scan counts toward the found allowance once it reaches the provider; a standard scan that finds no book moves to the no-match allowance while it has room (#577); it is refunded only when the provider is unavailable or its reply was malformed (`503 scan_unavailable`). A `413`/`415` from file validation or normalisation never uses a scan.
 
 **Scan records (#585).** Every photo is fingerprinted on the server (the SHA-256 of the image after normalisation, so only the exact same file matches). For each user the server keeps a scan record per fingerprint: the AI's answer, the Open Library / Google Books result, and which of those steps finished. Records are kept `scan_records.retention_days` (default 30) and are not keyed on the prompt or model, so an old answer is still served after either changes. The lookup happens after normalisation and before any allowance:
 - **The same photo, all steps done:** the saved result is returned with `"repeat": true`. No AI call, no Google Books / Open Library call, no daily allowance used, no lease (so no `scan_in_progress`), not counted by the global capacity or the cost ceiling; `enhanced_scans_remaining` and `GET /scan/usage` are unchanged. Repeats are not capped on their own: like every request they count toward the per-user daily request limit (`scan.requests_per_user_daily`, default 100, `429 scan_requests_daily_limit`, #586), and the per-minute rate limit still applies.
 - **The same photo, AI answer saved but enrichment missing** (a lookup failed last time): only the enrichment is redone, with no AI call and no charge; `"repeat": true`.
 - **A new photo:** the normal path (allowance, AI, enrichment); `"repeat": false`. The answer is saved when the AI returned outcome `ok`, with books or without: a genuine "no books" answer is saved too (#572), so re-uploading a "no book found" photo is a free repeat (`"repeat": true`, `"books": []`). Refusals, truncated or malformed replies, errors and timeouts are never saved, so re-uploading after one of those is a normal scan.
 
-A standard scan is answered by any record of the photo. An enhanced scan (Premium) is answered only by a record an enhanced scan produced; otherwise it takes the normal path and its answer replaces the saved one. The only refusals a repeat can get are the ones before the lookup (settings, kill switches, Turnstile, file validation, normalisation) and `403 enhanced_requires_premium` for an enhanced repeat by a non-Premium user. Records are per user; no client field names a record, a fingerprint, a user or a step, and a scan-record failure never fails a scan (it takes the normal path). `in_library` (per book) is checked against the user's library on every scan, repeats included.
+A standard scan is answered by any record of the photo. An enhanced scan (Premium) is answered only by a record an enhanced scan produced; otherwise it takes the normal path and its answer replaces the saved one. The only refusals a repeat can get are the ones before the lookup (settings, kill switches, AI consent, the request limit, Turnstile, file validation, normalisation) and `403 enhanced_requires_premium` for an enhanced repeat by a non-Premium user. Records are per user; no client field names a record, a fingerprint, a user or a step, and a scan-record failure never fails a scan (it takes the normal path). `in_library` (per book) is checked against the user's library on every scan, repeats included.
 
 **Example:**
 ```bash

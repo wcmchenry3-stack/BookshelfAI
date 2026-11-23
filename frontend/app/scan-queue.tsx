@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
 import { leaveScanQueue } from '../lib/scanQueueNav';
-import { formatLocalDateTime, formatLocalTime } from '../lib/scanErrors';
+import { AI_CONSENT_ERROR, formatLocalDateTime, formatLocalTime } from '../lib/scanErrors';
 import { failedTimeOf, isPendingUpload, type ScanJob } from '../lib/scanJob';
 import { fontFor } from '../theme/typography';
 
@@ -61,6 +61,8 @@ export default function ScanQueueScreen() {
 
   function stateOf(job: ScanJob): string {
     if (job.status === 'searching') return t('queueStateSending');
+    // #1023: held until AI consent is given (the next scan asks).
+    if (job.error === AI_CONSENT_ERROR) return t('queueStateConsent');
     if (job.nextAttemptAt != null && job.nextAttemptAt > now) {
       return t('queueStateNextTry', { time: formatLocalTime(job.nextAttemptAt, i18n.language) });
     }

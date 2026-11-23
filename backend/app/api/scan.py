@@ -46,6 +46,7 @@ from app.models.ai_usage import (
 from app.models.user import User
 from app.schemas.book import EnrichedBook, ScanResponse
 from app.schemas.scan import ScanUsageResponse
+from app.services import ai_consent
 from app.services.book_identifier import ScanUnavailableError
 from app.services.deduplication import DeduplicationService
 from app.services.enrichment import EnrichmentService
@@ -457,6 +458,9 @@ async def scan(
     attest_nonce: str | None = Form(None, alias="attestation-nonce"),
 ) -> ScanResponse:
     ai = await _load_scan_settings(db, enhanced)
+    # --- AI consent (#1023): only with AI_CONSENT_REQUIRED on; after the kill
+    # switches, before the request count and everything else (costs nothing)
+    ai_consent.require_for_scan(current_user)
 
     # --- /scan requests per user per UTC day (#586): after the kill
     # switches, before any other work (see _count_scan_request) ---

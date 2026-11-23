@@ -110,5 +110,13 @@
   "addItYourself": "自己添加",
   "unverifiedSavedMessage": "已将《{{title}}》以未验证状态加入心愿单。",
   "scanInProgress": "正在识别您的书籍并查找匹配项…",
-  "searchInProgress": "正在搜索…"
+  "searchInProgress": "正在搜索…",
+  "aiConsentTitle": "扫描会使用 AI",
+  "aiConsentBody": "为了识别你的书，Bookshelf 会把你的照片发送给 AI 服务商 Anthropic。照片不会被保存；我们只保留一个指纹和识别出的书单，保留 30 天。",
+  "aiConsentPrivacy": "隐私政策",
+  "aiConsentPrivacyHint": "在浏览器中打开隐私政策",
+  "aiConsentContinue": "继续",
+  "aiConsentNotNow": "暂不",
+  "aiConsentSaveFailed": "无法保存你的选择。请检查网络连接后重试。",
+  "queueStateConsent": "等待你同意使用 AI"
 }

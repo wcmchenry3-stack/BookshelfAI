@@ -17,5 +17,14 @@
   "openOnWishlist": "愿望清单",
   "openOnMyBooks": "我的书籍",
   "openOnCancel": "取消",
-  "openOnSaveFailed": "无法保存你的选择，请重试。"
+  "openOnSaveFailed": "无法保存你的选择，请重试。",
+  "aiConsent": "AI 照片扫描",
+  "aiConsentA11y": "AI 照片扫描：{{value}}",
+  "aiConsentOn": "已允许",
+  "aiConsentOff": "未允许",
+  "aiConsentOffHint": "下次扫描前会再询问你。",
+  "aiConsentWithdraw": "撤回",
+  "aiConsentWithdrawHint": "停止向 Anthropic 发送扫描照片，直到你再次允许",
+  "aiConsentWithdrawn": "AI 扫描已关闭。下次扫描前会再询问你。",
+  "aiConsentWithdrawFailed": "无法撤回。请检查网络连接后重试。"
 }

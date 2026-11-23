@@ -53,6 +53,12 @@ Done:
   moves the service-wide count. ``request_limit`` rows refuse with 429
   ``scan_requests_daily_limit`` before every other refusal but the kill
   switches; ``REPEATS`` has a repeat at the limit.
+- #1023 AI consent: with ``AI_CONSENT_REQUIRED`` on (``consent_required``
+  rows), a user without consent (``Start.consent``: none or withdrawn) is
+  refused with 403 ``ai_consent_required`` after the kill switches and
+  before everything else, the request count included (nothing moves, no
+  provider); with consent, or with the setting off (the default), the scan
+  runs as usual. ``REPEATS`` has a repeat refused the same way.
 
 Rules that do not exist yet get their rows from their own stories:
 
@@ -115,8 +121,18 @@ ALLOWED = 200
 # switches, and the request limit itself (a refused request writes
 # nothing). Every other request, allowed or refused, counts one.
 NOT_COUNTED = frozenset(
-    {"scan_disabled", "enhanced_scan_disabled", "scan_requests_daily_limit"}
+    {
+        "scan_disabled",
+        "enhanced_scan_disabled",
+        "scan_requests_daily_limit",
+        # #1023: after the kill switches, before the request count.
+        "ai_consent_required",
+    }
 )
+
+# The user's AI consent (#1023): never given (every user the harness makes),
+# given, or given and then withdrawn.
+NO_CONSENT, CONSENTED, WITHDRAWN = "none", "given", "withdrawn"
 
 
 def requests_delta(code: str | None) -> int:
@@ -154,6 +170,8 @@ class Start:
     # /scan requests of another user today (#586): never part of the
     # service-wide count.
     others_requests: int = 0
+    # The user's AI consent (#1023): NO_CONSENT, CONSENTED or WITHDRAWN.
+    consent: str = NO_CONSENT
 
 
 @dataclass(frozen=True)
@@ -198,6 +216,8 @@ class Case:
     ledger: str | None = None
     # ScanResponse.no_match on a 200 (#577): "free", "counted" or None.
     no_match: str | None = None
+    # AI_CONSENT_REQUIRED (#1023), an env setting (not ai_settings).
+    consent_required: bool = False
 
 
 # fmt: off
@@ -337,6 +357,36 @@ CASES: list[Case] = [
     Case("free-enhanced-request_limit_beats_requires_premium", FREE, True,
          None, 429, "scan_requests_daily_limit", NOTHING, NO_SPEND,
          Start(requests=LIMIT)),
+    # ---- AI consent (#1023): only with AI_CONSENT_REQUIRED on --------------
+    Case("free-standard-consent_required_without_consent-refused", FREE,
+         False, None, 403, "ai_consent_required", NOTHING, NO_SPEND,
+         consent_required=True),
+    Case("free-standard-consent_required_after_withdrawal-refused", FREE,
+         False, None, 403, "ai_consent_required", NOTHING, NO_SPEND,
+         Start(consent=WITHDRAWN), consent_required=True),
+    Case("free-standard-consent_required_with_consent-allowed", FREE, False,
+         "books", ALLOWED, None, CHARGED, COST, Start(consent=CONSENTED),
+         consent_required=True),
+    # Off (the default, rollout A): consent is recorded but never checked.
+    Case("free-standard-consent_not_required_without_consent-allowed", FREE,
+         False, "books", ALLOWED, None, CHARGED, COST),
+    Case("free-standard-consent_not_required_after_withdrawal-allowed", FREE,
+         False, "books", ALLOWED, None, CHARGED, COST,
+         Start(consent=WITHDRAWN)),
+    # Before the request limit and every allowance and backstop.
+    Case("free-standard-consent_refusal_beats_request_limit", FREE, False,
+         None, 403, "ai_consent_required", NOTHING, NO_SPEND,
+         Start(requests=LIMIT), consent_required=True),
+    Case("free-standard-consent_refusal_beats_daily_limit", FREE, False, None,
+         403, "ai_consent_required", NOTHING, NO_SPEND,
+         Start(daily=LIMIT, spend=LIMIT), consent_required=True),
+    # Only the kill switches come first.
+    Case("free-standard-scanning_disabled_without_consent-disabled", FREE,
+         False, None, 503, "scan_disabled", NOTHING, NO_SPEND,
+         settings={"scan.standard.enabled": False}, consent_required=True),
+    Case("free-enhanced-consent_refusal_beats_requires_premium", FREE, True,
+         None, 403, "ai_consent_required", NOTHING, NO_SPEND,
+         consent_required=True),
     # ---- Free, enhanced: Premium only, refused before anything -----------
     Case("free-enhanced-requires_premium-refused", FREE, True, None,
          403, "enhanced_requires_premium", NOTHING, NO_SPEND),
@@ -478,6 +528,13 @@ CASES: list[Case] = [
     Case("premium-enhanced-enhanced_disabled-refused", PREMIUM, True, None,
          503, "enhanced_scan_disabled", NOTHING, NO_SPEND,
          settings={"scan.enhanced.enabled": False}),
+    # #1023: Premium needs consent too, before the in-flight lease.
+    Case("premium-enhanced-consent_required_without_consent-refused", PREMIUM,
+         True, None, 403, "ai_consent_required", NOTHING, NO_SPEND,
+         Start(lease_held=True), consent_required=True),
+    Case("premium-enhanced-consent_required_with_consent-allowed", PREMIUM,
+         True, "books", ALLOWED, None, CHARGED_ENHANCED, COST,
+         Start(consent=CONSENTED), consent_required=True),
     Case("premium-enhanced-scanning_disabled-refused", PREMIUM, True, None,
          503, "scan_disabled", NOTHING, NO_SPEND,
          settings={"scan.standard.enabled": False}),
@@ -529,13 +586,19 @@ async def test_limits_matrix(case: Case, limits_db: h.LimitsDb, downstream):
         await db.seed_spend(day, settled=spend_start)
     await db.seed_zero_results(user_id, s.zero_results)
     held = await db.hold_lease(user_id) if s.lease_held else None
+    await db.set_ai_consent(user_id, s.consent)
 
     before = await db.counters(user_id, day)
     h.use_settings(rows)
     provider = h.FakeProvider(case.provider or "books")
 
     # -- the scan ---------------------------------------------------------
-    with h.Clock(h.at(day)).patch(), h.as_tier(case.tier), provider.patch():
+    with (
+        h.Clock(h.at(day)).patch(),
+        h.as_tier(case.tier),
+        provider.patch(),
+        h.ai_consent_required(case.consent_required),
+    ):
         got = await h.call_scan(db.factory, user_id, enhanced=case.enhanced)
 
     # -- what the client sees ----------------------------------------------
@@ -616,6 +679,7 @@ def test_matrix_ids_are_unique_and_cover_every_refusal_code():
         "enhanced_scan_disabled",
         "scan_unavailable",
         "scan_requests_daily_limit",
+        "ai_consent_required",
     } <= codes
     outcomes = {c.provider for c in CASES} - {None}
     assert outcomes == set(h.OUTCOMES) | set(h.ERRORS)
@@ -693,6 +757,9 @@ class Repeat:
     # Under the second upload's conditions, what a NEW photo gets: proves the
     # limit really is reached when a repeat is still served.
     new_photo: tuple[int, str] | None = None
+    # AI_CONSENT_REQUIRED (#1023) turned on for the second upload; the user
+    # has not given consent.
+    consent_required_after: bool = False
 
 
 FREE_REPEAT: dict[str, Any] = {"repeat": True, "delta": NOTHING, "spend": NO_SPEND}
@@ -737,6 +804,12 @@ REPEATS: list[Repeat] = [
            repeat=False, delta=NOTHING, spend=NO_SPEND,
            settings_after={"scan.requests_per_user_daily": 1},
            new_photo=(429, "scan_requests_daily_limit")),
+    # #1023: a saved answer is still the photo sent to the server; without
+    # consent (setting on) it is refused before the lookup, uncounted.
+    Repeat("free-standard-repeat_consent_required-refused", FREE,
+           (False, "books"), False, None, 403, "ai_consent_required",
+           repeat=False, delta=NOTHING, spend=NO_SPEND,
+           consent_required_after=True),
     # The scanning kill switch is checked before the lookup.
     Repeat("free-standard-repeat_scanning_disabled-refused", FREE,
            (False, "books"), False, None, 503, "scan_disabled", repeat=False,
@@ -840,7 +913,12 @@ async def test_limits_matrix_repeats(case: Repeat, limits_db: h.LimitsDb, downst
     provider = h.FakeProvider(case.provider or "books")
 
     # -- the same photo again ----------------------------------------------
-    with h.Clock(h.at(day)).patch(), h.as_tier(tier), provider.patch():
+    with (
+        h.Clock(h.at(day)).patch(),
+        h.as_tier(tier),
+        provider.patch(),
+        h.ai_consent_required(case.consent_required_after),
+    ):
         got = await h.call_scan(
             db.factory, user_id, enhanced=case.enhanced, image=photo
         )

@@ -110,5 +110,13 @@
   "addItYourself": "직접 추가",
   "unverifiedSavedMessage": "{{title}}을(를) 미확인으로 위시리스트에 추가했습니다.",
   "scanInProgress": "책을 읽고 일치하는 정보를 찾는 중…",
-  "searchInProgress": "검색 중…"
+  "searchInProgress": "검색 중…",
+  "aiConsentTitle": "스캔에는 AI가 사용됩니다",
+  "aiConsentBody": "책을 식별하기 위해 Bookshelf는 사진을 AI 제공업체인 Anthropic에 보냅니다. 사진은 저장되지 않으며, 지문과 찾은 책 목록만 30일 동안 보관합니다.",
+  "aiConsentPrivacy": "개인정보 처리방침",
+  "aiConsentPrivacyHint": "브라우저에서 개인정보 처리방침을 엽니다",
+  "aiConsentContinue": "계속",
+  "aiConsentNotNow": "나중에",
+  "aiConsentSaveFailed": "선택을 저장하지 못했습니다. 연결을 확인하고 다시 시도하세요.",
+  "queueStateConsent": "AI 사용 동의 대기 중"
 }

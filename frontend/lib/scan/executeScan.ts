@@ -33,12 +33,13 @@ import {
   classifyJobFailure,
   handleEnhancedRefusal,
   handleScanRefusal,
+  holdForAiConsent,
   handleUnavailable,
   isNetworkSuspend,
   restorePriorResults,
   shouldBumpUsageOnError,
 } from './scanOutcomes';
-import type { ScanExecDeps } from './types';
+import type { ExecuteScanOptions, ScanExecDeps } from './types';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,13 +50,19 @@ function sleep(ms: number): Promise<void> {
  * function: ScanJobProvider rebuilds `deps` after the renders that change
  * its callbacks and passes it here, so nothing is frozen.
  */
-export async function executeScan(deps: ScanExecDeps, job: ScanJob): Promise<void> {
+export async function executeScan(
+  deps: ScanExecDeps,
+  job: ScanJob,
+  options: ExecuteScanOptions = {}
+): Promise<void> {
   // Synchronous (before any await) so a drain can't start the same job.
   deps.inFlightRef.current.add(job.id);
   const controller = new AbortController();
   deps.abortersRef.current.add(controller);
   try {
-    await runScan(deps, job, controller.signal);
+    // No photo leaves the device before AI consent stands (#1023).
+    if (job.type === 'image' && !(await mayUpload(deps, job, options))) return;
+    await runScan(deps, job, controller.signal, options);
   } finally {
     deps.abortersRef.current.delete(controller);
     deps.inFlightRef.current.delete(job.id);
@@ -67,6 +74,26 @@ export async function executeScan(deps: ScanExecDeps, job: ScanJob): Promise<voi
       void deps.drainQueue();
     }
   }
+}
+
+/**
+ * Whether this photo may be uploaded (#1023). A send the user just asked for
+ * may show the consent prompt; the drain never does (no prompt at launch or
+ * on reconnect). Without consent the photo waits in the queue and goes once
+ * consent is given (ScanJobProvider drains then).
+ */
+async function mayUpload(
+  deps: ScanExecDeps,
+  job: ScanJob,
+  { interactive = false }: ExecuteScanOptions
+): Promise<boolean> {
+  const generation = deps.generationRef.current;
+  const gate = deps.aiConsentRef.current;
+  const ok = await (interactive ? gate.ensure() : gate.check());
+  // Signed out meanwhile: the queue is gone, nothing to hold.
+  if (deps.generationRef.current !== generation) return false;
+  if (!ok) holdForAiConsent(deps, job);
+  return ok;
 }
 
 /** One POST /scan form body; each one carries its own Turnstile token (#740). */
@@ -108,7 +135,12 @@ async function buildScanFormData(
   return formData;
 }
 
-async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
+async function runScan(
+  deps: ScanExecDeps,
+  job: ScanJob,
+  signal: AbortSignal,
+  { interactive = false }: ExecuteScanOptions = {}
+) {
   const { updateJob, showBanner, bumpUsage, setScanNotice, setReviewingJobId, t } = deps;
   const generation = deps.generationRef.current;
   const signedOutSince = () => deps.generationRef.current !== generation;
@@ -152,8 +184,15 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
           if (signal.aborted) return null;
           throw readErr;
         }
-        // Signed out or aborted during the read: still nothing is sent.
+        // #1023: consent may have been withdrawn while the token, the photo
+        // or a scan_in_progress wait was awaited: check again, without
+        // asking, right before every post. No consent: the photo waits.
+        const consented = await deps.aiConsentRef.current.check();
         if (signedOutSince() || signal.aborted) return null;
+        if (!consented) {
+          holdForAiConsent(deps, job);
+          return null;
+        }
         return api.post<ScanResponse>('/scan', body, {
           signal,
           timeout: SCAN_UPLOAD_TIMEOUT_MS,
@@ -347,6 +386,16 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
     const uiState = classifyJobFailure(classified, deps.turnstileConfiguredRef.current);
 
     if (shouldBumpUsageOnError(job, err, uiState)) bumpUsage();
+
+    // #1023: consent withdrawn elsewhere (or never recorded) and the server
+    // enforces it: the photo waits, and a send the user started asks again
+    // instead of an error. The drain never asks (no prompt at launch).
+    if (uiState.kind === 'ai_consent_required') {
+      deps.aiConsentRef.current.markRequired();
+      holdForAiConsent(deps, job);
+      if (interactive) void deps.aiConsentRef.current.ensure();
+      return;
+    }
 
     if (
       uiState.kind === 'daily_limit' ||

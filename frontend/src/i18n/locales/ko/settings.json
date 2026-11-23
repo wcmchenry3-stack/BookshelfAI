@@ -17,5 +17,14 @@
   "openOnWishlist": "위시리스트",
   "openOnMyBooks": "내 책",
   "openOnCancel": "취소",
-  "openOnSaveFailed": "선택을 저장하지 못했습니다. 다시 시도하세요."
+  "openOnSaveFailed": "선택을 저장하지 못했습니다. 다시 시도하세요.",
+  "aiConsent": "AI 사진 스캔",
+  "aiConsentA11y": "AI 사진 스캔: {{value}}",
+  "aiConsentOn": "허용됨",
+  "aiConsentOff": "허용 안 됨",
+  "aiConsentOffHint": "다음 스캔 전에 다시 물어봅니다.",
+  "aiConsentWithdraw": "철회",
+  "aiConsentWithdrawHint": "다시 허용할 때까지 스캔 사진을 Anthropic에 보내지 않습니다",
+  "aiConsentWithdrawn": "AI 스캔이 꺼졌습니다. 다음 스캔 전에 다시 물어봅니다.",
+  "aiConsentWithdrawFailed": "철회하지 못했습니다. 연결을 확인하고 다시 시도하세요."
 }

@@ -46,12 +46,14 @@ sequenceDiagram
   participant P as BookCandidatePicker
 
   U->>S: Tap capture
+  S->>S: AI consent (#1023): ask with the prompt unless it stands; Not now stops here
   S->>C: takePictureAsync() / File input
   C-->>S: photo URI
   S->>FS: Copy to scan-queue/ (native only)
   FS-->>S: persisted URI
   S->>SJ: startScan('image', uri)
   SJ->>SJ: Create ScanJob(id, status=pending)
+  SJ->>SJ: upload gate: consent must stand (else the photo waits, queued)
   SJ->>SJ: getToken(): fresh Turnstile token (#740; none if unset/timeout)
   SJ->>API: POST /scan (multipart, cf-turnstile-response)
   API->>AI: identify(base64 image)
@@ -189,6 +191,18 @@ A `UserBook` moves through four states. Transitions auto-timestamp the correspon
 
 Non-canonical transitions (e.g. skipping states, re-reads) are allowed — the frontend UI exposes the common paths, but the API accepts any state value on `PATCH /user-books/{id}`.
 
+### AI scan consent (#1023)
+
+Apple 5.1.2(i): before the first scan photo goes to Anthropic, the app asks.
+
+- **The prompt** ("Scanning uses AI"): says the photo goes to Anthropic, an AI provider, to identify the books, that photos aren't stored and only a fingerprint and the list of books found are kept for 30 days, and links the privacy policy. **Continue** records consent on the server (`POST /users/me/ai-consent`) and only then lets the scan go; if that call fails the prompt stays with an error. **Not now** records nothing and takes no photo; tapping Scan asks again. Search and "Add it yourself" never ask: they send no photo.
+- **Per account, on the server**, so it survives reinstalls and other devices. Existing users are asked at their next scan; nothing pops up at launch.
+- **Where it asks**: the native shutter (before the photo is taken; a second tap while it asks takes no second photo), the upload of a photo picked with the web "Scan Books" button (the picker itself opens in the same tap, since browsers only open it from the tap; picking is local and nothing is sent before consent), "Send now" for saved photos, and any re-send the user starts (Retry, the queue screen's Retry, an enhanced re-scan). Offline with an unknown state the photo is taken and saved; it is not uploaded until consent is known to stand. Consent is checked again, without asking, right before every upload request (after the Turnstile token and any `scan_in_progress` wait), so a withdrawal in Settings meanwhile stops it.
+- **Saved photos** (taken offline, or before this release) never upload without consent. The background drain (reconnect, launch, retry timer) never shows the prompt: such a photo stays queued ("Waiting for AI consent" in the queue) and goes as soon as consent is given; it follows the 7-day rule for queued photos.
+- **Server refusal**: when `AI_CONSENT_REQUIRED` is on and the server answers `403 ai_consent_required` (for example consent was withdrawn on another device), the app forgets the consent and keeps the photo queued; a send the user started shows the prompt instead of an error, the background drain does not (no prompt at launch).
+- **Known gap, accepted for rollout A**: the app reads the consent state once per session. While `AI_CONSENT_REQUIRED` is off, a withdrawal made on another device takes effect on this device only after the app restarts or the state is read again (sign-in, or a server refusal), so photos sent in between still go. Turning `AI_CONSENT_REQUIRED` on closes the gap on the server.
+- **Settings** ("AI photo scanning") shows Allowed / Not allowed and offers **Withdraw**, which applies at once; the next scan asks again.
+
 ## Offline resilience
 
 Scan jobs persist locally so the user can keep scanning even without connectivity. `ScanJobContext` is the single source of truth.
@@ -213,6 +227,7 @@ pending ─▶ searching ─▶ complete
              │             └─▶ (user confirms) ─▶ deleted
              │
              ├─▶ queued (refused: limit / paused / busy; next drain or "Try again")
+             ├─▶ queued, error ai_consent (#1023: no AI consent; sent once it is given)
              ├─▶ queued + nextAttemptAt (503 scan_unavailable, attempts 1-4; sent when due)
              │      └─▶ failed (attempt 5 failed; banner "Retry" ─▶ pending, attempt 1)
              └─▶ failed ─▶ queued (manual)

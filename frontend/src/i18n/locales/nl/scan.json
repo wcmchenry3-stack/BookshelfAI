@@ -111,5 +111,13 @@
   "addItYourself": "Zelf toevoegen",
   "unverifiedSavedMessage": "{{title}} is als niet geverifieerd aan je verlanglijst toegevoegd.",
   "scanInProgress": "Je boeken worden gelezen en matches opgezocht…",
-  "searchInProgress": "Zoeken…"
+  "searchInProgress": "Zoeken…",
+  "aiConsentTitle": "Scannen gebruikt AI",
+  "aiConsentBody": "Om je boeken te herkennen, stuurt Bookshelf je foto naar Anthropic, een AI-aanbieder. Foto's worden niet bewaard; we houden alleen een vingerafdruk en de lijst met gevonden boeken bij, 30 dagen lang.",
+  "aiConsentPrivacy": "Privacybeleid",
+  "aiConsentPrivacyHint": "Opent het privacybeleid in je browser",
+  "aiConsentContinue": "Doorgaan",
+  "aiConsentNotNow": "Niet nu",
+  "aiConsentSaveFailed": "Je keuze kon niet worden opgeslagen. Controleer je verbinding en probeer het opnieuw.",
+  "queueStateConsent": "Wacht op je AI-toestemming"
 }

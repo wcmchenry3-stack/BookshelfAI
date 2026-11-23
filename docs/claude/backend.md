@@ -32,7 +32,7 @@ Every endpoint is rate-limited via slowapi. The `limiter` instance lives in `app
 | `POST /auth/google`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all` | 5/min | `rate_limit_auth` |
 | `POST /scan` | 10/min | `rate_limit_scan` |
 | `GET /books/search` | 30/min | `rate_limit_books_search` |
-| `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH`, `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences` | 60/min | `rate_limit_writes` |
+| `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH`, `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences`, `POST` / `DELETE /users/me/ai-consent` | 60/min | `rate_limit_writes` |
 | `GET /user-books`, `GET /user-books/trash`, `GET /auth/me` | 120/min | `rate_limit_reads` |
 
 All limits are env-var overridable via `Settings` in `app/core/config.py`.
@@ -45,6 +45,10 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 - Users are matched by Google `sub` (`users.google_id`) via `app/auth/identity.py:resolve_google_user`, never by email; an email owned by another subject (compared with `lower()`) → 409 `account_conflict`; `ALLOWED_EMAILS` also ignores case
 - `/auth/test-login` exists only in development/test; hardened settings with `TEST_AUTH_SECRET` set fail boot
 - Logs and Sentry: log user IDs, never emails, allowlist entries, tokens (access, refresh, ID tokens), Google/Apple `sub` values or `Authorization` headers. `tests/security/test_log_hygiene_flows.py` (helpers in `tests/_log_hygiene.py`) drives the real auth, library, scan and error flows and fails on any such value in a log record or Sentry event. A story that adds a flow handling user data (e.g. account deletion) must add it there.
+
+### AI scan consent (#1023)
+- Consent to send scan photos to the AI provider lives on the user row (`users.ai_consent_at`, `ai_consent_withdrawn_at`; `User.ai_consent` says whether it stands). Only `app/services/ai_consent.py` (`grant`, `withdraw`) sets them, from the server's clock, through `POST` / `DELETE /users/me/ai-consent` (row re-read under `FOR UPDATE`). Never take a timestamp or a consent flag from a request.
+- `POST /scan` calls `ai_consent.require_for_scan(user)` right after the kill switches and before the request count, the bot check, the upload, the saved-answer lookup, the allowance and the provider, so a refusal (`403 ai_consent_required`) costs nothing. It refuses only while `AI_CONSENT_REQUIRED` is on (default off: rollout A). A new path that sends a user's photo to a model must make the same check first.
 
 ### Catalog/user boundary (#602, #611, #682)
 - `books` / `editions` are the **shared catalog**. Only `WishlistService` (`POST /wishlist`) creates rows, only from provider data the server signed (`catalog_token`), and no request ever updates an existing catalog row. Client input never reaches these tables.

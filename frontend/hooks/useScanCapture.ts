@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Sentry } from '../lib/sentry';
 import { checkCaptureStorage } from '../lib/scanJobStorage';
+import { useAiConsent } from './useAiConsent';
 import { useBanner } from './useBanner';
 
 interface Options {
@@ -19,11 +20,15 @@ interface Options {
 /**
  * Photo capture for the Scan screen: the native camera shutter sequence and
  * the web file input. Both refuse while the queue is full and hand the photo
- * to `startScan`.
+ * to `startScan`. The native shutter asks for AI consent first (#1023,
+ * `requestCapture`): Not now takes no photo. The web picker opens at once
+ * (`requestWebPick`); its upload asks before anything is sent.
  */
 export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facing }: Options) {
   const { t } = useTranslation('scan');
   const { showBanner } = useBanner();
+  const { ensureConsent } = useAiConsent();
+  const askingRef = useRef(false);
   const [capturing, setCapturing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
   const captureSeq = useRef(0);
@@ -156,5 +161,36 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
     }
   }
 
-  return { cameraRef, webInputRef, capturing, handleCapture, handleWebFileChange };
+  // #1023: ask before the photo is taken. A state that cannot be read
+  // (offline) does not ask: the photo only waits in the queue, and its upload
+  // checks consent again.
+  async function requestCapture() {
+    // Held synchronously across the consent await, so a double tap takes one
+    // photo (`capturing` only turns on inside handleCapture).
+    if (capturing || askingRef.current) return;
+    askingRef.current = true;
+    try {
+      if (await ensureConsent({ allowUnknown: true })) await handleCapture();
+    } finally {
+      askingRef.current = false;
+    }
+  }
+
+  // Web: open the picker in the same tap, always (browsers, Safari first,
+  // only open a file picker from a user gesture, which an await would lose).
+  // Picking a file is local; startScan's send asks for consent (an
+  // interactive send) before the photo is uploaded.
+  function requestWebPick() {
+    webInputRef.current?.click();
+  }
+
+  return {
+    cameraRef,
+    webInputRef,
+    capturing,
+    handleCapture,
+    requestCapture,
+    requestWebPick,
+    handleWebFileChange,
+  };
 }

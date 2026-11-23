@@ -17,5 +17,14 @@
   "openOnWishlist": "ほしい物",
   "openOnMyBooks": "マイブック",
   "openOnCancel": "キャンセル",
-  "openOnSaveFailed": "選択を保存できませんでした。もう一度お試しください。"
+  "openOnSaveFailed": "選択を保存できませんでした。もう一度お試しください。",
+  "aiConsent": "AI による写真スキャン",
+  "aiConsentA11y": "AI による写真スキャン：{{value}}",
+  "aiConsentOn": "許可済み",
+  "aiConsentOff": "未許可",
+  "aiConsentOffHint": "次回のスキャン前に確認します。",
+  "aiConsentWithdraw": "取り消す",
+  "aiConsentWithdrawHint": "再び許可するまで、スキャン写真を Anthropic に送信しません",
+  "aiConsentWithdrawn": "AI スキャンをオフにしました。次回のスキャン前に確認します。",
+  "aiConsentWithdrawFailed": "取り消せませんでした。接続を確認して、もう一度お試しください。"
 }
