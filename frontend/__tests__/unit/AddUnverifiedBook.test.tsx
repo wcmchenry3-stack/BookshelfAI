@@ -190,16 +190,29 @@ describe('AddUnverifiedBookSheet', () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it('closes without an error when the save was applied without its response (#685)', async () => {
+  it('completes the draft without an error when the save was applied without its response (#685)', async () => {
     mockPost.mockRejectedValueOnce(httpError(409, 'idempotency_outcome_unknown'));
     const reloads = jest.fn();
     const unsubscribe = onLibraryChanged(reloads);
-    const { getByLabelText, queryByText, onSaved, onDismiss } = await renderSheet();
+    const onSavedWithoutEntry = jest.fn();
+    const onSaved = jest.fn();
+    const onDismiss = jest.fn();
+    const { getByLabelText, queryByText } = await render(
+      <AddUnverifiedBookSheet
+        visible
+        draft={draft}
+        draftKey="k1"
+        onSaved={onSaved}
+        onSavedWithoutEntry={onSavedWithoutEntry}
+        onDismiss={onDismiss}
+      />
+    );
     await fireEvent.press(getByLabelText('Save'));
-    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    await waitFor(() => expect(onSavedWithoutEntry).toHaveBeenCalledWith('Pond Notes'));
     unsubscribe();
     expect(reloads).toHaveBeenCalledTimes(1);
     expect(onSaved).not.toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
     expect(queryByText("Couldn't save this book. Try again.")).toBeNull();
     expect(mockPost).toHaveBeenCalledTimes(1);
   });

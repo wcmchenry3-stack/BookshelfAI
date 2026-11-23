@@ -300,6 +300,39 @@ describe('a save that finishes after its form closed (#616)', () => {
   });
 });
 
+describe('a save applied without its response (#685)', () => {
+  it('completes only that draft: the other queued drafts stay', async () => {
+    const MARSH = book('Marsh Log', false);
+    const REED = book('Reed Book', false);
+    seedJob([POND, MARSH, REED, DUNE]);
+    const utils = await open();
+    await act(() => ctx.addYourself([POND, MARSH, REED]));
+    await settle();
+    expect(ctx.unverifiedDrafts.map((d) => d.title)).toEqual([
+      'Pond Notes',
+      'Marsh Log',
+      'Reed Book',
+    ]);
+    expect(utils.getByTestId('unverified-title-input').props.value).toBe('Pond Notes');
+
+    mockPost.mockRejectedValueOnce(
+      Object.assign(new Error('409'), {
+        response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } },
+      })
+    );
+    await act(async () => {
+      await fireEvent.press(utils.getByLabelText('Save'));
+    });
+    await settle();
+
+    // Pond Notes is saved: out of the queue and out of the scan's results.
+    expect(ctx.unverifiedDrafts.map((d) => d.title)).toEqual(['Marsh Log', 'Reed Book']);
+    expect(ctx.jobs[0].results?.map((b) => b.title)).not.toContain('Pond Notes');
+    expect(utils.getByTestId('unverified-title-input').props.value).toBe('Marsh Log');
+    expect(utils.queryByText("Couldn't save this book. Try again.")).toBeNull();
+  });
+});
+
 describe('mixed add outcome keeps the refused book reachable (#616)', () => {
   const answer = (t: string) =>
     t === 'Pond Notes'

@@ -42,6 +42,12 @@ interface Props {
   draftKey: string;
   /** Called with the new library entry once POST /wishlist/unverified succeeds. */
   onSaved: (entry: SavedUnverifiedBook) => void;
+  /**
+   * Called with the title sent when the save was applied but its response
+   * was lost (`409 idempotency_outcome_unknown`, #685): the same outcome as
+   * `onSaved`, without the entry.
+   */
+  onSavedWithoutEntry?: (title: string) => void;
   onDismiss: () => void;
   /** The sheet has finished dismissing (iOS only): the Modal's onDismiss. */
   onHidden?: () => void;
@@ -56,6 +62,7 @@ export function AddUnverifiedBookSheet({
   draft,
   draftKey,
   onSaved,
+  onSavedWithoutEntry,
   onDismiss,
   onHidden,
 }: Props) {
@@ -108,10 +115,11 @@ export function AddUnverifiedBookSheet({
       onSaved(data);
     } catch (err) {
       if (isIdempotencyOutcomeUnknown(err)) {
-        // #685: the book was saved, only the response was lost. Close the
-        // form and let the lists reload; no error.
+        // #685: the book was saved, only the response was lost. Complete
+        // this draft as a save does (bound to it, like onSaved), and let the
+        // lists reload; no error.
         notifyLibraryChanged();
-        if (draftKeyRef.current === startedFor) onDismiss();
+        onSavedWithoutEntry?.(cleanTitle);
         return;
       }
       // Show the failure only on the form it belongs to.

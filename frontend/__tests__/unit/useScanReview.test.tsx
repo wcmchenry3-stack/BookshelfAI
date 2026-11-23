@@ -186,6 +186,22 @@ describe('handleAddBooks', () => {
     expect(s.showBanner).toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
   });
 
+  it('never reports an add applied without its response, in a mixed result (#685)', async () => {
+    mockPost.mockImplementation(async (_p: string, b: EnrichedBook) => {
+      if (b.title === 'Dune') throw refusal(409, 'idempotency_outcome_unknown');
+      throw Object.assign(new Error('Network Error'), { response: undefined });
+    });
+    const s = setup([reviewJob([DUNE, EMMA])]);
+    const { result } = await s.hook;
+    await act(async () => {
+      await result.current.handleAddBooks([DUNE, EMMA]);
+    });
+    // Only Emma's network failure is reported, and only Emma stays to retry.
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mockCapture.mock.calls)).not.toContain('idempotency_outcome_unknown');
+    expect(s.updateJob).toHaveBeenCalledWith('job-1', { results: [EMMA] });
+  });
+
   it('offers "Add it yourself" for a book no catalog matched, which opens its draft', async () => {
     mockPost.mockRejectedValue(refusal(422, 'book_not_in_catalog'));
     const s = setup([reviewJob([DUNE])]);

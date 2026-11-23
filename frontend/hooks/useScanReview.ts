@@ -246,6 +246,7 @@ export function useScanReview({
         if (
           outcome.status === 'rejected' &&
           !alreadyOwned(outcome) &&
+          !isIdempotencyOutcomeUnknown(outcome.reason) &&
           catalogRefusal(outcome.reason) === null &&
           !isReportedCentrally(outcome.reason)
         ) {
