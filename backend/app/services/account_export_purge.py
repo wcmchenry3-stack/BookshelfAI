@@ -94,7 +94,10 @@ async def purge_expired(
             if paths:
                 await storage.delete(paths)
         except StorageError as exc:
-            logger.warning(
+            # ERROR, not WARNING: Sentry's logging integration only turns
+            # ERROR and above into events, and a persistent failure here keeps
+            # expired personal data past its 7-day retention (#1058 review).
+            logger.error(
                 "account_export: purge could not delete %d file(s) (%s); "
                 "the rows stay for the next run",
                 len(paths),

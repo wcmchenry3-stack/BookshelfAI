@@ -808,7 +808,7 @@ async def test_purge_stops_on_an_empty_batch_and_needs_no_storage_without_object
 
 async def test_a_storage_failure_is_logged_and_keeps_the_rows(caplog):
     db = Session(results=[_rows((uuid.uuid4(), "exports/a.json"))])
-    with caplog.at_level("WARNING", logger=purge.logger.name):
+    with caplog.at_level("ERROR", logger=purge.logger.name):
         assert await purge.purge_expired(db, Storage({"delete"}).client()) == 0
     assert "purge could not delete" in caplog.text
     assert db.rollbacks == 1 and db.commits == 0
