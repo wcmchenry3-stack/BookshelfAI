@@ -496,9 +496,9 @@ Stores registered iOS App Attest public keys for `/scan` bot protection (#753).
 | id | UUID PK | `IdMixin` |
 | user_id | UUID FK | CASCADE delete on `users.id`, indexed (`UserOwnedMixin`) |
 | platform | ENUM `device_key_platform` | `ios` or `android` (android rows unused — Play Integrity is stateless) |
-| key_id | VARCHAR(256) | Hex key id from `DCAppAttestService.generateKey()` |
-| public_key_cbor | BYTEA | COSE-encoded public key from the Apple attestation object |
-| counter | BIGINT | Strictly-monotonic assertion counter; reset on re-registration |
+| key_id | VARCHAR(256) | Key id from `DCAppAttestService.generateKey()`: base64 of SHA-256 of the public key, as the app sends it |
+| public_key_cbor | BYTEA | COSE_Key (EC2, P-256) of the attested credential certificate's public key (#1051) |
+| counter | BIGINT | Strictly-monotonic assertion counter, advanced with a compare-and-set (`WHERE counter < new`); 0 on (re-)registration |
 | last_used_at | TIMESTAMPTZ | Set on each successful `/scan` assertion |
 | created_at | TIMESTAMPTZ | Server default (`CreatedAtMixin`) |
 

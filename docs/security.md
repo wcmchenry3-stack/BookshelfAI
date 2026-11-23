@@ -125,8 +125,21 @@ A valid assertion or integrity token grants immediate access and skips the Turns
 **iOS — Apple App Attest (two-step):**
 
 1. `POST /attestation/nonce` — client calls this (auth required) to get a short-lived HMAC-signed nonce (5-minute TTL, stateless — no DB write).
-2. `POST /attestation/register` (key_id + attestation_b64 + nonce) — server verifies the App Attest cert chain via `StubAppleAttestVerifier` (stub until ATTESTATION_APPLE_APP_ID is set) and stores the public key + counter in `device_keys`.
-3. `POST /scan` (key_id + assertion_b64 + nonce) — `_check_bot_protection()` in `backend/app/api/_bot_check.py` calls `_verify_attestation()`, which verifies the assertion signature and counter against the stored key.
+2. `POST /attestation/register` (key_id + attestation_b64 + nonce) — `LiveAppleAttestVerifier` (`backend/app/core/app_attest.py`, #1051) runs every check in Apple's "Validating apps that connect to your server", numbered in the code as in that article:
+   1. `x5c` is exactly [credCert, intermediate]; the intermediate is a CA, each certificate is directly issued by the next (issuer name and signature), the intermediate by the **Apple App Attestation Root CA** embedded in the code (SHA-256 `1CB9823B…C932`), and all three are inside their validity dates.
+   2. `clientDataHash = SHA-256(nonce)` (UTF-8 bytes of the server nonce, which the client passes as the challenge).
+   3. `SHA-256(authData || clientDataHash)` …
+   4. … must equal the octet string in the credCert extension `1.2.840.113635.100.8.2`.
+   5. `SHA-256` of the credCert public key (uncompressed P-256 point) equals the `key_id`.
+   6. `rpIdHash` equals `SHA-256(ATTESTATION_APPLE_APP_ID)`.
+   7. The counter is 0.
+   8. `aaguid` is `appattest` + 7 zero bytes (production). `appattestdevelop` (development builds) is accepted only with `ATTESTATION_APPLE_ALLOW_DEVELOPMENT=true` (default false).
+   9. `credentialId` equals the `key_id`.
+
+   On success the public key is stored in `device_keys.public_key_cbor` as a COSE_Key (EC2, P-256) with counter 0, under the **canonical `key_id`**: padded standard base64 of the 32 decoded bytes (anything that does not decode to 32 bytes is `400 attestation_invalid`). `/scan` canonicalises the `key_id` the same way before the lookup, so the unpadded and base64url spellings cannot create a second row with its own counter. A registered key is **never overwritten**: posting the same attestation again (a client retry after a lost response; nonces are reusable for 5 minutes) answers the same `200 {"registered": true}` and leaves the row, counter included, unchanged; a different public key under an existing `key_id` is `400 attestation_invalid`. Resetting the counter would re-open every assertion already used. Two concurrent first registrations: the loser of the insert (unique `(user_id, key_id)`) is compared with the winner's row in the same way. The credential certificate must not be a CA (defence in depth, not one of Apple's listed checks), and certificate parts that cannot be parsed are a rejection with a reason code, not a 500. The **receipt is not stored or used**: Apple's fraud-metric receipt checks are not implemented. Any failure is `400 attestation_invalid`, logged as `app_attest attestation rejected reason=<code>` (no key material, nonce or certificate bytes).
+3. `POST /scan` (`attestation-key-id` + `attestation-assertion` + `attestation-nonce`, a fresh nonce per request) — `_check_bot_protection()` in `backend/app/api/_bot_check.py` calls `_verify_attestation()`: after the nonce's HMAC, user and expiry check it loads the user's `device_keys` row and verifies the assertion: the ECDSA P-256 / SHA-256 signature over `SHA-256(authenticatorData || SHA-256(nonce))` with the stored key, `rpIdHash`, and a counter strictly greater than the stored one. The new counter is then written with a compare-and-set (`UPDATE … WHERE counter < new`); if no row changed (a concurrent request with the same or a later counter won), the assertion fails. This is what makes a captured assertion single-use, even though nonces are not (`tests/integration/test_app_attest_db.py` races two replays).
+
+Both the attestation object and the assertion are accepted as standard base64 (what `DCAppAttestService` returns, and what the app sends) or base64url, padding optional; any other character, or a string that mixes the two alphabets (`-`/`_` with `+`/`/`), is rejected. Tests use device recordings (`backend/tests/fixtures/app_attest_vectors.json`, from the MIT-licensed `node-app-attest` package) and a throwaway PKI (`backend/tests/_app_attest_pki.py`) injected through the verifier's `root_ca_pem`; production always uses the embedded Apple root.
 
 **Android — Play Integrity (stateless per request):**
 
@@ -142,7 +155,8 @@ A valid assertion or integrity token grants immediate access and skips the Turns
 |---|---|
 | `ATTESTATION_REQUIRED=true` | Unattestation requests to `/scan` → `403 attestation_required`; Turnstile fallback is skipped |
 | `ATTESTATION_REQUIRED=false` (default) | Failed or absent attestation falls through to the Turnstile check |
-| `ATTESTATION_APPLE_APP_ID` unset | `StubAppleAttestVerifier` is used — all iOS attestations are rejected (default until owner sets up) |
+| `ATTESTATION_APPLE_APP_ID` unset | `/attestation/register` → `503 attestation_not_configured`; iOS assertions on `/scan` fail (default until owner sets up) |
+| `ATTESTATION_APPLE_ALLOW_DEVELOPMENT=true` | Also accept development-environment App Attest keys (`appattestdevelop`); default `false`, keep it off in production |
 | `ATTESTATION_GOOGLE_CREDENTIALS_JSON` unset | Android integrity verifier logs a warning and returns false |
 
 See `docs/RENDER.md` → "Enabling device attestation" for the owner setup guide.
