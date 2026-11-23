@@ -108,8 +108,13 @@ export function useLibraryMutations<T extends MutableBook>({
     }
   }
 
-  async function removeBook(item: T) {
-    if (!requireOnline() || !beginMutating(item.id)) return;
+  /**
+   * Resolves true once the server confirmed the removal, false otherwise
+   * (offline, already in flight, a 412, or an error, each reported here), so a
+   * caller such as the swipe row (#935) knows whether to close.
+   */
+  async function removeBook(item: T): Promise<boolean> {
+    if (!requireOnline() || !beginMutating(item.id)) return false;
     try {
       await api.delete(`/user-books/${item.id}`, ...ifMatch(item.version));
       // A delete moves the entry to the trash (#683), restorable for 30 days.
@@ -119,10 +124,12 @@ export function useLibraryMutations<T extends MutableBook>({
         actions: [{ label: t('viewTrash', { ns: 'my-books' }), onPress: openTrash }],
       });
       onRemoved(item);
+      return true;
     } catch (err) {
       if (!handledConflict(err, item)) {
         Alert.alert(t('errorTitle', { ns: 'common' }), t('errorRemoveBook'));
       }
+      return false;
     } finally {
       endMutating(item.id);
     }

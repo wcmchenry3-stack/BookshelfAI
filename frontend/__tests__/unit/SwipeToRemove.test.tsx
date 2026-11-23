@@ -86,7 +86,7 @@ function Row({
   group,
   title = 'Dune',
 }: {
-  onRemove: () => unknown;
+  onRemove: () => Promise<boolean>;
   disabled?: boolean;
   group?: SwipeRowGroup;
   title?: string;
@@ -121,33 +121,85 @@ beforeEach(() => {
 });
 
 describe('SwipeToRemove (#935)', () => {
-  it('reveals an 88px danger panel that is a button labelled "Remove {title} from wishlist"', async () => {
+  it('reveals an 88px danger panel: a button labelled "Remove {title} from wishlist"', async () => {
     const screen = await render(<Row onRemove={jest.fn()} />);
-    const panel = screen.getByRole('button', { name: 'Remove Dune from wishlist' });
+    const panel = screen.getByRole('button', {
+      name: 'Remove Dune from wishlist',
+      includeHiddenElements: true,
+    });
     expect(panel.props.testID).toBe('swipe-remove-panel');
     expect(REMOVE_PANEL_WIDTH).toBe(88);
     expect(panel).toHaveStyle({ width: 88, backgroundColor: '#B3261E' });
-    expect(screen.getByText('Remove')).toBeTruthy();
+    expect(screen.getByText('Remove', { includeHiddenElements: true })).toBeTruthy();
     expect(screen.getByText('Dune')).toBeTruthy();
   });
 
-  it('pressing the panel removes the book, then closes the row', async () => {
-    const onRemove = jest.fn().mockResolvedValue(undefined);
+  it('hides the panel from screen readers (it stays mounted behind a closed row)', async () => {
+    const screen = await render(<Row onRemove={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Remove Dune from wishlist' })).toBeNull();
+    expect(screen.queryByText('Remove')).toBeNull();
+    const wrap = screen.getByTestId('swipe-remove-panel-wrap', { includeHiddenElements: true });
+    expect(wrap.props.accessibilityElementsHidden).toBe(true);
+    expect(wrap.props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(wrap).not.toBeVisible();
+  });
+
+  it('pressing the panel removes the book; a removed row is not closed (it unmounts)', async () => {
+    const onRemove = jest.fn().mockResolvedValue(true);
     const screen = await render(<Row onRemove={onRemove} />);
     await act(async () => {
-      fireEvent.press(screen.getByRole('button', { name: 'Remove Dune from wishlist' }));
+      fireEvent.press(screen.getByTestId('swipe-remove-panel', { includeHiddenElements: true }));
     });
     expect(onRemove).toHaveBeenCalledTimes(1);
-    expect(rows[0].close).toHaveBeenCalled();
+    expect(rows[0].close).not.toHaveBeenCalled();
+  });
+
+  it('closes the row when the panel press did not remove (failed, offline or in flight)', async () => {
+    const onRemove = jest.fn().mockResolvedValue(false);
+    const screen = await render(<Row onRemove={onRemove} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('swipe-remove-panel', { includeHiddenElements: true }));
+    });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(rows[0].close).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a second panel press while its removal is in flight', async () => {
+    let finish: (removed: boolean) => void = () => {};
+    const onRemove = jest.fn(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    const screen = await render(<Row onRemove={onRemove} />);
+    const panel = () => screen.getByTestId('swipe-remove-panel', { includeHiddenElements: true });
+    await act(async () => {
+      fireEvent.press(panel());
+      fireEvent.press(panel());
+    });
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(rows[0].close).not.toHaveBeenCalled();
+    await act(async () => finish(true));
+    expect(rows[0].close).not.toHaveBeenCalled();
   });
 
   it('a full swipe removes the book straight away, with a haptic tick at the threshold', async () => {
-    const onRemove = jest.fn().mockResolvedValue(undefined);
+    const onRemove = jest.fn().mockResolvedValue(true);
     const impact = jest.spyOn(Haptics, 'impactAsync');
     await render(<Row onRemove={onRemove} />);
     await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
     expect(impact).toHaveBeenCalledTimes(1);
     await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(rows[0].close).not.toHaveBeenCalled();
+  });
+
+  it('a fast flick released past the distance before the reaction ran still removes', async () => {
+    const onRemove = jest.fn().mockResolvedValue(true);
+    const impact = jest.spyOn(Haptics, 'impactAsync');
+    await render(<Row onRemove={onRemove} />);
+    await act(async () => {
+      // Cross the distance and let go in the same frame.
+      rows[0].translation.value = -(FULL_SWIPE_DISTANCE + 10);
+      rows[0].props.onSwipeableWillOpen?.('left');
+      expect(impact).not.toHaveBeenCalled();
+    });
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
@@ -169,22 +221,46 @@ describe('SwipeToRemove (#935)', () => {
   });
 
   it('springs the row back when the removal fails', async () => {
-    let fail: (err: Error) => void = () => {};
-    const onRemove = jest.fn(() => new Promise<void>((_resolve, reject) => (fail = reject)));
+    let finish: (removed: boolean) => void = () => {};
+    const onRemove = jest.fn(() => new Promise<boolean>((resolve) => (finish = resolve)));
     await render(<Row onRemove={onRemove} />);
     await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
     await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
     expect(rows[0].close).not.toHaveBeenCalled();
-    await act(async () => fail(new Error('500')));
-    await waitFor(() => expect(rows[0].close).toHaveBeenCalled());
+    await act(async () => finish(false));
+    expect(rows[0].close).toHaveBeenCalledTimes(1);
   });
 
-  it('disables the gesture while offline and closes an open row', async () => {
+  it('springs the row back when the removal throws', async () => {
+    const onRemove = jest.fn().mockRejectedValue(new Error('500'));
+    await render(<Row onRemove={onRemove} />);
+    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
+    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    await waitFor(() => expect(rows[0].close).toHaveBeenCalledTimes(1));
+  });
+
+  it('disables the gesture and the panel while offline and closes an open row', async () => {
     const screen = await render(<Row onRemove={jest.fn()} />);
     expect(rows[0].props.enabled).toBe(true);
     await screen.rerender(<Row onRemove={jest.fn()} disabled />);
     expect(rows[0].props.enabled).toBe(false);
     expect(rows[0].close).toHaveBeenCalled();
+    expect(
+      screen.getByTestId('swipe-remove-panel', { includeHiddenElements: true })
+    ).toBeDisabled();
+  });
+
+  it('does not close the row when it is disabled by its own removal in flight', async () => {
+    let finish: (removed: boolean) => void = () => {};
+    const onRemove = jest.fn(() => new Promise<boolean>((resolve) => (finish = resolve)));
+    const screen = await render(<Row onRemove={onRemove} />);
+    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
+    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    // The screen marks the book as mutating, which disables the row.
+    await screen.rerender(<Row onRemove={onRemove} disabled />);
+    expect(rows[0].close).not.toHaveBeenCalled();
+    await act(async () => finish(true));
+    expect(rows[0].close).not.toHaveBeenCalled();
   });
 
   it('takes the touch only after 20px sideways, so vertical scrolling wins', async () => {
@@ -202,7 +278,7 @@ describe('SwipeToRemove (#935)', () => {
     rows.length = 0;
     const restore = jest.replaceProperty(I18nManager, 'isRTL', true);
     try {
-      const onRemove = jest.fn().mockResolvedValue(undefined);
+      const onRemove = jest.fn().mockResolvedValue(true);
       await render(<Row onRemove={onRemove} />);
       expect(rows[0].props.renderLeftActions).toBeDefined();
       expect(rows[0].props.renderRightActions).toBeUndefined();

@@ -39,12 +39,12 @@ export interface LibraryRowProps {
    * `remove` screen-reader action. Web has neither: it removes through the
    * detail sheet. Needs `onPress`, `removeActionLabel` and `swipeRemoveLabel`.
    */
-  onSwipeRemove?: () => unknown;
+  onSwipeRemove?: () => Promise<boolean>;
   /** Visible text of the swipe panel and name of the `remove` action, e.g. "Remove". */
   removeActionLabel?: string;
   /** Spoken label of the swipe panel's button, e.g. "Remove Dune from wishlist". */
   swipeRemoveLabel?: string;
-  /** Turns the swipe off (offline). */
+  /** Turns the swipe off (offline, or a change to the book in flight). */
   swipeDisabled?: boolean;
   /** The list's one-open-row group. */
   swipeGroup?: SwipeRowGroup;

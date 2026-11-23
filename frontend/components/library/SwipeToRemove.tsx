@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { I18nManager, Pressable, StyleSheet } from 'react-native';
+import { I18nManager, Pressable, StyleSheet, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import ReanimatedSwipeable, {
@@ -45,15 +45,34 @@ interface RemovePanelProps {
   translation: SharedValue<number>;
   /** -1 when the panel is on the right (LTR), 1 when on the left (RTL). */
   side: -1 | 1;
+  /** Gives the row the swipeable's translation, read when the swipe is let go. */
+  onTranslation: (translation: SharedValue<number>) => void;
   onArmedChange: (armed: boolean) => void;
   onPress: () => void;
+  disabled: boolean;
   label: string;
   text: string;
 }
 
-/** The red Remove button behind the row; reports when a drag passes the full-swipe distance. */
-function RemovePanel({ translation, side, onArmedChange, onPress, label, text }: RemovePanelProps) {
+/**
+ * The red Remove button behind the row. It is hidden from screen readers:
+ * gesture-handler keeps it mounted behind a closed row, where VoiceOver and
+ * TalkBack would otherwise focus an invisible button. They remove through the
+ * row's `remove` action instead. The haptic tick fires as a drag crosses the
+ * full-swipe distance.
+ */
+function RemovePanel({
+  translation,
+  side,
+  onTranslation,
+  onArmedChange,
+  onPress,
+  disabled,
+  label,
+  text,
+}: RemovePanelProps) {
   const { theme } = useTheme();
+  useEffect(() => onTranslation(translation), [onTranslation, translation]);
   useAnimatedReaction(
     () => translation.value * side >= FULL_SWIPE_DISTANCE,
     (armed, previous) => {
@@ -63,18 +82,26 @@ function RemovePanel({ translation, side, onArmedChange, onPress, label, text }:
     [side, onArmedChange]
   );
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={[styles.panel, { backgroundColor: theme.colors.danger }]}
-      testID="swipe-remove-panel"
+    <View
+      style={styles.panelWrap}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      testID="swipe-remove-panel-wrap"
     >
-      <MaterialIcons name="delete-outline" size={24} color={theme.colors.onDanger} />
-      <AppText variant="meta" color="onDanger" numberOfLines={1}>
-        {text}
-      </AppText>
-    </Pressable>
+      <Pressable
+        onPress={onPress}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={[styles.panel, { backgroundColor: theme.colors.danger }]}
+        testID="swipe-remove-panel"
+      >
+        <MaterialIcons name="delete-outline" size={24} color={theme.colors.onDanger} />
+        <AppText variant="meta" color="onDanger" numberOfLines={1}>
+          {text}
+        </AppText>
+      </Pressable>
+    </View>
   );
 }
 
@@ -97,54 +124,74 @@ export function SwipeToRemove({
   const reduceMotion = useReducedMotion();
   const rowRef = useRef<SwipeableMethods>(null);
   const armedRef = useRef(false);
+  const translationRef = useRef<SharedValue<number> | null>(null);
+  const removingRef = useRef(false);
   const handle = useMemo<SwipeRowHandle>(() => ({ close: () => rowRef.current?.close() }), []);
+  const side = I18nManager.isRTL ? 1 : -1;
 
   const remove = useCallback(async () => {
+    if (removingRef.current) return;
+    removingRef.current = true;
+    let removed = false;
     try {
-      await onRemove();
+      removed = await onRemove();
     } catch {
       // `onRemove` shows its own error alert; nothing to add here.
     } finally {
-      // A removed row unmounts; any other outcome springs back.
-      rowRef.current?.close();
+      removingRef.current = false;
     }
+    // A removed row unmounts as it is: closing it would flash. Any other
+    // outcome (failure, offline, a 412) springs back.
+    if (!removed) rowRef.current?.close();
   }, [onRemove]);
+
+  const onTranslation = useCallback((translation: SharedValue<number>) => {
+    translationRef.current = translation;
+  }, []);
 
   const onArmedChange = useCallback((armed: boolean) => {
     armedRef.current = armed;
     if (armed) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, []);
 
+  // Decided when the swipe is let go, from where the row is then: the reaction
+  // that arms it runs a frame later, so a fast flick that crosses the distance
+  // and lifts in the same frame would otherwise only open the row.
   const onWillOpen = useCallback(() => {
     group?.onOpen(handle);
-    if (!armedRef.current) return;
+    const travelled = (translationRef.current?.value ?? 0) * side;
+    const full = armedRef.current || travelled >= FULL_SWIPE_DISTANCE;
     armedRef.current = false;
-    void remove();
-  }, [group, handle, remove]);
+    if (full) void remove();
+  }, [group, handle, remove, side]);
 
   const onClose = useCallback(() => group?.onClose(handle), [group, handle]);
 
+  // Offline, or another change to this book in flight: close an open row,
+  // unless it is this row's own removal.
   useEffect(() => {
-    if (disabled) rowRef.current?.close();
+    if (disabled && !removingRef.current) rowRef.current?.close();
   }, [disabled]);
 
-  const rtl = I18nManager.isRTL;
   const renderActions = useCallback(
     (_progress: SharedValue<number>, translation: SharedValue<number>) => (
       <RemovePanel
         translation={translation}
-        side={rtl ? 1 : -1}
+        side={side}
+        onTranslation={onTranslation}
         onArmedChange={onArmedChange}
         onPress={() => void remove()}
+        disabled={disabled}
         label={label}
         text={actionText}
       />
     ),
-    [rtl, onArmedChange, remove, label, actionText]
+    [side, onTranslation, onArmedChange, remove, disabled, label, actionText]
   );
-  const sideProps = rtl
-    ? { renderLeftActions: renderActions, leftThreshold: OPEN_THRESHOLD }
-    : { renderRightActions: renderActions, rightThreshold: OPEN_THRESHOLD };
+  const sideProps =
+    side === 1
+      ? { renderLeftActions: renderActions, leftThreshold: OPEN_THRESHOLD }
+      : { renderRightActions: renderActions, rightThreshold: OPEN_THRESHOLD };
 
   return (
     <ReanimatedSwipeable
@@ -165,6 +212,7 @@ export function SwipeToRemove({
 }
 
 const styles = StyleSheet.create({
+  panelWrap: { flexDirection: 'row' },
   panel: {
     width: REMOVE_PANEL_WIDTH,
     alignItems: 'center',

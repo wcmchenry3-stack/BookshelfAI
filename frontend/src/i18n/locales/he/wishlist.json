@@ -27,7 +27,8 @@
   "errorLoadWishlist": "לא ניתן לטעון את רשימת המשאלות.",
   "errorUpdateStatus": "לא ניתן לעדכן את הסטטוס.",
   "errorRemoveBook": "לא ניתן להסיר את הספר.",
-  "swipeHint": "החלק ספר ימינה כדי להסיר אותו",
+  "swipeHint": "החלק ספר שמאלה כדי להסיר אותו",
+  "swipeHintRtl": "החלק ספר ימינה כדי להסיר אותו",
   "a11yActionRemove": "הסרה",
   "swipeRemoveA11y": "הסר את {{title}} מרשימת המשאלות"
 }

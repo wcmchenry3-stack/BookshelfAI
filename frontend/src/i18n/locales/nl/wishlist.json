@@ -26,6 +26,7 @@
   "errorUpdateStatus": "Kon status niet bijwerken.",
   "errorRemoveBook": "Kon boek niet verwijderen.",
   "swipeHint": "Veeg een boek naar links om het te verwijderen",
+  "swipeHintRtl": "Veeg een boek naar rechts om het te verwijderen",
   "a11yActionRemove": "Verwijderen",
   "swipeRemoveA11y": "{{title}} van verlanglijst verwijderen"
 }

@@ -26,6 +26,7 @@
   "errorUpdateStatus": "Status konnte nicht aktualisiert werden.",
   "errorRemoveBook": "Buch konnte nicht entfernt werden.",
   "swipeHint": "Wische ein Buch nach links, um es zu entfernen",
+  "swipeHintRtl": "Wische ein Buch nach rechts, um es zu entfernen",
   "a11yActionRemove": "Entfernen",
   "swipeRemoveA11y": "{{title}} von der Wunschliste entfernen"
 }

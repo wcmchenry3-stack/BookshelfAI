@@ -105,7 +105,12 @@
     "characterLimit": 50
   },
   "swipeHint": {
-    "description": "Footer hint under the Wishlist list on iOS and Android, hidden while a screen reader runs: swiping a row towards the start edge reveals Remove (left in LTR, right in RTL languages)",
+    "description": "Footer hint under the Wishlist list on iOS and Android, hidden while a screen reader runs, when the layout is left-to-right: swiping a row LEFT reveals Remove. Always says left, whatever the language's direction.",
+    "tone": "informative",
+    "characterLimit": 50
+  },
+  "swipeHintRtl": {
+    "description": "The same footer hint when the layout is right-to-left (the device mirrors the app): swiping a row RIGHT reveals Remove. Always says right, whatever the language's direction.",
     "tone": "informative",
     "characterLimit": 50
   },

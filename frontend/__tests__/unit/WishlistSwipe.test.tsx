@@ -6,7 +6,7 @@
  * real and its props are recorded.
  */
 import React from 'react';
-import { AccessibilityInfo, Alert, Platform } from 'react-native';
+import { AccessibilityInfo, Alert, I18nManager, Platform } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import WishlistScreen from '../../app/(tabs)/wishlist';
@@ -89,14 +89,20 @@ describe('Wishlist swipe to remove (#935)', () => {
       actionText: 'Remove',
       disabled: false,
     });
-    expect(screen.getByRole('button', { name: 'Remove Emma from wishlist' })).toBeTruthy();
+    // The panel is mounted but hidden from screen readers, which use the row's action.
+    expect(screen.queryByRole('button', { name: 'Remove Emma from wishlist' })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Remove Emma from wishlist', includeHiddenElements: true })
+    ).toBeTruthy();
   });
 
   it('swiping fully removes through removeBook: DELETE, the book leaves the list', async () => {
     const screen = await renderWishlist();
+    let removed: boolean | undefined;
     await act(async () => {
-      await swipePropsFor('Dune').onRemove();
+      removed = await swipePropsFor('Dune').onRemove();
     });
+    expect(removed).toBe(true);
     expect(mockDelete).toHaveBeenCalledWith('/user-books/ub-1');
     await waitFor(() => expect(screen.queryByLabelText(DUNE_ROW)).toBeNull());
   });
@@ -136,9 +142,11 @@ describe('Wishlist swipe to remove (#935)', () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     mockDelete.mockRejectedValue(new Error('Network error'));
     const screen = await renderWishlist();
+    let removed: boolean | undefined;
     await act(async () => {
-      await swipePropsFor('Dune').onRemove();
+      removed = await swipePropsFor('Dune').onRemove();
     });
+    expect(removed).toBe(false);
     expect(alertSpy).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalledWith('Error', 'Could not remove book.');
     expect(screen.getByLabelText(DUNE_ROW)).toBeTruthy();
@@ -148,6 +156,23 @@ describe('Wishlist swipe to remove (#935)', () => {
     mockConnected = false;
     await renderWishlist();
     expect(swipePropsFor('Dune').disabled).toBe(true);
+  });
+
+  it('turns the swipe off for a book while a change to it is in flight', async () => {
+    let finishDelete: (v: unknown) => void = () => {};
+    mockDelete.mockReturnValue(new Promise((resolve) => (finishDelete = resolve)));
+    const screen = await renderWishlist();
+    let pending: Promise<boolean> = Promise.resolve(false);
+    await act(async () => {
+      pending = swipePropsFor('Dune').onRemove();
+    });
+    expect(swipePropsFor('Dune').disabled).toBe(true);
+    expect(swipePropsFor('Emma').disabled).toBe(false);
+    await act(async () => {
+      finishDelete({});
+      await pending;
+    });
+    await waitFor(() => expect(screen.queryByLabelText(DUNE_ROW)).toBeNull());
   });
 
   it('closes the open row when the list starts scrolling', async () => {
@@ -184,6 +209,18 @@ describe('Wishlist swipe to remove (#935)', () => {
       expect(screen.getByTestId('wishlist-swipe-hint')).toBeTruthy();
       await act(async () => screenReaderListener?.(true));
       expect(screen.queryByTestId('wishlist-swipe-hint')).toBeNull();
+    });
+
+    it('says "swipe right" when the layout is right-to-left, whatever the language', async () => {
+      const restore = jest.replaceProperty(I18nManager, 'isRTL', true);
+      try {
+        const screen = await renderWishlist();
+        expect(screen.getByTestId('wishlist-swipe-hint')).toHaveTextContent(
+          'Swipe right on a book to remove it'
+        );
+      } finally {
+        restore.restore();
+      }
     });
 
     it('hides when the search matches no book', async () => {

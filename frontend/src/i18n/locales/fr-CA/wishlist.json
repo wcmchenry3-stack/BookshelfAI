@@ -26,6 +26,7 @@
   "errorUpdateStatus": "Impossible de mettre à jour le statut.",
   "errorRemoveBook": "Impossible de retirer le livre.",
   "swipeHint": "Balayez un livre vers la gauche pour le retirer",
+  "swipeHintRtl": "Balayez un livre vers la droite pour le retirer",
   "a11yActionRemove": "Retirer",
   "swipeRemoveA11y": "Retirer {{title}} de la liste de souhaits"
 }

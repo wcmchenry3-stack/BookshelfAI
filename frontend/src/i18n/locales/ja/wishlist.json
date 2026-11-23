@@ -25,6 +25,7 @@
   "errorUpdateStatus": "ステータスを更新できませんでした。",
   "errorRemoveBook": "本を削除できませんでした。",
   "swipeHint": "本を左にスワイプすると削除できます",
+  "swipeHintRtl": "本を右にスワイプすると削除できます",
   "a11yActionRemove": "削除",
   "swipeRemoveA11y": "{{title}}をウィッシュリストから削除"
 }

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Platform, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, I18nManager, Platform, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -29,9 +29,8 @@ interface WishlistRowProps {
   disabled: boolean;
   onOpen: (item: DetailBook) => void;
   onBought: (item: DetailBook) => void;
-  onRemove: (item: DetailBook) => Promise<void>;
-  /** Offline: no swipe (#935). */
-  swipeDisabled: boolean;
+  /** Resolves true once removed (#935). */
+  onRemove: (item: DetailBook) => Promise<boolean>;
   swipeGroup: SwipeRowGroup;
 }
 
@@ -45,7 +44,6 @@ const WishlistRow = memo(function WishlistRow({
   onOpen,
   onBought,
   onRemove,
-  swipeDisabled,
   swipeGroup,
 }: WishlistRowProps) {
   const { t } = useTranslation('wishlist');
@@ -65,7 +63,8 @@ const WishlistRow = memo(function WishlistRow({
       onSwipeRemove={() => onRemove(item)}
       removeActionLabel={t('a11yActionRemove')}
       swipeRemoveLabel={t('swipeRemoveA11y', { title: item.book.title })}
-      swipeDisabled={swipeDisabled}
+      // Offline, or a change to this book in flight: no swipe (#935).
+      swipeDisabled={disabled}
       swipeGroup={swipeGroup}
       trailing={
         <BoughtChip
@@ -168,6 +167,8 @@ export default function WishlistScreen() {
   const isEmpty = books.length === 0;
   // Web has no swipe, and a screen reader removes through the row's action.
   const showSwipeHint = Platform.OS !== 'web' && !screenReaderOn && visible.length > 0;
+  // The swipe follows the layout direction, which need not match the language.
+  const swipeHintKey = I18nManager.isRTL ? 'swipeHintRtl' : 'swipeHint';
 
   return (
     <LibraryScreen testID="wishlist-screen">
@@ -229,7 +230,7 @@ export default function WishlistScreen() {
                 style={styles.swipeHint}
                 testID="wishlist-swipe-hint"
               >
-                {t('swipeHint')}
+                {t(swipeHintKey)}
               </AppText>
             ) : undefined
           }
@@ -257,7 +258,6 @@ export default function WishlistScreen() {
               onOpen={openDetail}
               onBought={markBought}
               onRemove={removeFromRow}
-              swipeDisabled={!isConnected}
               swipeGroup={swipeGroup}
             />
           )}

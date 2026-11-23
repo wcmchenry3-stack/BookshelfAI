@@ -20,15 +20,18 @@ export interface SwipeToRemoveProps {
   /** The row. */
   children: ReactNode;
   /**
-   * Removes the item. It owns its own error alert; once it settles the row
-   * closes, so a failed removal springs back (a removed row unmounts).
+   * Removes the item and resolves true once it is removed (the row then
+   * unmounts). It owns its own error alert; on false the row springs back.
    */
-  onRemove: () => unknown;
+  onRemove: () => Promise<boolean>;
   /** Spoken label of the revealed Remove button, e.g. "Remove Dune from wishlist". */
   label: string;
   /** Visible text of the panel, e.g. "Remove". */
   actionText: string;
-  /** Turns the gesture off (offline) and closes an open row. */
+  /**
+   * Turns the gesture and the panel off (offline, or a change to the item in
+   * flight) and closes an open row, unless it is this row's own removal.
+   */
   disabled?: boolean;
   /** The list's one-open-row group (`useSingleOpenRow`). */
   group?: SwipeRowGroup;
