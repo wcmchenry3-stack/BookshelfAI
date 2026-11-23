@@ -305,9 +305,10 @@ describe('BookCandidatePicker', () => {
     );
     // The cover is decorative (the row label names the book), so no image label.
     expect(queryByLabelText('Cover of Dune')).toBeNull();
-    expect(getByTestId('candidate-cover', { hidden: true }).props.source).toEqual({
-      uri: 'https://example.com/cover.jpg',
-    });
+    // expo-image hands the native view its source as a list.
+    expect(getByTestId('candidate-cover', { hidden: true }).props.source).toEqual([
+      { uri: 'https://example.com/cover.jpg' },
+    ]);
   });
   describe('edition-level ownership (#587)', () => {
     const owned = (ownership: EnrichedBook['ownership']): EnrichedBook => ({

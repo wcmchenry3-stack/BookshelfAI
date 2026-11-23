@@ -10,12 +10,12 @@ from datetime import UTC, datetime
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.app_attest import AppAttestError, apple_verifier, canonical_key_id
 from app.core.attestation import (
     LiveAndroidIntegrityVerifier,
-    StubAppleAttestVerifier,
     verify_nonce,
 )
 from app.core.config import settings
@@ -117,33 +117,13 @@ async def _verify_attestation(
         return False
 
     if platform == "ios":
-        if not key_id or not assertion_b64:
-            return False
-        row = (
-            await db.execute(
-                select(DeviceKey).where(
-                    DeviceKey.user_id == user_id,
-                    DeviceKey.key_id == key_id,
-                    DeviceKey.platform == "ios",
-                )
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            return False
-        verifier = StubAppleAttestVerifier()
-        result = await verifier.verify_assertion(
+        return await _verify_ios_assertion(
             key_id=key_id,
             assertion_b64=assertion_b64,
-            public_key_cbor=row.public_key_cbor,
             nonce=nonce,
-            stored_counter=row.counter,
+            user_id=user_id,
+            db=db,
         )
-        if result is None:
-            return False
-        row.counter = result.counter
-        row.last_used_at = datetime.now(UTC)
-        await db.commit()
-        return True
 
     if platform == "android":
         if not integrity_token:
@@ -159,3 +139,57 @@ async def _verify_attestation(
         )
 
     return False
+
+
+async def _verify_ios_assertion(
+    *,
+    key_id: str | None,
+    assertion_b64: str | None,
+    nonce: str,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> bool:
+    """Verify an App Attest assertion and advance the key's counter (#1051)."""
+    app_id = settings.attestation_apple_app_id
+    if not app_id or not key_id or not assertion_b64:
+        return False
+    try:
+        # Rows are stored under the canonical spelling (see /register).
+        key_id = canonical_key_id(key_id)
+    except AppAttestError:
+        return False
+    row = (
+        await db.execute(
+            select(DeviceKey).where(
+                DeviceKey.user_id == user_id,
+                DeviceKey.key_id == key_id,
+                DeviceKey.platform == "ios",
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    result = await apple_verifier().verify_assertion(
+        key_id=key_id,
+        assertion_b64=assertion_b64,
+        public_key_cbor=row.public_key_cbor,
+        nonce=nonce,
+        stored_counter=row.counter,
+        app_id=app_id,
+    )
+    if result is None:
+        return False
+    # Compare-and-set: of two requests replaying one assertion concurrently,
+    # both may pass the in-memory counter check above, but only one can move
+    # the stored counter past it.
+    updated = await db.execute(
+        update(DeviceKey)
+        .where(DeviceKey.id == row.id, DeviceKey.counter < result.counter)
+        .values(counter=result.counter, last_used_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    if updated.rowcount != 1:
+        logger.warning("app_attest assertion rejected reason=counter_race")
+        return False
+    return True

@@ -5,22 +5,26 @@ carry a 5-minute expiry.  They are stateless: no database write is needed to
 issue one, and verification is a pure HMAC check.
 
 Verifiers are injected via FastAPI dependencies so tests can swap in fakes.
-The default implementations call the real Apple / Google APIs; they require
-ATTESTATION_NONCE_SECRET (all), plus ATTESTATION_ANDROID_PACKAGE_NAME and
-ATTESTATION_GOOGLE_CREDENTIALS_JSON for Android.
+They require ATTESTATION_NONCE_SECRET (all), ATTESTATION_APPLE_APP_ID for iOS
+(the App Attest verifier lives in ``app.core.app_attest``, #1051), and
+ATTESTATION_ANDROID_PACKAGE_NAME plus ATTESTATION_GOOGLE_CREDENTIALS_JSON for
+Android.
 
 Apple App Attest two-step flow:
   1. POST /attestation/nonce → nonce
-  2. POST /attestation/register (key_id + attestation_object + nonce)
+  2. POST /attestation/register (key_id + attestation_b64 + nonce)
      → server verifies attestation cert chain, stores public key
-  3. POST /scan (key_id + assertion_b64 + nonce) per request
-     → server verifies assertion signature and counter, updates counter
+  3. POST /scan (key_id + assertion + nonce, after a fresh /nonce) per request
+     → server verifies assertion signature and counter, then stores the new
+       counter with a compare-and-set
 
 Android Play Integrity flow (no persistent key):
   1. POST /attestation/nonce → nonce
-  2. Client requests Play Integrity token from Google with that nonce
+  2. Client requests a Standard Play Integrity token from Google, passing the
+     nonce verbatim as the ``requestHash``
   3. POST /scan (platform=android + integrity_token + nonce) per request
-     → server decodes token via Google API, checks nonce + verdicts
+     → server decodes token via Google API, checks
+       ``requestDetails.requestHash == nonce`` + package name + verdicts
 """
 
 import base64
@@ -139,27 +143,17 @@ class AppleAttestVerifier(Protocol):
         public_key_cbor: bytes,
         nonce: str,
         stored_counter: int,
+        app_id: str,
     ) -> AssertionResult | None:
         """Verify an App Attest assertion for one /scan request.
 
         Returns AssertionResult (new counter) on success, None on any failure.
         The verifier hashes ``nonce`` as the client data and checks the
         signature against ``public_key_cbor``. Rejects if the assertion
-        counter is not strictly greater than ``stored_counter``.
+        counter is not strictly greater than ``stored_counter`` or the RP ID
+        hash is not SHA-256(``app_id``).
         """
         ...
-
-
-class StubAppleAttestVerifier:
-    """Always-reject stub — used when ATTESTATION_APPLE_APP_ID is not set."""
-
-    async def verify_attestation(self, *_args, **_kwargs) -> AttestationResult | None:
-        logger.warning("Apple App Attest not configured — attestation rejected")
-        return None
-
-    async def verify_assertion(self, *_args, **_kwargs) -> AssertionResult | None:
-        logger.warning("Apple App Attest not configured — assertion rejected")
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +171,9 @@ class AndroidIntegrityVerifier(Protocol):
     ) -> bool:
         """Decode a Play Integrity token via Google's API.
 
-        Returns True only when the token is valid, the nonce matches, and
-        both MEETS_DEVICE_INTEGRITY and PLAY_RECOGNIZED are present.
+        Returns True only when the token is valid, its Standard
+        ``requestDetails.requestHash`` equals the nonce, and both
+        MEETS_DEVICE_INTEGRITY and PLAY_RECOGNIZED are present.
         """
         ...
 
@@ -231,7 +226,7 @@ class LiveAndroidIntegrityVerifier:
             return False
 
         req = outer.get("requestDetails", {})
-        if req.get("nonce") != nonce:
+        if not _request_hash_matches(req, nonce):
             return False
         if req.get("requestPackageName") != package_name:
             return False
@@ -244,6 +239,24 @@ class LiveAndroidIntegrityVerifier:
 
         app_verdict = outer.get("appIntegrity", {}).get("appRecognitionVerdict", "")
         return app_verdict == self._REQUIRED_APP_VERDICT
+
+
+def _request_hash_matches(request_details: object, nonce: str) -> bool:
+    """Return True when a Standard verdict's ``requestHash`` equals ``nonce``.
+
+    The app uses the Play Integrity **Standard** request (``@expo/app-integrity``
+    has no Classic API) and passes the server nonce verbatim as the
+    ``requestHash``, so the decoded verdict carries it in
+    ``requestDetails.requestHash``. The Classic ``requestDetails.nonce`` field
+    is ignored on purpose: no client sends Classic tokens, and accepting them
+    would only widen what the server trusts (#1050).
+    """
+    if not isinstance(request_details, dict):
+        return False
+    request_hash = request_details.get("requestHash")
+    if not isinstance(request_hash, str) or not request_hash:
+        return False
+    return hmac.compare_digest(request_hash.encode(), nonce.encode())
 
 
 async def _google_access_token(service_account_json: str) -> str:

@@ -86,6 +86,9 @@ export function OpenOnSetting() {
                   accessibilityRole="radio"
                   accessibilityLabel={t(OPTION_KEYS[tab])}
                   accessibilityState={{ checked }}
+                  // react-native-web ignores accessibilityState: without this the
+                  // row has role=radio and no aria-checked (axe aria-required-attr, #1032).
+                  aria-checked={checked}
                   testID={`open-on-option-${tab}`}
                 >
                   <Text style={[styles.optionText, { color: colors.onSurface }]}>

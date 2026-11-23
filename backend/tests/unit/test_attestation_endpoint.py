@@ -3,6 +3,8 @@
 Services and DB are mocked; no real database or network calls.
 """
 
+import base64
+import hashlib
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,6 +18,9 @@ FAKE_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 FAKE_USER = User(id=FAKE_USER_ID, email="attest@example.com")
 
 _TEST_SECRET = "test-secret-32-bytes-aaaaaaaaa"
+# A well-formed App Attest key id (base64 of 32 bytes); /register refuses
+# anything else since #1051's key_id canonicalisation.
+_VALID_KEY_ID = base64.b64encode(hashlib.sha256(b"test-key-id").digest()).decode()
 
 
 def _fake_db_new_key():
@@ -230,7 +235,7 @@ class TestRegister:
             resp = TestClient(app).post(
                 "/attestation/register",
                 json={
-                    "key_id": "test-key-id",
+                    "key_id": _VALID_KEY_ID,
                     "attestation_b64": "ZmFrZQ==",
                     "nonce": nonce,
                 },

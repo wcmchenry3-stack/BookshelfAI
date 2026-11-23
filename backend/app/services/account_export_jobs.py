@@ -29,7 +29,7 @@ taken over later) and for each (:func:`process`):
    language (``app/services/export_email.py``, ``app/services/email.py``)
    with ``account-export-<id>-<link expiry>`` as Resend's idempotency key
    (:func:`idempotency_key`; set ``email_accepted_at`` when Resend accepted
-   it, or may have: a timeout or a 5xx);
+   it, or may have: a timeout or a 5xx on any try, or a concurrent-key 409);
 4. marks the row ``ready``.
 
 Delivery is idempotent: a retry of an ``emailing`` row re-renders the same
@@ -102,6 +102,10 @@ LINK_TTL_SECONDS = 604_800
 # A claimed row is presumed dead (and a failed one may retry) after this.
 LEASE = timedelta(minutes=10)
 MAX_ATTEMPTS = 3
+# An open row older than this is never claimed (the claim marks it failed):
+# the purge may delete such a row and its file, so the two row sets are
+# disjoint and the purge needs no lock held across its storage call.
+STALE_AFTER = timedelta(days=7)
 # Exports handled per worker pass (each one is a few seconds).
 MAX_PER_PASS = 20
 POLL_SECONDS = 300
@@ -244,7 +248,8 @@ def _owned(claim: Claim):
 
 async def claim_next(db: AsyncSession, now: datetime | None = None) -> Claim | None:
     """Claim the oldest open row (commits); ``None`` when there is none. A
-    row out of attempts is marked ``failed`` instead and the next is tried.
+    row out of attempts, or older than :data:`STALE_AFTER`, is marked
+    ``failed`` instead and the next is tried.
     An ``emailing`` row stays ``emailing`` (its email may have gone out)."""
     now = now or utcnow()
     while True:
@@ -258,12 +263,15 @@ async def claim_next(db: AsyncSession, now: datetime | None = None) -> Claim | N
         if export is None:
             await db.commit()
             return None
-        if export.attempts >= MAX_ATTEMPTS:
+        stale = export.created_at < now - STALE_AFTER
+        if stale or export.attempts >= MAX_ATTEMPTS:
             # An emailing row keeps its file: the purge removes it after
             # expires_at, so a link that may have been delivered still works.
             export.status = STATUS_FAILED
             export.claimed_at = None
-            export.error_code = export.error_code or "attempts_exhausted"
+            export.error_code = export.error_code or (
+                "stale" if stale else "attempts_exhausted"
+            )
             await db.commit()
             logger.warning(
                 "account_export: gave up (export_id=%s user_id=%s)",
@@ -394,8 +402,9 @@ async def _send(
     key with another payload (the address changed meanwhile) mean the email
     went out; otherwise it is a failure, so a key Resend kept from a refused
     request never marks an unsent export as delivered. A timeout or a 5xx
-    may have been accepted, so it sets the flag before the failure is
-    raised."""
+    on any try, or a 409 ``concurrent_idempotent_requests``, may mean the
+    email was accepted (``EmailError.maybe_accepted``), so it sets the flag
+    before the failure is raised, whatever the last try answered."""
     try:
         await email.send(message, idempotency_key=key, transport=transport)
     except EmailError as exc:
@@ -405,7 +414,7 @@ async def _send(
                 claim.id,
             )
             return
-        if exc.status is None or exc.status >= 500:
+        if exc.maybe_accepted:
             await _fenced_update(sessions, claim, email_accepted_at=utcnow())
         raise
 

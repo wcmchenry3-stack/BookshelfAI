@@ -307,6 +307,8 @@ class Settings(EmailSettings, StorageSettings, BaseSettings):
     attestation_nonce_secret: str = ""
     # <TEAM_ID>.<BUNDLE_ID> — required to verify iOS App Attest certificates.
     attestation_apple_app_id: str = ""
+    # Also accept development App Attest keys ("appattestdevelop"); never in prod.
+    attestation_apple_allow_development: bool = False
     # Android package name, e.g. "com.example.app" — required for Play Integrity.
     attestation_android_package_name: str = ""
     # Google service-account JSON for calling the Play Integrity API.

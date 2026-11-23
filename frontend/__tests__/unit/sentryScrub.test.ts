@@ -201,13 +201,13 @@ describe('scrubSentryEvent', () => {
       expect(scrubSentryEvent(event)).toEqual(event);
     });
 
-    it('keeps contexts.request {method} and masks token query params in its url', () => {
+    it('keeps contexts.request {method} and drops the query string from its url (#1029)', () => {
       const out = scrubSentryEvent({
         contexts: { request: { method: 'GET', url: 'https://h/p?access_token=abc123&a=1' } },
       }) as Scrubbed;
       const req = out.contexts?.request as { method: string; url: string };
       expect(req.method).toBe('GET');
-      expect(req.url).toBe('https://h/p?access_token=[Filtered]&a=1');
+      expect(req.url).toBe('https://h/p');
     });
   });
 
@@ -258,14 +258,27 @@ describe('scrubSentryEvent', () => {
     });
 
     // Time at ~40k vs ~10k chars: linear gives a ratio near 4, quadratic near 16.
+    // A single call takes only tens of microseconds at 10k, which is too short to
+    // time reliably on a shared runner. So each sample repeats the call until at
+    // least MIN_SAMPLE_MS has passed and reports the mean per call. The median of
+    // SAMPLES such samples is returned, which absorbs scheduling spikes.
+    const MIN_SAMPLE_MS = 20;
+    const SAMPLES = 5;
     const time = (s: string) => {
-      let best = Infinity;
-      for (let i = 0; i < 3; i++) {
+      const perCall: number[] = [];
+      for (let r = 0; r < SAMPLES; r++) {
+        let calls = 0;
         const t = performance.now();
-        redactString(s);
-        best = Math.min(best, performance.now() - t);
+        let elapsed = 0;
+        do {
+          redactString(s);
+          calls++;
+          elapsed = performance.now() - t;
+        } while (elapsed < MIN_SAMPLE_MS);
+        perCall.push(elapsed / calls);
       }
-      return best;
+      perCall.sort((a, b) => a - b);
+      return perCall[Math.floor(SAMPLES / 2)];
     };
     const cases: [string, (n: number) => string][] = [
       ['eyJ', (n) => 'eyJ'.repeat(Math.ceil(n / 3))],
@@ -281,7 +294,9 @@ describe('scrubSentryEvent', () => {
       const small = time(make(10000));
       const big = time(make(40000));
       expect(big).toBeLessThan(1000);
-      expect(big / Math.max(small, 1)).toBeLessThan(8);
+      // No `Math.max(small, 1)` floor: per-call times are sub-millisecond, so a
+      // floor of 1 ms would turn the ratio into `big / 1` and hide a quadratic.
+      expect(big / small).toBeLessThan(8);
     });
 
     it('redacts JWTs in the scanned forms and leaves look-alikes', () => {
@@ -501,8 +516,8 @@ describe('round 2 scrub rules', () => {
           cookies: string;
         };
       };
-      expect(out.request.url).toBe('https://h/p?access_token=[Filtered]&x=1');
-      expect(out.request.query_string).toBe('token=[Filtered]&x=1');
+      expect(out.request.url).toBe('https://h/p');
+      expect(out.request.query_string).toBe('[Filtered]');
       expect(out.request.method).toBe('GET');
       expect(out.request.headers).toEqual({ Authorization: '[Filtered]', Accept: 'json' });
       expect(out.request.cookies).toBe('[Filtered]');
@@ -517,9 +532,42 @@ describe('round 2 scrub rules', () => {
         data: { url: 'https://h/p?api_key=k1&a=1', Authorization: 'x', status_code: 200 },
       }) as { message: string; data: Record<string, unknown> };
       expect(JSON.stringify(out)).not.toContain(JWT);
-      expect(out.data.url).toBe('https://h/p?api_key=[Filtered]&a=1');
+      expect(out.data.url).toBe('https://h/p');
       expect(out.data.Authorization).toBe('[Filtered]');
       expect(out.data.status_code).toBe(200);
+    });
+
+    it('drops the search text from a /books/search breadcrumb (#1029)', () => {
+      const out = scrubBreadcrumb({
+        category: 'fetch',
+        data: {
+          url: 'https://api.example.com/books/search?q=dune&limit=5',
+          method: 'GET',
+          status_code: 200,
+          'http.query': 'q=dune',
+        },
+      });
+      expect(JSON.stringify(out)).not.toContain('dune');
+      expect(out?.data).toMatchObject({
+        url: 'https://api.example.com/books/search',
+        method: 'GET',
+        status_code: 200,
+      });
+    });
+
+    it('drops the search text from an error event request (#1029)', () => {
+      const out = scrubSentryEvent({
+        request: {
+          url: 'https://api.example.com/books/search?q=dune',
+          query_string: 'q=dune',
+          method: 'GET',
+        },
+      });
+      expect(JSON.stringify(out)).not.toContain('dune');
+      expect(out?.request).toMatchObject({
+        url: 'https://api.example.com/books/search',
+        method: 'GET',
+      });
     });
 
     it('returns a clean breadcrumb as the same object', () => {

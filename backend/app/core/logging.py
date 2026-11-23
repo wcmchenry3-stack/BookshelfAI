@@ -81,6 +81,26 @@ class RedactingFilter(logging.Filter):
         return True
 
 
+class AccessLogQueryFilter(logging.Filter):
+    """Drop the query string from uvicorn's access-log request line (#1029).
+
+    Search text travels in ``GET /books/search?q=...``; the path, method, status
+    and client are kept. uvicorn's access record args are
+    ``(client, method, full_path, http_version, status)``, and its formatter
+    unpacks them, so the tuple keeps its shape. Never raises.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            args = record.args
+            if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+                path = args[2].split("?", 1)[0].split("#", 1)[0]
+                record.args = (*args[:2], path, *args[3:])
+        except Exception:  # noqa: BLE001, S110 - a log filter must never raise
+            pass
+        return True
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         log_obj: dict = {
@@ -107,6 +127,12 @@ def configure_logging() -> None:
     # Their formatters unpack record.args, so keep the args shape. This relies
     # on uvicorn having configured its handlers before the app is imported,
     # which is the case for `uvicorn app.main:app` (render.yaml, Dockerfile).
+    # The access logger also drops query strings (search text). The filter sits
+    # on the logger, not a handler, so it applies even when uvicorn has not yet
+    # attached handlers (local `--reload` runs) and runs before any handler.
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, AccessLogQueryFilter) for f in access_logger.filters):
+        access_logger.addFilter(AccessLogQueryFilter())
     for name in _UVICORN_LOGGERS:
         for uv_handler in logging.getLogger(name).handlers:
             uv_handler.addFilter(RedactingFilter(preserve_args=True))

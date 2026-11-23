@@ -788,16 +788,29 @@ def test_ctrl_c_during_the_first_call_counts_its_bound(tmp_path):
 def test_cancellation_during_a_call_counts_its_bound():
     import anyio
 
+    # Cancel once the provider call has started, not on a wall-clock deadline:
+    # a fixed 0.2s raced the pre-provider steps on a loaded runner. The 10s
+    # move_on_after is only a hang guard.
+    started = anyio.Event()
+
     class Slow:
         async def identify(self, _img):
+            started.set()
             await anyio.sleep(30)
 
     ds, _ = f.dataset(f.objects_for([f.case(1), f.case(2)]))
     run = runner.EvalRun(HAIKU, ds, cap_usd=1.0, provider_factory=lambda _s: Slow())
 
     async def go():
-        with anyio.move_on_after(0.2):
-            await run.execute()
+        with anyio.move_on_after(10):
+            async with anyio.create_task_group() as tg:
+
+                async def cancel_once_started():
+                    await started.wait()
+                    tg.cancel_scope.cancel()
+
+                tg.start_soon(cancel_once_started)
+                await run.execute()
 
     anyio.run(go)
     report = run.report()

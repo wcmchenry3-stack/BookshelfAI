@@ -51,7 +51,8 @@ const ALWAYS_KEYS: ReadonlySet<string> = new Set([
   'apikey',
   'api-key',
 ]);
-// Transactions only (#715): URL query / fragment attributes are dropped wholesale.
+// URL query / fragment attributes are dropped wholesale from every event, breadcrumb
+// and transaction (#715, #1029): search text travels in `?q=`.
 const QUERY_KEYS: ReadonlySet<string> = new Set([
   'http.query',
   'url.query',
@@ -278,7 +279,7 @@ function guarded(out: Obj, key: string, st: St, fn: (v: unknown) => unknown): vo
  */
 export function scrubSentryEvent<T>(event: T, hint?: { originalException?: unknown }): T | null {
   if (event === null || typeof event !== 'object') return event;
-  const st: St = { changed: false };
+  const st: St = { changed: false, str: stripUrlQueries, txn: true };
   let out: Obj;
   try {
     out = { ...(event as unknown as Obj) };
@@ -317,7 +318,7 @@ export function scrubSentryEvent<T>(event: T, hint?: { originalException?: unkno
  */
 export function scrubBreadcrumb<T>(breadcrumb: T): T | null {
   if (breadcrumb === null || typeof breadcrumb !== 'object') return breadcrumb;
-  const st: St = { changed: false };
+  const st: St = { changed: false, str: stripUrlQueries, txn: true };
   let out: Obj;
   try {
     out = { ...(breadcrumb as unknown as Obj) };

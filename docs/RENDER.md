@@ -590,20 +590,21 @@ when it is built with a site key (see [`security.md` → Turnstile on
 
 ## Enabling device attestation (#753)
 
-`POST /scan` accepts Apple App Attest (iOS) and Android Play Integrity tokens as a stronger bot signal. A valid assertion bypasses Turnstile entirely. All five settings default to off/empty; the kill switch `ATTESTATION_REQUIRED` defaults to `false` so no request is broken before the owner completes setup.
+`POST /scan` accepts Apple App Attest (iOS) and Android Play Integrity tokens as a stronger bot signal. A valid assertion bypasses Turnstile entirely. All six settings default to off/empty; the kill switch `ATTESTATION_REQUIRED` defaults to `false` so no request is broken before the owner completes setup.
 
 | Variable | Purpose | Where to set |
 | --- | --- | --- |
 | `ATTESTATION_REQUIRED` | `true` = hard-fail `/scan` when attestation data is sent but verification fails (default: `false`) | `bookshelf-api-dev` then `bookshelf-api` dashboard |
 | `ATTESTATION_NONCE_SECRET` | HMAC secret for stateless nonces (`openssl rand -hex 32`). Boot proceeds with it unset (attestation endpoints return 503) | dashboard secret (`sync: false`) |
-| `ATTESTATION_APPLE_APP_ID` | `<TEAM_ID>.<BUNDLE_ID>` — from App Attest capability in Apple Developer. Unset = Apple path always-rejects | dashboard |
+| `ATTESTATION_APPLE_APP_ID` | `<TEAM_ID>.<BUNDLE_ID>` — from App Attest capability in Apple Developer. Unset = `/attestation/register` 503 and iOS assertions always rejected | dashboard |
+| `ATTESTATION_APPLE_ALLOW_DEVELOPMENT` | `true` = also accept App Attest keys from the development environment (Xcode / debug builds, aaguid `appattestdevelop`). Default `false` (production keys only). May be `true` on `bookshelf-api-dev` while testing debug builds; never on `bookshelf-api` | dashboard |
 | `ATTESTATION_ANDROID_PACKAGE_NAME` | e.g. `com.buffingchi.bookshelf` | dashboard |
 | `ATTESTATION_GOOGLE_CREDENTIALS_JSON` | Service-account JSON (inline, single line) for the Play Integrity API. Unset = Android path always-rejects | dashboard secret (`sync: false`) |
 
 **Setup order:**
 
-1. **Apple**: enable App Attest in the Xcode target's Signing & Capabilities, set `ATTESTATION_APPLE_APP_ID` on both API services. Replace `StubAppleAttestVerifier` in `backend/app/api/_bot_check.py` with the real verifier once cert-chain verification is implemented.
-2. **Android**: enrol the app in the Play Integrity API (Google Play Console → Release → App integrity), create a Google service account with `playintegrity.apks.verify`, download the JSON, set `ATTESTATION_ANDROID_PACKAGE_NAME` and `ATTESTATION_GOOGLE_CREDENTIALS_JSON`.
+1. **Apple**: enable App Attest in the Xcode target's Signing & Capabilities (the `com.apple.developer.devicecheck.appattest-environment` entitlement, set to `production` in `app.json` by #870; TestFlight and App Store builds always use production), set `ATTESTATION_APPLE_APP_ID` on both API services. The server verifies attestations against Apple's App Attestation Root CA, which is embedded in `backend/app/core/app_attest.py` (#1051): nothing to download or configure. A build whose entitlement says `development` (Apple's default for a build run from Xcode without the entitlement) makes development keys, which are rejected unless `ATTESTATION_APPLE_ALLOW_DEVELOPMENT=true` (set it on `bookshelf-api-dev` only, if at all). A rejected registration logs `app_attest attestation rejected reason=<code>` (`development_aaguid`, `rp_id_mismatch`, `cert_expired`, …), which is the first place to look when iOS registration fails.
+2. **Android**: enrol the app in the Play Integrity API (Google Play Console → Release → App integrity), create a Google service account with `playintegrity.apks.verify`, download the JSON, set `ATTESTATION_ANDROID_PACKAGE_NAME` and `ATTESTATION_GOOGLE_CREDENTIALS_JSON`. The app uses the Play Integrity **Standard** request and the server verifies `requestDetails.requestHash` against the nonce (#1050); Classic tokens (`requestDetails.nonce` only) are rejected.
 3. **Nonce secret**: generate with `openssl rand -hex 32` and set `ATTESTATION_NONCE_SECRET` on both services.
 4. **Test on dev** with `ATTESTATION_REQUIRED=false` first. Confirm `/attestation/nonce` returns a nonce, `/attestation/register` succeeds, and `/scan` passes without returning 403.
 5. **Enable** `ATTESTATION_REQUIRED=true` once end-to-end is verified. Keep `ATTESTATION_REQUIRED=false` until both platforms are tested; Turnstile remains the fallback.

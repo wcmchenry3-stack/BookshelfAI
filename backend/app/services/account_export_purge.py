@@ -6,13 +6,15 @@ over: a ``ready`` export whose link expired, or any other one older than
 :data:`STALE_AFTER` (7 days). Never a row whose link still works
 (``expires_at`` in the future: an email may carry it), nor one a worker
 holds under a live lease (claimed less than ``LEASE`` ago: it may be about
-to sign a fresh link). Each batch locks its rows (``FOR UPDATE SKIP
-LOCKED``) and keeps them locked across the storage delete and the row
-delete, so a worker cannot claim one in between (its claim skips locked
-rows) and a row a worker holds is never picked. At most
-:data:`PURGE_MAX_BATCHES` batches of :data:`PURGE_BATCH_SIZE`, one storage
-call and one commit each; a storage failure rolls the batch back and the
-rows wait for the next run. Without storage only rows with no file go.
+to sign a fresh link). The worker never claims a row older than
+:data:`STALE_AFTER` (``claim_next`` marks it ``failed``), so the purge's rows
+and the worker's are disjoint and the purge locks nothing: each batch is an
+unlocked select (its transaction ended), the storage delete, then a DELETE
+that re-checks the condition; no database transaction is open across the
+storage call. At most :data:`PURGE_MAX_BATCHES` batches of
+:data:`PURGE_BATCH_SIZE`. A storage failure is logged and ends the purge (the
+rows stay for the next run); the caller still runs the sweep. Without storage
+only rows with no file go.
 
 :func:`sweep_orphans` then deletes any file in ``exports/`` older than
 :data:`SWEEP_AGE` (8 days), whatever the table says: an account deleted
@@ -23,6 +25,7 @@ still points at is never swept, whatever its age.
 Logs counts only (the caller logs them).
 """
 
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, delete, not_, or_, select
@@ -30,10 +33,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account_export import OPEN_STATUSES, STATUS_READY, AccountExport
 from app.services import account_export_jobs as jobs
-from app.services.object_storage import ObjectStorage
+from app.services.object_storage import ObjectStorage, StorageError
 
-# Failed or never-finished rows are kept this long (support can see them).
-STALE_AFTER = timedelta(days=7)
+logger = logging.getLogger(__name__)
+
+# Failed or never-finished rows are kept this long (support can see them);
+# the worker stops claiming a row at this age (account_export_jobs).
+STALE_AFTER = jobs.STALE_AFTER
 # Files older than this are deleted whether or not a row knows them.
 SWEEP_AGE = timedelta(days=8)
 PURGE_BATCH_SIZE = 100
@@ -77,19 +83,27 @@ async def purge_expired(
                 .where(condition)
                 .order_by(AccountExport.created_at)
                 .limit(PURGE_BATCH_SIZE)
-                .with_for_update(skip_locked=True)
             )
         ).all()
+        # End the read's transaction: none may be open across the storage call.
+        await db.rollback()
         if not rows:
-            await db.rollback()
             break
         paths = [path for _, path in rows if path]
         try:
             if paths:
                 await storage.delete(paths)
-        except Exception:
-            await db.rollback()  # releases the locks; the rows stay
-            raise
+        except StorageError as exc:
+            # ERROR, not WARNING: Sentry's logging integration only turns
+            # ERROR and above into events, and a persistent failure here keeps
+            # expired personal data past its 7-day retention (#1058 review).
+            logger.error(
+                "account_export: purge could not delete %d file(s) (%s); "
+                "the rows stay for the next run",
+                len(paths),
+                exc,
+            )
+            break
         result = await db.execute(
             delete(AccountExport)
             .where(AccountExport.id.in_([row_id for row_id, _ in rows]), condition)

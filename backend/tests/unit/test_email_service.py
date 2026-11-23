@@ -119,3 +119,43 @@ async def test_a_transport_failure_has_no_name():
     with pytest.raises(EmailError) as exc_info:
         await email.send(MESSAGE, idempotency_key="k", transport=transport)
     assert exc_info.value.code is None
+
+
+async def test_maybe_accepted_covers_any_try_not_only_the_last():
+    transport, _ = _transport(
+        httpx.ReadTimeout("lost"), httpx.Response(429), httpx.Response(429)
+    )
+    with pytest.raises(EmailError) as exc_info:
+        await email.send(MESSAGE, idempotency_key="k", transport=transport)
+    assert (exc_info.value.status, exc_info.value.maybe_accepted) == (429, True)
+
+    transport, _ = _transport(
+        httpx.Response(503), httpx.Response(429), httpx.Response(429)
+    )
+    with pytest.raises(EmailError) as exc_info:
+        await email.send(MESSAGE, idempotency_key="k", transport=transport)
+    assert exc_info.value.maybe_accepted is True
+
+
+async def test_a_refusal_alone_was_not_accepted():
+    transport, _ = _transport(*(httpx.Response(429) for _ in range(3)))
+    with pytest.raises(EmailError) as exc_info:
+        await email.send(MESSAGE, idempotency_key="k", transport=transport)
+    assert exc_info.value.maybe_accepted is False
+
+
+async def test_a_key_in_flight_may_be_accepted():
+    reply = httpx.Response(
+        409, json={"statusCode": 409, "name": "concurrent_idempotent_requests"}
+    )
+    transport, _ = _transport(reply)
+    with pytest.raises(EmailError) as exc_info:
+        await email.send(MESSAGE, idempotency_key="k", transport=transport)
+    assert exc_info.value.maybe_accepted is True
+    reply = httpx.Response(
+        409, json={"statusCode": 409, "name": "invalid_idempotent_request"}
+    )
+    transport, _ = _transport(reply)
+    with pytest.raises(EmailError) as exc_info:
+        await email.send(MESSAGE, idempotency_key="k", transport=transport)
+    assert exc_info.value.maybe_accepted is False

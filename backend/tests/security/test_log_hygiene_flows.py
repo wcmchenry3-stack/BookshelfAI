@@ -522,10 +522,12 @@ class TestLibraryFlows:
             assert client.patch(path, json={"rating": 3}, headers=auth).is_success
         logs = "\n".join(cap.log_texts)
         assert "idempotency: replayed" in logs
-        # The stored body (the replayed notes) is never logged. (Sentry's own
-        # request-body capture of the PATCH is not this flow's doing.)
+        # The stored body (the replayed notes) is never logged, and no
+        # captured Sentry event or transaction carries the request body (#1053).
         assert notes not in logs
         assert '"notes"' not in logs
+        assert cap.sentry_payloads, "no Sentry payload captured"
+        assert notes not in "\n".join(cap.sentry_texts)
         # The key is in no log and, as a scrubbed header, in no Sentry event.
         _clean(
             cap,
