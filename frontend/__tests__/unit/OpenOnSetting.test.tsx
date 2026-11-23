@@ -1,4 +1,5 @@
 import React from 'react';
+import TestRenderer, { act as rtAct } from 'react-test-renderer';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { OpenOnSetting } from '../../components/OpenOnSetting';
@@ -41,8 +42,8 @@ jest.mock('../../hooks/useTheme', () => ({
 
 const mockShowBanner = jest.fn();
 
-function renderRow(defaultTab: DefaultTab | null = 'scan') {
-  return render(
+function openOnTree(defaultTab: DefaultTab | null = 'scan') {
+  return (
     <AuthContext.Provider
       value={{
         isAuthenticated: true,
@@ -60,6 +61,10 @@ function renderRow(defaultTab: DefaultTab | null = 'scan') {
       </BannerContext.Provider>
     </AuthContext.Provider>
   );
+}
+
+function renderRow(defaultTab: DefaultTab | null = 'scan') {
+  return render(openOnTree(defaultTab));
 }
 
 const value = (utils: { getByTestId: (id: string) => { props: Record<string, unknown> } }) =>
@@ -148,6 +153,27 @@ describe('Settings "Open on" row (#913)', () => {
       busy: false,
       disabled: false,
     });
+  });
+
+  it('every radio row carries aria-checked, true for the current choice and false for the rest (#1032)', async () => {
+    // The native Pressable folds aria-checked into accessibilityState on the
+    // host node, so read the prop from the composite row element, where the
+    // picker sets it (as the #797 picker test does).
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await rtAct(async () => {
+      renderer = TestRenderer.create(openOnTree('wishlist'));
+    });
+    const opener = renderer.root.findByProps({ testID: 'settings-open-on' });
+    await rtAct(async () => opener.props.onPress());
+    const ariaChecked = (tab: string) =>
+      renderer.root
+        .findAll((n) => typeof n.type !== 'string' && n.props.testID === `open-on-option-${tab}`)
+        .map((n) => n.props['aria-checked']);
+    expect({
+      scan: ariaChecked('scan'),
+      wishlist: ariaChecked('wishlist'),
+      'my-books': ariaChecked('my-books'),
+    }).toEqual({ scan: [false], wishlist: [true], 'my-books': [false] });
   });
 
   it('a failed save restores the old value and shows a translated error banner', async () => {
