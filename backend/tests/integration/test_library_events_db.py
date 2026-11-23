@@ -10,9 +10,11 @@
 - Notes and override text never reach ``changed_fields``.
 - The retention job deletes events older than the window, in bounded
   batches with a commit each, and does nothing while another connection
-  holds its advisory lock.
-- On a migrated database: the app role can insert, read and delete events
-  but not update them; deleting a user as the app role anonymises its
+  holds its advisory lock. It deletes through the ``purge_library_events``
+  function (migration 0035, #1042; its own tests are in
+  ``test_library_events_purge_db.py``), so these need a migrated database.
+- On a migrated database: the app role can insert and read events but not
+  update or delete them; deleting a user as the app role anonymises its
   events (``ON DELETE SET NULL``); migration 0030 downgrades and upgrades
   cleanly with RLS on.
 
@@ -438,7 +440,16 @@ async def _seed_events(env, user, ages_in_days, now) -> None:
         await db.commit()
 
 
+async def _require_purge_function(env) -> None:
+    """Skip on a database not built by alembic (no purge function), like
+    the other migration-dependent tests; a migrated one must have it."""
+    async with env.engine.connect() as conn:
+        if not await conn.run_sync(lambda c: inspect(c).has_table("alembic_version")):
+            pytest.skip("database not built by alembic upgrade head")
+
+
 async def test_retention_deletes_only_old_events_in_bounded_batches(env):
+    await _require_purge_function(env)
     alice = await env.make_user()
     # Ten years back, so the cutoff is older than every event other tests
     # wrote: only the rows seeded here are past it.
@@ -482,6 +493,7 @@ async def test_retention_deletes_only_old_events_in_bounded_batches(env):
 
 
 async def test_retention_does_nothing_while_another_instance_holds_the_lock(env):
+    await _require_purge_function(env)
     alice = await env.make_user()
     now = datetime.now(UTC) - timedelta(days=3650)
     await _seed_events(env, alice, [settings.library_events_retention_days + 5], now)
@@ -517,7 +529,7 @@ def _privileges_and_set_null(connection) -> None:
     for privilege, held in (
         ("SELECT", True),
         ("INSERT", True),
-        ("DELETE", True),
+        ("DELETE", False),
         ("UPDATE", False),
         ("TRUNCATE", False),
     ):

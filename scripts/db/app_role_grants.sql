@@ -6,10 +6,12 @@
 -- migration 0028 never runs again on the restored database. See
 -- docs/backups.md ("Restoring: the app role") and the DB Restore Drill.
 --
--- Same end state as migrations 0028 and 0030: DML on every table in `public`
--- except `alembic_version` (and no UPDATE on `library_events`, #684), USAGE
--- on every sequence, BYPASSRLS, and the default
--- privileges of the running (owner) role for later tables and sequences.
+-- Same end state as migrations 0028, 0030 and 0035: DML on every table in
+-- `public` except `alembic_version` (no UPDATE on `library_events`, #684, and
+-- no DELETE on it either once its purge function exists, #1042), EXECUTE on
+-- `purge_library_events` for the role only, USAGE on every sequence,
+-- BYPASSRLS, and the default privileges of the running (owner) role for later
+-- tables and sequences.
 -- Idempotent: safe to run more than once. One DO block, so it runs as a
 -- single statement from psql, the Supabase SQL editor or a driver.
 -- DCL (GRANT / ALTER ROLE / ALTER DEFAULT PRIVILEGES) has no ORM form; this is
@@ -30,6 +32,23 @@ BEGIN
     -- 0030: the library audit log is append-only for the app (#684).
     IF to_regclass('public.library_events') IS NOT NULL THEN
         REVOKE UPDATE ON public.library_events FROM bookshelf_app;
+    END IF;
+    -- 0035: the purge goes through a SECURITY DEFINER function, so the app
+    -- has no DELETE (#1042). A --no-acl restore also resets the function's
+    -- ACL to the default (EXECUTE for PUBLIC), so set it again. On a backup
+    -- older than 0035 the function is missing and DELETE stays.
+    IF to_regprocedure('public.purge_library_events(timestamptz, integer)') IS NOT NULL THEN
+        REVOKE ALL ON FUNCTION public.purge_library_events(timestamptz, integer) FROM PUBLIC;
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+            REVOKE ALL ON FUNCTION public.purge_library_events(timestamptz, integer) FROM anon;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+            REVOKE ALL ON FUNCTION public.purge_library_events(timestamptz, integer) FROM authenticated;
+        END IF;
+        GRANT EXECUTE ON FUNCTION public.purge_library_events(timestamptz, integer) TO bookshelf_app;
+        IF to_regclass('public.library_events') IS NOT NULL THEN
+            REVOKE DELETE ON public.library_events FROM bookshelf_app;
+        END IF;
     END IF;
 
     ALTER ROLE bookshelf_app BYPASSRLS;
