@@ -79,7 +79,7 @@ Middleware is configured in `backend/app/main.py`. FastAPI's `add_middleware` wr
 |---|---|---|---|
 | 1 | `_HealthExemptTrustedHost` | Drops spoofed Host headers; exempts `/health` (not `/health/db`) so CI probes bypassing Cloudflare can still hit the origin | hardened only (staging + production) |
 | 2 | `RequestSizeLimitMiddleware` | Pure ASGI. Caps the request body (6 MB on `POST /scan`, 10 MB elsewhere): a declared `Content-Length` over the cap → 413 before reading; chunked bodies are counted as they arrive and cut off with 413 at the cap; malformed `Content-Length` → 400 (#557) | all envs |
-| 3 | `CORSMiddleware` | Allowlisted origins only (validator blocks `*`); credentials allowed; limited methods + headers; allows the `If-Match` request header; exposes only `Retry-After` (scan 429s) and `ETag` (entry versions, #685) | all envs |
+| 3 | `CORSMiddleware` | Allowlisted origins only (validator blocks `*`); credentials allowed; limited methods + headers; allows the `If-Match` and `Idempotency-Key` request headers (#685); exposes only `Retry-After` (scan 429s) and `ETag` (entry versions, #685) | all envs |
 | 4 | `RequestIdMiddleware` | Generates a request ID, stores it in a contextvar for log correlation, returns it as `X-Request-ID` | all envs |
 | 5 | `SentryContextMiddleware` | Attaches request context to Sentry events | all envs |
 | 6 | `SecurityHeadersMiddleware` | Sets `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `CSP`, `Permissions-Policy`, and (hardened only) `HSTS` on every response | all envs |
