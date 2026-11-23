@@ -84,6 +84,7 @@ def _catalog_row(**fields):
         "created_at": NOW,
         "updated_at": NOW,
         "deleted_at": None,
+        "version": 1,
     }
     data.update(fields)
     return SimpleNamespace(**data)
@@ -598,6 +599,7 @@ _NOT_USER_DATA = {
     "deleted_at",
     "created_at",
     "updated_at",
+    "version",  # the optimistic-concurrency counter (#685)
 }
 
 

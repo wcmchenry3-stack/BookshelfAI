@@ -8,15 +8,21 @@ except the trash list, restore and the daily purge
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Literal, NoReturn
+from typing import Annotated, Literal, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.ai import scan_corrections
+from app.api._concurrency import (
+    VersionETagRoute,
+    parse_if_match,
+    require_version,
+    stale_write_as_412,
+)
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -74,7 +80,8 @@ RESTORE_CONFLICT = "restore_conflict"
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["user-books"])
+# Every single-entry response carries the entry's version as its ETag (#685).
+router = APIRouter(tags=["user-books"], route_class=VersionETagRoute)
 
 BookStatus = Literal["wishlisted", "purchased", "reading", "read"]
 
@@ -304,15 +311,17 @@ async def _reread_and_commit(
 ) -> UserBook:
     """Flush, read the entry back for the response inside the same
     transaction (so a DELETE committed right after cannot turn the re-read
-    into a 500, #683), then commit."""
-    await db.flush()  # assigns a new row's id
-    result = await db.execute(
-        _user_book_query(user_id)
-        .where(UserBook.id == user_book.id)
-        .execution_options(populate_existing=True)
-    )
-    user_book = result.scalar_one()
-    await db.commit()
+    into a 500, #683), then commit. The flush writes the versioned UPDATE
+    (#685): one that matches no row is a 412."""
+    async with stale_write_as_412(db):
+        await db.flush()  # assigns a new row's id
+        result = await db.execute(
+            _user_book_query(user_id)
+            .where(UserBook.id == user_book.id)
+            .execution_options(populate_existing=True)
+        )
+        user_book = result.scalar_one()
+        await db.commit()
     return user_book
 
 
@@ -322,9 +331,15 @@ async def update_user_book(
     request: Request,
     user_book_id: uuid.UUID,
     req: UserBookUpdate,
+    if_match: Annotated[str | None, Header()] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UserBook:
+    """Change the entry's status, notes, rating or overrides. ``If-Match``
+    (#685, optional for now): the entry's ETag as last read; 412
+    ``version_mismatch`` when it changed since (nothing written), 400
+    ``invalid_if_match`` when malformed. See ``app/api/_concurrency.py``."""
+    wanted = parse_if_match(if_match)
     # Row-locked and live only: a PATCH racing a DELETE waits for it and
     # then finds the entry trashed (404), never writing to a trashed row.
     result = await db.execute(
@@ -335,6 +350,8 @@ async def update_user_book(
     user_book = result.scalar_one_or_none()
     if not user_book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    # Under the row lock, so a concurrent writer cannot slip in between.
+    require_version(wanted, user_book.version, user_id=current_user.id, action="update")
 
     before = library_events.snapshot(user_book)
     # The user's own title / author / cover (#682): this entry only, never
@@ -409,6 +426,7 @@ async def list_trash(
 async def delete_user_book(
     request: Request,
     user_book_id: uuid.UUID,
+    if_match: Annotated[str | None, Header()] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -424,7 +442,12 @@ async def delete_user_book(
     trash; a copy with notes, a rating, an edition, overrides or a status
     past wishlisted is kept), then the oldest trashed entries beyond
     ``settings.trash_max_entries_per_user`` (``trash.evict_over_cap``, a
-    backstop)."""
+    backstop).
+
+    ``If-Match`` (#685, optional for now), as on ``PATCH``: 412
+    ``version_mismatch`` when the entry changed since the client read it
+    (nothing is trashed), 400 ``invalid_if_match`` when malformed."""
+    wanted = parse_if_match(if_match)
     # Lock order users -> user_books -> user_custom_books. The user lock
     # serialises this with the user's other deletes, restores and adds; the
     # row lock (live only) makes a concurrent second DELETE a 404.
@@ -444,6 +467,7 @@ async def delete_user_book(
     user_book = result.scalar_one_or_none()
     if not user_book:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    require_version(wanted, user_book.version, user_id=current_user.id, action="delete")
 
     now = datetime.now(UTC)
     before = library_events.snapshot(user_book)
@@ -452,10 +476,12 @@ async def delete_user_book(
         # An unverified entry exists only for this library row: it goes to
         # the trash with it, and so no longer counts towards the cap.
         user_book.custom_book.deleted_at = now
-    await library_events.record_change(db, user_book, before, EVENT_DELETED)
-    await evict_same_book(db, current_user.id, user_book)
-    await evict_over_cap(db, current_user.id)
-    await db.commit()
+    # The versioned UPDATEs are flushed by the first query below (#685).
+    async with stale_write_as_412(db):
+        await library_events.record_change(db, user_book, before, EVENT_DELETED)
+        await evict_same_book(db, current_user.id, user_book)
+        await evict_over_cap(db, current_user.id)
+        await db.commit()
 
 
 @router.post("/user-books/{user_book_id}/restore", response_model=UserBookRead)

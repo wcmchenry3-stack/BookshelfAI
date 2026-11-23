@@ -1678,6 +1678,18 @@
         "server_default": "sql:now()",
         "onupdate": "sql:now()",
         "foreign_keys": []
+      },
+      {
+        "name": "version",
+        "type": "INTEGER",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": "sql:1",
+        "onupdate": null,
+        "foreign_keys": []
       }
     ],
     "indexes": [
@@ -1795,6 +1807,18 @@
         "default": null,
         "server_default": "sql:now()",
         "onupdate": "sql:now()",
+        "foreign_keys": []
+      },
+      {
+        "name": "version",
+        "type": "INTEGER",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": "sql:1",
+        "onupdate": null,
         "foreign_keys": []
       }
     ],

@@ -602,7 +602,8 @@ class TestOriginLockdown:
         # scan_in_progress).
         response = cors_client.get("/health", headers={"Origin": CORS_ORIGIN})
         assert response.headers["access-control-allow-origin"] == CORS_ORIGIN
-        assert response.headers["access-control-expose-headers"] == "Retry-After"
+        # ETag: a library entry's version (#685).
+        assert response.headers["access-control-expose-headers"] == "Retry-After, ETag"
 
     def test_rejected_requests_do_not_consume_rate_limit(
         self, origin_secret, proxy_mode
