@@ -8,6 +8,10 @@
   counter and both pass the signature and counter checks (a barrier holds
   them there), but the compare-and-set ``UPDATE ... WHERE counter < new``
   lets exactly one through.
+- Re-registering the same attestation (nonces are reusable) answers the same
+  success in every key_id spelling, keeps one row and never resets the
+  counter, so an old assertion stays dead; assertions find the row whatever
+  spelling of the key_id they carry (#1074 review).
 
 Needs DATABASE_URL pointing at a Postgres database.
 """
@@ -30,7 +34,7 @@ from app.core.database import Base, get_db
 from app.main import app
 from app.models.device_key import DeviceKey
 from app.models.user import User
-from tests._app_attest_pki import APP_ID, NOW, Device, Pki
+from tests._app_attest_pki import APP_ID, NOW, Device, Pki, spellings
 from tests.helpers import bearer, install_jwt_keys, rsa_pem_pair
 
 pytestmark = pytest.mark.integration
@@ -100,11 +104,13 @@ async def _stored(factory, uid) -> DeviceKey:
         ).scalar_one()
 
 
-async def _scan_check(factory, uid, device: Device, nonce: str, assertion: str):
+async def _scan_check(
+    factory, uid, device: Device, nonce: str, assertion: str, key_id=None
+):
     async with factory() as db:
         return await _bot_check._verify_attestation(
             platform="ios",
-            key_id=device.key_id,
+            key_id=key_id or device.key_id,
             assertion_b64=assertion,
             integrity_token=None,
             nonce=nonce,
@@ -161,3 +167,44 @@ async def test_concurrent_replay_passes_only_once(env, monkeypatch):
     )
     assert sorted(outcomes) == [False, True]
     assert (await _stored(factory, uid)).counter == 1
+
+
+async def test_reregistering_never_resets_the_counter(env):
+    """Same attestation posted again (nonces are reusable for 5 minutes), in
+    every key_id spelling: one row, counter untouched, old assertion dead."""
+    factory, client, auth, uid, device = env
+    nonce = issue_nonce(uid, _SECRET)
+    body = {
+        "key_id": device.key_id,
+        "attestation_b64": device.attestation(nonce),
+        "nonce": nonce,
+    }
+    first = await client.post("/attestation/register", json=body, headers=auth)
+    assert first.status_code == 200, first.text
+
+    scan_nonce = issue_nonce(uid, _SECRET)
+    assertion = device.assertion(scan_nonce, 1)
+    assert await _scan_check(factory, uid, device, scan_nonce, assertion) is True
+
+    for spelling in spellings(device.key_id):
+        again = await client.post(
+            "/attestation/register", json={**body, "key_id": spelling}, headers=auth
+        )
+        assert again.status_code == 200, again.text
+        assert again.json() == first.json()
+    row = await _stored(factory, uid)  # scalar_one: still exactly one row
+    assert row.key_id == device.key_id
+    assert row.counter == 1
+    assert await _scan_check(factory, uid, device, scan_nonce, assertion) is False
+
+
+async def test_assertion_with_any_key_id_spelling_finds_the_row(env):
+    factory, client, auth, uid, device = env
+    await _register(client, auth, uid, device)
+    for counter, spelling in enumerate(spellings(device.key_id), start=1):
+        nonce = issue_nonce(uid, _SECRET)
+        assertion = device.assertion(nonce, counter)
+        assert await _scan_check(
+            factory, uid, device, nonce, assertion, key_id=spelling
+        )
+    assert (await _stored(factory, uid)).counter == 4

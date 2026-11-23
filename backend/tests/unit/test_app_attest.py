@@ -22,6 +22,7 @@ from pathlib import Path
 import cbor2
 import pytest
 from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -36,7 +37,7 @@ from app.core.app_attest import (
     public_key_from_cose,
 )
 from app.core.attestation import AppleAttestVerifier
-from tests._app_attest_pki import APP_ID, NOW, Device, Pki
+from tests._app_attest_pki import APP_ID, NOW, Device, Pki, spellings
 
 VECTORS = json.loads(
     (Path(__file__).parents[1] / "fixtures" / "app_attest_vectors.json").read_text()
@@ -492,3 +493,88 @@ async def test_verify_assertion_logs_reason_only(pki, device, caplog):
 def test_decode_b64_rejects_non_string():
     with pytest.raises(AppAttestError):
         decode_b64(None, max_len=10)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups (PR #1074): key_id spelling, chain shape, error wrapping
+# ---------------------------------------------------------------------------
+
+
+def test_every_key_id_spelling_has_one_canonical_form(device):
+    forms = {app_attest.canonical_key_id(s) for s in spellings(device.key_id)}
+    assert forms == {device.key_id}
+
+
+@pytest.mark.parametrize(
+    "key_id",
+    [
+        base64.b64encode(b"\x01" * 31).decode(),
+        base64.b64encode(b"\x01" * 33).decode(),
+        "not base64 !",
+    ],
+)
+def test_key_id_that_is_not_32_bytes_rejected(key_id):
+    with pytest.raises(AppAttestError):
+        app_attest.canonical_key_id(key_id)
+
+
+@pytest.mark.parametrize("value", ["ab+c-def", "ab/c_def", "a-b+"])
+def test_mixed_base64_alphabets_rejected(value):
+    with pytest.raises(AppAttestError) as exc:
+        decode_b64(value, max_len=100)
+    assert exc.value.reason == "bad_base64"
+
+
+def test_x5c_with_three_certificates_rejected(pki, device):
+    extra = pki.root.public_bytes(serialization.Encoding.DER)
+    assert _attest_reason(pki, device, extra_x5c=(extra,)) == "bad_chain"
+
+
+def test_expired_root_rejected():
+    expired = Pki(root_not_after=NOW - timedelta(days=1))
+    device = Device(expired)
+    reason = _reason(
+        _verifier(expired)._attest,
+        device.key_id,
+        device.attestation(NONCE),
+        NONCE,
+        APP_ID,
+    )
+    assert reason == "cert_expired"
+
+
+def test_leaf_that_is_a_ca_rejected(pki, device):
+    assert _attest_reason(pki, device, leaf_ca=True) == "bad_chain"
+
+
+class _BrokenCert:
+    """A certificate whose extensions and key cannot be parsed."""
+
+    @property
+    def extensions(self):
+        raise ValueError("duplicate extension")
+
+    def public_key(self):
+        raise UnsupportedAlgorithm("unknown key type")
+
+
+@pytest.mark.parametrize(
+    ("check", "reason"),
+    [
+        (app_attest._is_ca, "bad_chain"),
+        (app_attest._nonce_from_extension, "bad_chain"),
+        (app_attest._p256_key, "bad_key"),
+    ],
+)
+def test_unparseable_certificate_parts_are_clean_rejections(check, reason):
+    assert _reason(check, _BrokenCert()) == reason
+
+
+def test_non_ec_leaf_key_rejected():
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    class _Ed25519Cert:
+        def public_key(self):
+            return ed25519.Ed25519PrivateKey.generate().public_key()
+
+    assert _reason(app_attest._p256_key, _Ed25519Cert()) == "bad_key"

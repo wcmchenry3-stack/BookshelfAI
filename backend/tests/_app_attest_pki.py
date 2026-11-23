@@ -74,6 +74,7 @@ class Pki:
     intermediate_key: ec.EllipticCurvePrivateKey = field(
         default_factory=lambda: ec.generate_private_key(ec.SECP384R1())
     )
+    root_not_after: datetime = NOW + timedelta(days=3650)
 
     def __post_init__(self) -> None:
         self.root = _cert(
@@ -83,7 +84,7 @@ class Pki:
             signing_key=self.root_key,
             ca=True,
             not_before=NOW - timedelta(days=3650),
-            not_after=NOW + timedelta(days=3650),
+            not_after=self.root_not_after,
         )
         self.intermediate = self.make_intermediate()
 
@@ -166,6 +167,8 @@ class Device:
         intermediate: x509.Certificate | None = None,
         intermediate_key: ec.EllipticCurvePrivateKey | None = None,
         fmt: str = "apple-appattest",
+        leaf_ca: bool = False,
+        extra_x5c: tuple[bytes, ...] = (),
     ) -> str:
         """A base64 attestation object, valid unless an override breaks it."""
         data = auth_data(
@@ -190,7 +193,7 @@ class Device:
             issuer=inter.subject.rfc4514_string().removeprefix("CN="),
             public_key=self.key.public_key(),
             signing_key=intermediate_key or self.pki.intermediate_key,
-            ca=False,
+            ca=leaf_ca,
             not_before=NOW - timedelta(days=1),
             not_after=leaf_not_after or NOW + timedelta(days=30),
             extensions=(nonce_extension(ext_nonce),),
@@ -201,6 +204,7 @@ class Device:
                 "x5c": [
                     leaf.public_bytes(serialization.Encoding.DER),
                     inter.public_bytes(serialization.Encoding.DER),
+                    *extra_x5c,
                 ],
                 "receipt": b"test-receipt",
             },
@@ -222,3 +226,9 @@ class Device:
         signature = (signing_key or self.key).sign(signed, ec.ECDSA(hashes.SHA256()))
         obj = {"signature": signature, "authenticatorData": data}
         return base64.b64encode(cbor2.dumps(obj)).decode()
+
+
+def spellings(key_id: str) -> list[str]:
+    """Padded and unpadded, standard and base64url spellings of one key id."""
+    url = key_id.replace("+", "-").replace("/", "_")
+    return [key_id, key_id.rstrip("="), url, url.rstrip("=")]

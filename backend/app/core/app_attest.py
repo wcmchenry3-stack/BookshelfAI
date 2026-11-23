@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 
 import cbor2
 from cryptography import x509
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -102,15 +102,32 @@ def decode_b64(value: str, *, max_len: int) -> bytes:
     """Decode standard base64 (what DCAppAttestService returns) or base64url.
 
     Strict: padding is optional, but any character outside the two alphabets
-    is an error (``base64.urlsafe_b64decode`` would silently drop it).
+    is an error (``base64.urlsafe_b64decode`` would silently drop it), and so
+    is a string that mixes them (``-``/``_`` with ``+``/``/``).
     """
     if not isinstance(value, str) or not value or len(value) > max_len:
+        raise AppAttestError("bad_base64")
+    if any(c in value for c in "-_") and any(c in value for c in "+/"):
         raise AppAttestError("bad_base64")
     std = value.replace("-", "+").replace("_", "/").rstrip("=")
     try:
         return base64.b64decode(std + "=" * (-len(std) % 4), validate=True)
     except (binascii.Error, ValueError) as exc:
         raise AppAttestError("bad_base64") from exc
+
+
+def canonical_key_id(key_id: str) -> str:
+    """The one spelling of an App Attest key id: padded standard base64.
+
+    A key id is SHA-256 of the public key, so it must decode to 32 bytes.
+    ``/attestation/register`` stores and ``/scan`` looks up this form, so the
+    other spellings ``decode_b64`` accepts (unpadded, base64url) cannot create
+    a second row, with its own counter, for the same key.
+    """
+    raw = decode_b64(key_id, max_len=256)
+    if len(raw) != 32:
+        raise AppAttestError("bad_key_id")
+    return base64.b64encode(raw).decode()
 
 
 def _cbor_map(raw: bytes) -> dict:
@@ -171,22 +188,29 @@ def _verify_chain(
     now: datetime,
 ) -> None:
     """Apple step 1: x5c is [credCert, intermediate], chaining to the root."""
-    try:
-        is_ca = intermediate.extensions.get_extension_for_class(
-            x509.BasicConstraints
-        ).value.ca
-    except x509.ExtensionNotFound:
-        is_ca = False
-    if not is_ca:
+    if not _is_ca(intermediate):
+        raise AppAttestError("bad_chain")
+    # Defence in depth (not one of Apple's listed checks): the credential
+    # certificate is an end-entity certificate, never a CA.
+    if _is_ca(leaf):
         raise AppAttestError("bad_chain")
     try:
         # Checks the issuer name and the signature with the issuer's key.
         leaf.verify_directly_issued_by(intermediate)
         intermediate.verify_directly_issued_by(root)
-    except (ValueError, TypeError, InvalidSignature) as exc:
+    except (ValueError, TypeError, InvalidSignature, UnsupportedAlgorithm) as exc:
         raise AppAttestError("bad_chain") from exc
     for cert in (leaf, intermediate, root):
         _check_validity(cert, now)
+
+
+def _is_ca(cert: x509.Certificate) -> bool:
+    try:
+        return cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+    except x509.ExtensionNotFound:
+        return False
+    except ValueError as exc:  # malformed or duplicate extensions
+        raise AppAttestError("bad_chain") from exc
 
 
 def _nonce_from_extension(leaf: x509.Certificate) -> bytes:
@@ -195,16 +219,23 @@ def _nonce_from_extension(leaf: x509.Certificate) -> bytes:
         ext = leaf.extensions.get_extension_for_oid(NONCE_EXTENSION_OID)
     except x509.ExtensionNotFound as exc:
         raise AppAttestError("nonce_missing") from exc
+    except ValueError as exc:  # malformed or duplicate extensions
+        raise AppAttestError("bad_chain") from exc
     value = getattr(ext.value, "value", b"")
     if len(value) != 38 or not value.startswith(_NONCE_EXTENSION_PREFIX):
         raise AppAttestError("nonce_missing")
     return value[len(_NONCE_EXTENSION_PREFIX) :]
 
 
-def _p256_key(key: object) -> ec.EllipticCurvePublicKey:
-    if not isinstance(key, ec.EllipticCurvePublicKey) or not isinstance(
-        key.curve, ec.SECP256R1
-    ):
+def _p256_key(cert: x509.Certificate) -> ec.EllipticCurvePublicKey:
+    try:
+        key = cert.public_key()
+    except (ValueError, UnsupportedAlgorithm) as exc:
+        raise AppAttestError("bad_key") from exc
+    if not isinstance(key, ec.EllipticCurvePublicKey):
+        raise AppAttestError("bad_key")
+    curve = key.curve
+    if not isinstance(curve, ec.SECP256R1):
         raise AppAttestError("bad_key")
     return key
 
@@ -324,7 +355,7 @@ class LiveAppleAttestVerifier:
             raise AppAttestError("nonce_mismatch")
         # 5. SHA256 of the credCert public key (uncompressed point) must equal
         #    the key identifier.
-        leaf_key = _p256_key(leaf.public_key())
+        leaf_key = _p256_key(leaf)
         point = leaf_key.public_bytes(
             serialization.Encoding.X962,
             serialization.PublicFormat.UncompressedPoint,

@@ -10,10 +10,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
-from app.core.app_attest import apple_verifier
+from app.core.app_attest import AppAttestError, apple_verifier, canonical_key_id
 from app.core.attestation import (
     AttestationResult,
     issue_nonce,
@@ -109,42 +110,69 @@ async def register_device(
             detail="invalid_nonce",
         )
 
+    try:
+        key_id = canonical_key_id(body.key_id)
+    except AppAttestError:
+        raise _attestation_invalid() from None
+
     result: AttestationResult | None = await apple_verifier.verify_attestation(
-        key_id=body.key_id,
+        key_id=key_id,
         attestation_b64=body.attestation_b64,
         nonce=body.nonce,
         app_id=settings.attestation_apple_app_id,
     )
     if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="attestation_invalid",
-        )
+        raise _attestation_invalid()
 
-    # Upsert: replace a stale key for the same key_id rather than failing.
-    existing = await db.execute(
-        select(DeviceKey).where(
-            DeviceKey.user_id == current_user.id,
-            DeviceKey.key_id == body.key_id,
+    # A registered key is never overwritten: its counter is what makes an
+    # assertion single-use, and nonces are reusable for 5 minutes, so an
+    # overwrite (counter back to 0) would re-open every old assertion. The
+    # same key again is a client retry after a lost response: same answer,
+    # row unchanged. A different key under this key_id is refused.
+    existing = await _ios_key(db, current_user.id, key_id)
+    if existing is None:
+        db.add(
+            DeviceKey(
+                id=uuid.uuid4(),
+                user_id=current_user.id,
+                platform="ios",
+                key_id=key_id,
+                public_key_cbor=result.public_key_cbor,
+                counter=result.counter,
+            )
         )
-    )
-    row = existing.scalar_one_or_none()
-    if row is None:
-        row = DeviceKey(
-            id=uuid.uuid4(),
-            user_id=current_user.id,
-            platform="ios",
-            key_id=body.key_id,
-            public_key_cbor=result.public_key_cbor,
-            counter=result.counter,
-        )
-        db.add(row)
-    else:
-        row.public_key_cbor = result.public_key_cbor
-        row.counter = result.counter
-
-    await db.commit()
-    logger.info(
-        "device_key registered user=%s key_id=%.16s", current_user.id, body.key_id
-    )
+        try:
+            await db.commit()
+        except IntegrityError:
+            # A concurrent registration of the same key_id won the insert.
+            await db.rollback()
+            existing = await _ios_key(db, current_user.id, key_id)
+        else:
+            logger.info(
+                "device_key registered user=%s key_id=%.16s", current_user.id, key_id
+            )
+            return RegisterResponse(registered=True)
+    if existing is None or existing.public_key_cbor != result.public_key_cbor:
+        raise _attestation_invalid()
     return RegisterResponse(registered=True)
+
+
+def _attestation_invalid() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="attestation_invalid",
+    )
+
+
+async def _ios_key(
+    db: AsyncSession, user_id: uuid.UUID, key_id: str
+) -> DeviceKey | None:
+    return (
+        await db.execute(
+            select(DeviceKey).where(
+                DeviceKey.user_id == user_id,
+                DeviceKey.key_id == key_id,
+                DeviceKey.platform == "ios",
+            )
+        )
+    ).scalar_one_or_none()

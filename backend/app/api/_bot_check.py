@@ -13,7 +13,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.app_attest import apple_verifier
+from app.core.app_attest import AppAttestError, apple_verifier, canonical_key_id
 from app.core.attestation import (
     LiveAndroidIntegrityVerifier,
     verify_nonce,
@@ -152,6 +152,11 @@ async def _verify_ios_assertion(
     """Verify an App Attest assertion and advance the key's counter (#1051)."""
     app_id = settings.attestation_apple_app_id
     if not app_id or not key_id or not assertion_b64:
+        return False
+    try:
+        # Rows are stored under the canonical spelling (see /register).
+        key_id = canonical_key_id(key_id)
+    except AppAttestError:
         return False
     row = (
         await db.execute(

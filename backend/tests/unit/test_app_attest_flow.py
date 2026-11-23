@@ -15,17 +15,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.api import _bot_check
 from app.api.attestation import get_apple_verifier
 from app.auth.dependencies import get_current_user
 from app.core.app_attest import LiveAppleAttestVerifier
-from app.core.attestation import issue_nonce
+from app.core.attestation import AttestationResult, issue_nonce
 from app.core.database import get_db
 from app.main import app
 from app.models.device_key import DeviceKey
 from app.models.user import User
-from tests._app_attest_pki import APP_ID, NOW, Device, Pki
+from tests._app_attest_pki import APP_ID, NOW, Device, Pki, spellings
 
 _USER_ID = uuid.UUID("00000000-0000-0000-0000-000000001051")
 _SECRET = str(uuid.uuid5(uuid.NAMESPACE_URL, "app-attest-flow-test"))
@@ -54,15 +55,21 @@ def _settings(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _register(pki, body: dict):
+def _register(pki, body: dict, *, rows=(None,), commit_error=None, verifier=None):
+    """POST /register; ``rows`` are what successive key lookups return."""
     captured = []
 
     async def _db():
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
+        results = []
+        for row in rows:
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = row
+            results.append(result)
         db = AsyncMock()
         db.add = MagicMock()
-        db.execute = AsyncMock(return_value=result)
+        db.execute = AsyncMock(side_effect=results)
+        if commit_error is not None:
+            db.commit = AsyncMock(side_effect=commit_error)
         captured.append(db)
         yield db
 
@@ -70,8 +77,8 @@ def _register(pki, body: dict):
         id=_USER_ID, email="attest@example.com"
     )
     app.dependency_overrides[get_db] = _db
-    app.dependency_overrides[get_apple_verifier] = lambda: LiveAppleAttestVerifier(
-        root_ca_pem=pki.root_pem, now=lambda: NOW
+    app.dependency_overrides[get_apple_verifier] = lambda: verifier or (
+        LiveAppleAttestVerifier(root_ca_pem=pki.root_pem, now=lambda: NOW)
     )
     try:
         resp = TestClient(app).post("/attestation/register", json=body)
@@ -114,6 +121,76 @@ def test_register_attestation_for_other_nonce_is_400(pki, device):
     assert resp.json()["detail"] == "attestation_invalid"
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
+
+
+def _body(device: Device, *, key_id: str | None = None) -> dict:
+    nonce = issue_nonce(_USER_ID, _SECRET)
+    return {
+        "key_id": key_id or device.key_id,
+        "attestation_b64": device.attestation(nonce),
+        "nonce": nonce,
+    }
+
+
+@pytest.mark.parametrize("variant", range(4))
+def test_register_stores_the_canonical_key_id(pki, device, variant):
+    spelling = spellings(device.key_id)[variant]
+    resp, db = _register(pki, _body(device, key_id=spelling))
+    assert resp.status_code == 200
+    assert db.add.call_args.args[0].key_id == device.key_id
+    lookup = _compiled(db.execute.await_args_list[0].args[0])
+    assert f"device_keys.key_id = '{device.key_id}'" in lookup
+    assert "device_keys.platform = 'ios'" in lookup
+
+
+def test_register_rejects_a_key_id_that_is_not_32_bytes(pki, device):
+    resp, db = _register(pki, _body(device, key_id="dGVzdC1rZXktaWQ="))
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "attestation_invalid"
+    db.execute.assert_not_awaited()
+
+
+def test_reregistering_the_same_key_is_idempotent(pki, device):
+    row = _row(device, counter=7)
+    resp, db = _register(pki, _body(device), rows=(row,))
+    assert resp.status_code == 200
+    assert resp.json() == {"registered": True}
+    assert row.counter == 7
+    assert row.public_key_cbor == device.public_key_cbor
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+def test_reregistering_a_key_id_with_another_key_is_400(pki, device):
+    row = _row(device, counter=7)
+    other = Device(pki).public_key_cbor
+
+    class _OtherKeyVerifier:
+        async def verify_attestation(self, **_kwargs):
+            return AttestationResult(public_key_cbor=other, counter=0)
+
+    resp, db = _register(pki, _body(device), rows=(row,), verifier=_OtherKeyVerifier())
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "attestation_invalid"
+    assert row.counter == 7
+    assert row.public_key_cbor == device.public_key_cbor
+    db.add.assert_not_called()
+
+
+@pytest.mark.parametrize(("winner_same_key", "status"), [(True, 200), (False, 400)])
+def test_register_losing_an_insert_race_compares_with_the_winner(
+    pki, device, winner_same_key, status
+):
+    winner = _row(device) if winner_same_key else _row(Device(pki))
+    winner.key_id = device.key_id
+    resp, db = _register(
+        pki,
+        _body(device),
+        rows=(None, winner),
+        commit_error=IntegrityError("INSERT", {}, Exception("duplicate")),
+    )
+    assert resp.status_code == status
+    db.rollback.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +283,19 @@ async def test_missing_fields_or_app_id_fail_before_the_db(device, monkeypatch):
     assertion = device.assertion(nonce, 9)
     assert not await _verify(db, key_id=None, assertion=assertion, nonce=nonce)
     assert not await _verify(db, key_id=device.key_id, assertion=None, nonce=nonce)
+    assert not await _verify(db, key_id="c2hvcnQ=", assertion=assertion, nonce=nonce)
     monkeypatch.setattr(_bot_check.settings, "attestation_apple_app_id", "")
     assert not await _verify(db, key_id=device.key_id, assertion=assertion, nonce=nonce)
     db.execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("variant", range(4))
+async def test_assertion_lookup_uses_the_canonical_key_id(device, variant):
+    nonce = issue_nonce(_USER_ID, _SECRET)
+    db = _scan_db(_row(device, counter=0))
+    spelling = spellings(device.key_id)[variant]
+    assert await _verify(
+        db, key_id=spelling, assertion=device.assertion(nonce, 1), nonce=nonce
+    )
+    lookup = _compiled(db.execute.await_args_list[0].args[0])
+    assert f"device_keys.key_id = '{device.key_id}'" in lookup
