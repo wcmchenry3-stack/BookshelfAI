@@ -201,13 +201,13 @@ describe('scrubSentryEvent', () => {
       expect(scrubSentryEvent(event)).toEqual(event);
     });
 
-    it('keeps contexts.request {method} and masks token query params in its url', () => {
+    it('keeps contexts.request {method} and drops the query string from its url (#1029)', () => {
       const out = scrubSentryEvent({
         contexts: { request: { method: 'GET', url: 'https://h/p?access_token=abc123&a=1' } },
       }) as Scrubbed;
       const req = out.contexts?.request as { method: string; url: string };
       expect(req.method).toBe('GET');
-      expect(req.url).toBe('https://h/p?access_token=[Filtered]&a=1');
+      expect(req.url).toBe('https://h/p');
     });
   });
 
@@ -516,8 +516,8 @@ describe('round 2 scrub rules', () => {
           cookies: string;
         };
       };
-      expect(out.request.url).toBe('https://h/p?access_token=[Filtered]&x=1');
-      expect(out.request.query_string).toBe('token=[Filtered]&x=1');
+      expect(out.request.url).toBe('https://h/p');
+      expect(out.request.query_string).toBe('[Filtered]');
       expect(out.request.method).toBe('GET');
       expect(out.request.headers).toEqual({ Authorization: '[Filtered]', Accept: 'json' });
       expect(out.request.cookies).toBe('[Filtered]');
@@ -532,9 +532,42 @@ describe('round 2 scrub rules', () => {
         data: { url: 'https://h/p?api_key=k1&a=1', Authorization: 'x', status_code: 200 },
       }) as { message: string; data: Record<string, unknown> };
       expect(JSON.stringify(out)).not.toContain(JWT);
-      expect(out.data.url).toBe('https://h/p?api_key=[Filtered]&a=1');
+      expect(out.data.url).toBe('https://h/p');
       expect(out.data.Authorization).toBe('[Filtered]');
       expect(out.data.status_code).toBe(200);
+    });
+
+    it('drops the search text from a /books/search breadcrumb (#1029)', () => {
+      const out = scrubBreadcrumb({
+        category: 'fetch',
+        data: {
+          url: 'https://api.example.com/books/search?q=dune&limit=5',
+          method: 'GET',
+          status_code: 200,
+          'http.query': 'q=dune',
+        },
+      });
+      expect(JSON.stringify(out)).not.toContain('dune');
+      expect(out?.data).toMatchObject({
+        url: 'https://api.example.com/books/search',
+        method: 'GET',
+        status_code: 200,
+      });
+    });
+
+    it('drops the search text from an error event request (#1029)', () => {
+      const out = scrubSentryEvent({
+        request: {
+          url: 'https://api.example.com/books/search?q=dune',
+          query_string: 'q=dune',
+          method: 'GET',
+        },
+      });
+      expect(JSON.stringify(out)).not.toContain('dune');
+      expect(out?.request).toMatchObject({
+        url: 'https://api.example.com/books/search',
+        method: 'GET',
+      });
     });
 
     it('returns a clean breadcrumb as the same object', () => {
