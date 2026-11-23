@@ -63,6 +63,12 @@ All limits are env-var overridable via `Settings` in `app/core/config.py`.
 - Uniqueness of `(user_id, book_id)` holds among live rows only (`uq_user_books_user_book_live`, partial). A restore that would make a second live entry of a work is `409 restore_conflict`.
 - Account deletion (#291) must delete trashed rows at once, not leave them to the purge.
 
+### Entry versions: ETag / If-Match (#685)
+- `user_books` and `user_custom_books` have `version` (`VersionedMixin` in `app/models/_mixins.py`, SQLAlchemy `version_id_col`): the ORM bumps it on every UPDATE and writes `UPDATE ... WHERE id = ? AND version = ?`. Change these rows through the ORM only; a bulk `update(UserBook)` does not bump the version.
+- The user-books router uses `VersionETagRoute` (`app/api/_concurrency.py`): every single-entry response gets `ETag: "<version>"` from its body, so a new endpoint returning one `UserBookRead` gets it for free.
+- A write to one entry takes `if_match: Annotated[str | None, Header()] = None`, calls `parse_if_match` first (400 `invalid_if_match`, before any query), then, after the live, user-scoped lookup under `FOR UPDATE` (so another user's entry stays 404), `require_version(...)` (412 `version_mismatch` with `current_version`; a missing header is accepted and logged with the user id only). Wrap the flush and commit in `stale_write_as_412(db)`. A new single-entry `PATCH` / `PUT` / `DELETE` must do all three.
+- The version is server-owned: never accept it in a request body.
+
 ### Library audit log (#684)
 - Every library mutation writes one `library_events` row per entry it changes, **in its own transaction, before its commit**: `library_events.record_created(db, entry)` for a new entry, `before = library_events.snapshot(entry)` then `record_change(db, entry, before[, event_type])` for a change (writes nothing when nothing changed), and `record_purged` for hard deletes (already done by `trash._delete_entries`, the only path that hard-deletes `user_books`). A new mutation path must call one of them; `tests/integration/test_library_events_db.py` covers each endpoint.
 - `changed_fields` holds `{field: {old, new}}` of structured columns only. Free text (`library_events.FREE_TEXT_FIELDS`: notes and the overrides) is recorded as `"changed"`. When you add a user-set text column to `user_books`, add it to `TRACKED_FIELDS` and `FREE_TEXT_FIELDS` (`tests/unit/test_library_events.py` fails otherwise).

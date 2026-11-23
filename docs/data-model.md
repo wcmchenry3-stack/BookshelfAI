@@ -80,6 +80,7 @@ erDiagram
     string cover_url_override "user's own, nullable (#682)"
     timestamptz created_at
     timestamptz updated_at
+    int version "optimistic concurrency, default 1 (#685)"
   }
   REFRESH_TOKENS {
     uuid id PK
@@ -309,6 +310,7 @@ The user's relationship to a Book — this is the "bookshelf" row.
 | `cover_url_override` | string, nullable | the user's own cover URL (#682), validated like every user-supplied URL (https, public IP); check: 1–2048 characters |
 | `deleted_at` | timestamptz, nullable | set when the entry is moved to the trash (`DELETE /user-books/{id}`, #683, migration 0026); NULL for a live entry. Partial index `ix_user_books_deleted_at` on `(deleted_at) WHERE deleted_at IS NOT NULL` (trashed rows only) serves the trash list and the purge |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
+| `version` | int, not null, server default 1 | optimistic concurrency (#685, migration 0032): 1 for a new row, bumped by the ORM on every UPDATE (`VersionedMixin`, `version_id_col`), which writes `UPDATE ... WHERE id = ? AND version = ?`. Returned as `version` and as the single-entry `ETag`; `PATCH` / `DELETE /user-books/{id}` compare `If-Match` with it under the row lock (`412 version_mismatch`, `app/api/_concurrency.py`). A bulk `update(UserBook)` does not bump it: change entries through the ORM. Not user data (`has_no_user_data()`) and not tracked by `library_events`. 4 bytes per row |
 
 Overrides are NULL for an unverified entry (`ck_user_books_overrides_catalog_only`): that entry is already the user's own data and never carries a cover (#616). Storage: at most ~3 KB more per row, typically none.
 
@@ -341,6 +343,7 @@ Unverified entries (#616, migration 0016): books the user added themselves becau
 | `isbn_13` | string, nullable | the ISBN the user typed, normalised to ISBN-13 (check: 13 characters). **Not unique and never matched against anyone else's data**: it never claims `editions.isbn_13` |
 | `deleted_at` | timestamptz, nullable | set and cleared together with its library row's `deleted_at` (#683, migration 0026). No index: the table is only read by `user_id` and is purged with its library row |
 | `created_at` / `updated_at` | timestamptz, server defaults | |
+| `version` | int, not null, server default 1 | optimistic concurrency (#685, migration 0032), as on `user_books.version`: bumped by the ORM on every UPDATE of the row (trash and restore). The API's `ETag` / `If-Match` use the library row's version, not this one |
 
 No provider IDs, cover, description or edition. At most `UNVERIFIED_BOOKS_PER_USER_MAX` (default 200) live rows per user (trashed rows do not count, #683, which changes #625's decision that deleting an unverified entry is permanent); plus at most `TRASH_MAX_ENTRIES_PER_USER` (default 1,000) trashed rows; each row is at most ~1.1 KB (typically ~150 B), so ~1.3 MB per user worst case (200 live + 1,000 trashed), and writes are rate limited (`rate_limit_writes`). Rows go with the account (cascade) and with their library row: `DELETE /user-books/{id}` moves both to the trash, restore brings both back, and both are deleted 30 days after deletion, when the same book is deleted again (an older trashed copy whose library row holds no user data is replaced), or when the user's trash passes the cap, whichever comes first (#683). Account deletion and data export (not built yet) must include this table. Downgrading 0016 deletes every unverified entry.
 
@@ -697,6 +700,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0027_device_attestation.py` — device attestation (#753); expand only. Adds the `device_key_platform` ENUM (`ios`, `android`) and the `device_keys` table (UUID PK, `user_id` FK CASCADE, `platform`, `key_id` VARCHAR(256), `public_key_cbor` BYTEA, `counter` BIGINT, `last_used_at` TIMESTAMPTZ nullable, `created_at` server default; unique `(user_id, key_id)`). The downgrade drops the table and the ENUM
 - `0029_users_default_tab.py` — the "Open on" preference (#913); expand only. Adds the nullable `users.default_tab` (varchar, no default, so existing users stay NULL, i.e. Scan; no backfill) and the check constraint `ck_users_default_tab` (`default_tab IS NULL OR default_tab IN ('scan', 'wishlist', 'my-books')`). The previous release never reads or writes the column. The downgrade drops the constraint and the column (users' choices are lost and the app falls back to Scan)
 - `0031_users_ai_consent.py` — AI scan consent (#1023); expand only. Adds the nullable `users.ai_consent_at` and `users.ai_consent_withdrawn_at` (timestamptz, no default, so existing users have no consent and are asked at their next scan; no backfill), each only when missing, so a re-run after a half-applied upgrade resumes; 5 s `lock_timeout` for the brief ACCESS EXCLUSIVE lock (catalog-only change, no rewrite). The previous release never reads or writes them. Why columns and not a history table: the owner asked for the given and withdrawn times, which two columns keep; a full history of every change is not needed for Apple 5.1.2(i) and would be a table that grows with use. The downgrade drops both columns (every recorded consent is lost; the app asks again)
+- `0032_library_entry_version.py` — optimistic concurrency for library entries (#685); expand only. Adds `version INTEGER NOT NULL DEFAULT 1` to `user_books` and `user_custom_books`, each only when missing (a re-run after a half-applied upgrade resumes); 5 s `lock_timeout` for the brief ACCESS EXCLUSIVE lock. With a constant default, PostgreSQL 11+ stores the default in the catalog: no table rewrite, no scan, no backfill, and existing rows read as 1. The previous release never reads or writes the column (its inserts get the default, its updates leave it as it is). 4 bytes per row. The downgrade drops both columns; only the version counters are lost
 
 ### Writing a new migration
 
