@@ -23,6 +23,7 @@ import {
   defaultTabRoute,
   loadDefaultTab,
 } from '../lib/defaultTab';
+import { resetAttestationState } from '../lib/attestation/attestation';
 import { Sentry } from '../lib/sentry';
 import * as storage from '../lib/storage';
 
@@ -247,6 +248,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     sessionGenRef.current += 1;
     gateStoredSession(Promise.resolve(false));
+    // #870: the next account starts with no attestation latch and no
+    // registration of this one's still running (keys stay, per account).
+    resetAttestationState();
     try {
       const results = await Promise.allSettled([
         storage.deleteItem(ACCESS_TOKEN_KEY),

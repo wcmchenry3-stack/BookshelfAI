@@ -32,6 +32,8 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - ExpoAppIntegrity (58.0.2):
+    - ExpoModulesCore
   - ExpoApplication (58.1.2):
     - ExpoModulesCore
   - ExpoAsset (58.0.21):
@@ -2344,6 +2346,7 @@ DEPENDENCIES:
   - DoubleConversion (from `build/rndeps-facades/DoubleConversion`)
   - EXConstants (from `../node_modules/expo-constants/ios`)
   - Expo (from `../node_modules/expo`)
+  - "ExpoAppIntegrity (from `../node_modules/@expo/app-integrity/ios`)"
   - ExpoApplication (from `../node_modules/expo-auth-session/node_modules/expo-application/ios`)
   - ExpoAsset (from `../node_modules/expo-asset/ios`)
   - ExpoCamera (from `../node_modules/expo-camera/ios/ExpoCamera.podspec`)
@@ -2475,6 +2478,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-constants/ios"
   Expo:
     :path: "../node_modules/expo"
+  ExpoAppIntegrity:
+    :path: "../node_modules/@expo/app-integrity/ios"
   ExpoApplication:
     :path: "../node_modules/expo-auth-session/node_modules/expo-application/ios"
   ExpoAsset:
@@ -2722,6 +2727,7 @@ SPEC CHECKSUMS:
   DoubleConversion: 501a575c40c0b50c89685762dd3e415e6bb26fb0
   EXConstants: aeda76f4be923fc719522ae162dd0b8c6483f9cc
   Expo: 23763d9c59158fd5cae2d5831d3e42576f61f011
+  ExpoAppIntegrity: ec92e0b1bfb86dacc1e5eab784982e24b232215f
   ExpoApplication: c83355b2f69f996b5d26b64fef39228e7f1e1208
   ExpoAsset: eda9e4844b55b78d4e71a0e2de767a038f3a0806
   ExpoCamera: 5d9ae8e9c52e102d9a21b2a903478dcd79ce3ddc

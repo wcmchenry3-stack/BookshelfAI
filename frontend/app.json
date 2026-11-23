@@ -11,6 +11,9 @@
       "deploymentTarget": "16.4",
       "bundleIdentifier": "com.buffingchi.bookshelf",
       "buildNumber": "1",
+      "entitlements": {
+        "com.apple.developer.devicecheck.appattest-environment": "production"
+      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "CFBundleURLTypes": [

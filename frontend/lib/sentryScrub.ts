@@ -50,6 +50,17 @@ const ALWAYS_KEYS: ReadonlySet<string> = new Set([
   'api_key',
   'apikey',
   'api-key',
+  // Device attestation (#870): request bodies and form fields.
+  'nonce',
+  'assertion',
+  'attestation_b64',
+  'integrity_token',
+  'attestation-nonce',
+  'attestation-assertion',
+  'attestation-token',
+  'key_id',
+  'keyid',
+  'attestation-key-id',
 ]);
 // Transactions only (#715): URL query / fragment attributes are dropped wholesale.
 const QUERY_KEYS: ReadonlySet<string> = new Set([
