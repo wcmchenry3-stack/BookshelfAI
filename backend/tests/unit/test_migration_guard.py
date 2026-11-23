@@ -166,8 +166,11 @@ def test_existing_migrations_flagged_are_the_known_historical_ones():
         if guard.scan_source(path.read_text(), path.name)
     }
     # 0015 deletes duplicate rows via helpers; 0018/0019 are the contract steps of
-    # #594 and #540. CI scans changed files only, so history is not re-gated.
-    assert flagged == {"0015", "0018", "0019"}
+    # #594 and #540; 0035 creates the library_events purge function, whose body
+    # holds a DELETE FROM, and revokes DELETE from the app role (#1042, owner
+    # approval by label). CI scans changed files only, so history is not
+    # re-gated.
+    assert flagged == {"0015", "0018", "0019", "0035"}
 
 
 def test_fstring_sql_is_joined_before_matching():

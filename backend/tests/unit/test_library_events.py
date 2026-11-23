@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from app.core.config import Settings, settings
 from app.models.library_event import EVENT_TYPES, LibraryEvent
@@ -254,10 +255,6 @@ def _scalar(value):
     return SimpleNamespace(scalar_one=lambda: value)
 
 
-def _ids(n):
-    return SimpleNamespace(scalars=lambda: iter(range(n)))
-
-
 async def test_retention_stops_when_the_lock_is_held():
     db = _db()
     db.commit = AsyncMock()
@@ -275,11 +272,9 @@ async def test_retention_batches_until_a_short_batch(monkeypatch):
     db.execute = AsyncMock(
         side_effect=[
             _scalar(True),
-            _ids(2),
-            SimpleNamespace(rowcount=2),
+            _scalar(2),
             _scalar(True),
-            _ids(1),
-            SimpleNamespace(rowcount=1),
+            _scalar(1),
         ]
     )
     assert await library_events_retention.purge_old_library_events(db, NOW) == 3
@@ -289,7 +284,7 @@ async def test_retention_batches_until_a_short_batch(monkeypatch):
 async def test_retention_with_nothing_old_deletes_nothing():
     db = _db()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_scalar(True), _ids(0)])
+    db.execute = AsyncMock(side_effect=[_scalar(True), _scalar(0)])
     assert await library_events_retention.purge_old_library_events(db, NOW) == 0
     assert db.execute.await_count == 2
     db.commit.assert_awaited_once()
@@ -300,8 +295,29 @@ async def test_retention_stops_after_max_batches(monkeypatch):
     monkeypatch.setattr(library_events_retention, "PURGE_MAX_BATCHES", 2)
     db = _db()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(
-        side_effect=[_scalar(True), _ids(1), SimpleNamespace(rowcount=1)] * 2
-    )
+    db.execute = AsyncMock(side_effect=[_scalar(True), _scalar(1)] * 2)
     assert await library_events_retention.purge_old_library_events(db, NOW) == 2
     assert db.commit.await_count == 2
+
+
+async def test_retention_purges_through_the_function_not_a_delete():
+    """#1042: each batch is one call of the SECURITY DEFINER function with
+    the retention cutoff and the batch size, not a DELETE by the app role."""
+    db = _db()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_scalar(True), _scalar(0)])
+    await library_events_retention.purge_old_library_events(db, NOW)
+    compiled = (
+        db.execute.await_args_list[1].args[0].compile(dialect=postgresql.dialect())
+    )
+    assert str(compiled).startswith("SELECT purge_library_events(")
+    assert "DELETE" not in str(compiled).upper()
+    assert set(compiled.params.values()) == {
+        library_events_retention.retention_cutoff(NOW),
+        5_000,
+    }
+
+
+def test_retention_batch_fits_the_purge_function_limit():
+    # Migration 0035's function refuses a batch above 10,000.
+    assert 1 <= library_events_retention.PURGE_BATCH_SIZE <= 10_000

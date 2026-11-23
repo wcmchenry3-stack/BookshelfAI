@@ -188,14 +188,18 @@ on Supabase), as the owner (`postgres` on Supabase):
    [`scripts/db/app_role_grants.sql`](../scripts/db/app_role_grants.sql)
    (paste it into the SQL editor, or `psql -v ON_ERROR_STOP=1 -f
    scripts/db/app_role_grants.sql`). It is idempotent and gives the same end
-   state as 0028 and 0030: DML on every table in `public` except
-   `alembic_version` (and no `UPDATE` on the append-only `library_events`,
-   #684), `USAGE` on every sequence, `BYPASSRLS`, and the owner's default privileges
+   state as 0028, 0030 and 0035: DML on every table in `public` except
+   `alembic_version` (no `UPDATE` on the append-only `library_events`, #684,
+   and no `DELETE` on it either once its purge function exists, #1042),
+   `EXECUTE` on `purge_library_events` for the role only (a `--no-acl`
+   restore resets the function to the default, `EXECUTE` for `PUBLIC`),
+   `USAGE` on every sequence, `BYPASSRLS`, and the owner's default privileges
    for later tables. It stops with an error if the role does not exist.
    `tests/integration/test_db_role.py` checks that it restores every grant.
 
 3. **Verify**: this must return 0 rows (every app table has DML for the
-   role, and `library_events` has no `UPDATE`):
+   role; `library_events` has no `UPDATE`, and has `DELETE` only on a backup
+   older than migration 0035, which has no purge function):
 
    ```sql
    SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -203,10 +207,12 @@ on Supabase), as the owner (`postgres` on Supabase):
      AND (NOT (has_table_privilege('bookshelf_app', c.oid, 'SELECT')
                AND has_table_privilege('bookshelf_app', c.oid, 'INSERT')
                AND (c.relname = 'library_events'
-                    OR has_table_privilege('bookshelf_app', c.oid, 'UPDATE'))
-               AND has_table_privilege('bookshelf_app', c.oid, 'DELETE'))
+                    OR (has_table_privilege('bookshelf_app', c.oid, 'UPDATE')
+                        AND has_table_privilege('bookshelf_app', c.oid, 'DELETE'))))
           OR (c.relname = 'library_events'
-              AND has_table_privilege('bookshelf_app', c.oid, 'UPDATE')));
+              AND (has_table_privilege('bookshelf_app', c.oid, 'UPDATE')
+                   OR has_table_privilege('bookshelf_app', c.oid, 'DELETE')
+                      <> (to_regprocedure('public.purge_library_events(timestamptz, integer)') IS NULL))));
    ```
 
 4. **Repoint the services**: `MIGRATION_DATABASE_URL` to the restored
@@ -256,7 +262,8 @@ The drill fails when any of these is true:
 - after creating `bookshelf_app` (no login) and running
   `scripts/db/app_role_grants.sql`, some table in `public` other than
   `alembic_version` lacks `SELECT`, `INSERT`, `UPDATE` (not wanted on
-  `library_events`, which must not have it, #684) or `DELETE` for it (the
+  `library_events`, which must not have it, #684) or `DELETE` (not wanted on
+  `library_events` either once its purge function exists, #1042) for it (the
   "app role grants re-applied" check, which proves the restore runbook's
   grant step works on a real dump).
 

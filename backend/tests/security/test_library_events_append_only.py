@@ -1,22 +1,24 @@
 """The library audit log is append-only in code (#684).
 
 ``library_events`` rows are inserted by ``app/services/library_events.py``
-and deleted only by the retention job,
-``app/services/library_events_retention.py``. This test reads every module
-under ``backend/app`` and fails if:
+and purged only by the retention job,
+``app/services/library_events_retention.py``, through the ``SECURITY
+DEFINER`` function ``purge_library_events`` (#1042, migration 0035). This
+test reads every module under ``backend/app`` and fails if:
 
-- any module other than those two (and the model package) imports
+- any module other than the writer (and the model package) imports
   ``LibraryEvent``, so no other code can load, change or delete an event
   through the ORM;
-- the writer module calls ``update(...)`` or ``delete(...)`` on
-  ``LibraryEvent``, calls ``.update`` / ``.delete`` on a
-  ``query(LibraryEvent)``, or assigns to an attribute of an object (an
-  ORM update);
-- any module except the retention job does any of that, or holds SQL text
-  that updates or deletes ``library_events``.
+- any module, the retention job included, calls ``update(...)`` or
+  ``delete(...)`` on ``LibraryEvent``, calls ``.update`` / ``.delete`` on a
+  ``query(LibraryEvent)``, or holds SQL text that updates or deletes
+  ``library_events``;
+- the writer assigns to an attribute of an object (an ORM update);
+- any module except the retention job names ``purge_library_events``.
 
-The database enforces the same for ``UPDATE`` (migration 0030 revokes it
-from the app role; ``tests/integration/test_library_events_db.py``).
+The database enforces the same: migration 0030 revokes ``UPDATE`` and 0035
+``DELETE`` from the app role (``tests/integration/test_library_events_db.py``,
+``tests/integration/test_library_events_purge_db.py``).
 
 Run on its own with:
 ``pytest -m security tests/security/test_library_events_append_only.py``
@@ -41,11 +43,11 @@ IMPORTERS = frozenset(
         Path("models") / "library_event.py",
         Path("models") / "__init__.py",
         WRITER,
-        RETENTION,
     }
 )
 MODEL = "LibraryEvent"
 TABLE = "library_events"
+PURGE_FUNCTION = "purge_library_events"
 RAW_SQL_RE = re.compile(
     rf"\b(UPDATE\s+(ONLY\s+)?|DELETE\s+FROM\s+(ONLY\s+)?)(public\.)?\"?{TABLE}\b",
     re.IGNORECASE,
@@ -116,6 +118,24 @@ def write_violations(source: str, path: Path) -> list[str]:
     return found
 
 
+def purge_calls(source: str, path: Path) -> list[str]:
+    """Every mention of the purge function: ``func.purge_library_events``
+    (any attribute or name of that spelling) or a string holding it."""
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if (
+            (isinstance(node, ast.Attribute) and node.attr == PURGE_FUNCTION)
+            or (isinstance(node, ast.Name) and node.id == PURGE_FUNCTION)
+            or (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and PURGE_FUNCTION in node.value
+            )
+        ):
+            found.append(f"{path}:{node.lineno}: calls {PURGE_FUNCTION}")
+    return found
+
+
 def import_violations(source: str, path: Path) -> list[str]:
     # Constants (the event types) may be imported; the class, the module
     # object or ``*`` may not.
@@ -159,14 +179,15 @@ def test_scan_covers_the_app_and_the_two_allowed_modules():
     assert len(paths) > 50, "the scan read too few modules"
 
 
-def test_no_update_or_delete_of_library_events_outside_retention():
+def test_no_module_updates_or_deletes_library_events():
+    """Not even the retention job: it purges through the function (#1042)."""
     problems = []
     for path, source in _modules():
-        if path == RETENTION:
-            continue
         problems += write_violations(source, path)
         if path not in IMPORTERS:
             problems += import_violations(source, path)
+        if path != RETENTION:
+            problems += purge_calls(source, path)
     assert problems == [], "\n".join(problems)
 
 
@@ -176,12 +197,25 @@ def test_the_writer_never_changes_an_event_it_added():
     assert attribute_assignments(source, path) == []
 
 
-def test_the_retention_job_is_the_one_delete():
-    """The allowlisted module really is where the delete lives (so the
-    scanner sees it), and it never updates."""
+def test_the_retention_job_is_the_one_purge():
+    """The allowlisted module really is where the purge function is called
+    (so the scanner sees it), and it neither deletes nor updates."""
     source = (APP_ROOT / RETENTION).read_text(encoding="utf-8")
-    found = write_violations(source, RETENTION)
-    assert found and all("delete" in f for f in found), found
+    assert purge_calls(source, RETENTION) != []
+    assert write_violations(source, RETENTION) == []
+    assert import_violations(source, RETENTION) == []
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "stmt = select(func.purge_library_events(cutoff, 10))",
+        "stmt = select(sa.func.purge_library_events(cutoff, 10))",
+        "db.execute(text('SELECT purge_library_events(now(), 10000)'))",
+    ],
+)
+def test_scanner_catches_a_planted_purge_call(snippet):
+    assert purge_calls(snippet, Path("planted.py")) != []
 
 
 @pytest.mark.parametrize(

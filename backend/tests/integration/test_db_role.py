@@ -10,8 +10,10 @@ On a database built by ``alembic upgrade head`` (migration 0028 has run):
 - every table in ``public`` (except ``alembic_version``) has exactly
   ``SELECT, INSERT, UPDATE, DELETE`` for the role and every sequence has
   ``USAGE`` only, so a table or sequence added without grants fails the build;
-  the append-only audit log ``library_events`` (#684, migration 0030) has
-  no ``UPDATE`` (:data:`_NO_UPDATE`);
+  the append-only audit log ``library_events`` has no ``UPDATE`` (#684,
+  migration 0030) and no ``DELETE`` (#1042, migration 0035)
+  (:data:`_WITHHELD`), and only the role (not ``PUBLIC``) may execute its
+  purge function ``purge_library_events``;
 - ``scripts/db/app_role_grants.sql`` (the restore runbook's grants,
   docs/backups.md) brings those grants back after they are lost.
 
@@ -37,9 +39,10 @@ pytestmark = pytest.mark.integration
 _INSUFFICIENT_PRIVILEGE = "42501"
 _DML = ("SELECT", "INSERT", "UPDATE", "DELETE")
 _NOT_GRANTED = ("TRUNCATE", "REFERENCES", "TRIGGER")
-# Append-only tables (#684): the role inserts, reads and (retention job
-# only) deletes, never updates.
-_NO_UPDATE = frozenset({"library_events"})
+# DML the role must not hold. library_events is append-only (#684) and is
+# purged only through a SECURITY DEFINER function (#1042, migration 0035).
+_WITHHELD = {"library_events": ("UPDATE", "DELETE")}
+_PURGE_FUNCTION = "public.purge_library_events(timestamptz, integer)"
 _GRANTS_SQL = Path(__file__).resolve().parents[3] / "scripts/db/app_role_grants.sql"
 
 _APP_TABLES = sa.text("""
@@ -132,6 +135,29 @@ def _sequence_problems(connection) -> list[str]:
     return problems
 
 
+def _function_problems(connection) -> list[str]:
+    """The purge function: EXECUTE for the role, not for PUBLIC."""
+    acl = connection.execute(
+        sa.text(
+            "SELECT a.grantee, a.privilege_type FROM pg_proc p, "
+            "aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a "
+            "WHERE p.oid = to_regprocedure(:f)"
+        ),
+        {"f": _PURGE_FUNCTION},
+    ).all()
+    problems = []
+    if not _scalar(
+        connection,
+        "SELECT has_function_privilege(:r, :f, 'EXECUTE')",
+        r=APP_DB_ROLE,
+        f=_PURGE_FUNCTION,
+    ):
+        problems.append("purge_library_events: missing EXECUTE")
+    if any(grantee == 0 for grantee, _ in acl):
+        problems.append("purge_library_events: EXECUTE granted to PUBLIC")
+    return problems
+
+
 def grant_problems(connection) -> list[str]:
     """Every way the app role's grants differ from what 0028 sets up."""
     tables = connection.execute(_APP_TABLES).scalars().all()
@@ -139,8 +165,9 @@ def grant_problems(connection) -> list[str]:
     problems = []
     for table in tables:
         privileges = _table_privileges(connection, table)
-        expected = tuple(p for p in _DML if p != "UPDATE" or table not in _NO_UPDATE)
-        not_granted = _NOT_GRANTED + (("UPDATE",) if table in _NO_UPDATE else ())
+        withheld = _WITHHELD.get(table, ())
+        expected = tuple(p for p in _DML if p not in withheld)
+        not_granted = _NOT_GRANTED + withheld
         missing = [p for p in expected if not privileges[p]]
         extra = [p for p in not_granted if privileges[p]]
         if missing:
@@ -148,6 +175,7 @@ def grant_problems(connection) -> list[str]:
         if extra:
             problems.append(f"{table}: unexpected {', '.join(extra)}")
     problems += _sequence_problems(connection)
+    problems += _function_problems(connection)
     alembic = _table_privileges(connection, "alembic_version")
     if any(alembic.values()):
         problems.append(f"alembic_version: unexpected {alembic}")
@@ -253,7 +281,19 @@ async def test_restore_grants_script_reapplies_every_grant():
             connection.execute(
                 sa.text(f"REVOKE ALL ON ALL {kind} IN SCHEMA public FROM {APP_DB_ROLE}")
             )
-        assert grant_problems(connection) != []
+        # What a --no-acl restore leaves on the function: the default ACL
+        # (EXECUTE for PUBLIC). Also hand DELETE back, which the script must
+        # take away again (#1042).
+        connection.execute(
+            sa.text(f"GRANT EXECUTE ON FUNCTION {_PURGE_FUNCTION} TO PUBLIC")
+        )
+        connection.execute(
+            sa.text(f"REVOKE ALL ON FUNCTION {_PURGE_FUNCTION} FROM {APP_DB_ROLE}")
+        )
+        connection.execute(sa.text(f"GRANT DELETE ON library_events TO {APP_DB_ROLE}"))
+        problems = grant_problems(connection)
+        assert "purge_library_events: EXECUTE granted to PUBLIC" in problems
+        assert "library_events: unexpected DELETE" in problems
         script = _GRANTS_SQL.read_text()
         connection.exec_driver_sql(script)
         connection.exec_driver_sql(script)
