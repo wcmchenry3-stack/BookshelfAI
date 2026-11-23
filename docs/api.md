@@ -40,7 +40,7 @@ Common status codes:
 | 401 | Unauthorized | missing / invalid / expired access token, access token issued before #689 (`token_outdated`, refresh and retry), invalid refresh token, session revoked by sign out of all devices (`token_revoked`), rotated refresh token replayed (`refresh_reused`) |
 | 403 | Forbidden | email not in `ALLOWED_EMAILS`, Turnstile verification failed, enhanced scan by a non-Premium user (`enhanced_requires_premium`), a scan without AI consent while `AI_CONSENT_REQUIRED` is on (`ai_consent_required`) |
 | 404 | Not Found | `user_book_id` / `book_id` doesn't exist or belongs to another user |
-| 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), the first request with the same `Idempotency-Key` still running (`idempotency_in_progress`, with `Retry-After: 1`, #685), a write that was already applied under the same `Idempotency-Key` but whose response was never stored (`idempotency_outcome_unknown`, #685), and other per-endpoint conflicts |
+| 409 | Conflict | sign-in email belongs to a different Google account (`account_conflict`), the first request with the same `Idempotency-Key` still running (`idempotency_in_progress`, with `Retry-After: 1`, #685), a write that was already applied under the same `Idempotency-Key` but whose response was never stored (`idempotency_outcome_unknown`, #685), a second account export within 24 h (`{"code": "export_limit", "retry_after": N}`, #694), and other per-endpoint conflicts |
 | 422 | Unprocessable Entity | body validation (`detail` is a list), per-endpoint refusals (`catalog_token_invalid`, `book_not_in_catalog`, `overrides_not_supported`), an `Idempotency-Key` already used for a different request (`idempotency_key_reused`, #685) |
 | 412 | Precondition Failed | `If-Match` on `PATCH` / `DELETE /user-books/{id}` names an older version of the entry (`{"detail": {"code": "version_mismatch", "current_version": N}}`, #685; see [Entry versions](#entry-versions-etag-if-match-and-412-685)) |
 | 413 | Payload Too Large | request body > 6 MB on `POST /scan` or > 10 MB elsewhere, with or without `Content-Length` (middleware), image > 5 MB (endpoint), or image pixel count above the cap (`image_too_large_pixels`) |
@@ -48,7 +48,7 @@ Common status codes:
 | 402 | Payment Required | not returned by `/scan` since #582 (there is no monthly limit; older servers sent `scan_limit_reached` / `enhanced_limit_reached`) |
 | 429 | Too Many Requests | rate limit hit, daily scan limit reached (`daily_scan_limit`), the user's `/scan` requests for the day used up (`scan_requests_daily_limit`, #586), another scan still running (`scan_in_progress`), enhanced scans throttled after repeated empty enhanced scans (`enhanced_throttled`). `Retry-After` is listed in `Access-Control-Expose-Headers`, so browser clients can read it on cross-origin responses |
 | 502 | Bad Gateway | upstream API (Google Books, Open Library) failure |
-| 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity, a database query ran longer than the statement timeout (`db_timeout`, any endpoint, with `Retry-After: 5`; #696) |
+| 503 | Service Unavailable | DB down (/health/db), scan service unavailable, scanning switched off or at daily capacity, a database query ran longer than the statement timeout (`db_timeout`, any endpoint, with `Retry-After: 5`; #696), account export not configured (`export_not_configured`, #694) |
 
 ### Rate limits
 
@@ -59,7 +59,7 @@ Per user for a valid access token, otherwise per client IP (IPv6 per /64; Cloudf
 | `rate_limit_auth` | 5/min | `/auth/google`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all` |
 | `rate_limit_scan` | 10/min | `POST /scan` |
 | `rate_limit_books_search` | 30/min | `GET /books/search` |
-| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences`, `POST` / `DELETE /users/me/ai-consent` |
+| `rate_limit_writes` | 60/min | `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/*`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences`, `POST` / `DELETE /users/me/ai-consent`, `POST /account/export` (plus one export per user per 24 h) |
 | `rate_limit_reads` | 120/min | `GET /user-books`, `GET /user-books/trash`, `GET /auth/me`, `GET /scan/usage` |
 | `rate_limit_health` | 60/min | `GET` / `HEAD /health`, `GET` / `HEAD /health/db` |
 
@@ -294,6 +294,52 @@ curl -X POST https://bookshelfapi.buffingchi.com/users/me/ai-consent \
 
 ---
 
+## Account
+
+### `POST /account/export` — email me a copy of my data
+
+**Auth:** required (Bearer access token)
+**Rate limit:** `rate_limit_writes`, and at most one export per user per 24 hours
+**Idempotency-Key:** honoured (#685); a keyed retry replays the `202` (or the `409`)
+**Source:** `backend/app/api/users.py:request_account_export`, job in `backend/app/services/account_export_jobs.py`
+
+Queues a copy of everything the app keeps about the signed-in user (#694) and answers at once; nothing heavy runs in the request. A background worker then builds one JSON file, stores it privately in Supabase Storage, and emails a download link to the account's email address. The link works for 7 days (604,800 s), then stops working and the file is deleted. The user comes from the access token; the body only picks the email's language.
+
+**Request (optional body):**
+```json
+{ "locale": "de" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `locale` | one of `ar`, `de`, `en`, `es`, `fr-CA`, `he`, `hi`, `ja`, `ko`, `nl`, `pt`, `ru`, `zh`; optional, default `en` | the app's current language; the email is written in it |
+
+**Response `202`:** queued.
+```json
+{ "id": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed", "status": "pending", "created_at": "2026-11-23T08:00:00Z" }
+```
+
+**Errors:**
+| Status | `detail` | When |
+|---|---|---|
+| `401` | `Token expired`, `Invalid token`, `token_revoked`, ... | no, bad or revoked access token |
+| `409` | `{"code": "export_limit", "retry_after": 3600}`, with `Retry-After: 3600` | the user already asked within the last 24 hours (any outcome counts); `retry_after` is the seconds until the next request is allowed. 409 rather than 429 so the app's retry layer does not retry it |
+| `422` | FastAPI validation list | `locale` not one of the values above, or any other field in the body |
+| `429` | rate limited | over `rate_limit_writes` |
+| `503` | `export_not_configured` | the kill switch: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or `RESEND_API_KEY` is unset (see `deployment.md`). Nothing is queued |
+
+**The file** (`schema_version` 1; layout in `backend/app/services/account_export.py`): `schema_version`, `generated_at`, `user_id`, `identities` (the Google subject), `tables` (one list per user table: `users`, `user_books` (trashed entries included), `user_custom_books`, `scan_records`, `scan_corrections`, `ai_enhanced_zero_results`, `ai_quota`, `ai_usage`, `library_events`, `device_keys`, `refresh_tokens` (issued / expires / revoked times only), `account_exports`) and `catalog` (the `books` and `editions` the library points at). Never in it: token ids, request hashes, device keys, photo fingerprints, internal ids, or another user's rows. `idempotency_keys` and `ai_inflight` are left out (transient); `excluded_tables` in the file names them with the reason.
+
+```bash
+curl -X POST https://bookshelfapi.buffingchi.com/account/export \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"locale": "en"}'
+```
+
+---
+
 ## Books
 
 ### `GET /books/search` — free-text search
@@ -482,7 +528,7 @@ Every library entry has a `version` (an integer, 1 for a new entry) that the ser
 
 ### `Idempotency-Key`: retries without double writes (#685)
 
-Every library and account write takes an optional `Idempotency-Key` header, so a client can retry it after a lost response without applying it twice: `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/{id}`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences`, `POST` / `DELETE /users/me/ai-consent`. The client sends a fresh key (a UUID) per user action and the same key on every retry of it. `Idempotency-Key` is in the CORS allowed request headers.
+Every library and account write takes an optional `Idempotency-Key` header, so a client can retry it after a lost response without applying it twice: `POST /wishlist`, `POST /wishlist/unverified`, `POST /purchased`, `PATCH` / `DELETE /user-books/{id}`, `POST /user-books/{id}/restore`, `PATCH /users/me/preferences`, `POST` / `DELETE /users/me/ai-consent`, `POST /account/export`. The client sends a fresh key (a UUID) per user action and the same key on every retry of it. `Idempotency-Key` is in the CORS allowed request headers.
 
 - **Key.** 1 to 255 visible ASCII characters (`!` to `~`; no spaces). Anything else (empty, longer, a space, a non-ASCII or control character), or two different values, is **`400 invalid_idempotency_key`**, before anything is read or written.
 - **Same request.** Two requests are the same when the method, the path (so another entry or another endpoint is another request), the query, `If-Match` and the JSON body (compared as data: key order and spacing do not matter) are equal.

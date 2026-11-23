@@ -11,6 +11,7 @@ erDiagram
   USERS ||--o{ USER_BOOKS : owns
   USERS |o--o{ LIBRARY_EVENTS : "library audit log (set null on delete, #684)"
   USERS ||--o{ IDEMPOTENCY_KEYS : "stored write responses, 24 h (#685)"
+  USERS ||--o{ ACCOUNT_EXPORTS : "data export requests, 7 days (#694)"
   USERS ||--o{ REFRESH_TOKENS : issued
   USERS ||--o{ AI_QUOTA : "AI calls per window"
   USERS ||--o| AI_INFLIGHT : "call in flight"
@@ -199,6 +200,20 @@ erDiagram
     jsonb response_headers "ETag, Location"
     timestamptz created_at "indexed"
   }
+  ACCOUNT_EXPORTS {
+    uuid id PK
+    uuid user_id FK "cascade on delete"
+    varchar status "pending, running, ready or failed"
+    varchar locale "the email's language"
+    smallint attempts
+    timestamptz claimed_at "nullable, the lease"
+    timestamptz completed_at "nullable"
+    varchar object_path "nullable, in the private bucket"
+    bigint size_bytes "nullable"
+    timestamptz expires_at "nullable, indexed"
+    varchar error_code "nullable"
+    timestamptz created_at
+  }
   AI_SETTINGS {
     text key PK
     jsonb value
@@ -222,6 +237,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
 | `library_events.user_id` → `users.id` | `SET NULL` | Deleting an account anonymises its library audit events (`user_id` becomes NULL) instead of failing or deleting them; they still leave after 180 days (#684). `library_events.user_book_id` has no FK, so purging a library row never touches its events. |
 | `idempotency_keys.user_id` → `users.id` | `CASCADE` | Deleting an account removes its stored `Idempotency-Key` responses, which hold its data (#685). |
+| `account_exports.user_id` → `users.id` | `CASCADE` | Deleting an account removes its export rows (#694). The export files in Supabase Storage are not rows: account deletion (#291) must delete them first; the daily sweep removes any left after 8 days. |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
 | `books.merged_into_id` → `books.id` | `RESTRICT` | A book that other rows were merged into cannot be deleted (#682). |
@@ -243,9 +259,9 @@ An unreferenced book can be deleted. The ORM relationships `Book.editions` and `
 | `display_name` | string, nullable | from Google profile |
 | `avatar_url` | string, nullable | from Google profile |
 | `token_version` | integer, not null, server default `0` | carried in every token as `tv`; bumping it revokes all the user's sessions (`app/auth/sessions.py`, #689, migration 0021) |
-| `default_tab` | string, nullable | the "Open on" screen the app opens on after sign-in and on launch (#913, migration 0029): `scan`, `wishlist` or `my-books`; NULL means Scan. Check constraint `ck_users_default_tab` (NULL or one of the three; `DEFAULT_TABS` in the model). Returned by `GET /auth/me`, set only by `PATCH /users/me/preferences` (the caller's own row). Goes with the account row; account data export (not built yet) must include it |
+| `default_tab` | string, nullable | the "Open on" screen the app opens on after sign-in and on launch (#913, migration 0029): `scan`, `wishlist` or `my-books`; NULL means Scan. Check constraint `ck_users_default_tab` (NULL or one of the three; `DEFAULT_TABS` in the model). Returned by `GET /auth/me`, set only by `PATCH /users/me/preferences` (the caller's own row). Goes with the account row; included in the account export (#694) |
 | `ai_consent_at` | timestamptz, nullable | when the user last agreed that scan photos may go to the AI provider (#1023, Apple 5.1.2(i), migration 0031). Server time, set only by `POST /users/me/ai-consent` (the caller's own row; idempotent, so a consent that stands keeps its first time). NULL: never given (every user before 0031) |
-| `ai_consent_withdrawn_at` | timestamptz, nullable | when the user last withdrew it (#1023, migration 0031), server time, set only by `DELETE /users/me/ai-consent`. Consent **stands** when `ai_consent_at` is set and `ai_consent_withdrawn_at` is NULL or earlier (`User.ai_consent`); both times are kept, so the row says when it was last given and last withdrawn. Returned by `GET /auth/me` (`ai_consent`, `ai_consent_at`, `ai_consent_withdrawn_at`). `POST /scan` refuses without it only while `AI_CONSENT_REQUIRED` is on. Goes with the account row on deletion (#291); account data export (#694, not built yet) must include both columns |
+| `ai_consent_withdrawn_at` | timestamptz, nullable | when the user last withdrew it (#1023, migration 0031), server time, set only by `DELETE /users/me/ai-consent`. Consent **stands** when `ai_consent_at` is set and `ai_consent_withdrawn_at` is NULL or earlier (`User.ai_consent`); both times are kept, so the row says when it was last given and last withdrawn. Returned by `GET /auth/me` (`ai_consent`, `ai_consent_at`, `ai_consent_withdrawn_at`). `POST /scan` refuses without it only while `AI_CONSENT_REQUIRED` is on. Goes with the account row on deletion (#291); both columns are in the account export (#694) |
 | `created_at` / `updated_at` | timestamptz, server defaults | `updated_at` auto-bumps on row change |
 
 **Lockdown:** the backend enforces `ALLOWED_EMAILS` at the `/auth/google` endpoint — any Google account whose email isn't in that comma-separated env var is rejected *before* a User row is created. See [`architecture.md`](architecture.md#auth-architecture).
@@ -393,7 +409,7 @@ All hard deletes of `user_books` go through `trash._delete_entries`, which write
 
 **Volume.** About 400 B per event with its indexes (`pg_column_size`: about 70 B for `purged`, 180–260 B for a typical change, 400 B for `created`, 650 B for a change of every tracked field; plus three index entries). Expected about 2 events per active user per day, so about 144 KB per active user at steady state (see `storage-and-retention.md`). No per-user cap: the write rate limit (`rate_limit_writes`) bounds it.
 
-**Export and account deletion.** Account export (#694, not built yet) must include the user's events. Account deletion (#291) needs nothing more for this table: the `SET NULL` anonymises them.
+**Export and account deletion.** The account export (#694) includes the user's events (read through `library_events.history`; `request_id` left out). Account deletion (#291) needs nothing more for this table: the `SET NULL` anonymises them.
 
 ### `idempotency_keys` (`backend/app/models/idempotency_key.py`)
 
@@ -419,7 +435,34 @@ Constraint `uq_idempotency_keys_user_key (user_id, key)`: the claim's `ON CONFLI
 
 **Volume.** About 1 KB per row with its indexes (`pg_column_size`: about 940 B for an add, 720 B for a `PATCH` with 2,000 characters of notes, 190 B for a `204`; plus about 100 B of index entries). At most two days of keyed writes per user, bounded by `rate_limit_writes`; see `storage-and-retention.md`.
 
-**Export and account deletion.** Account export (#694) need not include it (a short-lived cache of responses the user already received). Account deletion (#291) needs nothing more: the cascade removes the rows.
+**Export and account deletion.** The account export (#694) leaves it out (`EXCLUDED_TABLES`: a short-lived cache of responses the user already received, with request hashes). Account deletion (#291) needs nothing more: the cascade removes the rows.
+
+### `account_exports` (`backend/app/models/account_export.py`)
+
+One row per request for a copy of the user's data (#694, migration 0034): the export worker's queue and the record of where the file is and when its link expires. `POST /account/export` inserts it; `app/services/account_export_jobs.py` moves it through its states and purges it. The file is a JSON document in the private Supabase Storage bucket `account-exports`, never in Postgres; what the document holds is in `app/services/account_export.py` (`SECTIONS`, `EXCLUDED_TABLES`).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | generated; also the file name, `exports/<id>.json` (no user id in the path) |
+| `user_id` | UUID FK → `users.id`, not null, `ON DELETE CASCADE` | the requester |
+| `status` | varchar(16), not null, server default `pending`, check `ck_account_exports_status` | `pending` (queued, or waiting to retry), `running` (claimed), `ready` (emailed), `failed` (gave up after 3 attempts; nothing emailed) |
+| `locale` | varchar(16), not null | the email's language: one of the app's 13 locales, from the request body (default `en`) |
+| `attempts` | smallint, not null, default 0, check `ck_account_exports_attempts` (>= 0) | tries so far; at most 3 (`MAX_ATTEMPTS`) |
+| `claimed_at` | timestamptz, nullable | when the current or last try claimed the row: a 10-minute lease (`LEASE`); a dead run's row is taken over, and a failed try waits it out before the next |
+| `completed_at` | timestamptz, nullable | when it was emailed |
+| `object_path` | varchar(255), nullable | the file inside the bucket, set after the upload |
+| `size_bytes` | bigint, nullable | the document's size |
+| `expires_at` | timestamptz, nullable | when the signed link stops working: signing time + 7 days (604,800 s) |
+| `error_code` | varchar(64), nullable | why the last try failed: `storage_<operation>_<status>`, `email_<status>`, `build_failed`, `attempts_exhausted`; never a message |
+| `created_at` | timestamptz, not null, server default `now()` | set from the app's clock; the 24-hour cap counts from it |
+
+Indexes: `ix_account_exports_user_created (user_id, created_at)` for the one-a-day cap and the cascade; `ix_account_exports_open (created_at) WHERE status IN ('pending', 'running')` for the worker's queue; `ix_account_exports_expires_at (expires_at)` for the purge. RLS on, no policies (#677). `bookshelf_app` has `SELECT`, `INSERT`, `UPDATE`, `DELETE`, granted explicitly by the migration too.
+
+**Retention.** The daily cleanup deletes the file, then the row, once `expires_at` has passed; `failed` and never-finished rows 7 days after `created_at`; then it deletes any file in `exports/` older than 8 days (`storage-and-retention.md`).
+
+**Volume.** About 150 bytes per row; at most one row per user per day, each kept 7 days. The files are about 1.4 MB per 1,000 books (`storage-and-retention.md`).
+
+**Export and account deletion.** The export includes this table (`id`, `status`, `created_at`, `completed_at`, `expires_at`). Account deletion (#291): the cascade removes the rows, but the files must be deleted from storage first (`object_storage.ObjectStorage.delete`).
 
 ### `refresh_tokens` (`backend/app/models/refresh_token.py`)
 
@@ -741,6 +784,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0031_users_ai_consent.py` — AI scan consent (#1023); expand only. Adds the nullable `users.ai_consent_at` and `users.ai_consent_withdrawn_at` (timestamptz, no default, so existing users have no consent and are asked at their next scan; no backfill), each only when missing, so a re-run after a half-applied upgrade resumes; 5 s `lock_timeout` for the brief ACCESS EXCLUSIVE lock (catalog-only change, no rewrite). The previous release never reads or writes them. Why columns and not a history table: the owner asked for the given and withdrawn times, which two columns keep; a full history of every change is not needed for Apple 5.1.2(i) and would be a table that grows with use. The downgrade drops both columns (every recorded consent is lost; the app asks again)
 - `0032_library_entry_version.py` — optimistic concurrency for library entries (#685); expand only. Adds `version INTEGER NOT NULL DEFAULT 1` to `user_books` and `user_custom_books`, each only when missing (a re-run after a half-applied upgrade resumes); 5 s `lock_timeout` for the brief ACCESS EXCLUSIVE lock. With a constant default, PostgreSQL 11+ stores the default in the catalog: no table rewrite, no scan, no backfill, and existing rows read as 1. The previous release never reads or writes the column (its inserts get the default, its updates leave it as it is). 4 bytes per row. The downgrade drops both columns; only the version counters are lost
 - `0033_idempotency_keys.py` — the `Idempotency-Key` store (#685); expand only. Creates `idempotency_keys` (above) with `uq_idempotency_keys_user_key`, the two check constraints and `ix_idempotency_keys_created_at`, each only when missing (a re-run after a half-applied upgrade resumes); enables RLS; grants `bookshelf_app` `SELECT`, `INSERT`, `UPDATE`, `DELETE` and the sequence's `USAGE` explicitly (on top of 0028's default privileges); 5 s `lock_timeout`. The previous release never reads or writes the table. The downgrade drops it (guarded the same way); only stored responses for retries of the last day are lost
+- `0034_account_exports.py` — the account export queue (#694); expand only. Creates `account_exports` (above) with its two check constraints and the indexes `ix_account_exports_user_created`, `ix_account_exports_open` (partial, open rows) and `ix_account_exports_expires_at`, each only when missing (a re-run after a half-applied upgrade resumes); enables RLS; grants `bookshelf_app` `SELECT`, `INSERT`, `UPDATE`, `DELETE` explicitly (UUID key, no sequence); 5 s `lock_timeout`. The previous release never reads or writes the table. The downgrade drops it (guarded the same way): queued requests and the record of the files are lost; the files expire on their own and a later upgrade's sweep deletes them
 
 ### Writing a new migration
 
