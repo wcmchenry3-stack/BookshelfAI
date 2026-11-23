@@ -26,6 +26,8 @@ release never reads or writes it.
     size_bytes    BIGINT, the JSON document's size
     delivery_url  TEXT, the signed link (a credential until expires_at),
                   kept so a retry re-sends the identical email
+    email_accepted_at TIMESTAMPTZ, when Resend accepted that email (or may
+                  have: a timeout, a 5xx)
     expires_at    TIMESTAMPTZ, when the signed link stops working
     error_code    VARCHAR(64), a fixed code, never a message
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -102,6 +104,7 @@ def _create_table() -> None:
         sa.Column("object_path", sa.String(255), nullable=True),
         sa.Column("size_bytes", sa.BigInteger, nullable=True),
         sa.Column("delivery_url", sa.Text, nullable=True),
+        sa.Column("email_accepted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error_code", sa.String(64), nullable=True),
         sa.Column(

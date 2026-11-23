@@ -323,7 +323,7 @@ Queues a copy of everything the app keeps about the signed-in user (#694) and an
 | Status | `detail` | When |
 |---|---|---|
 | `401` | `Token expired`, `Invalid token`, `token_revoked`, ... | no, bad or revoked access token |
-| `409` | `{"code": "export_limit", "retry_after": 3600}`, with `Retry-After: 3600` | the user already has an export from the last 24 hours that did not fail (queued, in progress or emailed); a `failed` export emailed nothing and does not count, so the user can ask again at once. `retry_after` is the seconds until the next request is allowed. 409 rather than 429 so the app's retry layer does not retry it. A keyed retry replays it with the same body and `Retry-After` |
+| `409` | `{"code": "export_limit", "retry_after": 3600}`, with `Retry-After: 3600` | the user already has an export from the last 24 hours that is queued, in progress or emailed, or already has 3 failed ones in that window (`FAILED_CAP`). A failed export emailed nothing, so it gets the looser cap: the user can ask again at once, at most 3 times a day, which bounds the work an export that keeps failing can cost. `retry_after` is the seconds until the next request is allowed (the later of the two caps when both apply). 409 rather than 429 so the app's retry layer does not retry it. A keyed retry replays it with the same body and `Retry-After` |
 | `422` | FastAPI validation list | `locale` not one of the values above, or any other field in the body |
 | `429` | rate limited | over `rate_limit_writes` |
 | `503` | `export_not_configured` | the kill switch: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` or `RESEND_API_KEY` is unset (see `deployment.md`). Nothing is queued |

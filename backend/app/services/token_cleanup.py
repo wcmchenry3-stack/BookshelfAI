@@ -37,7 +37,7 @@ The same daily run also purges, in bounded batches:
 - account exports (``account_exports`` and their files in Supabase Storage)
   whose 7-day link expired, failed or unfinished ones older than 7 days
   (file first, then row), and any export file older than 8 days
-  (app/services/account_export_jobs.py, #694).
+  (app/services/account_export_purge.py, #694).
 
 Every step opens its session from ``JobSessionLocal``, so each transaction
 runs under ``STATEMENT_TIMEOUT_JOB_MS`` (default 60 s) rather than the 5 s
@@ -73,8 +73,8 @@ from app.ai.scan_records import purge_old_scan_records
 from app.auth.refresh_family import purge_refresh_tokens
 from app.core.database import JobSessionLocal
 from app.services import object_storage
-from app.services.account_export_jobs import purge_expired as purge_account_exports
-from app.services.account_export_jobs import sweep_orphans as sweep_export_objects
+from app.services.account_export_purge import purge_expired as purge_account_exports
+from app.services.account_export_purge import sweep_orphans as sweep_export_objects
 from app.services.idempotency import purge_expired as purge_expired_idempotency_keys
 from app.services.library_events_retention import purge_old_library_events
 from app.services.trash import purge_trash

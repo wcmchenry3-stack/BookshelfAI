@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
 
 from app.core.config import settings
@@ -26,6 +27,7 @@ from app.models.account_export import AccountExport
 from app.models.user import User
 from app.services import _http_retry, account_export
 from app.services import account_export_jobs as jobs
+from app.services import account_export_purge as purge
 from app.services.email import EmailError
 from app.services.object_storage import ObjectStorage, StorageError
 
@@ -189,23 +191,49 @@ def built(monkeypatch):
 
 
 async def test_request_queues_a_pending_row():
-    db = Session()
+    db = Session(results=[MagicMock(), _rows()])
     user = SimpleNamespace(id=uuid.uuid4())
     export = await jobs.request_export(db, user, "ko")
     assert (export.status, export.locale, export.created_at) == ("pending", "ko", NOW)
     assert db.added == [export]
-    assert len(db.executed) == 1  # the user row lock
+    assert len(db.executed) == 2  # the user row lock, then the window
 
 
-async def test_request_within_the_window_is_limited():
-    db = Session(scalars=[NOW - timedelta(hours=23)])
-    with pytest.raises(jobs.ExportLimited) as exc_info:
+async def _limited(*recent) -> int | None:
+    db = Session(results=[MagicMock(), _rows(*recent)])
+    try:
         await jobs.request_export(db, SimpleNamespace(id=uuid.uuid4()), "en")
-    assert exc_info.value.retry_after == 3600
-    db = Session(scalars=[NOW - timedelta(hours=24) + timedelta(milliseconds=1)])
-    with pytest.raises(jobs.ExportLimited) as exc_info:
-        await jobs.request_export(db, SimpleNamespace(id=uuid.uuid4()), "en")
-    assert exc_info.value.retry_after == 1
+    except jobs.ExportLimited as exc:
+        return exc.retry_after
+    return None
+
+
+async def test_an_open_or_ready_export_allows_no_other_for_a_day():
+    for status in ("pending", "running", "emailing", "ready"):
+        assert await _limited((status, NOW - timedelta(hours=23))) == 3600
+    edge = NOW - timedelta(hours=24) + timedelta(milliseconds=1)
+    assert await _limited(("ready", edge)) == 1
+
+
+async def test_failed_exports_count_toward_a_cap_of_three():
+    hours = [NOW - timedelta(hours=h) for h in (20, 10, 2)]
+    assert await _limited(*(("failed", t) for t in hours[1:])) is None
+    # The oldest of the last three leaves the window first.
+    assert await _limited(*(("failed", t) for t in hours)) == 4 * 3600
+    four = [NOW - timedelta(hours=h) for h in (22, 20, 10, 2)]
+    assert await _limited(*(("failed", t) for t in four)) == 4 * 3600
+
+
+async def test_both_caps_take_the_later_time():
+    recent = [
+        ("ready", NOW - timedelta(hours=1)),
+        *(("failed", NOW - timedelta(hours=h)) for h in (20, 19, 18)),
+    ]
+    assert await _limited(*recent) == 23 * 3600
+
+
+def test_next_allowed_is_none_without_recent_exports():
+    assert jobs._next_allowed([]) is None
 
 
 def test_the_clock_is_utc():
@@ -307,30 +335,110 @@ async def test_an_emailing_row_resends_the_recorded_link_without_rebuilding(
     assert export.status == "ready"
 
 
-async def test_a_reused_key_means_the_email_already_went_out(built, caplog):
-    export = _export(status="emailing", delivery_url="https://x/s?t=1", expires_at=NOW)
+LIVE = NOW + timedelta(days=6)
+
+
+def _emailing(**kw) -> AccountExport:
+    return _export(
+        status="emailing", delivery_url="https://x/s?t=1", expires_at=LIVE, **kw
+    )
+
+
+async def _process(export, transport, storage=None):
+    return await jobs.process(
+        _claim(export),
+        (storage or Storage()).client(),
+        sessions=sessions_of(_db(export)),
+        email_transport=transport,
+    )
+
+
+async def test_a_reused_key_after_an_accepted_send_means_it_went_out(built, caplog):
+    export = _emailing(email_accepted_at=NOW - timedelta(minutes=20))
     transport, _ = resend(409, {"name": "invalid_idempotent_request"})
     with caplog.at_level("INFO"):
-        assert await jobs.process(
-            _claim(export),
-            Storage().client(),
-            sessions=sessions_of(_db(export)),
-            email_transport=transport,
-        )
+        assert await _process(export, transport)
     assert export.status == "ready"
     assert "already sent" in caplog.text
 
 
-async def test_another_409_from_resend_is_a_failure(built):
-    export = _export(status="emailing", delivery_url="https://x/s?t=1", expires_at=NOW)
-    transport, _ = resend(409, {"name": "concurrent_idempotent_requests"})
-    assert not await jobs.process(
-        _claim(export),
-        Storage().client(),
-        sessions=sessions_of(_db(export)),
-        email_transport=transport,
-    )
+async def test_a_reused_key_without_an_accepted_send_is_a_failure(built):
+    """Resend may keep a key from a request it refused: without a send that
+    may have been accepted, its 409 never marks the export delivered."""
+    export = _emailing()
+    transport, _ = resend(409, {"name": "invalid_idempotent_request"})
+    assert not await _process(export, transport)
     assert (export.status, export.error_code) == ("emailing", "email_409")
+    assert export.email_accepted_at is None
+
+
+async def test_another_409_from_resend_is_a_failure(built):
+    export = _emailing(email_accepted_at=NOW)
+    transport, _ = resend(409, {"name": "concurrent_idempotent_requests"})
+    assert not await _process(export, transport)
+    assert (export.status, export.error_code) == ("emailing", "email_409")
+
+
+@pytest.mark.parametrize(
+    ("status", "flagged"),
+    [(500, True), (503, True), (422, False), (403, False), (429, False)],
+)
+async def test_a_send_that_may_have_been_accepted_is_flagged(built, status, flagged):
+    export = _emailing()
+    transport, _ = resend(status)
+    assert not await _process(export, transport)
+    assert (export.email_accepted_at is not None) is flagged
+
+
+async def test_a_timeout_is_flagged_as_maybe_accepted(built):
+    export = _emailing()
+
+    def timeout(_request):
+        raise httpx.ReadTimeout("lost")
+
+    assert not await _process(export, httpx.MockTransport(timeout))
+    assert export.email_accepted_at == NOW
+
+
+async def test_a_delivered_export_records_the_accepted_send(built):
+    export = _emailing()
+    transport, _ = resend()
+    assert await _process(export, transport)
+    assert (export.status, export.email_accepted_at) == ("ready", NOW)
+
+
+@pytest.mark.parametrize(
+    "left", [timedelta(minutes=59), timedelta(0), -timedelta(days=1)]
+)
+async def test_a_link_about_to_expire_is_never_emailed(built, left):
+    """A fresh build, upload and link instead, under a new key, and the old
+    send's accepted flag no longer applies."""
+    old = "https://x/s?t=old"
+    export = _emailing(email_accepted_at=NOW - timedelta(days=7))
+    export.delivery_url, export.expires_at = old, NOW + left
+    storage = Storage()
+    sent = []
+
+    def handler(request):
+        sent.append((request.headers["idempotency-key"], json.loads(request.content)))
+        return httpx.Response(200)
+
+    assert await _process(export, httpx.MockTransport(handler), storage)
+    assert storage.uploaded  # rebuilt
+    assert export.delivery_url != old and export.expires_at == NOW + jobs.LINK_TTL
+    ((key, payload),) = sent
+    assert old not in payload["text"] and export.delivery_url in payload["text"]
+    assert key == jobs.idempotency_key(_claim(export), NOW + jobs.LINK_TTL)
+    assert export.status == "ready"
+
+
+def test_the_key_follows_the_link():
+    claim = jobs.Claim(uuid.uuid4(), NOW)
+    assert jobs.idempotency_key(claim, LIVE) == jobs.idempotency_key(claim, LIVE)
+    assert jobs.idempotency_key(claim, LIVE) != jobs.idempotency_key(
+        claim, LIVE + timedelta(seconds=1)
+    )
+    assert jobs.idempotency_key(claim, LIVE).startswith(f"account-export-{claim.id}-")
 
 
 async def test_nothing_to_do_when_the_row_or_user_is_gone(built):
@@ -593,7 +701,7 @@ def _rows(*rows):
 
 
 async def test_purge_deletes_objects_then_rows_in_batches(monkeypatch):
-    monkeypatch.setattr(jobs, "PURGE_BATCH_SIZE", 2)
+    monkeypatch.setattr(purge, "PURGE_BATCH_SIZE", 2)
     a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db = Session(
         results=[
@@ -604,18 +712,41 @@ async def test_purge_deletes_objects_then_rows_in_batches(monkeypatch):
         ]
     )
     storage = Storage()
-    assert await jobs.purge_expired(db, storage.client()) == 3
+    assert await purge.purge_expired(db, storage.client()) == 3
     assert storage.deleted == ["exports/a.json", "exports/c.json"]
-    assert db.commits == 2 and db.rollbacks == 2
+    # The rows stay locked across the storage call: one commit per batch.
+    assert db.commits == 2 and db.rollbacks == 0
+    locked = str(db.executed[0].compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE SKIP LOCKED" in locked
 
 
 async def test_purge_stops_on_an_empty_batch_and_needs_no_storage_without_objects():
     db = Session(results=[_rows()])
-    assert await jobs.purge_expired(db, None) == 0
+    assert await purge.purge_expired(db, None) == 0
+    assert db.rollbacks == 1
     db = Session(results=[_rows((uuid.uuid4(), None)), MagicMock(rowcount=1)])
-    assert await jobs.purge_expired(db, None) == 1
+    assert await purge.purge_expired(db, None) == 1
     where = str(db.executed[0].compile(compile_kwargs={"literal_binds": False}))
     assert "object_path IS NULL" in where
+
+
+async def test_a_storage_failure_rolls_the_batch_back():
+    db = Session(results=[_rows((uuid.uuid4(), "exports/a.json"))])
+    with pytest.raises(StorageError):
+        await purge.purge_expired(db, Storage({"delete"}).client())
+    assert db.rollbacks == 1 and db.commits == 0
+    assert len(db.executed) == 1  # no row delete
+
+
+def test_the_purge_never_matches_a_live_link_or_a_live_lease():
+    where = str(
+        purge.expired_condition(NOW).compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "account_exports.expires_at IS NULL OR account_exports.expires_at <" in where
+    assert "NOT (account_exports.status IN" in where
+    assert "account_exports.claimed_at >=" in where
 
 
 async def test_sweep_deletes_old_objects_only():
@@ -629,12 +760,12 @@ async def test_sweep_deletes_old_objects_only():
             {"name": "c.json", "id": "3"},
         ]
     ]
-    assert await jobs.sweep_orphans(storage.client()) == 1
+    assert await purge.sweep_orphans(storage.client()) == 1
     assert storage.deleted == ["exports/a.json"]
 
 
 async def test_sweep_pages_while_every_object_on_a_page_is_old(monkeypatch):
-    monkeypatch.setattr(jobs, "PURGE_BATCH_SIZE", 1)
+    monkeypatch.setattr(purge, "PURGE_BATCH_SIZE", 1)
     old = (NOW - timedelta(days=9)).isoformat()
     storage = Storage()
     storage.listing = [
@@ -642,7 +773,7 @@ async def test_sweep_pages_while_every_object_on_a_page_is_old(monkeypatch):
         [{"name": "b.json", "id": "2", "created_at": old}],
         [],
     ]
-    assert await jobs.sweep_orphans(storage.client()) == 2
+    assert await purge.sweep_orphans(storage.client()) == 2
 
 
 # ── The document's loaders ───────────────────────────────────────────────────

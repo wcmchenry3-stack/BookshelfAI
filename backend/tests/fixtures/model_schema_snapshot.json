@@ -2426,6 +2426,18 @@
         "foreign_keys": []
       },
       {
+        "name": "email_accepted_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
         "name": "expires_at",
         "type": "TIMESTAMP WITH TIME ZONE",
         "nullable": true,

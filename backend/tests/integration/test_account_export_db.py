@@ -67,7 +67,12 @@ from app.models.scan_record import ScanRecord
 from app.models.user import User
 from app.models.user_book import UserBook
 from app.models.user_custom_book import UserCustomBook
-from app.services import _http_retry, account_export, account_export_jobs
+from app.services import (
+    _http_retry,
+    account_export,
+    account_export_jobs,
+    account_export_purge,
+)
 from app.services.object_storage import ObjectStorage
 from tests.helpers import bearer, install_jwt_keys, rsa_pem_pair
 from tests.integration.test_db_role import run_rolled_back
@@ -173,9 +178,16 @@ class FakeResend:
     keys: dict[str, bytes] = field(default_factory=dict)
     status: int = 200
     timeout_after_accept: bool = False
+    # Keep the key of a request refused with ``status`` (as Stripe does), so
+    # its later reuse with another payload is a 409 although nothing was sent.
+    keep_key_on_refusal: bool = False
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.status != 200:
+            if self.keep_key_on_refusal:
+                self.keys.setdefault(
+                    request.headers["idempotency-key"], request.content
+                )
             return httpx.Response(self.status)
         key = request.headers["idempotency-key"]
         if key in self.keys and self.keys[key] != request.content:
@@ -320,7 +332,9 @@ async def test_a_request_is_queued_then_delivered_by_email(env):
 
     (message,) = env.resend.sent
     assert message["to"] == [f"{uid}@example.com"]
-    assert message["key"] == f"account-export-{row.id}"
+    claim = account_export_jobs.Claim(row.id, row.created_at)
+    assert message["key"] == account_export_jobs.idempotency_key(claim, row.expires_at)
+    assert message["key"].startswith(f"account-export-{row.id}-")
     assert message["subject"] == "Dein Bookshelf-Datenexport"
     link = _link(message)
     assert link.startswith(f"{BASE}/storage/v1/object/sign/{BUCKET}/exports/")
@@ -661,13 +675,13 @@ async def test_the_link_works_for_seven_days_then_the_file_is_gone(env, monkeypa
     _at(monkeypatch, env, start + timedelta(days=6, hours=23))
     assert env.supabase.download(link) == 200
     async with env.factory() as db:
-        await account_export_jobs.purge_expired(db, env.supabase.storage())
+        await account_export_purge.purge_expired(db, env.supabase.storage())
     assert len(await _exports(env.factory, uid)) == 1  # not expired yet
 
     _at(monkeypatch, env, start + timedelta(days=7, seconds=5))
     assert env.supabase.download(link) == 400  # the signed token expired
     async with env.factory() as db:
-        purged = await account_export_jobs.purge_expired(db, env.supabase.storage())
+        purged = await account_export_purge.purge_expired(db, env.supabase.storage())
     assert purged >= 1
     assert await _exports(env.factory, uid) == []
     assert row.object_path not in env.supabase.objects
@@ -703,9 +717,9 @@ async def test_the_purge_runs_in_batches_and_keeps_live_rows(env, monkeypatch):
                 )
             )
         await db.commit()
-    monkeypatch.setattr(account_export_jobs, "PURGE_BATCH_SIZE", 2)
+    monkeypatch.setattr(account_export_purge, "PURGE_BATCH_SIZE", 2)
     async with env.factory() as db:
-        purged = await account_export_jobs.purge_expired(
+        purged = await account_export_purge.purge_expired(
             db, env.supabase.storage(), now
         )
     assert purged >= 4
@@ -732,7 +746,7 @@ async def test_a_storage_failure_keeps_the_rows(env):
     env.supabase.fail.add("delete")
     async with env.factory() as db:
         with pytest.raises(Exception):  # noqa: B017 - the cleanup step logs it
-            await account_export_jobs.purge_expired(db, env.supabase.storage())
+            await account_export_purge.purge_expired(db, env.supabase.storage())
     assert len(await _exports(env.factory, uid)) == 1
 
 
@@ -756,7 +770,7 @@ async def test_without_storage_only_rows_with_no_object_go(env):
         )
         await db.commit()
     async with env.factory() as db:
-        await account_export_jobs.purge_expired(db, None)
+        await account_export_purge.purge_expired(db, None)
     (left,) = await _exports(env.factory, uid)
     assert left.object_path == "exports/x.json"
 
@@ -767,8 +781,8 @@ async def test_the_sweep_deletes_old_files_no_row_knows(env, monkeypatch):
     objects["exports/orphan-old.json"] = (b"{}", now - timedelta(days=9))
     objects["exports/recent.json"] = (b"{}", now - timedelta(days=2))
     objects["other/old.json"] = (b"{}", now - timedelta(days=30))
-    monkeypatch.setattr(account_export_jobs, "PURGE_BATCH_SIZE", 1)
-    swept = await account_export_jobs.sweep_orphans(env.supabase.storage(), now)
+    monkeypatch.setattr(account_export_purge, "PURGE_BATCH_SIZE", 1)
+    swept = await account_export_purge.sweep_orphans(env.supabase.storage(), now)
     assert swept == 1
     assert sorted(objects) == ["exports/recent.json", "other/old.json"]
 
@@ -1019,12 +1033,12 @@ async def test_failing_for_good_after_the_link_was_recorded_keeps_the_file(
     assert row.object_path in env.supabase.objects  # kept until expires_at
 
     async with env.factory() as db:
-        await account_export_jobs.purge_expired(
+        await account_export_purge.purge_expired(
             db, env.supabase.storage(), start + timedelta(days=7, hours=-1)
         )
     assert row.object_path in env.supabase.objects
     async with env.factory() as db:
-        await account_export_jobs.purge_expired(
+        await account_export_purge.purge_expired(
             db, env.supabase.storage(), row.expires_at + timedelta(seconds=1)
         )
     assert row.object_path not in env.supabase.objects
@@ -1093,3 +1107,136 @@ async def test_a_replayed_cap_refusal_keeps_retry_after(env):
     assert replay.headers[REPLAYED_HEADER] == "true"
     assert replay.headers["retry-after"] == first.headers["retry-after"]
     assert replay.json() == first.json()
+
+
+# ── Review round 2 ───────────────────────────────────────────────────────────
+
+
+async def test_a_refused_send_then_a_409_is_never_ready(env, monkeypatch):
+    """Attempt 1 is refused (422) and Resend keeps the key; the address then
+    changes, so attempt 2 reuses the key with another payload and gets a 409.
+    Nothing was ever sent: the row must not become ready."""
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    env.resend.status, env.resend.keep_key_on_refusal = 422, True
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert (row.status, row.error_code, row.email_accepted_at) == (
+        "emailing",
+        "email_422",
+        None,
+    )
+    env.resend.status = 200
+    async with env.factory() as db:
+        user = await db.get(User, uid)
+        user.email = f"changed-{uid}@example.com"
+        await db.commit()
+    _after_lease(monkeypatch, env, start)
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert (row.status, row.error_code) == ("emailing", "email_409")
+    assert env.resend.sent == []
+
+
+async def test_an_expiring_link_is_re_signed_not_emailed(env, monkeypatch):
+    """The export sat in emailing until its link had under an hour left
+    (email was down for days): the next attempt signs a new link and emails
+    that one, under a new key."""
+    uid, _ = await _queued(env)
+    start = datetime.now(UTC)
+    _at(monkeypatch, env, start)
+    env.resend.status = 503
+    await env.run_worker()
+    (stale,) = await _exports(env.factory, uid)
+    assert stale.status == "emailing" and stale.email_accepted_at is not None
+    env.resend.status = 200
+    _at(monkeypatch, env, stale.expires_at - timedelta(minutes=30))
+    await env.run_worker()
+    (row,) = await _exports(env.factory, uid)
+    assert row.status == "ready"
+    assert row.delivery_url != stale.delivery_url
+    assert row.expires_at > stale.expires_at
+    (message,) = env.resend.sent
+    assert _link(message) == row.delivery_url
+    assert env.supabase.download(row.delivery_url) == 200
+
+
+async def test_failed_exports_allow_three_a_day(env):
+    uid, auth = await env.make_user()
+    async with env.factory() as db:
+        db.add_all(
+            AccountExport(user_id=uid, locale="en", status="failed") for _ in range(2)
+        )
+        await db.commit()
+    first = await env.client.post("/account/export", headers=auth)
+    assert first.status_code == 202, first.text
+    async with env.factory() as db:  # the third fails too
+        row = await db.get(AccountExport, uuid.UUID(first.json()["id"]))
+        row.status = "failed"
+        await db.commit()
+    limited = await env.client.post("/account/export", headers=auth)
+    assert limited.status_code == 409
+    assert limited.json()["detail"]["code"] == "export_limit"
+    assert 86_000 < limited.json()["detail"]["retry_after"] <= 86_400
+
+
+async def test_the_purge_never_deletes_a_file_someone_can_still_use(env):
+    uid, _ = await env.make_user()
+    now = datetime.now(UTC)
+    old = now - timedelta(days=8)
+    cases = {
+        # Stale, but a worker claimed it a minute ago (live lease).
+        "leased": {"status": "running", "claimed_at": now - timedelta(minutes=1)},
+        # Stale, but re-signed: its emailed link still works.
+        "relinked": {"status": "emailing", "expires_at": now + timedelta(days=6)},
+        # Stale and failed, with a link that still works.
+        "failed_live": {"status": "failed", "expires_at": now + timedelta(hours=2)},
+        # Over: purged.
+        "over": {"status": "failed", "expires_at": now - timedelta(hours=1)},
+    }
+    async with env.factory() as db:
+        for name, values in cases.items():
+            path = f"exports/{name}-{uid.hex}.json"
+            env.supabase.objects[path] = (b"{}", old)
+            db.add(
+                AccountExport(
+                    user_id=uid, locale="en", created_at=old, object_path=path, **values
+                )
+            )
+        await db.commit()
+    async with env.factory() as db:
+        await account_export_purge.purge_expired(db, env.supabase.storage(), now)
+    kept = sorted(r.object_path.split("-")[0] for r in await _exports(env.factory, uid))
+    assert kept == ["exports/failed_live", "exports/leased", "exports/relinked"]
+    assert f"exports/over-{uid.hex}.json" not in env.supabase.objects
+    for name in ("leased", "relinked", "failed_live"):
+        assert f"exports/{name}-{uid.hex}.json" in env.supabase.objects
+
+
+async def test_the_purge_skips_a_row_a_worker_is_claiming(env):
+    """The batch is locked (FOR UPDATE SKIP LOCKED): a row a worker holds
+    locked while claiming it is neither picked nor deleted, nor its file."""
+    uid, _ = await env.make_user()
+    now = datetime.now(UTC)
+    path = f"exports/claiming-{uid.hex}.json"
+    env.supabase.objects[path] = (b"{}", now - timedelta(days=8))
+    async with env.factory() as db:
+        row = AccountExport(
+            user_id=uid,
+            locale="en",
+            status="pending",
+            created_at=now - timedelta(days=8),
+            object_path=path,
+        )
+        db.add(row)
+        await db.commit()
+    async with env.factory() as worker:
+        await worker.execute(
+            select(AccountExport).where(AccountExport.id == row.id).with_for_update()
+        )
+        async with env.factory() as db:
+            await account_export_purge.purge_expired(db, env.supabase.storage(), now)
+        await worker.rollback()
+    assert len(await _exports(env.factory, uid)) == 1
+    assert path in env.supabase.objects

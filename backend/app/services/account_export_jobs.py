@@ -1,10 +1,12 @@
-"""Account export requests, the export worker and the export purge (#694).
+"""Account export requests and the export worker (#694).
 
 Request (``POST /account/export``, :func:`request_export`): under the user's
 row lock (the cap must not let two concurrent requests through), refuse when
-the user has an export inside :data:`CAP_WINDOW` (24 h) that did not fail
-(:class:`ExportLimited` with the seconds until the next one is allowed; a
-``failed`` export emailed nothing, so it does not count), else insert a
+the user has an open or ready export inside :data:`CAP_WINDOW` (24 h), or
+:data:`FAILED_CAP` (3) failed ones (:class:`ExportLimited` with the seconds
+until the next one is allowed; a failed export emailed nothing, so it gets
+the looser cap, which still bounds the work a failing export can cost),
+else insert a
 ``pending`` ``account_exports`` row. Nothing heavy runs in the request.
 
 Worker (:func:`run_worker`, started from the app lifespan): wakes when a
@@ -24,15 +26,19 @@ taken over later) and for each (:func:`process`):
    and moves the row to ``emailing``, in one commit, before any email;
 3. emails the recorded link to the account's address in the request's
    language (``app/services/export_email.py``, ``app/services/email.py``)
-   with ``account-export-<id>`` as Resend's idempotency key;
+   with ``account-export-<id>-<link expiry>`` as Resend's idempotency key
+   (:func:`idempotency_key`; set ``email_accepted_at`` when Resend accepted
+   it, or may have: a timeout or a 5xx);
 4. marks the row ``ready``.
 
 Delivery is idempotent: a retry of an ``emailing`` row re-renders the same
 email from the recorded link, which Resend (same key, same payload, within
 24 h) does not send again; its 409 ``invalid_idempotent_request`` (the key
-went out with another payload, e.g. a changed address) counts as sent. A
-lost response, a failed final commit or a kill before it ends with one
-email and the row ``ready`` at the next attempt.
+went out with another payload, e.g. a changed address) counts as sent, but
+only when ``email_accepted_at`` says an earlier try may have been accepted.
+A lost response, a failed final commit or a kill before it ends with one
+email and the row ``ready`` at the next attempt. A recorded link with less
+than :data:`MIN_LINK_LEFT` (1 h) left is never emailed: a new one is signed.
 
 Every write of an attempt after its claim is fenced: it applies only while
 the row is still ``running`` / ``emailing`` with this attempt's
@@ -43,17 +49,12 @@ A failed attempt keeps an ``error_code`` and waits out the lease before the
 next try: a row that had not reached ``emailing`` goes back to ``pending``,
 an ``emailing`` row stays ``emailing``. After :data:`MAX_ATTEMPTS` it is
 ``failed``; its file is deleted only if it never reached ``emailing``
-(otherwise a delivered link keeps working until ``expires_at``).
+(otherwise a delivered link keeps working until ``expires_at``). A row that
+runs out of attempts while ``emailing`` ends ``failed`` even if its last
+send was accepted; the user can ask again (failed exports have a looser
+cap), so that is accepted.
 
-Purge (:func:`purge_expired`, from the daily cleanup in
-``app/services/token_cleanup.py``): for rows whose link expired, failed or
-never-finished rows older than 7 days (and past ``expires_at`` when they
-have one), deletes the objects first and then
-the rows, in bounded batches. :func:`sweep_orphans` then deletes any object
-older than :data:`SWEEP_AGE` (8 days) left in ``exports/``, which covers an
-account deleted before its export expired (the row cascades away, the
-object does not). The signed link expires on its own after 7 days, so the
-link stops working on time even when the purge runs late.
+The purge and the storage sweep are in ``app/services/account_export_purge.py``.
 
 Kill switch: without ``SUPABASE_URL`` / ``SUPABASE_SERVICE_ROLE_KEY`` /
 ``RESEND_API_KEY`` (:func:`configured`) the endpoint answers 503
@@ -71,7 +72,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import JobSessionLocal
@@ -106,13 +107,12 @@ POLL_SECONDS = 300
 INITIAL_DELAY_SECONDS = 30
 # Folder of the export objects inside the bucket.
 OBJECT_PREFIX = "exports"
-# Failed or never-finished rows are kept this long (support can see them).
-STALE_AFTER = timedelta(days=7)
-# Objects older than this are deleted whether or not a row knows them.
-SWEEP_AGE = timedelta(days=8)
-PURGE_BATCH_SIZE = 100
-PURGE_MAX_BATCHES = 10
-SWEEP_MAX_PAGES = 10
+# A recorded link with less than this left is not emailed; a new one is
+# signed instead.
+MIN_LINK_LEFT = timedelta(hours=1)
+# Failed exports a user may have inside CAP_WINDOW (an open or ready one
+# allows no other).
+FAILED_CAP = 3
 CONTENT_TYPE = "application/json"
 
 Sessions = async_sessionmaker[AsyncSession]
@@ -140,6 +140,21 @@ def object_path(export_id: uuid.UUID) -> str:
     return f"{OBJECT_PREFIX}/{export_id}.json"
 
 
+def _next_allowed(recent) -> datetime | None:
+    """When the next request is allowed, given ``(status, created_at)`` of
+    the user's exports inside the window; ``None`` when one is allowed now.
+    An open or ready export allows no other for 24 hours; a failed one
+    emailed nothing, so it only counts toward :data:`FAILED_CAP`."""
+    live = [created for status, created in recent if status != STATUS_FAILED]
+    failed = sorted(created for status, created in recent if status == STATUS_FAILED)
+    times = []
+    if live:
+        times.append(max(live) + CAP_WINDOW)
+    if len(failed) >= FAILED_CAP:
+        times.append(failed[-FAILED_CAP] + CAP_WINDOW)
+    return max(times) if times else None
+
+
 async def request_export(
     db: AsyncSession, user: User, locale: str, now: datetime | None = None
 ) -> AccountExport:
@@ -147,19 +162,17 @@ async def request_export(
     :class:`ExportLimited`."""
     now = now or utcnow()
     await lock_user(db, user.id)
-    latest = await db.scalar(
-        select(AccountExport.created_at)
-        .where(
-            AccountExport.user_id == user.id,
-            AccountExport.created_at > now - CAP_WINDOW,
-            # A failed export emailed nothing: the user may ask again at once.
-            AccountExport.status != STATUS_FAILED,
+    recent = (
+        await db.execute(
+            select(AccountExport.status, AccountExport.created_at).where(
+                AccountExport.user_id == user.id,
+                AccountExport.created_at > now - CAP_WINDOW,
+            )
         )
-        .order_by(AccountExport.created_at.desc())
-        .limit(1)
-    )
-    if latest is not None:
-        wait = (latest + CAP_WINDOW - now).total_seconds()
+    ).all()
+    allowed_at = _next_allowed(recent)
+    if allowed_at is not None and allowed_at > now:
+        wait = (allowed_at - now).total_seconds()
         raise ExportLimited(max(1, math.ceil(wait)))
     export = AccountExport(
         id=uuid.uuid4(),
@@ -325,6 +338,7 @@ async def _prepare(
         status=STATUS_EMAILING,
         delivery_url=url,
         expires_at=expires_at,
+        email_accepted_at=None,  # a new link: nothing sent with it yet
     ):
         return url, expires_at
     return await _lost(sessions, claim, path, storage)
@@ -339,34 +353,52 @@ async def _lost(
         await storage.delete([path])
 
 
+def idempotency_key(claim: Claim, expires_at: datetime) -> str:
+    """Resend's key for the email of this link: the same on every retry with
+    it, a new one for a newly signed link."""
+    return f"account-export-{claim.id}-{int(expires_at.timestamp())}"
+
+
 async def _send(
+    sessions: Sessions,
     claim: Claim,
     message: email.Message,
+    key: str,
+    accepted: bool,
     transport: httpx.AsyncBaseTransport | None,
 ) -> None:
-    """Send the email once per export: the same key and the same payload on
-    every retry, so Resend sends it once. A 409 for a key it accepted with a
-    different payload (the address changed meanwhile) means the first one
-    went out."""
+    """Send the email once per link: the same key and the same payload on
+    every retry, so Resend sends it once.
+
+    ``accepted`` says whether an earlier try with this key may have been
+    accepted (``email_accepted_at``). Only then does Resend's 409 for the
+    key with another payload (the address changed meanwhile) mean the email
+    went out; otherwise it is a failure, so a key Resend kept from a refused
+    request never marks an unsent export as delivered. A timeout or a 5xx
+    may have been accepted, so it sets the flag before the failure is
+    raised."""
     try:
-        await email.send(
-            message, idempotency_key=f"account-export-{claim.id}", transport=transport
-        )
+        await email.send(message, idempotency_key=key, transport=transport)
     except EmailError as exc:
-        if exc.code != email.KEY_ALREADY_USED:
-            raise
-        logger.info(
-            "account_export: email already sent under this key (export_id=%s)",
-            claim.id,
-        )
+        if exc.code == email.KEY_ALREADY_USED and accepted:
+            logger.info(
+                "account_export: email already sent under this key (export_id=%s)",
+                claim.id,
+            )
+            return
+        if exc.status is None or exc.status >= 500:
+            await _fenced_update(sessions, claim, email_accepted_at=utcnow())
+        raise
 
 
 async def _mark_ready(sessions: Sessions, claim: Claim) -> bool:
+    now = utcnow()
     return await _fenced_update(
         sessions,
         claim,
         status=STATUS_READY,
-        completed_at=utcnow(),
+        email_accepted_at=now,
+        completed_at=now,
         claimed_at=None,
         error_code=None,
     )
@@ -380,7 +412,11 @@ async def _attempt(
 ) -> bool:
     """One try. True when this attempt delivered the export; False when there
     is nothing left for it to do (the row went away, or another attempt holds
-    it). Raises on a storage, email or build failure."""
+    it). Raises on a storage, email or build failure.
+
+    A recorded link with less than :data:`MIN_LINK_LEFT` left (the export sat
+    unsent, e.g. while email was down) is never emailed: the attempt starts
+    afresh with a new build, upload and link, under a new key."""
     async with sessions() as db:
         export = await db.get(AccountExport, claim.id)
         user = await db.get(User, export.user_id) if export else None
@@ -388,14 +424,27 @@ async def _attempt(
             return False  # the account (and its row) went away
         to, locale, user_id = user.email, export.locale, user.id
         url, expires_at = export.delivery_url, export.expires_at
+        accepted = export.email_accepted_at is not None
         await db.rollback()
-    if url is None or expires_at is None:
+    if url is None or expires_at is None or expires_at - utcnow() < MIN_LINK_LEFT:
+        if url is not None:
+            logger.info(
+                "account_export: recorded link about to expire, re-signing "
+                "(export_id=%s)",
+                claim.id,
+            )
         prepared = await _prepare(sessions, claim, user_id, storage)
         if prepared is None:
             return False
         url, expires_at = prepared
+        accepted = False
     await _send(
-        claim, export_email.render(locale, to, url, expires_at), email_transport
+        sessions,
+        claim,
+        export_email.render(locale, to, url, expires_at),
+        idempotency_key(claim, expires_at),
+        accepted,
+        email_transport,
     )
     return await _mark_ready(sessions, claim)
 
@@ -519,81 +568,3 @@ async def run_worker() -> None:
         except Exception:
             # The next pass retries; a database outage must not end the loop.
             logger.exception("account_export: worker pass failed")
-
-
-# ── Purge ────────────────────────────────────────────────────────────────────
-
-
-def _expired_condition(now: datetime):
-    return or_(
-        and_(AccountExport.status == STATUS_READY, AccountExport.expires_at < now),
-        and_(
-            AccountExport.status != STATUS_READY,
-            AccountExport.created_at < now - STALE_AFTER,
-            # An email may have gone out: keep the file while its link works.
-            or_(AccountExport.expires_at.is_(None), AccountExport.expires_at < now),
-        ),
-    )
-
-
-async def purge_expired(
-    db: AsyncSession,
-    storage: ObjectStorage | None,
-    now: datetime | None = None,
-) -> int:
-    """Delete expired exports (object first, then row); return how many rows
-    went. At most :data:`PURGE_MAX_BATCHES` batches of
-    :data:`PURGE_BATCH_SIZE`, one storage call and one commit each. Without
-    storage only rows with no object go. A storage failure stops the run;
-    those rows stay for the next one."""
-    now = now or utcnow()
-    condition = _expired_condition(now)
-    if storage is None:
-        condition = and_(condition, AccountExport.object_path.is_(None))
-    total = 0
-    for _ in range(PURGE_MAX_BATCHES):
-        rows = (
-            await db.execute(
-                select(AccountExport.id, AccountExport.object_path)
-                .where(condition)
-                .order_by(AccountExport.created_at)
-                .limit(PURGE_BATCH_SIZE)
-            )
-        ).all()
-        await db.rollback()  # no transaction held over the storage call
-        if not rows:
-            break
-        paths = [path for _, path in rows if path]
-        if paths:
-            await storage.delete(paths)
-        result = await db.execute(
-            delete(AccountExport)
-            .where(AccountExport.id.in_([row_id for row_id, _ in rows]), condition)
-            .execution_options(synchronize_session=False)
-        )
-        total += result.rowcount or 0
-        await db.commit()
-        if len(rows) < PURGE_BATCH_SIZE:
-            break
-    return total
-
-
-async def sweep_orphans(storage: ObjectStorage, now: datetime | None = None) -> int:
-    """Delete objects in ``exports/`` older than :data:`SWEEP_AGE`, whatever
-    the table says; return how many. Oldest first, at most
-    :data:`SWEEP_MAX_PAGES` pages of :data:`PURGE_BATCH_SIZE`."""
-    cutoff = (now or utcnow()) - SWEEP_AGE
-    total = 0
-    for _ in range(SWEEP_MAX_PAGES):
-        page = await storage.list(OBJECT_PREFIX, limit=PURGE_BATCH_SIZE)
-        old = [
-            f"{OBJECT_PREFIX}/{obj.name}"
-            for obj in page
-            if obj.created_at is not None and obj.created_at < cutoff
-        ]
-        if old:
-            await storage.delete(old)
-            total += len(old)
-        if len(old) < PURGE_BATCH_SIZE:
-            break
-    return total

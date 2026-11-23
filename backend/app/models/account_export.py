@@ -102,6 +102,11 @@ class AccountExport(IdMixin, UserOwnedMixin, CreatedAtMixin, Base):
     size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # The signed link (a credential until expires_at; never logged).
     delivery_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When Resend accepted the email of the recorded link, or may have (a
+    # timeout or a 5xx). Only then does its 409 for the key count as sent.
+    email_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # When the signed link expires (and the purge may delete the object).
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
