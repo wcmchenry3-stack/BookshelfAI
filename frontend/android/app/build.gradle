@@ -1,3 +1,4 @@
+apply plugin: "io.sentry.android.gradle"
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
@@ -182,3 +183,23 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// Sentry Android Gradle plugin (R8 mapping upload, #890). Org/project come from
+// SENTRY_ORG / SENTRY_PROJECT and the token from SENTRY_AUTH_TOKEN (CLAUDE.md
+// rule 21). The upload is skipped, not failed, when the token is unset (CI,
+// local builds); SENTRY_DISABLE_AUTO_UPLOAD=true also skips it.
+sentry {
+      autoUploadProguardMapping = shouldSentryAutoUpload() && !(System.getenv("SENTRY_AUTH_TOKEN") ?: "").isEmpty()
+      includeProguardMapping = true
+      dexguardEnabled = false
+      uploadNativeSymbols = false
+      autoUploadNativeSymbols = false
+      includeNativeSources = false
+      includeSourceContext = false
+      tracingInstrumentation {
+          enabled = false
+      }
+      autoInstallation {
+          enabled = false
+      }
+  }

@@ -168,7 +168,19 @@
         }
       ],
       "./plugins/withSentryDebugFilesNodeEnv",
-      "@sentry/react-native/expo",
+      [
+        "@sentry/react-native/expo",
+        {
+          "experimental_android": {
+            "enableAndroidGradlePlugin": true,
+            "includeProguardMapping": true,
+            "autoUploadProguardMapping": true,
+            "uploadNativeSymbols": false,
+            "autoUploadNativeSymbols": false,
+            "includeNativeSources": false
+          }
+        }
+      ],
       "expo-web-browser",
       "@sentry/react-native",
       "./plugins/withPodDeploymentTargetFix",
