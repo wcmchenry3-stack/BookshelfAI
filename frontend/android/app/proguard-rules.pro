@@ -25,8 +25,9 @@
 
 # react-native-webview (Turnstile runs in a WebView). The page talks to the app
 # through RNCWebViewBridge via addJavascriptInterface, and the web side finds
-# those methods by name, so R8 must neither strip nor rename them.
--keepattributes JavascriptInterface
+# those methods by name, so R8 must neither strip nor rename them. The whole
+# package is kept on purpose (conservative until a release build is smoke-tested;
+# narrowing it to RNCWebView$RNCWebViewBridge is a possible later size win).
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
