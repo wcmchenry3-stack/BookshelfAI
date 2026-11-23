@@ -15,6 +15,13 @@ import {
 } from '../../lib/api';
 import { MAX_RETRY_AFTER_MS, toApiError } from '../../lib/apiError';
 import { resetApiErrorReporting } from '../../lib/apiErrorReporting';
+import {
+  IDEMPOTENCY_KEY_HEADER,
+  idempotencyKeyOf,
+  isIdempotencyInProgress,
+  isIdempotencyOutcomeUnknown,
+  isKeyedWrite,
+} from '../../lib/idempotency';
 
 const mockCapture = jest.fn();
 const mockGetItem = jest.fn();
@@ -32,6 +39,9 @@ jest.mock('../../lib/sentry', () => ({
   Sentry: { addBreadcrumb: jest.fn(), captureException: (...a: unknown[]) => mockCapture(...a) },
   initSentry: jest.fn(),
 }));
+
+// jest-expo's native stub returns nothing; the app gets real UUIDs.
+jest.mock('expo-crypto', () => ({ randomUUID: () => jest.requireActual('crypto').randomUUID() }));
 
 jest.mock('axios', () => {
   const savedRS = globalThis.ReadableStream;
@@ -52,9 +62,14 @@ type Step = {
 
 /** Adapter that plays `steps` in order (the last repeats) and counts calls. */
 function script(steps: Step[]) {
-  const calls: { method?: string; url?: string; auth?: unknown }[] = [];
+  const calls: { method?: string; url?: string; auth?: unknown; key?: string }[] = [];
   api.defaults.adapter = async (config) => {
-    calls.push({ method: config.method, url: config.url, auth: config.headers?.Authorization });
+    calls.push({
+      method: config.method,
+      url: config.url,
+      auth: config.headers?.Authorization,
+      key: idempotencyKeyOf(config.headers),
+    });
     const step = steps[Math.min(calls.length - 1, steps.length - 1)];
     if (step.ok) {
       return { status: 200, data: { ok: true }, headers: {}, config, statusText: 'OK' };
@@ -209,6 +224,133 @@ describe('retry', () => {
     await expect(api.get('/user-books', { signal: controller.signal })).rejects.toBeTruthy();
     expect(calls.length).toBeLessThanOrEqual(1);
     expect(sleeps).toEqual([]);
+  });
+});
+
+describe('Idempotency-Key (#685)', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('sends a fresh key with every keyed write, one per call', async () => {
+    const calls = script([{ ok: true }]);
+    await api.post('/wishlist', { title: 'Dune' });
+    await api.post('/wishlist', { title: 'Dune' });
+    await api.patch('/user-books/b1', { rating: 4 });
+    await api.delete('/users/me/ai-consent');
+    const keys = calls.map((c) => c.key);
+    keys.forEach((key) => expect(key).toMatch(UUID));
+    expect(new Set(keys).size).toBe(4);
+  });
+
+  it('reuses the same key on every retry of a call', async () => {
+    const calls = script([{}, { status: 503 }, { ok: true }]);
+    await expect(api.post('/wishlist/unverified', { title: 'x' })).resolves.toBeTruthy();
+    expect(calls).toHaveLength(3);
+    expect(calls[0].key).toMatch(UUID);
+    expect(calls.map((c) => c.key)).toEqual([calls[0].key, calls[0].key, calls[0].key]);
+  });
+
+  it('keeps a key the caller passes, so a user retry can reuse it', async () => {
+    const calls = script([{ status: 502 }, { ok: true }]);
+    await api.post('/user-books/b1/restore', undefined, {
+      headers: { [IDEMPOTENCY_KEY_HEADER]: 'mine-1' },
+    });
+    expect(calls.map((c) => c.key)).toEqual(['mine-1', 'mine-1']);
+  });
+
+  it.each([
+    ['post', '/wishlist'],
+    ['post', '/purchased'],
+    ['patch', '/user-books/b1'],
+    ['post', '/user-books/b1/restore'],
+    ['patch', '/users/me/preferences'],
+    ['post', '/users/me/ai-consent'],
+  ] as const)('retries a keyed %s %s', async (method, url) => {
+    const calls = script([{ status: 503 }, { ok: true }]);
+    await expect(api.request({ url, method })).resolves.toBeTruthy();
+    expect(calls).toHaveLength(2);
+    expect(calls[1].key).toBe(calls[0].key);
+  });
+
+  it.each([
+    ['post', '/auth/logout'],
+    ['post', '/auth/google'],
+    ['patch', '/user-books'],
+    ['post', '/attestation/register'],
+  ] as const)('sends no key and never retries an unkeyed %s %s', async (method, url) => {
+    const calls = script([{ status: 503 }, { ok: true }]);
+    await expect(api.request({ url, method })).rejects.toBeTruthy();
+    expect(calls).toEqual([expect.objectContaining({ key: undefined })]);
+  });
+
+  it('never keys or retries /scan, even with a key passed', async () => {
+    let calls = script([{ status: 503 }, { ok: true }]);
+    await expect(api.post('/scan', {})).rejects.toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].key).toBeUndefined();
+    calls = script([{}, { ok: true }]);
+    await expect(
+      api.post('/scan', {}, { headers: { [IDEMPOTENCY_KEY_HEADER]: 'k' } })
+    ).rejects.toBeTruthy();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not key reads', async () => {
+    const calls = script([{ ok: true }]);
+    await api.get('/user-books');
+    await api.get('/user-books/trash');
+    expect(calls.map((c) => c.key)).toEqual([undefined, undefined]);
+  });
+
+  it('waits out 409 idempotency_in_progress and retries with the same key', async () => {
+    const calls = script([
+      { status: 409, data: { detail: 'idempotency_in_progress' }, headers: { 'retry-after': '1' } },
+      { ok: true },
+    ]);
+    await expect(api.post('/wishlist', {})).resolves.toBeTruthy();
+    expect(sleeps).toEqual([1000]);
+    expect(calls[1].key).toBe(calls[0].key);
+  });
+
+  it('does not retry any other 409, a 422 key reuse or an unknown outcome', async () => {
+    for (const data of [
+      { detail: 'owned_same_edition' },
+      { detail: 'idempotency_key_reused' },
+      { detail: 'idempotency_outcome_unknown' },
+    ]) {
+      const calls = script([{ status: data.detail.startsWith('owned') ? 409 : 422, data }]);
+      await expect(api.post('/wishlist', {})).rejects.toBeTruthy();
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it('a timeout of a keyed write is still not retried', async () => {
+    const calls = script([{ timeout: true }, { ok: true }]);
+    await expect(api.post('/wishlist', {})).rejects.toMatchObject({ code: 'ECONNABORTED' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('matches only the keyed writes', () => {
+    expect(isKeyedWrite('POST', '/wishlist')).toBe(true);
+    expect(isKeyedWrite('DELETE', '/user-books/x')).toBe(true);
+    expect(isKeyedWrite('GET', '/wishlist')).toBe(false);
+    expect(isKeyedWrite(undefined, '/wishlist')).toBe(false);
+    expect(isKeyedWrite('DELETE', '/user-books/trash')).toBe(false);
+    expect(isKeyedWrite('POST', '/user-books/x/notes')).toBe(false);
+    expect(isKeyedWrite('POST', '/scan')).toBe(false);
+  });
+
+  it('reads a key from plain and axios header objects', () => {
+    expect(idempotencyKeyOf(undefined)).toBeUndefined();
+    expect(idempotencyKeyOf('x')).toBeUndefined();
+    expect(idempotencyKeyOf({ 'idempotency-key': 'a' })).toBe('a');
+    expect(idempotencyKeyOf({ [IDEMPOTENCY_KEY_HEADER]: '' })).toBeUndefined();
+    expect(idempotencyKeyOf({ get: () => 'b' })).toBe('b');
+    expect(isIdempotencyInProgress(409, 'idempotency_in_progress')).toBe(true);
+    expect(isIdempotencyInProgress(409, 'other')).toBe(false);
+    const unknown = { response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } } };
+    expect(isIdempotencyOutcomeUnknown(unknown)).toBe(true);
+    expect(isIdempotencyOutcomeUnknown({ response: { status: 409, data: {} } })).toBe(false);
+    expect(isIdempotencyOutcomeUnknown(new Error('x'))).toBe(false);
   });
 });
 

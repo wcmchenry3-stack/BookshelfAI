@@ -4,6 +4,13 @@ import type { AxiosRequestConfig } from 'axios';
 import { MAX_RETRY_AFTER_MS, isTimeoutError, toApiError } from './apiError';
 import { DEFAULT_TIMEOUT_MS } from './apiTimeouts';
 import { reportApiError } from './apiErrorReporting';
+import {
+  IDEMPOTENCY_KEY_HEADER,
+  idempotencyKeyOf,
+  isIdempotencyInProgress,
+  isKeyedWrite,
+  newIdempotencyKey,
+} from './idempotency';
 import { Sentry } from './sentry';
 import * as storage from './storage';
 
@@ -63,9 +70,11 @@ const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_JITTER_RATIO = 0.25;
 /** Statuses worth retrying; a network error with no response is too (a timeout is not). */
 const RETRYABLE_STATUSES: readonly number[] = [408, 429, 502, 503, 504];
-// TODO(#685): POST and PATCH retry only once the server honours an
-// Idempotency-Key; until then a retried write could be applied twice.
+// Retried as they are: sending them twice changes nothing more.
 const IDEMPOTENT_METHODS: readonly string[] = ['get', 'head', 'put', 'delete', 'options'];
+// Retried only when they carry an Idempotency-Key (#685, lib/idempotency.ts):
+// the server then replays the first response instead of writing twice.
+const KEYED_RETRY_METHODS: readonly string[] = ['post', 'patch'];
 // Never retried here: the scan queue (#604) owns the /scan retry schedule.
 const NO_RETRY_PATHS = ['/scan'];
 
@@ -104,7 +113,11 @@ function shouldRetry(
 ) {
   if (!config) return false;
   if (axios.isCancel(error) || config.signal?.aborted) return false;
-  if (!IDEMPOTENT_METHODS.includes(String(config.method ?? 'get').toLowerCase())) return false;
+  const method = String(config.method ?? 'get').toLowerCase();
+  const keyed = idempotencyKeyOf(config.headers) !== undefined;
+  if (!IDEMPOTENT_METHODS.includes(method) && !(keyed && KEYED_RETRY_METHODS.includes(method))) {
+    return false;
+  }
   if (NO_RETRY_PATHS.includes(requestPath(config.url))) return false;
   if ((config._retryCount ?? 0) >= MAX_RETRIES) return false;
   // A request from an earlier session is never replayed with the new session's token.
@@ -114,7 +127,10 @@ function shouldRetry(
   // lost, and a re-send would multiply the load. Other network errors
   // (connection refused/reset, offline) are retried.
   if (isTimeoutError(error)) return false;
-  const status = toApiError(error).status;
+  const { status, code } = toApiError(error);
+  // The first attempt with this key is still running on the server: wait
+  // (Retry-After) and send the same key again, which then gets its replay.
+  if (keyed && isIdempotencyInProgress(status, code)) return true;
   return status === undefined || RETRYABLE_STATUSES.includes(status);
 }
 
@@ -125,6 +141,11 @@ api.interceptors.request.use(async (config) => {
     message: `${(config.method ?? 'GET').toUpperCase()} ${config.url}`,
     level: 'info',
   });
+  // #685: one key per call (a user action); a retry re-sends this config, so
+  // it keeps the key and the server replays instead of writing twice.
+  if (isKeyedWrite(config.method, requestPath(config.url)) && !idempotencyKeyOf(config.headers)) {
+    config.headers[IDEMPOTENCY_KEY_HEADER] = newIdempotencyKey();
+  }
   const usable = await storedSession;
   // The session this request is sent in; see the 401 handler.
   (config as SessionTagged)._sessionEpoch = sessionEpoch;

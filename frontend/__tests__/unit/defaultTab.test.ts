@@ -105,6 +105,14 @@ describe('saveDefaultTab', () => {
     expect(mockPatch).toHaveBeenCalledWith('/users/me/preferences', { default_tab: 'wishlist' });
   });
 
+  it('resolves to the sent tab when the save was applied without its response (#685)', async () => {
+    mockPatch.mockRejectedValue({
+      response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } },
+    });
+    await expect(saveDefaultTab('my-books')).resolves.toBe('my-books');
+    expect(mockPatch).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects when the save fails', async () => {
     mockPatch.mockRejectedValue({ response: { status: 500 } });
     await expect(saveDefaultTab('scan')).rejects.toEqual({ response: { status: 500 } });

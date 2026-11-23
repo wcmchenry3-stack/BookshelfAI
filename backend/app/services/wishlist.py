@@ -115,10 +115,14 @@ class WishlistService:
             raise
         # The audit event commits with the entry (#684).
         await library_events.record_created(db, user_book)
-        await db.commit()
+        # Everything the response needs is read before the commit (#685): a
+        # failure after it (a read timing out) would answer 5xx for a write
+        # that is already applied. Flushed first so the new entry exists.
+        await db.flush()
         await db.refresh(user_book, ["book", "edition"])
         # Eagerly load book.editions for serialisation
         await db.refresh(book, ["editions"])
+        await db.commit()
         return user_book
 
     async def _find_or_create_book(

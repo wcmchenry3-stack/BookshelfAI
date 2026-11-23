@@ -103,6 +103,30 @@ describe('lib/aiConsent', () => {
     expect(mockDelete).toHaveBeenCalledWith('/users/me/ai-consent');
   });
 
+  it('reads the state back when the write was applied without its response (#685)', async () => {
+    mockPost.mockRejectedValue({
+      response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } },
+    });
+    mockDelete.mockRejectedValue({
+      response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } },
+    });
+    mockGet.mockResolvedValueOnce({ data: GIVEN }).mockResolvedValueOnce({ data: WITHDRAWN });
+    await expect(grantAiConsent()).resolves.toEqual({ given: true, givenAt: GIVEN.ai_consent_at });
+    await expect(withdrawAiConsent()).resolves.toMatchObject({ given: false });
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when that read-back fails, and on any other error', async () => {
+    const unknown = { response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } } };
+    mockPost.mockRejectedValue(unknown);
+    mockGet.mockRejectedValue(new Error('offline'));
+    await expect(grantAiConsent()).rejects.toBe(unknown);
+    const other = { response: { status: 409, data: { detail: 'idempotency_in_progress' } } };
+    mockDelete.mockRejectedValue(other);
+    await expect(withdrawAiConsent()).rejects.toBe(other);
+  });
+
   it('rejects an answer without the consent state', async () => {
     mockPost.mockResolvedValue({ data: {} });
     await expect(grantAiConsent()).rejects.toThrow();

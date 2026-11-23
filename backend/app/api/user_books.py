@@ -23,6 +23,7 @@ from app.api._concurrency import (
     require_version,
     stale_write_as_412,
 )
+from app.api._idempotency import IdempotencyRoute, idempotent
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -80,8 +81,14 @@ RESTORE_CONFLICT = "restore_conflict"
 
 logger = logging.getLogger(__name__)
 
-# Every single-entry response carries the entry's version as its ETag (#685).
-router = APIRouter(tags=["user-books"], route_class=VersionETagRoute)
+
+class _LibraryRoute(IdempotencyRoute, VersionETagRoute):
+    """Every single-entry response carries the entry's version as its ETag,
+    and keyed writes store their response for a replay (both #685). The
+    idempotency layer is the outer one, so the stored response has the ETag."""
+
+
+router = APIRouter(tags=["user-books"], route_class=_LibraryRoute)
 
 BookStatus = Literal["wishlisted", "purchased", "reading", "read"]
 
@@ -121,6 +128,7 @@ def _user_book_query(user_id: uuid.UUID, *, trashed: bool = False):
     "/wishlist", response_model=UserBookRead, status_code=status.HTTP_201_CREATED
 )
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def add_to_wishlist(
     request: Request,
     req: WishlistRequest,
@@ -162,6 +170,7 @@ async def add_to_wishlist(
     status_code=status.HTTP_201_CREATED,
 )
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def add_unverified_to_wishlist(
     request: Request,
     req: UnverifiedBookCreate,
@@ -224,6 +233,7 @@ async def list_user_books(
     "/purchased", response_model=UserBookRead, status_code=status.HTTP_201_CREATED
 )
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def add_purchased(
     request: Request,
     req: PurchasedCreate,
@@ -327,6 +337,7 @@ async def _reread_and_commit(
 
 @router.patch("/user-books/{user_book_id}", response_model=UserBookRead)
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def update_user_book(
     request: Request,
     user_book_id: uuid.UUID,
@@ -423,6 +434,7 @@ async def list_trash(
 
 @router.delete("/user-books/{user_book_id}", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def delete_user_book(
     request: Request,
     user_book_id: uuid.UUID,
@@ -486,6 +498,7 @@ async def delete_user_book(
 
 @router.post("/user-books/{user_book_id}/restore", response_model=UserBookRead)
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def restore_user_book(
     request: Request,
     user_book_id: uuid.UUID,

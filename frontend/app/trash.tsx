@@ -16,6 +16,7 @@ import { useOnlineOnly } from '../hooks/useOnlineOnly';
 import { useTheme } from '../hooks/useTheme';
 import { listTrash, restoreUserBook, type TrashedUserBook } from '../lib/api';
 import { isServiceUnavailable } from '../lib/apiErrorReporting';
+import { isIdempotencyOutcomeUnknown } from '../lib/idempotency';
 import { notifyLibraryChanged } from '../lib/libraryChanged';
 import {
   daysUntilPurge,
@@ -115,6 +116,12 @@ export default function TrashScreen() {
         duration: 4000,
       });
     } catch (err) {
+      if (isIdempotencyOutcomeUnknown(err)) {
+        // #685: the restore was applied, only its response was lost.
+        void load();
+        notifyLibraryChanged();
+        return;
+      }
       const failure = restoreFailure(err);
       if (failure === 'not_found') void load();
       const message =

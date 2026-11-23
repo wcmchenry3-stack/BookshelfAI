@@ -10,6 +10,7 @@ PostgreSQL schema, entity reference, and the dedup strategy that makes the colle
 erDiagram
   USERS ||--o{ USER_BOOKS : owns
   USERS |o--o{ LIBRARY_EVENTS : "library audit log (set null on delete, #684)"
+  USERS ||--o{ IDEMPOTENCY_KEYS : "stored write responses, 24 h (#685)"
   USERS ||--o{ REFRESH_TOKENS : issued
   USERS ||--o{ AI_QUOTA : "AI calls per window"
   USERS ||--o| AI_INFLIGHT : "call in flight"
@@ -187,6 +188,17 @@ erDiagram
     varchar request_id "nullable"
     timestamptz created_at "indexed"
   }
+  IDEMPOTENCY_KEYS {
+    bigint id PK
+    uuid user_id FK "cascade on delete"
+    varchar key "unique with user_id"
+    varchar request_hash "SHA-256 hex"
+    varchar state "pending, committed or complete"
+    smallint response_status "nullable"
+    text response_body "nullable, at most 64 KB"
+    jsonb response_headers "ETag, Location"
+    timestamptz created_at "indexed"
+  }
   AI_SETTINGS {
     text key PK
     jsonb value
@@ -195,7 +207,7 @@ erDiagram
   }
 ```
 
-All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id`, `scan_corrections.id` and `library_events.id` (`BIGSERIAL`) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
+All primary keys are `UUID` (Postgres native `uuid` type, generated server-side via `uuid.uuid4`), except `ai_usage.id`, `scan_corrections.id`, `library_events.id` and `idempotency_keys.id` (`BIGSERIAL`) and the composite keys of the counter tables. All timestamps are `TIMESTAMPTZ` (UTC).
 
 **Deletion semantics.** Shared catalog rows (`books`, `editions`) must never take user data with them:
 
@@ -209,6 +221,7 @@ All primary keys are `UUID` (Postgres native `uuid` type, generated server-side 
 | `scan_corrections.scan_record_id` → `scan_records.id` | `CASCADE` | A scan record's correction flags go with it (retention purge, per-user cap, account deletion); the daily totals in `scan_corrections_daily` (no user) stay. |
 | `ai_usage.user_id` → `users.id` | `SET NULL` | Deleting an account keeps the cost history but removes the personal link (`user_id` becomes NULL). |
 | `library_events.user_id` → `users.id` | `SET NULL` | Deleting an account anonymises its library audit events (`user_id` becomes NULL) instead of failing or deleting them; they still leave after 180 days (#684). `library_events.user_book_id` has no FK, so purging a library row never touches its events. |
+| `idempotency_keys.user_id` → `users.id` | `CASCADE` | Deleting an account removes its stored `Idempotency-Key` responses, which hold its data (#685). |
 | `user_books.book_id` → `books.id` | `RESTRICT` | A book referenced by any user's library cannot be deleted (`IntegrityError`). |
 | `editions.book_id` → `books.id` | `RESTRICT` | A book that still has editions cannot be deleted. |
 | `books.merged_into_id` → `books.id` | `RESTRICT` | A book that other rows were merged into cannot be deleted (#682). |
@@ -381,6 +394,32 @@ All hard deletes of `user_books` go through `trash._delete_entries`, which write
 **Volume.** About 400 B per event with its indexes (`pg_column_size`: about 70 B for `purged`, 180–260 B for a typical change, 400 B for `created`, 650 B for a change of every tracked field; plus three index entries). Expected about 2 events per active user per day, so about 144 KB per active user at steady state (see `storage-and-retention.md`). No per-user cap: the write rate limit (`rate_limit_writes`) bounds it.
 
 **Export and account deletion.** Account export (#694, not built yet) must include the user's events. Account deletion (#291) needs nothing more for this table: the `SET NULL` anonymises them.
+
+### `idempotency_keys` (`backend/app/models/idempotency_key.py`)
+
+The `Idempotency-Key` store (#685, migration 0033): one row per key a user sent on a library or account write, with the response to replay when the same request comes again (see [api.md](api.md#idempotency-key-retries-without-double-writes-685)). Only `app/services/idempotency.py` writes it, driven by `app/api/_idempotency.py`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGSERIAL PK | |
+| `user_id` | UUID FK → `users.id`, not null, `ON DELETE CASCADE` | keys are per user; the stored body is the user's data and goes with the account |
+| `key` | varchar(255), not null | the client's key, 1 to 255 visible ASCII characters (validated before any write) |
+| `request_hash` | varchar(64), not null | SHA-256 hex of the method, the path, the query, `If-Match` and the canonical JSON body; another request with the key is `422 idempotency_key_reused` |
+| `state` | varchar(16), not null, check `ck_idempotency_keys_state` | `pending` while the first request runs (a duplicate gets `409 idempotency_in_progress`); `committed` from the commit of its write, set in that same transaction, with no response stored yet (a duplicate gets `409 idempotency_outcome_unknown`); `complete` once its response is stored |
+| `response_status` | smallint, nullable | NULL while pending |
+| `response_body` | text, nullable, check `ck_idempotency_keys_body_size` (at most 65,536 bytes) | the JSON body as sent; NULL while pending and for a `204`. A larger response is not stored (`MAX_RESPONSE_BODY_BYTES`) |
+| `response_headers` | JSONB, nullable | `etag` and `location` only (`REPLAYED_HEADERS`) |
+| `created_at` | timestamptz, not null, server default `now()` | set from the app's clock at the claim; the 24 h window and the 2-minute pending lease count from it |
+
+Constraint `uq_idempotency_keys_user_key (user_id, key)`: the claim's `ON CONFLICT DO NOTHING` target, the lookup and the scan for the cascade. Index `ix_idempotency_keys_created_at (created_at)` for the purge. RLS on, no policies (#677). `bookshelf_app` has `SELECT`, `INSERT`, `UPDATE` (pending to complete) and `DELETE` (release and purge), granted explicitly by the migration too.
+
+**Lifecycle.** The claim inserts a `pending` row and commits before the endpoint runs. A `before_commit` listener on the request's session (`idempotency.arm_commit_marker`) turns it `committed` inside the endpoint's own transaction, so the mark and the write are durable together; a successful response or a `4xx` refusal is then stored on it (`complete`). A `5xx`, a `429` or an exception deletes the row only while it is `pending` (nothing was written), so a retry runs again; a `committed` row is never deleted early, so the write never runs twice. A row older than 24 h (`KEY_TTL`), or a `pending` one older than 2 minutes (`PENDING_LEASE`), counts as absent: the next claim deletes it (the `DELETE` re-checks both conditions, so a row committed meanwhile survives) and inserts afresh. If the old request was in fact still running, its commit then fails (`KeyLostError`), so its write is not applied.
+
+**Retention.** Never replayed after 24 h; the daily cleanup (`token_cleanup.py:_purge_idempotency_keys`, `idempotency.purge_expired`) deletes rows older than that in batches of 1,000 (one commit each, at most 200 per run), so a row lasts at most about 48 h.
+
+**Volume.** About 1 KB per row with its indexes (`pg_column_size`: about 940 B for an add, 720 B for a `PATCH` with 2,000 characters of notes, 190 B for a `204`; plus about 100 B of index entries). At most two days of keyed writes per user, bounded by `rate_limit_writes`; see `storage-and-retention.md`.
+
+**Export and account deletion.** Account export (#694) need not include it (a short-lived cache of responses the user already received). Account deletion (#291) needs nothing more: the cascade removes the rows.
 
 ### `refresh_tokens` (`backend/app/models/refresh_token.py`)
 
@@ -701,6 +740,7 @@ Migrations are managed with Alembic and live in `backend/alembic/versions/`:
 - `0029_users_default_tab.py` — the "Open on" preference (#913); expand only. Adds the nullable `users.default_tab` (varchar, no default, so existing users stay NULL, i.e. Scan; no backfill) and the check constraint `ck_users_default_tab` (`default_tab IS NULL OR default_tab IN ('scan', 'wishlist', 'my-books')`). The previous release never reads or writes the column. The downgrade drops the constraint and the column (users' choices are lost and the app falls back to Scan)
 - `0031_users_ai_consent.py` — AI scan consent (#1023); expand only. Adds the nullable `users.ai_consent_at` and `users.ai_consent_withdrawn_at` (timestamptz, no default, so existing users have no consent and are asked at their next scan; no backfill), each only when missing, so a re-run after a half-applied upgrade resumes; 5 s `lock_timeout` for the brief ACCESS EXCLUSIVE lock (catalog-only change, no rewrite). The previous release never reads or writes them. Why columns and not a history table: the owner asked for the given and withdrawn times, which two columns keep; a full history of every change is not needed for Apple 5.1.2(i) and would be a table that grows with use. The downgrade drops both columns (every recorded consent is lost; the app asks again)
 - `0032_library_entry_version.py` — optimistic concurrency for library entries (#685); expand only. Adds `version INTEGER NOT NULL DEFAULT 1` to `user_books` and `user_custom_books`, each only when missing (a re-run after a half-applied upgrade resumes); 5 s `lock_timeout` for the brief ACCESS EXCLUSIVE lock. With a constant default, PostgreSQL 11+ stores the default in the catalog: no table rewrite, no scan, no backfill, and existing rows read as 1. The previous release never reads or writes the column (its inserts get the default, its updates leave it as it is). 4 bytes per row. The downgrade drops both columns; only the version counters are lost
+- `0033_idempotency_keys.py` — the `Idempotency-Key` store (#685); expand only. Creates `idempotency_keys` (above) with `uq_idempotency_keys_user_key`, the two check constraints and `ix_idempotency_keys_created_at`, each only when missing (a re-run after a half-applied upgrade resumes); enables RLS; grants `bookshelf_app` `SELECT`, `INSERT`, `UPDATE`, `DELETE` and the sequence's `USAGE` explicitly (on top of 0028's default privileges); 5 s `lock_timeout`. The previous release never reads or writes the table. The downgrade drops it (guarded the same way); only stored responses for retries of the last day are lost
 
 ### Writing a new migration
 

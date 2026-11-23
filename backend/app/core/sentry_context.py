@@ -56,6 +56,7 @@ _REQUEST_DENYLIST = [
     "provided_secret",
     "http.query",
     "catalog_token",  # POST /wishlist body and EnrichedBook (#602)
+    "idempotency-key",  # header on library and account writes (#685)
 ]
 
 

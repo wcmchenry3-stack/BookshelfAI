@@ -22,3 +22,5 @@ d05251dc4483705959f55bcc066407bd885dbce9:backend/tests/security/test_origin_auth
 # 9026c33 (PR #782, #736): a fake JWT literal in a Sentry scrub test. The test
 # now builds it at runtime; this silences the historic hit in the PR range.
 9026c336db3cdc0d8dcd5a6dcabc96156351d4ff:frontend/__tests__/unit/sentryScrub.test.ts:jwt:7
+# 20dca36: test_idempotency_api.py held a fake UUID test key (KEY = "6f1c2c1e-..."); replaced by a uuid5 in 44460a9.
+20dca36be75e208c7e195b4b8ec67e7cefed093b:backend/tests/unit/test_idempotency_api.py:generic-api-key:27

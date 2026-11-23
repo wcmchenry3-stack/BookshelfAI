@@ -141,6 +141,7 @@ class TestCleanupIsolation:
         "purge_old_scan_records",
         "purge_trash",
         "purge_old_library_events",
+        "purge_expired_idempotency_keys",
     ]
 
     @staticmethod

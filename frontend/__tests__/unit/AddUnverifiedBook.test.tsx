@@ -4,6 +4,7 @@ import { fireEvent, render, waitFor, within } from '@testing-library/react-nativ
 import { AddUnverifiedBookSheet } from '../../components/AddUnverifiedBookSheet';
 import { BookCandidatePicker, type EnrichedBook } from '../../components/BookCandidatePicker';
 import { UnverifiedBadge } from '../../components/UnverifiedBadge';
+import { onLibraryChanged } from '../../lib/libraryChanged';
 import { draftFromBook, hasNoCatalogMatch, unverifiedFailure } from '../../lib/unverified';
 
 // #616: "Add it yourself" — a form pre-filled from the scan that saves a book
@@ -187,6 +188,33 @@ describe('AddUnverifiedBookSheet', () => {
     await fireEvent.press(getByLabelText('Save'));
     expect(await findByText(message)).toBeTruthy();
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('completes the draft without an error when the save was applied without its response (#685)', async () => {
+    mockPost.mockRejectedValueOnce(httpError(409, 'idempotency_outcome_unknown'));
+    const reloads = jest.fn();
+    const unsubscribe = onLibraryChanged(reloads);
+    const onSavedWithoutEntry = jest.fn();
+    const onSaved = jest.fn();
+    const onDismiss = jest.fn();
+    const { getByLabelText, queryByText } = await render(
+      <AddUnverifiedBookSheet
+        visible
+        draft={draft}
+        draftKey="k1"
+        onSaved={onSaved}
+        onSavedWithoutEntry={onSavedWithoutEntry}
+        onDismiss={onDismiss}
+      />
+    );
+    await fireEvent.press(getByLabelText('Save'));
+    await waitFor(() => expect(onSavedWithoutEntry).toHaveBeenCalledWith('Pond Notes'));
+    unsubscribe();
+    expect(reloads).toHaveBeenCalledTimes(1);
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(queryByText("Couldn't save this book. Try again.")).toBeNull();
+    expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
   it('cancel closes without saving', async () => {

@@ -4,6 +4,7 @@ import { act, renderHook } from '@testing-library/react-native';
 import type { EnrichedBook } from '../../components/BookCandidatePicker';
 import type { PendingUnverifiedDraft } from '../../contexts/ScanJobContext';
 import { candidateKey, useScanReview } from '../../hooks/useScanReview';
+import { onLibraryChanged } from '../../lib/libraryChanged';
 import type { BannerConfig } from '../../contexts/BannerContext';
 import type { ScanJob } from '../../lib/scanJob';
 
@@ -163,6 +164,42 @@ describe('handleAddBooks', () => {
     expect(s.showBanner).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'addedSomeMessage', type: 'error' })
     );
+  });
+
+  it('counts an add applied without its response as added and reloads (#685)', async () => {
+    mockPost.mockImplementation(async (_p: string, b: EnrichedBook) => {
+      if (b.title === 'Emma') throw refusal(409, 'idempotency_outcome_unknown');
+      return { data: {} };
+    });
+    const reloads = jest.fn();
+    const unsubscribe = onLibraryChanged(reloads);
+    const s = setup([reviewJob([DUNE, EMMA])]);
+    const { result } = await s.hook;
+    await act(async () => {
+      await result.current.handleAddBooks([DUNE, EMMA]);
+    });
+    unsubscribe();
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    expect(s.dismissJob).toHaveBeenCalledWith('job-1');
+    expect(mockCapture).not.toHaveBeenCalled();
+    expect(reloads).toHaveBeenCalledTimes(1);
+    expect(s.showBanner).toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
+  });
+
+  it('never reports an add applied without its response, in a mixed result (#685)', async () => {
+    mockPost.mockImplementation(async (_p: string, b: EnrichedBook) => {
+      if (b.title === 'Dune') throw refusal(409, 'idempotency_outcome_unknown');
+      throw Object.assign(new Error('Network Error'), { response: undefined });
+    });
+    const s = setup([reviewJob([DUNE, EMMA])]);
+    const { result } = await s.hook;
+    await act(async () => {
+      await result.current.handleAddBooks([DUNE, EMMA]);
+    });
+    // Only Emma's network failure is reported, and only Emma stays to retry.
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mockCapture.mock.calls)).not.toContain('idempotency_outcome_unknown');
+    expect(s.updateJob).toHaveBeenCalledWith('job-1', { results: [EMMA] });
   });
 
   it('offers "Add it yourself" for a book no catalog matched, which opens its draft', async () => {

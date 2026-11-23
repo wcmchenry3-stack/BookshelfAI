@@ -693,6 +693,11 @@ class TestCleanupTask:
             patch.object(
                 token_cleanup, "purge_old_library_events", AsyncMock(return_value=0)
             ),
+            patch.object(
+                token_cleanup,
+                "purge_expired_idempotency_keys",
+                AsyncMock(return_value=0),
+            ),
             patch.object(token_cleanup.asyncio, "sleep", sleeps),
             patch.multiple(token_cleanup, **patches),
             pytest.raises(_Stop),

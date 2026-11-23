@@ -126,6 +126,7 @@ function GlobalScanModals() {
           // Bound to this render's draft: a save that finishes after its form
           // was closed completes that draft, not whichever is shown by then.
           onSaved={(entry) => unverifiedSaved(entry.book.title, draft.id)}
+          onSavedWithoutEntry={(title) => unverifiedSaved(title, draft.id)}
           onDismiss={dismissUnverified}
           onHidden={sheetGate.notifyDismissed}
         />
