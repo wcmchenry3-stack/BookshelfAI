@@ -27,7 +27,7 @@ export const NONCE_PATH = '/attestation/nonce';
 export const REGISTER_PATH = '/attestation/register';
 
 /** SecureStore key prefix of the registered App Attest key id (iOS). */
-const APP_ATTEST_KEY_STORAGE_KEY ='bookshelf_app_attest_key_id';
+const APP_ATTEST_KEY_STORAGE_KEY = 'bookshelf_app_attest_key_id';
 
 /** A registration outlives the scan that started it, but not by more than this. */
 export const REGISTRATION_TIMEOUT_MS = 15_000;
