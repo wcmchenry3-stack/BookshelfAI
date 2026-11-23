@@ -101,13 +101,14 @@ deletes `android/` and recreates it from the template, which is what happened
 on the SDK 58 upgrade (#714). Template changes can still overwrite files, so
 **review the diff and restore these hand edits after a prebuild**:
 
-| File | Hand edit | Why |
-|---|---|---|
-| `android/settings.gradle` | JDK preflight block at the top of `pluginManagement` | Fails fast on JDK 24+ (book_app#178). Prebuild drops it. |
-| `android/.gitignore` | `*.keystore` / `*.jks` lines | Never commit a keystore (CLAUDE.md rule 17). Prebuild drops them. |
-| `android/gradle.properties` | `android.enableMinifyInReleaseBuilds=false` | The SDK 58 template defaults to `true` (R8 on in release). Kept off until R8 is enabled on purpose (see below). |
-| `android/app/src/main/res/` splash files | `drawable-*/splashscreen_logo.png`, `values/{colors,strings,styles}.xml`, `values-night/colors.xml` kept from before SDK 58 | Without `expo-splash-screen` installed, SDK 58 prebuild no longer turns app.json `splash` into resources. It leaves the template's placeholder grid image as a full-screen `windowBackground`. |
+| File                                        | Hand edit                                                          | Why                                                                                                                                                                                                                                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `android/settings.gradle`                   | JDK preflight block at the top of `pluginManagement`               | Fails fast on JDK 24+ (book_app#178). Prebuild drops it.                                                                                                                                                                                                                        |
+| `android/.gitignore`                        | `*.keystore` / `*.jks` lines                                       | Never commit a keystore (CLAUDE.md rule 17). Prebuild drops them.                                                                                                                                                                                                               |
+| `android/gradle.properties`                 | `android.enableMinifyInReleaseBuilds=false`                        | The SDK 58 template defaults to `true` (R8 on in release). Kept off until R8 is enabled on purpose (see below).                                                                                                                                                                 |
 | `android/gradle/wrapper/gradle-wrapper.jar` | Official jar for the Gradle version in `gradle-wrapper.properties` | The SDK 58 template ships the Gradle **9.3.1** jar while pinning the 9.4.1 distribution. We commit the 9.4.1 jar (sha256 `55243ef5…e1145c`, from `gradle wrapper --gradle-version 9.4.1`). It matches the gradle/actions checksum list and `@react-native/gradle-plugin`'s jar. |
+
+The splash is not a hand edit: since #1010 the `expo-splash-screen` plugin in `app.json` (image `assets/splash-icon.png`, light and dark) makes prebuild write `drawable-*/splashscreen_logo.png`, `drawable-night-*`, `values*/colors.xml`, the `Theme.App.SplashScreen` style and the `SplashScreenManager` call in `MainActivity.kt`. Commit those; do not restore the older files over them.
 
 `versionCode` / `versionName` in `app/build.gradle` come from `app.json`
 (`expo.android.versionCode`, `expo.version`). The `sync-native-versions`
@@ -116,15 +117,15 @@ workflow patches both files with `sed`, so keep the `versionCode N` /
 
 ## Toolchain versions (Expo SDK 58 / React Native 0.88.1)
 
-| | Before (SDK 56 / RN 0.85.3) | Now (SDK 58 / RN 0.88.1) | Source |
-|---|---|---|---|
-| Gradle (wrapper) | 9.0.0 | **9.4.1** | Expo template |
-| Android Gradle Plugin | 8.12.0 | **9.2.1** | `react-native/gradle/libs.versions.toml` |
-| Kotlin Gradle plugin | 2.1.20 | **2.2.10** (resolved) | RN catalog pins 2.2.0, but AGP 9 requires KGP ≥ 2.2.10 and upgrades it automatically; `android.kotlinVersion` can only raise it |
-| compileSdk / buildTools | 36 / 36.0.0 | **37 / 37.0.0** | same catalog |
-| targetSdk | 36 | 36 | same catalog |
-| minSdk | 24 | 24 | same catalog |
-| NDK | 27.1.12297006 | 27.1.12297006 | same catalog |
+|                         | Before (SDK 56 / RN 0.85.3) | Now (SDK 58 / RN 0.88.1) | Source                                                                                                                          |
+| ----------------------- | --------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Gradle (wrapper)        | 9.0.0                       | **9.4.1**                | Expo template                                                                                                                   |
+| Android Gradle Plugin   | 8.12.0                      | **9.2.1**                | `react-native/gradle/libs.versions.toml`                                                                                        |
+| Kotlin Gradle plugin    | 2.1.20                      | **2.2.10** (resolved)    | RN catalog pins 2.2.0, but AGP 9 requires KGP ≥ 2.2.10 and upgrades it automatically; `android.kotlinVersion` can only raise it |
+| compileSdk / buildTools | 36 / 36.0.0                 | **37 / 37.0.0**          | same catalog                                                                                                                    |
+| targetSdk               | 36                          | 36                       | same catalog                                                                                                                    |
+| minSdk                  | 24                          | 24                       | same catalog                                                                                                                    |
+| NDK                     | 27.1.12297006               | 27.1.12297006            | same catalog                                                                                                                    |
 
 Compatibility (CLAUDE.md rule 18): the AGP 9.2 release notes say it needs
 **Gradle 9.4.1 or newer** and JDK 17 or newer, and supports API level 37.
@@ -152,12 +153,12 @@ upload confirmed. That is tracked as a follow-up to #714.
 
 ## CI jobs (GitHub Actions)
 
-| Job | What it checks |
-|---|---|
-| `android-bundle-check` | JS bundle compiles for Android (Metro, no native build). Runs when `frontend/**` changes |
-| `android-build-check` | `./gradlew assembleDebug` compiles cleanly end-to-end. Runs only when native-affecting paths change, and not on draft PRs |
-| `gradle-wrapper-check` | `gradle-wrapper.jar` is present and unmodified |
-| `local-path-check` | No hardcoded local machine paths in Gradle files |
+| Job                    | What it checks                                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `android-bundle-check` | JS bundle compiles for Android (Metro, no native build). Runs when `frontend/**` changes                                  |
+| `android-build-check`  | `./gradlew assembleDebug` compiles cleanly end-to-end. Runs only when native-affecting paths change, and not on draft PRs |
+| `gradle-wrapper-check` | `gradle-wrapper.jar` is present and unmodified                                                                            |
+| `local-path-check`     | No hardcoded local machine paths in Gradle files                                                                          |
 
 The bundle/build jobs are conditional (`detect-changes`; path lists in `docs/testing.md`). The required check is `native-build-gate` (always runs; passes when each conditional job succeeded or was skipped), because a skipped reusable-workflow job never reports its `<job> / <inner job>` name. Push and deploy runs always run them.
 
@@ -182,24 +183,24 @@ Gradle's bundling step would inline the dev API. Check with
 
 ## Key files
 
-| File | Purpose |
-|---|---|
-| `frontend/android/app/build.gradle` | App module: SDK versions, signing, dependencies, Sentry |
-| `frontend/android/build.gradle` | Root project: repositories, plugin dependencies |
-| `frontend/android/settings.gradle` | Module includes, React Native + Expo autolinking |
-| `frontend/android/gradle.properties` | JVM args, architecture list, Hermes/New Arch toggles |
-| `frontend/android/gradle/wrapper/gradle-wrapper.properties` | Gradle distribution version |
-| `frontend/android/sentry.properties` | Sentry CLI config (uses env vars for org/project/token) |
-| `frontend/android/app/debug.keystore` | Gitignored — generated by CI, never committed |
+| File                                                        | Purpose                                                 |
+| ----------------------------------------------------------- | ------------------------------------------------------- |
+| `frontend/android/app/build.gradle`                         | App module: SDK versions, signing, dependencies, Sentry |
+| `frontend/android/build.gradle`                             | Root project: repositories, plugin dependencies         |
+| `frontend/android/settings.gradle`                          | Module includes, React Native + Expo autolinking        |
+| `frontend/android/gradle.properties`                        | JVM args, architecture list, Hermes/New Arch toggles    |
+| `frontend/android/gradle/wrapper/gradle-wrapper.properties` | Gradle distribution version                             |
+| `frontend/android/sentry.properties`                        | Sentry CLI config (uses env vars for org/project/token) |
+| `frontend/android/app/debug.keystore`                       | Gitignored — generated by CI, never committed           |
 
 ## Key differences from iOS CI
 
-| Aspect | iOS | Android |
-|---|---|---|
-| Build system | Xcode Cloud | Local Gradle (`./gradlew`) |
-| Submission | App Store Connect | Play Console (direct upload) |
-| Native deps | CocoaPods (`pod install`) | Gradle (automatic) |
-| Lock file | `Podfile.lock` (committed) | None (Gradle resolves dynamically) |
-| CI compile check | `ios-build-check` (macOS) | `android-build-check` (Linux) |
-| Bundle check | `js-bundle-check` (iOS platform) | `android-bundle-check` (Android platform) |
-| Signing | Xcode managed | Keystore + env vars |
+| Aspect           | iOS                              | Android                                   |
+| ---------------- | -------------------------------- | ----------------------------------------- |
+| Build system     | Xcode Cloud                      | Local Gradle (`./gradlew`)                |
+| Submission       | App Store Connect                | Play Console (direct upload)              |
+| Native deps      | CocoaPods (`pod install`)        | Gradle (automatic)                        |
+| Lock file        | `Podfile.lock` (committed)       | None (Gradle resolves dynamically)        |
+| CI compile check | `ios-build-check` (macOS)        | `android-build-check` (Linux)             |
+| Bundle check     | `js-bundle-check` (iOS platform) | `android-bundle-check` (Android platform) |
+| Signing          | Xcode managed                    | Keystore + env vars                       |

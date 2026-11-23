@@ -141,7 +141,7 @@ the whole `git diff` afterwards and restore anything prebuild removed:
 | `Info.plist` `RCTNewArchEnabled` and tab formatting | `pod install` writes them back; keep them |
 | `Info.plist` `CFBundleShortVersionString` / `CFBundleVersion` (prebuild writes the literal `app.json` `version` / `ios.buildNumber`) | Restore `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`. `sync-native-versions.yml` updates only those build settings in `project.pbxproj`, never Info.plist, so a literal goes stale after the next release (it shipped 1.0.0 that way until #713) |
 | `Images.xcassets` app icon | Prebuild regenerates it from `assets/icon.png`; the committed icon is that file (owner decision, #713), so the result should be unchanged |
-| `SplashScreenLegacy`/`SplashScreenBackground` assets and `SplashScreen.storyboard` | Keep the committed ones. SDK 58 without the `expo-splash-screen` plugin points the storyboard at an image it does not create (follow-up #891) |
+| `SplashScreenLogo` / `SplashScreenBackground` assets and `SplashScreen.storyboard` | Keep what prebuild writes: since #1010 the `expo-splash-screen` plugin in `app.json` generates them from `assets/splash-icon.png`, and the old `SplashScreenLegacy` imageset is gone. Never hand-edit them; change the recipe or the plugin config |
 | The `fmt` consteval patch at the end of the Podfile `post_install` | Hand-kept (not owned by a plugin); restore it. It is a no-op when the `fmt` header does not match |
 
 Adding a native dependency: Expo modules and React Native libraries are found by

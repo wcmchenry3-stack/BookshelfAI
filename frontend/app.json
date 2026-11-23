@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#263250"
-    },
     "ios": {
       "supportsTablet": true,
       "deploymentTarget": "16.4",
@@ -171,7 +166,20 @@
       "expo-web-browser",
       "@sentry/react-native",
       "./plugins/withPodDeploymentTargetFix",
-      "expo-image"
+      "expo-image",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 288,
+          "resizeMode": "contain",
+          "backgroundColor": "#263250",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#263250"
+          }
+        }
+      ]
     ],
     "scheme": "bookshelf"
   }

@@ -27,7 +27,7 @@
       "credits": "docs/ASSETS.md"
     },
     {
-      "glob": "frontend/assets/splash.png",
+      "glob": "frontend/assets/splash-icon.png",
       "kind": "generated",
       "recipe": "tools/assets/gen_app_icons.py (drawn by tools/assets/draw_logo.py)",
       "credits": "docs/ASSETS.md"
