@@ -26,5 +26,15 @@
   "aiConsentWithdraw": "撤回",
   "aiConsentWithdrawHint": "停止向 Anthropic 发送扫描照片，直到你再次允许",
   "aiConsentWithdrawn": "AI 扫描已关闭。下次扫描前会再询问你。",
-  "aiConsentWithdrawFailed": "无法撤回。请检查网络连接后重试。"
+  "aiConsentWithdrawFailed": "无法撤回。请检查网络连接后重试。",
+  "exportData": "导出我的数据",
+  "exportDataHint": "通过邮件获取你的数据副本",
+  "exportConfirmTitle": "要导出你的数据吗?",
+  "exportConfirmBody": "我们会通过邮件发送一个链接，指向包含你的书库和账户数据的文件。链接 7 天内有效。",
+  "exportConfirm": "导出",
+  "exportCancel": "取消",
+  "exportQueued": "我们会通过邮件把数据链接发给你，7 天内有效。",
+  "exportLimited_other": "每天只能导出一次。请在 {{count}} 小时后重试。",
+  "exportUnavailable": "数据导出暂不可用，请稍后重试。",
+  "exportFailed": "无法申请导出。请检查网络连接后重试。"
 }

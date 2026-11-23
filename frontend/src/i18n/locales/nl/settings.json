@@ -26,5 +26,16 @@
   "aiConsentWithdraw": "Intrekken",
   "aiConsentWithdrawHint": "Stuurt geen scanfoto's meer naar Anthropic tot je het weer toestaat",
   "aiConsentWithdrawn": "Scannen met AI staat uit. We vragen het je vóór je volgende scan.",
-  "aiConsentWithdrawFailed": "Intrekken is mislukt. Controleer je verbinding en probeer het opnieuw."
+  "aiConsentWithdrawFailed": "Intrekken is mislukt. Controleer je verbinding en probeer het opnieuw.",
+  "exportData": "Mijn gegevens exporteren",
+  "exportDataHint": "Ontvang een kopie van je gegevens per e-mail",
+  "exportConfirmTitle": "Je gegevens exporteren?",
+  "exportConfirmBody": "We mailen je een link naar een bestand met je bibliotheek en accountgegevens. De link werkt 7 dagen.",
+  "exportConfirm": "Exporteren",
+  "exportCancel": "Annuleren",
+  "exportQueued": "We mailen je een link naar je gegevens. Die werkt 7 dagen.",
+  "exportLimited_one": "Je kunt één keer per dag exporteren. Probeer het over {{count}} uur opnieuw.",
+  "exportLimited_other": "Je kunt één keer per dag exporteren. Probeer het over {{count}} uur opnieuw.",
+  "exportUnavailable": "Gegevens exporteren is nog niet beschikbaar. Probeer het later opnieuw.",
+  "exportFailed": "Export aanvragen is mislukt. Controleer je verbinding en probeer het opnieuw."
 }

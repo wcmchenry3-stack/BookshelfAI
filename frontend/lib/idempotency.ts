@@ -32,6 +32,7 @@ const KEYED_PATHS: readonly RegExp[] = [
   /^\/purchased$/,
   /^\/user-books\/[^/]+(\/restore)?$/,
   /^\/users\/me\/(preferences|ai-consent)$/,
+  /^\/account\/export$/,
 ];
 
 /** Whether the server honours an Idempotency-Key on `method` `path` (a path without query). */

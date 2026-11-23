@@ -41,6 +41,8 @@ const KNOWN_DETAILS: ReadonlySet<string> = new Set([
   'ai_budget_reached',
   'ai_unavailable',
   'scan_unavailable',
+  // 503 while the account export is not set up (#694): the Settings row says so.
+  'export_not_configured',
 ]);
 
 /** Codes the app handles on purpose; never reported. */

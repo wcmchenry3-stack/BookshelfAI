@@ -26,5 +26,17 @@
   "aiConsentWithdraw": "ביטול הסכמה",
   "aiConsentWithdrawHint": "מפסיק לשלוח תמונות סריקה ל-Anthropic עד שתאשר שוב",
   "aiConsentWithdrawn": "סריקה ב-AI כבויה. נשאל אותך לפני הסריקה הבאה.",
-  "aiConsentWithdrawFailed": "לא ניתן לבטל את ההסכמה. בדוק את החיבור ונסה שוב."
+  "aiConsentWithdrawFailed": "לא ניתן לבטל את ההסכמה. בדוק את החיבור ונסה שוב.",
+  "exportData": "ייצוא הנתונים שלי",
+  "exportDataHint": "קבלת עותק של הנתונים במייל",
+  "exportConfirmTitle": "לייצא את הנתונים?",
+  "exportConfirmBody": "נשלח לך במייל קישור לקובץ עם הספרייה ונתוני החשבון שלך. הקישור פועל 7 ימים.",
+  "exportConfirm": "ייצוא",
+  "exportCancel": "ביטול",
+  "exportQueued": "נשלח לך במייל קישור לנתונים שלך. הוא פועל 7 ימים.",
+  "exportLimited_one": "אפשר לייצא פעם ביום. אפשר לנסות שוב בעוד שעה.",
+  "exportLimited_two": "אפשר לייצא פעם ביום. אפשר לנסות שוב בעוד שעתיים.",
+  "exportLimited_other": "אפשר לייצא פעם ביום. אפשר לנסות שוב בעוד {{count}} שעות.",
+  "exportUnavailable": "ייצוא נתונים עדיין לא זמין. אפשר לנסות שוב מאוחר יותר.",
+  "exportFailed": "לא ניתן לבקש ייצוא. כדאי לבדוק את החיבור ולנסות שוב."
 }

@@ -26,5 +26,16 @@
   "aiConsentWithdraw": "Retirar",
   "aiConsentWithdrawHint": "Deja de enviar fotos de escaneo a Anthropic hasta que lo vuelvas a permitir",
   "aiConsentWithdrawn": "El escaneo con IA está desactivado. Te lo preguntaremos antes del próximo.",
-  "aiConsentWithdrawFailed": "No se pudo retirar. Revisa tu conexión e inténtalo de nuevo."
+  "aiConsentWithdrawFailed": "No se pudo retirar. Revisa tu conexión e inténtalo de nuevo.",
+  "exportData": "Exportar mis datos",
+  "exportDataHint": "Recibe una copia de tus datos por correo",
+  "exportConfirmTitle": "¿Exportar tus datos?",
+  "exportConfirmBody": "Te enviaremos por correo un enlace a un archivo con tu biblioteca y los datos de tu cuenta. El enlace funciona 7 días.",
+  "exportConfirm": "Exportar",
+  "exportCancel": "Cancelar",
+  "exportQueued": "Te enviaremos por correo un enlace a tus datos. Funciona 7 días.",
+  "exportLimited_one": "Puedes exportar una vez al día. Inténtalo de nuevo en {{count}} hora.",
+  "exportLimited_other": "Puedes exportar una vez al día. Inténtalo de nuevo en {{count}} horas.",
+  "exportUnavailable": "La exportación de datos aún no está disponible. Inténtalo más tarde.",
+  "exportFailed": "No se pudo pedir la exportación. Revisa tu conexión e inténtalo de nuevo."
 }
