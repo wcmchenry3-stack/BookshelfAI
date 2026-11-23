@@ -46,12 +46,14 @@ sequenceDiagram
   participant P as BookCandidatePicker
 
   U->>S: Tap capture
+  S->>S: AI consent (#1023): ask with the prompt unless it stands; Not now stops here
   S->>C: takePictureAsync() / File input
   C-->>S: photo URI
   S->>FS: Copy to scan-queue/ (native only)
   FS-->>S: persisted URI
   S->>SJ: startScan('image', uri)
   SJ->>SJ: Create ScanJob(id, status=pending)
+  SJ->>SJ: upload gate: consent must stand (else the photo waits, queued)
   SJ->>SJ: getToken(): fresh Turnstile token (#740; none if unset/timeout)
   SJ->>API: POST /scan (multipart, cf-turnstile-response)
   API->>AI: identify(base64 image)
@@ -189,6 +191,17 @@ A `UserBook` moves through four states. Transitions auto-timestamp the correspon
 
 Non-canonical transitions (e.g. skipping states, re-reads) are allowed — the frontend UI exposes the common paths, but the API accepts any state value on `PATCH /user-books/{id}`.
 
+### AI scan consent (#1023)
+
+Apple 5.1.2(i): before the first scan photo goes to Anthropic, the app asks.
+
+- **The prompt** ("Scanning uses AI"): says the photo goes to Anthropic, an AI provider, to identify the books, that photos aren't stored and only a fingerprint and the list of books found are kept for 30 days, and links the privacy policy. **Continue** records consent on the server (`POST /users/me/ai-consent`) and only then lets the scan go; if that call fails the prompt stays with an error. **Not now** records nothing and takes no photo; tapping Scan asks again. Search and "Add it yourself" never ask: they send no photo.
+- **Per account, on the server**, so it survives reinstalls and other devices. Existing users are asked at their next scan; nothing pops up at launch.
+- **Where it asks**: the shutter and the web "Scan Books" button (before the photo is taken or picked), "Send now" for saved photos, and any re-send the user starts (Retry, the queue screen's Retry, an enhanced re-scan). Offline with an unknown state the photo is taken and saved; it is not uploaded until consent is known to stand.
+- **Saved photos** (taken offline, or before this release) never upload without consent. The background drain (reconnect, launch, retry timer) never shows the prompt: such a photo stays queued ("Waiting for AI consent" in the queue) and goes as soon as consent is given; it follows the 7-day rule for queued photos.
+- **Server refusal**: when `AI_CONSENT_REQUIRED` is on and the server answers `403 ai_consent_required` (for example consent was withdrawn on another device), the app forgets the consent, keeps the photo queued and shows the prompt instead of an error.
+- **Settings** ("AI photo scanning") shows Allowed / Not allowed and offers **Withdraw**, which applies at once; the next scan asks again.
+
 ## Offline resilience
 
 Scan jobs persist locally so the user can keep scanning even without connectivity. `ScanJobContext` is the single source of truth.
@@ -213,6 +226,7 @@ pending ─▶ searching ─▶ complete
              │             └─▶ (user confirms) ─▶ deleted
              │
              ├─▶ queued (refused: limit / paused / busy; next drain or "Try again")
+             ├─▶ queued, error ai_consent (#1023: no AI consent; sent once it is given)
              ├─▶ queued + nextAttemptAt (503 scan_unavailable, attempts 1-4; sent when due)
              │      └─▶ failed (attempt 5 failed; banner "Retry" ─▶ pending, attempt 1)
              └─▶ failed ─▶ queued (manual)
