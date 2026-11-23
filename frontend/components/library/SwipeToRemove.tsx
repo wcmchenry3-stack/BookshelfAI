@@ -36,6 +36,8 @@ export const FULL_SWIPE_DISTANCE = REMOVE_PANEL_WIDTH * 2;
  * stays a scroll.
  */
 export const SWIPE_ACTIVATION_OFFSET = 20;
+/** How close to the panel width an open row must be to count as at rest on it. */
+const AT_REST_TOLERANCE = 1;
 
 /** No spring overshoot ever; with Reduce Motion on, no spring at all. */
 export const SPRING_OPTIONS = { overshootClamping: true };
@@ -135,6 +137,8 @@ export function SwipeToRemove({
   const removingRef = useRef(false);
   const liveX = useSharedValue(0);
   const startX = useSharedValue(0);
+  // Whether the swipeable last said it is opening (true) or closing (false).
+  const openSV = useSharedValue(false);
   const [decider] = useState(() => createSwipeReleaseDecider(FULL_SWIPE_DISTANCE));
   const handle = useMemo<SwipeRowHandle>(() => ({ close: () => rowRef.current?.close() }), []);
   const side = I18nManager.isRTL ? 1 : -1;
@@ -173,12 +177,14 @@ export function SwipeToRemove({
     [decider, remove]
   );
   const onWillOpen = useCallback(() => {
+    openSV.set(true);
     group?.onOpen(handle);
     if (decider.outcome('open')) void remove();
-  }, [decider, group, handle, remove]);
+  }, [decider, group, handle, remove, openSV]);
   const onWillClose = useCallback(() => {
+    openSV.set(false);
     decider.outcome('close');
-  }, [decider]);
+  }, [decider, openSV]);
 
   // Watches the same touches as the swipeable's own pan, alongside it
   // (`simultaneousWith` below; gesture-handler makes that relation symmetric),
@@ -190,16 +196,28 @@ export function SwipeToRemove({
       activeOffsetX: [-SWIPE_ACTIVATION_OFFSET, SWIPE_ACTIVATION_OFFSET] as [number, number],
       onBegin: () => {
         'worklet';
-        // Touch-down: where the row rests (0, or the panel width when open).
-        startX.set(liveX.get());
+        // Touch-down: where the swipeable will count this drag from. It uses
+        // 0 or the full panel width, from the state its last spring is going
+        // to, never where a spring happens to be. So count the panel width
+        // only when the row is open and at rest on it; anywhere else count 0,
+        // which can only undercount (a grab mid-opening-spring), never
+        // overcount (a grab mid-closing-spring would add travel the swipeable
+        // does not see, and remove a book swiped under the distance).
+        const live = liveX.get();
+        const atRestOpen =
+          openSV.get() && Math.abs(live * side - REMOVE_PANEL_WIDTH) < AT_REST_TOLERANCE;
+        startX.set(atRestOpen ? live : 0);
         scheduleOnRN(onGestureBegin);
       },
-      onDeactivate: (event: { translationX: number }) => {
+      onDeactivate: (event: { translationX: number; canceled: boolean }) => {
         'worklet';
+        // Cancelled or failed while active (e.g. the list took the touch):
+        // send nothing, so the swipeable's release pairs with nothing.
+        if (event.canceled) return;
         scheduleOnRN(onGestureRelease, (startX.get() + event.translationX) * side);
       },
     }),
-    [disabled, liveX, startX, side, onGestureBegin, onGestureRelease]
+    [disabled, liveX, startX, openSV, side, onGestureBegin, onGestureRelease]
   );
   const observer = usePanGesture(observerConfig);
 

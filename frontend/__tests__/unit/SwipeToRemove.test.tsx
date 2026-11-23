@@ -146,6 +146,22 @@ function finger(row: MockRow) {
       });
       await settle();
     },
+    /** Moves `travel` and the gesture is cancelled while active (e.g. the list took it). */
+    async cancel(travel: number) {
+      await act(async () => {
+        controller.activate({ translationX: travel / 2 });
+        controller.cancel({ translationX: travel });
+      });
+      await settle();
+    },
+    /** A touch that never moves far enough to activate (a tap). */
+    async tap() {
+      await act(async () => {
+        controller.begin();
+        controller.fail();
+      });
+      await settle();
+    },
   };
 }
 
@@ -159,6 +175,26 @@ async function swipe(row: MockRow, travel: number) {
 async function willOpen(row: MockRow, direction = 'left') {
   await act(async () => row.props.onSwipeableWillOpen?.(direction));
   await settle();
+}
+
+async function willClose(row: MockRow) {
+  await act(async () => row.props.onSwipeableWillClose?.('left'));
+  await settle();
+}
+
+/** Where the row's spring has got to (what the panel mirrors as the live position). */
+async function rowAt(row: MockRow, x: number) {
+  await act(async () => {
+    row.translation.value = x;
+  });
+  await settle();
+}
+
+/** A short swipe that opens the row, then its spring lands on the panel. */
+async function openAtRest(row: MockRow) {
+  await swipe(row, -REMOVE_PANEL_WIDTH);
+  await willOpen(row);
+  await rowAt(row, -REMOVE_PANEL_WIDTH);
 }
 
 beforeEach(() => {
@@ -289,12 +325,68 @@ describe('SwipeToRemove (#935)', () => {
   it('counts the travel from an already open row', async () => {
     const onRemove = jest.fn().mockResolvedValue(true);
     await render(<Row onRemove={onRemove} />);
-    await act(async () => {
-      rows[0].translation.value = -REMOVE_PANEL_WIDTH;
-    });
-    await settle();
+    await openAtRest(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
     // 88 open + 98 more = past 176.
     await swipe(rows[0], -(FULL_SWIPE_DISTANCE - REMOVE_PANEL_WIDTH + 10));
+    await willOpen(rows[0]);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('a grab while the row springs closed counts from 0, as the swipeable does', async () => {
+    const onRemove = jest.fn();
+    await render(<Row onRemove={onRemove} />);
+    await openAtRest(rows[0]);
+    // A tap closes it; the closing spring is at 60 when the finger lands again.
+    await willClose(rows[0]);
+    await rowAt(rows[0], -60);
+    // The swipeable shows 0 + 120 = 120: under the distance.
+    await swipe(rows[0], -120);
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it('a grab mid-opening-spring never adds the spring position (Codex)', async () => {
+    const onRemove = jest.fn();
+    await render(<Row onRemove={onRemove} />);
+    // A short swipe let go at 150 opens the row: the spring heads for 88.
+    await swipe(rows[0], -150);
+    await willOpen(rows[0]);
+    await rowAt(rows[0], -140);
+    // Grabbed at 140 and dragged 50 more: the swipeable shows 88 + 50 = 138.
+    await swipe(rows[0], -50);
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it('a row still drawn on the panel but already closing counts from 0', async () => {
+    const onRemove = jest.fn();
+    await render(<Row onRemove={onRemove} />);
+    await openAtRest(rows[0]);
+    // Closed (tap, another row opened, a failed removal), before the spring moved.
+    await willClose(rows[0]);
+    await swipe(rows[0], -(FULL_SWIPE_DISTANCE - REMOVE_PANEL_WIDTH + 10));
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it('a swipe cancelled while active past the distance does not remove', async () => {
+    const onRemove = jest.fn();
+    await render(<Row onRemove={onRemove} />);
+    const f = finger(rows[0]);
+    await f.down();
+    await f.cancel(-PAST);
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it('a tap leaves nothing behind: a later full swipe still removes once', async () => {
+    const onRemove = jest.fn().mockResolvedValue(true);
+    await render(<Row onRemove={onRemove} />);
+    await finger(rows[0]).tap();
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+    await swipe(rows[0], -PAST);
     await willOpen(rows[0]);
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
