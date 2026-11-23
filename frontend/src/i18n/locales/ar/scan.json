@@ -123,5 +123,7 @@
   "aiConsentContinue": "متابعة",
   "aiConsentNotNow": "ليس الآن",
   "aiConsentSaveFailed": "تعذّر حفظ اختيارك. تحقّق من الاتصال وحاول مرة أخرى.",
-  "queueStateConsent": "بانتظار موافقتك على الذكاء الاصطناعي"
+  "queueStateConsent": "بانتظار موافقتك على الذكاء الاصطناعي",
+  "imageTooLarge": "هذه الصورة كبيرة جدًا للمسح. التقط صورة جديدة وحاول مرة أخرى.",
+  "queueFailedTooLarge": "كبيرة جدًا للمسح. احذفها والتقط صورة جديدة."
 }

@@ -32,6 +32,7 @@ import { withScanRecord } from '../unverified';
 import {
   classifyJobFailure,
   handleEnhancedRefusal,
+  handleImageTooLarge,
   handleScanRefusal,
   holdForAiConsent,
   handleUnavailable,
@@ -404,6 +405,12 @@ async function runScan(
       uiState.kind === 'paused'
     ) {
       handleScanRefusal(deps, job, uiState);
+      return;
+    }
+
+    // #668: a 413 is final for this photo (not retried, not generic).
+    if (uiState.kind === 'image_too_large') {
+      handleImageTooLarge(deps, job);
       return;
     }
 

@@ -118,5 +118,7 @@
   "aiConsentContinue": "계속",
   "aiConsentNotNow": "나중에",
   "aiConsentSaveFailed": "선택을 저장하지 못했습니다. 연결을 확인하고 다시 시도하세요.",
-  "queueStateConsent": "AI 사용 동의 대기 중"
+  "queueStateConsent": "AI 사용 동의 대기 중",
+  "imageTooLarge": "이 사진은 너무 커서 스캔할 수 없습니다. 새로 촬영한 뒤 다시 시도해 주세요.",
+  "queueFailedTooLarge": "너무 커서 스캔할 수 없습니다. 삭제하고 새로 촬영해 주세요."
 }

@@ -119,5 +119,7 @@
   "aiConsentContinue": "Continuer",
   "aiConsentNotNow": "Pas maintenant",
   "aiConsentSaveFailed": "Impossible d'enregistrer ton choix. Vérifie ta connexion et réessaie.",
-  "queueStateConsent": "En attente de ton accord (IA)"
+  "queueStateConsent": "En attente de ton accord (IA)",
+  "imageTooLarge": "Cette photo est trop volumineuse pour être numérisée. Prenez une nouvelle photo et réessayez.",
+  "queueFailedTooLarge": "Trop volumineuse pour être numérisée. Supprimez-la et prenez une nouvelle photo."
 }

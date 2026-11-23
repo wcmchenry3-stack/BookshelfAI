@@ -3,6 +3,7 @@ import { Sentry } from '../sentry';
 import {
   AI_CONSENT_ERROR,
   enhancedRefusalMessage,
+  IMAGE_TOO_LARGE_ERROR,
   isTurnstileCode,
   MAX_SCAN_ATTEMPTS,
   SCAN_RETRY_DELAYS_MS,
@@ -203,6 +204,27 @@ export function handleEnhancedRefusal(
   }
 }
 
+/**
+ * #668: the server refused the photo as too large (413). The same photo fails
+ * the same way, so it is failed for good (no retry schedule, no Retry action;
+ * the queue screen offers delete only). A failed enhanced re-scan keeps the
+ * standard scan's books instead.
+ */
+export function handleImageTooLarge(deps: ScanExecDeps, job: ScanJob) {
+  const message = deps.t('imageTooLarge');
+  if (job.enhanced && job.results?.length) {
+    restorePriorResults(deps, job, { enhanced: false }, message, 'error');
+    return;
+  }
+  deps.updateJob(job.id, {
+    status: 'failed',
+    error: IMAGE_TOO_LARGE_ERROR,
+    attempts: undefined,
+    nextAttemptAt: undefined,
+  });
+  deps.showBanner({ message, type: 'error', duration: 8000 });
+}
+
 /** True when the failure has no response at all: the OS most likely suspended the upload (#213). */
 export function isNetworkSuspend(err: unknown): boolean {
   return (
@@ -247,6 +269,8 @@ export function shouldBumpUsageOnError(job: ScanJob, err: unknown, uiState: Scan
     // #586: refused before anything was taken; the counters are unchanged.
     uiState.kind !== 'requests_daily_limit' &&
     // #1023: refused before the request count.
-    uiState.kind !== 'ai_consent_required'
+    uiState.kind !== 'ai_consent_required' &&
+    // #668: refused while the upload is read, before the quota is reserved.
+    uiState.kind !== 'image_too_large'
   );
 }

@@ -118,5 +118,7 @@
   "aiConsentContinue": "继续",
   "aiConsentNotNow": "暂不",
   "aiConsentSaveFailed": "无法保存你的选择。请检查网络连接后重试。",
-  "queueStateConsent": "等待你同意使用 AI"
+  "queueStateConsent": "等待你同意使用 AI",
+  "imageTooLarge": "这张照片太大，无法扫描。请重新拍摄后再试。",
+  "queueFailedTooLarge": "太大，无法扫描。请删除后重新拍摄。"
 }

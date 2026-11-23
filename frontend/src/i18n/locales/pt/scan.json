@@ -119,5 +119,7 @@
   "aiConsentContinue": "Continuar",
   "aiConsentNotNow": "Agora não",
   "aiConsentSaveFailed": "Não foi possível salvar sua escolha. Verifique sua conexão e tente novamente.",
-  "queueStateConsent": "Aguardando seu consentimento"
+  "queueStateConsent": "Aguardando seu consentimento",
+  "imageTooLarge": "Esta foto é grande demais para ser escaneada. Tire uma nova foto e tente de novo.",
+  "queueFailedTooLarge": "Grande demais para escanear. Exclua-a e tire uma nova foto."
 }

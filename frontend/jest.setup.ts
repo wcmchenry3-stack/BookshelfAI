@@ -80,6 +80,12 @@ jest.mock('expo-font', () => ({
 // A test file that mocks 'expo-router' itself replaces this one.
 jest.mock('expo-router', () => require('./__tests__/helpers/routerMock').routerModule());
 
+// expo-image-manipulator (#668) has no native module under Jest: a stand-in that
+// records its calls (see __tests__/helpers/imageManipulatorMock.ts).
+jest.mock('expo-image-manipulator', () =>
+  require('./__tests__/helpers/imageManipulatorMock').imageManipulatorModule()
+);
+
 // AI consent (#1023): consent already given unless a test says otherwise, so
 // the scan tests written before the consent gate still upload. Consent tests
 // change `aiConsentMock` or `jest.unmock` this and render the real provider

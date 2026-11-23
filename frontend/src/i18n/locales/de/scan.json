@@ -119,5 +119,7 @@
   "aiConsentContinue": "Weiter",
   "aiConsentNotNow": "Nicht jetzt",
   "aiConsentSaveFailed": "Deine Auswahl konnte nicht gespeichert werden. Prüfe deine Verbindung und versuche es erneut.",
-  "queueStateConsent": "Wartet auf deine KI-Zustimmung"
+  "queueStateConsent": "Wartet auf deine KI-Zustimmung",
+  "imageTooLarge": "Dieses Foto ist zu groß zum Scannen. Mach ein neues Foto und versuche es erneut.",
+  "queueFailedTooLarge": "Zu groß zum Scannen. Lösche es und mach ein neues Foto."
 }

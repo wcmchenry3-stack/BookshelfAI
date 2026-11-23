@@ -118,5 +118,7 @@
   "aiConsentContinue": "続ける",
   "aiConsentNotNow": "今はしない",
   "aiConsentSaveFailed": "選択を保存できませんでした。接続を確認して、もう一度お試しください。",
-  "queueStateConsent": "AI の利用への同意待ち"
+  "queueStateConsent": "AI の利用への同意待ち",
+  "imageTooLarge": "この写真は大きすぎてスキャンできません。新しく撮影してもう一度お試しください。",
+  "queueFailedTooLarge": "大きすぎてスキャンできません。削除して新しく撮影してください。"
 }

@@ -17,6 +17,15 @@ describe('classifyScanError: every backend code maps to exactly one UI state', (
   const cases: [string, unknown, ScanUiState][] = [
     // #582: no monthly limit. A 402 from an older server (monthly or
     // enhanced monthly allowance) is a generic failure, never a limit notice.
+    // #668: every 413 the server sends is its own state (never retried).
+    ['413 image_too_large_pixels', err(413, 'image_too_large_pixels'), { kind: 'image_too_large' }],
+    [
+      '413 Image must be 5MB or smaller',
+      err(413, 'Image must be 5MB or smaller'),
+      { kind: 'image_too_large' },
+    ],
+    ['413 Request body too large', err(413, 'Request body too large'), { kind: 'image_too_large' }],
+    ['413 with no JSON body (a proxy)', err(413), { kind: 'image_too_large' }],
     [
       '402 scan_limit_reached (older server)',
       err(402, 'scan_limit_reached', { limit: 5, used: 5, period_end: '2026-11-01' }),

@@ -121,5 +121,7 @@
   "aiConsentContinue": "המשך",
   "aiConsentNotNow": "לא עכשיו",
   "aiConsentSaveFailed": "לא ניתן לשמור את הבחירה. בדוק את החיבור ונסה שוב.",
-  "queueStateConsent": "ממתין להסכמה לשימוש ב-AI"
+  "queueStateConsent": "ממתין להסכמה לשימוש ב-AI",
+  "imageTooLarge": "התמונה גדולה מדי לסריקה. צלמו תמונה חדשה ונסו שוב.",
+  "queueFailedTooLarge": "גדולה מדי לסריקה. מחקו אותה וצלמו תמונה חדשה."
 }

@@ -332,10 +332,10 @@ describe('checkCaptureStorage (#670, G5)', () => {
     expect(checkCaptureStorage({ enforceByteCap: true })).toBe('ok');
   });
 
-  it('does not enforce the 50 MB cap by default (off until #668, decision #1037)', () => {
-    expect(ENFORCE_QUEUE_BYTE_CAP).toBe(false);
+  it('enforces the 50 MB cap by default (on with the capture resize, #668)', () => {
+    expect(ENFORCE_QUEUE_BYTE_CAP).toBe(true);
     mockFileSizes['1-0.jpg'] = 80 * MB;
-    expect(checkCaptureStorage()).toBe('ok');
+    expect(checkCaptureStorage()).toBe('queue_full');
   });
 
   it('still refuses on low free space when the byte cap is off', () => {
