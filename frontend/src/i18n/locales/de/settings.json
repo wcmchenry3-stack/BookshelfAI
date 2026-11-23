@@ -17,5 +17,14 @@
   "openOnWishlist": "Wunschliste",
   "openOnMyBooks": "Meine Bücher",
   "openOnCancel": "Abbrechen",
-  "openOnSaveFailed": "Deine Auswahl konnte nicht gespeichert werden. Versuche es erneut."
+  "openOnSaveFailed": "Deine Auswahl konnte nicht gespeichert werden. Versuche es erneut.",
+  "aiConsent": "Foto-Scan mit KI",
+  "aiConsentA11y": "Foto-Scan mit KI: {{value}}",
+  "aiConsentOn": "Erlaubt",
+  "aiConsentOff": "Nicht erlaubt",
+  "aiConsentOffHint": "Vor deinem nächsten Scan wirst du gefragt.",
+  "aiConsentWithdraw": "Widerrufen",
+  "aiConsentWithdrawHint": "Sendet keine Scan-Fotos mehr an Anthropic, bis du es wieder erlaubst",
+  "aiConsentWithdrawn": "KI-Scan ist aus. Vor deinem nächsten Scan wirst du gefragt.",
+  "aiConsentWithdrawFailed": "Widerruf fehlgeschlagen. Prüfe deine Verbindung und versuche es erneut."
 }

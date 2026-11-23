@@ -73,6 +73,10 @@ jest.mock('../../components/FeedbackWidget/FeedbackContext', () => ({
 jest.mock('../../contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
+// #1023: the AI consent provider sits between Auth and ScanJob.
+jest.mock('../../contexts/AiConsentContext', () => ({
+  AiConsentProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 jest.mock('../../contexts/BannerContext', () => ({
   BannerProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));

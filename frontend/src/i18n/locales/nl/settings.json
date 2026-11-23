@@ -17,5 +17,14 @@
   "openOnWishlist": "Verlanglijst",
   "openOnMyBooks": "Mijn Boeken",
   "openOnCancel": "Annuleren",
-  "openOnSaveFailed": "Je keuze kon niet worden opgeslagen. Probeer het opnieuw."
+  "openOnSaveFailed": "Je keuze kon niet worden opgeslagen. Probeer het opnieuw.",
+  "aiConsent": "Foto's scannen met AI",
+  "aiConsentA11y": "Foto's scannen met AI: {{value}}",
+  "aiConsentOn": "Toegestaan",
+  "aiConsentOff": "Niet toegestaan",
+  "aiConsentOffHint": "We vragen het je vóór je volgende scan.",
+  "aiConsentWithdraw": "Intrekken",
+  "aiConsentWithdrawHint": "Stuurt geen scanfoto's meer naar Anthropic tot je het weer toestaat",
+  "aiConsentWithdrawn": "Scannen met AI staat uit. We vragen het je vóór je volgende scan.",
+  "aiConsentWithdrawFailed": "Intrekken is mislukt. Controleer je verbinding en probeer het opnieuw."
 }

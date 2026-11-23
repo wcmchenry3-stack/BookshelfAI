@@ -20,6 +20,7 @@ import { BookCandidatePicker } from '../components/BookCandidatePicker';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { GestureRoot } from '../components/GestureRoot';
 import { InAppBanner } from '../components/InAppBanner';
+import { AiConsentProvider } from '../contexts/AiConsentContext';
 import { AuthProvider } from '../contexts/AuthContext';
 import { BannerProvider } from '../contexts/BannerContext';
 import { ScanJobProvider } from '../contexts/ScanJobContext';
@@ -159,16 +160,19 @@ function RootLayout() {
         <ThemeProvider>
           <BannerProvider>
             <AuthProvider>
-              {/* One hidden Turnstile widget for every POST /scan (#740). */}
-              <TurnstileProvider>
-                <ScanJobProvider>
-                  <FeedbackProvider>
-                    <InAppBanner />
-                    <InnerStack />
-                    <GlobalScanModals />
-                  </FeedbackProvider>
-                </ScanJobProvider>
-              </TurnstileProvider>
+              {/* Consent before any scan photo goes to the AI provider (#1023). */}
+              <AiConsentProvider>
+                {/* One hidden Turnstile widget for every POST /scan (#740). */}
+                <TurnstileProvider>
+                  <ScanJobProvider>
+                    <FeedbackProvider>
+                      <InAppBanner />
+                      <InnerStack />
+                      <GlobalScanModals />
+                    </FeedbackProvider>
+                  </ScanJobProvider>
+                </TurnstileProvider>
+              </AiConsentProvider>
             </AuthProvider>
           </BannerProvider>
         </ThemeProvider>

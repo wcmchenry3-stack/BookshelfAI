@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Sentry } from '../lib/sentry';
 import { checkCaptureStorage } from '../lib/scanJobStorage';
+import { useAiConsent } from './useAiConsent';
 import { useBanner } from './useBanner';
 
 interface Options {
@@ -19,11 +20,13 @@ interface Options {
 /**
  * Photo capture for the Scan screen: the native camera shutter sequence and
  * the web file input. Both refuse while the queue is full and hand the photo
- * to `startScan`.
+ * to `startScan`. The shutter and the web picker ask for AI consent first
+ * (#1023, `requestCapture` / `requestWebPick`): Not now takes no photo.
  */
 export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facing }: Options) {
   const { t } = useTranslation('scan');
   const { showBanner } = useBanner();
+  const { status: consentStatus, ensureConsent } = useAiConsent();
   const [capturing, setCapturing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
   const captureSeq = useRef(0);
@@ -156,5 +159,33 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
     }
   }
 
-  return { cameraRef, webInputRef, capturing, handleCapture, handleWebFileChange };
+  // #1023: ask before the photo is taken. A state that cannot be read
+  // (offline) does not ask: the photo only waits in the queue, and its upload
+  // checks consent again.
+  async function requestCapture() {
+    if (capturing) return;
+    if (await ensureConsent({ allowUnknown: true })) await handleCapture();
+  }
+
+  function requestWebPick() {
+    // Known consent: open the picker in the same tap (browsers only open a
+    // file picker from a user gesture). Otherwise ask first, then open it.
+    if (consentStatus === 'given') {
+      webInputRef.current?.click();
+      return;
+    }
+    void ensureConsent({ allowUnknown: true }).then((ok) => {
+      if (ok) webInputRef.current?.click();
+    });
+  }
+
+  return {
+    cameraRef,
+    webInputRef,
+    capturing,
+    handleCapture,
+    requestCapture,
+    requestWebPick,
+    handleWebFileChange,
+  };
 }

@@ -79,3 +79,11 @@ jest.mock('expo-font', () => ({
 // useRouter, useLocalSearchParams and useFocusEffect (see __tests__/helpers/routerMock.ts).
 // A test file that mocks 'expo-router' itself replaces this one.
 jest.mock('expo-router', () => require('./__tests__/helpers/routerMock').routerModule());
+
+// AI consent (#1023): consent already given unless a test says otherwise, so
+// the scan tests written before the consent gate still upload. Consent tests
+// change `aiConsentMock` or `jest.unmock` this and render the real provider
+// (see __tests__/helpers/aiConsentMock.ts).
+jest.mock('./hooks/useAiConsent', () =>
+  require('./__tests__/helpers/aiConsentMock').aiConsentModule()
+);

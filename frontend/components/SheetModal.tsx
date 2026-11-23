@@ -1,15 +1,8 @@
-import { useEffect, useRef, type ReactNode } from 'react';
-import {
-  AccessibilityInfo,
-  findNodeHandle,
-  Modal,
-  Platform,
-  StyleSheet,
-  View,
-  type TextInstance,
-} from 'react-native';
+import { type ReactNode } from 'react';
+import { Modal, Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useModalTitleFocus } from '../hooks/useModalTitleFocus';
 import { useTheme } from '../hooks/useTheme';
 import { AppText } from './ui/AppText';
 import { Button } from './ui/Button';
@@ -56,20 +49,8 @@ export default function SheetModal({
   const { theme } = useTheme();
   const { colors } = theme;
   const insets = useSafeAreaInsets();
-  const titleRef = useRef<TextInstance>(null);
+  const titleRef = useModalTitleFocus(visible);
   const isIOS = Platform.OS === 'ios';
-
-  useEffect(() => {
-    // react-native-web's findNodeHandle always throws; the web Modal already
-    // moves focus into the dialog, so native focusing is skipped there.
-    if (!visible || Platform.OS === 'web') return;
-    // Wait a beat so the node is mounted inside the Modal before focusing.
-    const timer = setTimeout(() => {
-      const node = titleRef.current ? findNodeHandle(titleRef.current) : null;
-      if (node) AccessibilityInfo.setAccessibilityFocus(node);
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [visible]);
 
   return (
     <Modal

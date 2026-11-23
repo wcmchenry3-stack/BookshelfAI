@@ -6,6 +6,22 @@ import type { ScanJob } from '../scanJob';
 
 type TFn = (key: string, options?: Record<string, unknown>) => string;
 
+/** How a send was started: by the user (may ask for AI consent) or by the drain. */
+export interface ExecuteScanOptions {
+  /** True when the user just asked for this send, so the consent prompt may show. */
+  interactive?: boolean;
+}
+
+/** AI consent as the scan pipeline sees it (#1023; AiConsentProvider's state). */
+export interface ScanAiConsentGate {
+  /** True only when consent is known to stand; never asks. */
+  check: () => Promise<boolean>;
+  /** Asks with the prompt when needed; true once consent stands. */
+  ensure: () => Promise<boolean>;
+  /** The server refused for lack of consent. */
+  markRequired: () => void;
+}
+
 /**
  * Everything executeScan needs from ScanJobProvider, passed as one object.
  * Refs are the provider's own and are read at call time, never captured once;
@@ -42,4 +58,6 @@ export interface ScanExecDeps {
   stopDrainRef: MutableRefObject<'none' | 'enhanced' | 'images'>;
   getTurnstileTokenRef: MutableRefObject<(signal?: AbortSignal) => Promise<string | null>>;
   turnstileConfiguredRef: MutableRefObject<boolean>;
+  /** AI consent (#1023): no photo is uploaded until it stands. */
+  aiConsentRef: MutableRefObject<ScanAiConsentGate>;
 }

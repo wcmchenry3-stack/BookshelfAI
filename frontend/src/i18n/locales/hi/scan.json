@@ -111,5 +111,13 @@
   "addItYourself": "खुद जोड़ें",
   "unverifiedSavedMessage": "{{title}} को आपकी विशलिस्ट में असत्यापित के रूप में जोड़ा गया।",
   "scanInProgress": "आपकी किताबें पढ़ी जा रही हैं और मिलान खोजे जा रहे हैं…",
-  "searchInProgress": "खोज रही है…"
+  "searchInProgress": "खोज रही है…",
+  "aiConsentTitle": "स्कैनिंग में AI का उपयोग होता है",
+  "aiConsentBody": "आपकी किताबें पहचानने के लिए Bookshelf आपकी फ़ोटो Anthropic को भेजता है, जो एक AI प्रदाता है। फ़ोटो सहेजी नहीं जातीं; हम सिर्फ़ एक फ़िंगरप्रिंट और मिली किताबों की सूची 30 दिनों तक रखते हैं।",
+  "aiConsentPrivacy": "गोपनीयता नीति",
+  "aiConsentPrivacyHint": "गोपनीयता नीति आपके ब्राउज़र में खोलता है",
+  "aiConsentContinue": "जारी रखें",
+  "aiConsentNotNow": "अभी नहीं",
+  "aiConsentSaveFailed": "आपकी पसंद सहेजी नहीं जा सकी। अपना कनेक्शन जाँचें और फिर से कोशिश करें।",
+  "queueStateConsent": "AI सहमति का इंतज़ार"
 }

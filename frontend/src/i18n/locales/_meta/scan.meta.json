@@ -572,5 +572,44 @@
     "description": "Progress line on the scan screen while a typed book search is running; shown with a spinner until the result or an error arrives",
     "tone": "neutral",
     "characterLimit": 30
+  },
+  "aiConsentTitle": {
+    "description": "Title of the prompt shown before the first scan photo is sent to the AI provider (#1023)",
+    "tone": "neutral",
+    "characterLimit": 32
+  },
+  "aiConsentBody": {
+    "description": "Body of the AI consent prompt: where the photo goes and what is kept. Keep 'Bookshelf' and 'Anthropic' as is",
+    "tone": "neutral",
+    "characterLimit": 240
+  },
+  "aiConsentPrivacy": {
+    "description": "Link in the AI consent prompt that opens the privacy policy",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "aiConsentPrivacyHint": {
+    "description": "Screen-reader hint for the privacy policy link: it opens in the browser",
+    "tone": "neutral"
+  },
+  "aiConsentContinue": {
+    "description": "Button in the AI consent prompt that agrees and records consent",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "aiConsentNotNow": {
+    "description": "Button in the AI consent prompt that declines for now (no scan)",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "aiConsentSaveFailed": {
+    "description": "Error inside the AI consent prompt when consent could not be saved",
+    "tone": "neutral",
+    "characterLimit": 110
+  },
+  "queueStateConsent": {
+    "description": "State of a queued photo that waits until the user allows AI scanning",
+    "tone": "neutral",
+    "characterLimit": 40
   }
 }

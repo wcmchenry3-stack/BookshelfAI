@@ -56,6 +56,8 @@ export type ScanUiState =
       /** Seconds until enhanced scans are allowed again (throttled only). */
       retryAfterSeconds?: number;
     }
+  /** #1023: the server enforces AI consent and this account has none. */
+  | { kind: 'ai_consent_required' }
   | { kind: 'generic' };
 
 /** Why the server refused an enhanced scan (#533). */
@@ -69,6 +71,9 @@ export type ScanNotice =
   | { kind: 'paused' };
 
 /** `error` values a refused (re-queued) job carries. */
+/** A queued photo's `error` while it waits for AI consent (#1023). */
+export const AI_CONSENT_ERROR = 'ai_consent';
+
 export const REFUSAL_ERRORS: readonly string[] = [
   'daily_limit',
   'requests_daily_limit',
@@ -76,6 +81,8 @@ export const REFUSAL_ERRORS: readonly string[] = [
   'in_progress',
   // #604: waiting on the retry schedule (503 scan_unavailable).
   'unavailable',
+  // #1023: waiting for AI consent.
+  AI_CONSENT_ERROR,
 ];
 
 /**
@@ -201,6 +208,7 @@ export function classifyScanError(err: unknown): ScanUiState {
   const { status } = response;
   const detail = typeof response.data?.detail === 'string' ? response.data.detail : undefined;
 
+  if (status === 403 && detail === 'ai_consent_required') return { kind: 'ai_consent_required' };
   if (status === 403 && detail === 'enhanced_requires_premium') {
     return { kind: 'enhanced_refused', reason: 'premium_required' };
   }

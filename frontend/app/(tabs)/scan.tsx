@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useScanJobs } from '../../hooks/useScanJobs';
+import { useAiConsent } from '../../hooks/useAiConsent';
 import { useBanner } from '../../hooks/useBanner';
 import { useScanUsage } from '../../hooks/useScanUsage';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
@@ -50,7 +51,7 @@ export default function ScanScreen() {
   function queueFullMessage(): string {
     return t(isScanningLimited(scanNotice, jobs ?? []) ? 'queueFullLimited' : 'queueFull');
   }
-  function handleRetryNotice() {
+  async function handleRetryNotice() {
     // Offline: keep the notice and say why nothing was sent.
     if (!isConnected) {
       showBanner({
@@ -60,9 +61,14 @@ export default function ScanScreen() {
       });
       return;
     }
+    // #1023: the user asked to send the saved photos, so ask for consent
+    // first (the drain alone never asks). Not now keeps them queued.
+    const photosWaiting = (jobs ?? []).some((j) => j.type === 'image' && j.status === 'queued');
+    if (photosWaiting && !(await ensureConsent())) return;
     resumeQueue?.();
   }
   const { showBanner } = useBanner();
+  const { ensureConsent } = useAiConsent();
   const [permission, requestPermission] = useCameraPermissions();
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   // This screen's own navigation object: `setParams` there acts on the Scan route,
@@ -82,12 +88,13 @@ export default function ScanScreen() {
   }, [mode, navigation]);
   const [query, setQuery] = useState('');
   const [facing, setFacing] = useState<CameraFacing>('back');
-  const { cameraRef, webInputRef, capturing, handleCapture, handleWebFileChange } = useScanCapture({
-    startScan,
-    isQueueFull,
-    queueFullMessage,
-    facing,
-  });
+  const { cameraRef, webInputRef, capturing, requestCapture, requestWebPick, handleWebFileChange } =
+    useScanCapture({
+      startScan,
+      isQueueFull,
+      queueFullMessage,
+      facing,
+    });
 
   function handleSearch() {
     const q = query.trim();
@@ -205,7 +212,7 @@ export default function ScanScreen() {
           {progressPanel}
           <Pressable
             style={[styles.webCaptureButton, { backgroundColor: activeColor }]}
-            onPress={() => webInputRef.current?.click()}
+            onPress={requestWebPick}
             accessibilityRole="button"
             accessibilityLabel={t('captureA11y')}
             accessibilityHint={t('captureHint')}
@@ -325,7 +332,7 @@ export default function ScanScreen() {
           {/* Shutter: outer ring in activeColor, inner disc in onSurface */}
           <Pressable
             style={[styles.captureButton, { borderColor: activeColor }]}
-            onPress={handleCapture}
+            onPress={() => void requestCapture()}
             disabled={capturing}
             accessibilityRole="button"
             accessibilityLabel={t('captureA11y')}

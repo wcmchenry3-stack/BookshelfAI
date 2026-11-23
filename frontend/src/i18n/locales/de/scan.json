@@ -111,5 +111,13 @@
   "addItYourself": "Selbst hinzufügen",
   "unverifiedSavedMessage": "{{title}} wurde als ungeprüft zu deiner Wunschliste hinzugefügt.",
   "scanInProgress": "Deine Bücher werden gelesen und Treffer gesucht…",
-  "searchInProgress": "Suche läuft…"
+  "searchInProgress": "Suche läuft…",
+  "aiConsentTitle": "Beim Scannen hilft KI",
+  "aiConsentBody": "Um deine Bücher zu erkennen, sendet Bookshelf dein Foto an Anthropic, einen KI-Anbieter. Fotos werden nicht gespeichert; wir behalten nur einen Fingerabdruck und die Liste der gefundenen Bücher, 30 Tage lang.",
+  "aiConsentPrivacy": "Datenschutzerklärung",
+  "aiConsentPrivacyHint": "Öffnet die Datenschutzerklärung im Browser",
+  "aiConsentContinue": "Weiter",
+  "aiConsentNotNow": "Nicht jetzt",
+  "aiConsentSaveFailed": "Deine Auswahl konnte nicht gespeichert werden. Prüfe deine Verbindung und versuche es erneut.",
+  "queueStateConsent": "Wartet auf deine KI-Zustimmung"
 }

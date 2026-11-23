@@ -30,8 +30,10 @@ const FORBIDDEN = 'forbidden';
 /** Short machine codes safe to send as the `api.detail` tag. */
 const KNOWN_DETAILS: ReadonlySet<string> = new Set([
   FORBIDDEN,
-  // 403 the app handles (premium-only enhanced scan): recognised, not reported.
+  // 403s the app handles (premium-only enhanced scan; AI consent, #1023):
+  // recognised, not reported.
   'enhanced_requires_premium',
+  'ai_consent_required',
   // 503 scan pause/outage codes (scanErrors.ts): recognised, not reported.
   'scan_disabled',
   'enhanced_scan_disabled',

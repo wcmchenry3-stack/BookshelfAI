@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { EnrichedBook } from '../components/BookCandidatePicker';
 import { useAuth } from '../hooks/useAuth';
 import { useBanner } from '../hooks/useBanner';
+import { useScanAiConsent } from '../hooks/useScanAiConsent';
 import { useScanQueue } from '../hooks/useScanQueue';
 import { useScanReview } from '../hooks/useScanReview';
 import { useTurnstile } from '../hooks/useTurnstile';
@@ -25,7 +26,7 @@ import {
   sweepOrphanedScanFiles,
 } from '../lib/scanJobStorage';
 import { executeScan } from '../lib/scan/executeScan';
-import type { ScanExecDeps } from '../lib/scan/types';
+import type { ExecuteScanOptions, ScanExecDeps } from '../lib/scan/types';
 import type { UnverifiedDraft } from '../lib/unverified';
 
 /** An "Add it yourself" form waiting to be shown, with its own id (#616). */
@@ -153,7 +154,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       ),
     []
   );
-  const executeScanRef = useRef<(job: ScanJob) => Promise<void>>(async () => {});
+  const executeScanRef = useRef<(job: ScanJob, o?: ExecuteScanOptions) => Promise<void>>(
+    async () => {}
+  );
   // Set when the initial load fails, so the persist effect below doesn't
   // immediately overwrite storage with the empty `jobs` state it starts
   // with — we don't know what was actually stored. Consumed on first fire.
@@ -349,6 +352,9 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
     executeScanRef,
   });
 
+  // AI consent (#1023): the upload gate, and a drain once consent is given.
+  const aiConsentRef = useScanAiConsent({ jobsRef, drainingRef, drainAgainRef, drainQueue });
+
   const pendingCount = useMemo(() => jobs.filter(isPendingUpload).length, [jobs]);
   const isQueueFull = pendingCount >= MAX_QUEUE_SIZE;
 
@@ -444,7 +450,7 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       const updated: ScanJob = { ...job, enhanced: true, status: 'pending', error: undefined };
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
       setReviewingJobId(null);
-      await executeScanRef.current(updated);
+      await executeScanRef.current(updated, { interactive: true });
     },
     [setJobsAndRef]
   );
@@ -497,15 +503,17 @@ export function ScanJobProvider({ children }: { children: React.ReactNode }) {
       stopDrainRef,
       getTurnstileTokenRef,
       turnstileConfiguredRef,
+      aiConsentRef,
     };
-    executeScanRef.current = (job: ScanJob) => executeScan(deps, job);
-    // updateJob, setJobsAndRef, drainQueue and imageInFlight never change, so
-    // listing them re-runs this no more often than the values below.
+    executeScanRef.current = (job, options) => executeScan(deps, job, options);
+    // updateJob, setJobsAndRef, drainQueue, imageInFlight and aiConsentRef
+    // never change, so listing them re-runs this no more often than the rest.
   }, [
     updateJob,
     setJobsAndRef,
     drainQueue,
     imageInFlight,
+    aiConsentRef,
     showBanner,
     t,
     i18n,

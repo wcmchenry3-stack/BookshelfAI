@@ -111,5 +111,13 @@
   "addItYourself": "Add it yourself",
   "unverifiedSavedMessage": "Added {{title}} to your wishlist as unverified.",
   "scanInProgress": "Reading your books and looking up matches…",
-  "searchInProgress": "Searching…"
+  "searchInProgress": "Searching…",
+  "aiConsentTitle": "Scanning uses AI",
+  "aiConsentBody": "To identify your books, Bookshelf sends your photo to Anthropic, an AI provider. Photos aren't stored; we keep only a fingerprint and the list of books found, for 30 days.",
+  "aiConsentPrivacy": "Privacy policy",
+  "aiConsentPrivacyHint": "Opens the privacy policy in your browser",
+  "aiConsentContinue": "Continue",
+  "aiConsentNotNow": "Not now",
+  "aiConsentSaveFailed": "Couldn't save your choice. Check your connection and try again.",
+  "queueStateConsent": "Waiting for AI consent"
 }

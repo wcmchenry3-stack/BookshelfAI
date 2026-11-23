@@ -111,5 +111,13 @@
   "addItYourself": "Añádelo tú",
   "unverifiedSavedMessage": "{{title}} se añadió a tu lista de deseos sin verificar.",
   "scanInProgress": "Leyendo tus libros y buscando coincidencias…",
-  "searchInProgress": "Buscando…"
+  "searchInProgress": "Buscando…",
+  "aiConsentTitle": "El escaneo usa IA",
+  "aiConsentBody": "Para identificar tus libros, Bookshelf envía tu foto a Anthropic, un proveedor de IA. Las fotos no se guardan; solo conservamos una huella y la lista de libros encontrados durante 30 días.",
+  "aiConsentPrivacy": "Política de privacidad",
+  "aiConsentPrivacyHint": "Abre la política de privacidad en tu navegador",
+  "aiConsentContinue": "Continuar",
+  "aiConsentNotNow": "Ahora no",
+  "aiConsentSaveFailed": "No se pudo guardar tu elección. Revisa tu conexión e inténtalo de nuevo.",
+  "queueStateConsent": "Esperando tu permiso (IA)"
 }

@@ -17,5 +17,14 @@
   "openOnWishlist": "Lista de deseos",
   "openOnMyBooks": "Mis Libros",
   "openOnCancel": "Cancelar",
-  "openOnSaveFailed": "No se pudo guardar tu elección. Inténtalo de nuevo."
+  "openOnSaveFailed": "No se pudo guardar tu elección. Inténtalo de nuevo.",
+  "aiConsent": "Escaneo de fotos con IA",
+  "aiConsentA11y": "Escaneo de fotos con IA: {{value}}",
+  "aiConsentOn": "Permitido",
+  "aiConsentOff": "No permitido",
+  "aiConsentOffHint": "Te lo preguntaremos antes de tu próximo escaneo.",
+  "aiConsentWithdraw": "Retirar",
+  "aiConsentWithdrawHint": "Deja de enviar fotos de escaneo a Anthropic hasta que lo vuelvas a permitir",
+  "aiConsentWithdrawn": "El escaneo con IA está desactivado. Te lo preguntaremos antes del próximo.",
+  "aiConsentWithdrawFailed": "No se pudo retirar. Revisa tu conexión e inténtalo de nuevo."
 }

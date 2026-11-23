@@ -4,7 +4,7 @@ import * as Crypto from 'expo-crypto';
 
 import { isReportedCentrally, sanitizeApiError } from '../lib/apiErrorReporting';
 import { Sentry } from '../lib/sentry';
-import type { ScanExecDeps } from '../lib/scan/types';
+import type { ExecuteScanOptions, ScanExecDeps } from '../lib/scan/types';
 import { hasRefusedJobs, MAX_SCAN_RETRY_DELAY_MS } from '../lib/scanErrors';
 import {
   isAwaitingRetry,
@@ -46,8 +46,11 @@ export type ScanQueueDeps = Pick<
   jobs: ScanJob[];
   loaded: boolean;
   /** The latest executeScan, set by the provider; read at call time. */
-  executeScanRef: MutableRefObject<(job: ScanJob) => Promise<void>>;
+  executeScanRef: MutableRefObject<(job: ScanJob, options?: ExecuteScanOptions) => Promise<void>>;
 };
+
+// A send the user asked for: it may show the AI consent prompt (#1023).
+const BY_USER: ExecuteScanOptions = { interactive: true };
 
 /**
  * The scan queue (#604, #605): the drain (one at a time, `drainingRef` /
@@ -311,7 +314,7 @@ export function useScanQueue({
           return;
         }
 
-        await executeScanRef.current(job);
+        await executeScanRef.current(job, BY_USER);
       } catch (err) {
         if (!isReportedCentrally(err)) {
           Sentry.captureException(sanitizeApiError(err));
@@ -358,7 +361,7 @@ export function useScanQueue({
         failedAt: undefined,
       };
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
-      await executeScanRef.current(updated);
+      await executeScanRef.current(updated, BY_USER);
     },
     [showBanner, t, jobsRef, updateJob, setJobsAndRef, executeScanRef]
   );
@@ -411,7 +414,7 @@ export function useScanQueue({
         nextAttemptAt: undefined,
       };
       setJobsAndRef((prev) => prev.map((j) => (j.id === jobId ? updated : j)));
-      await executeScanRef.current(updated);
+      await executeScanRef.current(updated, BY_USER);
     },
     [
       setJobsAndRef,
