@@ -376,7 +376,8 @@ the Render dashboard by the owner. Secrets never go in this repo, a PR, a
 chat message, or an MCP tool argument (including the Render MCP server —
 paste values by hand in the dashboard UI instead). This applies to the
 Supabase pooler URL, JWT keypair, Google OAuth credentials, the Anthropic
-key, Turnstile, and Sentry DSNs.
+key, Turnstile, Sentry DSNs, the Resend key and the Supabase Storage
+service-role key (#694).
 
 ## Environment values
 
@@ -434,19 +435,57 @@ To roll back, clear `ORIGIN_AUTH_SECRET` (lockdown off) and/or set
 
 Transactional email (account-deletion confirmation, data-export link, later
 purchase receipts and quota notices) is sent through [Resend](https://resend.com),
-server-side only. The app doesn't send any email yet; the Phase 2 account
-deletion and export stories add the code and its settings.
+server-side only, through `backend/app/services/email.py`. The first email is
+the data-export link (#694); account deletion (#291) will reuse the sender.
 
 | What | Value |
 |---|---|
 | Sending domain | `mail.buffingchi.com` (verified in Resend, region `us-east-1`) |
-| From address | any address on that domain, e.g. `noreply@mail.buffingchi.com`. Nothing to create: Resend sends as any address on a verified domain |
+| From address | `EMAIL_FROM` (default `noreply@mail.buffingchi.com`), sent as `Bookshelf <address>`; any address on the verified domain works. Nothing to create: Resend sends as any address on a verified domain |
 | Reply-to | a real inbox via Cloudflare Email Routing on `buffingchi.com` (#678). Resend only sends. Set with `EMAIL_REPLY_TO` (default `support@buffingchi.com`; one bare address; a blank value counts as unset and falls back to the default) |
 | `RESEND_API_KEY` | dashboard secret (`sync: false`) on both API services; one key per environment, **Sending access** only, restricted to `mail.buffingchi.com`. Set on dev and prod (2026-10-26) |
 
 Apple's "Hide My Email" relay drops mail from senders that aren't registered:
 the sending domain and from address must be listed under Apple Developer →
 Services → **Sign in with Apple for Email Communication** (#679).
+
+## Account export storage (Supabase Storage, #694)
+
+The "Export my data" files are JSON documents in a **private** Supabase
+Storage bucket of the same Supabase project as the database (prod project for
+`bookshelf-api`, the `dev` branch's project for `bookshelf-api-dev`). The API
+reaches it over the Storage REST API with the project's service-role key;
+users download through a signed URL that expires after 7 days, and the daily
+cleanup deletes the file after that. Until all three settings below are set,
+`POST /account/export` answers `503 export_not_configured` and nothing is
+written: the code ships switched off.
+
+Owner setup, per environment (dev first):
+
+1. Supabase dashboard > Storage > **New bucket**: name `account-exports`
+   (or set `EXPORT_BUCKET` to another name), **Public bucket: off**. No
+   storage policies are needed (the service-role key bypasses them, and
+   nothing else may read the bucket). Optional: file size limit 50 MB,
+   allowed MIME type `application/json`.
+2. Supabase dashboard > Project Settings > API: copy the **Project URL**
+   and the **service_role** key (not the anon / publishable key).
+3. Render dashboard, the API service > Environment: set `SUPABASE_URL` (the
+   Project URL, `https://<ref>.supabase.co`, nothing after the host) and
+   `SUPABASE_SERVICE_ROLE_KEY` as secrets (`sync: false` in `render.yaml`;
+   paste by hand). `RESEND_API_KEY` is already set (see Email above).
+4. Redeploy, then in the app: Settings > Export my data. The email arrives
+   from `noreply@mail.buffingchi.com` with a link; the file downloads as
+   `bookshelf-export-<date>.json`. In Supabase > Storage the object is under
+   `exports/`. A second request the same day answers "once a day".
+
+To switch it off again, unset `SUPABASE_URL` (queued exports wait; files
+already made still expire and are purged once it is set again; their links
+expire on their own). The service-role key bypasses every Supabase access
+policy of the project: keep it only in the Render dashboard, rotate it in
+Supabase if it leaks, and never put it in the app. Storage use is in `storage-and-retention.md` (about 1.4 MB per
+1,000 books per export, at most one export per user a day, kept 7 days);
+Supabase Pro includes a storage quota well above that (check the plan page
+when it changes).
 
 ## Health checks
 

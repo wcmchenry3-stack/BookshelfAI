@@ -142,6 +142,7 @@ class TestCleanupIsolation:
         "purge_trash",
         "purge_old_library_events",
         "purge_expired_idempotency_keys",
+        "purge_account_exports",
     ]
 
     @staticmethod

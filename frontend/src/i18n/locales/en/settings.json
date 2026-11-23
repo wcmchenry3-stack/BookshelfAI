@@ -26,5 +26,16 @@
   "aiConsentWithdraw": "Withdraw",
   "aiConsentWithdrawHint": "Stops sending scan photos to Anthropic until you allow it again",
   "aiConsentWithdrawn": "AI scanning is off. You'll be asked before your next scan.",
-  "aiConsentWithdrawFailed": "Couldn't withdraw. Check your connection and try again."
+  "aiConsentWithdrawFailed": "Couldn't withdraw. Check your connection and try again.",
+  "exportData": "Export my data",
+  "exportDataHint": "Get a copy of your data by email",
+  "exportConfirmTitle": "Export your data?",
+  "exportConfirmBody": "We'll email you a link to a file with your library and account data. The link works for 7 days.",
+  "exportConfirm": "Export",
+  "exportCancel": "Cancel",
+  "exportQueued": "We'll email you a link to your data. It works for 7 days.",
+  "exportLimited_one": "You can export once a day. Try again in {{count}} hour.",
+  "exportLimited_other": "You can export once a day. Try again in {{count}} hours.",
+  "exportUnavailable": "Data export isn't available yet. Try again later.",
+  "exportFailed": "Couldn't request your export. Check your connection and try again."
 }

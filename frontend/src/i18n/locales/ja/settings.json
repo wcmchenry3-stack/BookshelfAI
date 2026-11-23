@@ -26,5 +26,15 @@
   "aiConsentWithdraw": "取り消す",
   "aiConsentWithdrawHint": "再び許可するまで、スキャン写真を Anthropic に送信しません",
   "aiConsentWithdrawn": "AI スキャンをオフにしました。次回のスキャン前に確認します。",
-  "aiConsentWithdrawFailed": "取り消せませんでした。接続を確認して、もう一度お試しください。"
+  "aiConsentWithdrawFailed": "取り消せませんでした。接続を確認して、もう一度お試しください。",
+  "exportData": "データをエクスポート",
+  "exportDataHint": "データのコピーをメールで受け取ります",
+  "exportConfirmTitle": "データをエクスポートしますか?",
+  "exportConfirmBody": "ライブラリとアカウントのデータを含むファイルへのリンクをメールでお送りします。リンクは 7 日間有効です。",
+  "exportConfirm": "エクスポート",
+  "exportCancel": "キャンセル",
+  "exportQueued": "データへのリンクをメールでお送りします。7 日間有効です。",
+  "exportLimited_other": "エクスポートは 1 日 1 回までです。{{count}} 時間後にもう一度お試しください。",
+  "exportUnavailable": "データのエクスポートはまだご利用いただけません。後でもう一度お試しください。",
+  "exportFailed": "エクスポートを依頼できませんでした。接続を確認して、もう一度お試しください。"
 }

@@ -88,6 +88,17 @@ services:
       # fails over it.
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Account export (#694): the project URL and service-role key of the
+      # Supabase project holding the PRIVATE `account-exports` bucket, and
+      # the Resend key for the email with the link. Dashboard secrets only;
+      # any of them unset = POST /account/export answers 503
+      # export_not_configured. See docs/deployment.md.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
 
   # --- Production static web (branch main). autoDeploy is off — see the note
   # on bookshelf-api above; same workflow deploys both.
@@ -210,6 +221,17 @@ services:
       # without it they answer 503 scan_unavailable (refunded). Boot never
       # fails over it.
       - key: ANTHROPIC_API_KEY
+        sync: false
+      # Account export (#694): the project URL and service-role key of the
+      # Supabase project holding the PRIVATE `account-exports` bucket, and
+      # the Resend key for the email with the link. Dashboard secrets only;
+      # any of them unset = POST /account/export answers 503
+      # export_not_configured. See docs/deployment.md.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RESEND_API_KEY
         sync: false
 
   - type: web

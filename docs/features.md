@@ -20,7 +20,7 @@ Navigation is file-based via `expo-router`. Two route groups:
   sign-out (confirm prompt; best-effort `POST /auth/logout` with the refresh token, then local
   sign-out and redirect to login). Server-side revocation is best-effort: if it times out (5 s)
   or the device is offline, the refresh token stays valid server-side until it expires
-  (7 days). "Sign out of all devices" is the remedy and does not exist yet. A **Send feedback** row opens the feedback sheet (see Feedback below).
+  (7 days). "Sign out of all devices" is the remedy and does not exist yet. A **Send feedback** row opens the feedback sheet (see Feedback below). An **Export my data** row asks for a copy of the account's data by email (see Data export below).
 
 ## Core flows
 
@@ -203,6 +203,17 @@ Apple 5.1.2(i): before the first scan photo goes to Anthropic, the app asks.
 - **Server refusal**: when `AI_CONSENT_REQUIRED` is on and the server answers `403 ai_consent_required` (for example consent was withdrawn on another device), the app forgets the consent and keeps the photo queued; a send the user started shows the prompt instead of an error, the background drain does not (no prompt at launch).
 - **Known gap, accepted for rollout A**: the app reads the consent state once per session. While `AI_CONSENT_REQUIRED` is off, a withdrawal made on another device takes effect on this device only after the app restarts or the state is read again (sign-in, or a server refusal), so photos sent in between still go. Turning `AI_CONSENT_REQUIRED` on closes the gap on the server.
 - **Settings** ("AI photo scanning") shows Allowed / Not allowed and offers **Withdraw**, which applies at once; the next scan asks again.
+
+### Data export (#694)
+
+Settings **Export my data** ("Get a copy of your data by email") asks "Export your data?" (the link comes by email and works for 7 days); **Export** sends `POST /account/export` with the app's language, **Cancel** sends nothing. The row is disabled while the request runs.
+
+- **Queued (`202`):** banner "We'll email you a link to your data. It works for 7 days." A background job on the server builds one JSON file with everything the app keeps about the account (profile, library including the trash, unverified books, scan records and corrections, scan counters and usage, the library history, devices, sign-in sessions, earlier exports, and the catalog entries the library points at; never tokens, keys or another user's data), stores it privately and emails the account's address a download link in the app's language. The link stops working after 7 days and the file is deleted.
+- **Once a day (`409 export_limit`):** "You can export once a day. Try again in N hours." (N from `Retry-After`, rounded up).
+- **Not set up (`503 export_not_configured`):** "Data export isn't available yet. Try again later." The server ships with export off until the owner configures storage.
+- **Anything else** (offline, a server error): "Couldn't request your export. Check your connection and try again." A retry of the same request carries the same `Idempotency-Key`, so it never queues two exports.
+
+Strings live in the `settings` namespace (`export*`). Code: `frontend/components/AccountExportSetting.tsx`, `frontend/lib/accountExport.ts`; server in `docs/api.md` (`POST /account/export`).
 
 ## Offline resilience
 

@@ -25,15 +25,36 @@ class EmailSettings(BaseSettings):
     # this address to. A blank env var is treated as unset (env_ignore_empty),
     # so the default applies; there is no way to disable it from the environment.
     email_reply_to: str = "support@buffingchi.com"
+    # From address of transactional email (#694): an address on the domain
+    # verified in Resend (mail.buffingchi.com). Sent as "Bookshelf <address>".
+    email_from: str = "noreply@mail.buffingchi.com"
+    # Resend API key: a secret, from the environment only, never logged. Empty
+    # = no email can be sent, so the account export stays off (503
+    # export_not_configured, app/services/account_export_jobs.py).
+    resend_api_key: str = ""
 
     @field_validator("email_reply_to")
     @classmethod
     def valid_email_reply_to(cls, v: str) -> str:
-        v = v.strip()
-        if (
-            len(v) > _MAX_LENGTH
-            or len(v.partition("@")[0]) > _MAX_LOCAL_LENGTH
-            or not _EMAIL_ADDRESS_PATTERN.fullmatch(v)
-        ):
-            raise ValueError("EMAIL_REPLY_TO must be a single plain email address")
-        return v
+        return _plain_address(v, "EMAIL_REPLY_TO")
+
+    @field_validator("email_from")
+    @classmethod
+    def valid_email_from(cls, v: str) -> str:
+        return _plain_address(v, "EMAIL_FROM")
+
+    @field_validator("resend_api_key")
+    @classmethod
+    def strip_resend_api_key(cls, v: str) -> str:
+        return v.strip()
+
+
+def _plain_address(v: str, name: str) -> str:
+    v = v.strip()
+    if (
+        len(v) > _MAX_LENGTH
+        or len(v.partition("@")[0]) > _MAX_LOCAL_LENGTH
+        or not _EMAIL_ADDRESS_PATTERN.fullmatch(v)
+    ):
+        raise ValueError(f"{name} must be a single plain email address")
+    return v

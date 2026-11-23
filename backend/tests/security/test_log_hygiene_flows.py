@@ -10,8 +10,8 @@ Flows covered today: Google sign-in, refresh, logout, sign out of all
 devices (logout-all) and the revoked-token rejections after it (#689),
 refresh-token reuse detection and its Sentry alert (#690),
 library add (wishlist), delete (to the trash), the trash list and restore
-(#683), a scan, the allowlist-reject path, and a
-server error. Account
+(#683), a scan, the account export request and its delivery job (#694),
+the allowlist-reject path, and a server error. Account
 deletion does not exist yet: the story that adds it must drive its flow inside
 ``capture()`` here (see ``tests/_log_hygiene.py``).
 
@@ -570,6 +570,136 @@ class TestAiConsentFlow:
         assert db.user.ai_consent is False
         assert "AI consent withdrawn" in "\n".join(cap.log_texts)
         _clean(cap, tokens=[access])
+
+
+class _ExportDb(FakeDb):
+    """``FakeDb`` plus what the account export (#694) reads and writes: the
+    cap lookup (``scalar``), the export row (``get`` / ``add``) and the
+    worker's fenced updates of it (applied to the row)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.export = None
+
+    async def scalar(self, _stmt):
+        return None  # no export in the last 24 hours
+
+    async def get(self, model, pk, **_options):
+        from app.models.account_export import AccountExport
+
+        if model is AccountExport:
+            return self.export
+        return await super().get(model, pk)
+
+    def add(self, obj):
+        from app.models.account_export import AccountExport
+
+        if isinstance(obj, AccountExport):
+            self.export = obj
+        else:
+            super().add(obj)
+
+    async def connection(self, **_kwargs):
+        pass  # the build's snapshot options; nothing to emulate
+
+    async def execute(self, stmt):
+        from sqlalchemy.sql.dml import Update
+
+        if isinstance(stmt, Update) and self.export is not None:
+            for column, bind in stmt._values.items():
+                setattr(self.export, column.key, bind.value)
+        return await super().execute(stmt)
+
+
+class TestAccountExportFlow:
+    def test_request_and_delivery_log_ids_only(self, monkeypatch):
+        """#694: queueing an export and the job that uploads it, signs the
+        link and emails it never log the address, the link, its token or
+        the storage and email keys."""
+        import httpx
+
+        from app.core.database import get_db
+        from app.services import _http_retry, account_export_jobs
+        from app.services.object_storage import ObjectStorage
+
+        db = _ExportDb()
+
+        async def _db():
+            yield db
+
+        app.dependency_overrides[get_db] = _db
+        monkeypatch.setattr(_http_retry, "BACKOFF_S", 0)
+        service_key = f"svc-{uuid.uuid5(uuid.NAMESPACE_URL, 'hygiene-storage')}"
+        resend_key = f"rs-{uuid.uuid5(uuid.NAMESPACE_URL, 'hygiene-resend')}"
+        token = f"tok-{uuid.uuid5(uuid.NAMESPACE_URL, 'hygiene-link')}"
+        sent = []
+
+        def supabase(request):
+            if "/object/sign/" in request.url.path:
+                return httpx.Response(
+                    200, json={"signedURL": f"/object/sign/b/x.json?token={token}"}
+                )
+            return httpx.Response(200, json={})
+
+        def resend(request):
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": "e"})
+
+        storage = ObjectStorage(
+            "https://ref.supabase.co",
+            service_key,
+            "account-exports",
+            transport=httpx.MockTransport(supabase),
+        )
+
+        class _Sessions:
+            async def __aenter__(self):
+                return db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        client = TestClient(app)
+        try:
+            with (
+                lh.capture() as cap,
+                patch.multiple(
+                    settings,
+                    supabase_url="https://ref.supabase.co",
+                    supabase_service_role_key=service_key,
+                    resend_api_key=resend_key,
+                ),
+            ):
+                tokens = _sign_in(client).json()
+                auth = {"Authorization": f"Bearer {tokens['access_token']}"}
+                resp = client.post("/account/export", headers=auth)
+                assert resp.status_code == 202, resp.text
+                # As claim_next leaves it.
+                db.export.status, db.export.claimed_at = "running", NOW
+                delivered = asyncio.run(
+                    account_export_jobs.process(
+                        account_export_jobs.Claim(db.export.id, NOW),
+                        storage,
+                        sessions=_Sessions,
+                        email_transport=httpx.MockTransport(resend),
+                    )
+                )
+        finally:
+            app.dependency_overrides.clear()
+        assert delivered and db.export.status == "ready"
+        (message,) = sent
+        assert message["to"] == [EMAIL] and token in message["text"]
+        assert "Account export queued" in "\n".join(cap.log_texts)
+        _clean(
+            cap,
+            tokens=[
+                tokens["access_token"],
+                tokens["refresh_token"],
+                token,
+                service_key,
+                resend_key,
+            ],
+        )
 
 
 class TestScanFlow:

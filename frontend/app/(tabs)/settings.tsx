@@ -13,6 +13,7 @@ import { noMatchRemainingToday, remainingToday } from '../../components/ScanStat
 import { ThemeToggleButton } from '../../components/ThemeToggleButton';
 import { OpenOnSetting } from '../../components/OpenOnSetting';
 import { AiConsentSetting } from '../../components/AiConsentSetting';
+import { AccountExportSetting } from '../../components/AccountExportSetting';
 import { useFeedback } from '../../components/FeedbackWidget/FeedbackContext';
 import { openTrash } from '../../lib/trash';
 import { fontFor } from '../../theme/typography';
@@ -119,6 +120,7 @@ export default function SettingsScreen() {
           {t('trashHint')}
         </Text>
       </Pressable>
+      <AccountExportSetting />
       <Pressable
         onPress={openFeedback}
         style={styles.feedback}

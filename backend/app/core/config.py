@@ -11,12 +11,10 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from app.ai.models_allowlist import (
-    MAX_TOKENS_BOUNDS,
-    TIMEOUT_S_BOUNDS,
-)
+from app.ai.models_allowlist import MAX_TOKENS_BOUNDS, TIMEOUT_S_BOUNDS
 from app.core.db_url import to_async_url
 from app.core.email_settings import EmailSettings
+from app.core.storage_settings import StorageSettings
 
 # Supabase's transaction pooler (transaction-mode pooling) doesn't support
 # asyncpg's server-side prepared statements, which asyncpg uses by default. It
@@ -113,7 +111,7 @@ class _BlankGuardSource(PydanticBaseSettingsSource):
         return {}
 
 
-class Settings(EmailSettings, BaseSettings):
+class Settings(EmailSettings, StorageSettings, BaseSettings):
     # hide_input_in_errors: a validation error must never echo a secret value
     # (e.g. ORIGIN_AUTH_SECRET) into boot logs.
     # env_ignore_empty (#648): a blank env var (process or .env) is treated as

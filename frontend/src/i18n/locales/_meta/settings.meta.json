@@ -132,5 +132,60 @@
     "description": "Banner when withdrawing consent failed",
     "tone": "neutral",
     "characterLimit": 90
+  },
+  "exportData": {
+    "description": "Settings row label that asks for a copy of the user's data by email (#694)",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "exportDataHint": {
+    "description": "Subtitle and screen-reader hint of the Export my data row",
+    "tone": "neutral",
+    "characterLimit": 60
+  },
+  "exportConfirmTitle": {
+    "description": "Title of the export confirmation prompt",
+    "tone": "neutral",
+    "characterLimit": 30
+  },
+  "exportConfirmBody": {
+    "description": "Body of the export confirmation prompt: a link by email, valid 7 days",
+    "tone": "neutral",
+    "characterLimit": 140
+  },
+  "exportConfirm": {
+    "description": "Confirm button of the export prompt",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "exportCancel": {
+    "description": "Cancel button of the export prompt",
+    "tone": "neutral",
+    "characterLimit": 20
+  },
+  "exportQueued": {
+    "description": "Banner after the export was requested: the link comes by email, valid 7 days",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "exportLimited_one": {
+    "description": "Banner when an export was already requested today; {{count}} is the hours until the next one is allowed",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "exportLimited_other": {
+    "description": "Banner when an export was already requested today; {{count}} is the hours until the next one is allowed",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "exportUnavailable": {
+    "description": "Banner when the server cannot export yet (not set up)",
+    "tone": "neutral",
+    "characterLimit": 90
+  },
+  "exportFailed": {
+    "description": "Banner when the export request failed (offline or a server error)",
+    "tone": "neutral",
+    "characterLimit": 90
   }
 }

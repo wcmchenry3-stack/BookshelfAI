@@ -1,14 +1,25 @@
-"""The signed-in user's own settings (#913) and AI consent (#1023).
+"""The signed-in user's own settings (#913), AI consent (#1023) and data
+export (#694).
 
 ``PATCH /users/me/preferences`` and ``POST`` / ``DELETE /users/me/ai-consent``
 change only the caller's row: the user comes
 from the access token (``get_current_user``), never from the request. ``GET
 /auth/me`` returns the same fields.
+
+``POST /account/export`` (``account_router``) queues an export and answers
+``202``; the worker (``app/services/account_export_jobs.py``) builds the JSON
+file and emails a link valid for 7 days to the account's address. One export
+per user per 24 hours (or 3 failed ones): a further request
+inside the window is ``409`` with
+``{"code": "export_limit", "retry_after": <seconds>}`` and ``Retry-After``
+(409, not 429, so the app's retry layer leaves it alone). Until Supabase
+Storage and Resend are configured it is ``503 export_not_configured``. The
+body only picks the email's language.
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._idempotency import IdempotencyRoute, idempotent
@@ -17,12 +28,19 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.limiter import limiter
 from app.models.user import User
+from app.schemas.account import AccountExportQueued, AccountExportRequest
 from app.schemas.auth import AiConsentRead, UserPreferences, UserPreferencesUpdate
-from app.services import ai_consent
+from app.services import account_export_jobs, ai_consent
 
 logger = logging.getLogger(__name__)
 # Every write here honours Idempotency-Key (#685).
 router = APIRouter(prefix="/users", tags=["users"], route_class=IdempotencyRoute)
+account_router = APIRouter(
+    prefix="/account", tags=["account"], route_class=IdempotencyRoute
+)
+
+EXPORT_NOT_CONFIGURED = "export_not_configured"
+EXPORT_LIMIT = "export_limit"
 
 
 @router.patch("/me/preferences", response_model=UserPreferences)
@@ -90,3 +108,41 @@ async def withdraw_ai_consent(
     if changed:
         logger.info("AI consent withdrawn (user_id=%s)", current_user.id)
     return current_user
+
+
+@account_router.post(
+    "/export",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=AccountExportQueued,
+)
+@limiter.limit(settings.rate_limit_writes)
+@idempotent
+async def request_account_export(
+    request: Request,
+    body: AccountExportRequest | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AccountExportQueued:
+    """Queue a copy of the user's data, emailed as a link (#694)."""
+    if not account_export_jobs.configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=EXPORT_NOT_CONFIGURED,
+        )
+    locale = body.locale if body is not None else "en"
+    try:
+        export = await account_export_jobs.request_export(db, current_user, locale)
+    except account_export_jobs.ExportLimited as exc:
+        logger.info("Account export refused: cap (user_id=%s)", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": EXPORT_LIMIT, "retry_after": exc.retry_after},
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    queued = AccountExportQueued.model_validate(export)
+    await db.commit()
+    account_export_jobs.wake()
+    logger.info(
+        "Account export queued (user_id=%s export_id=%s)", current_user.id, queued.id
+    )
+    return queued

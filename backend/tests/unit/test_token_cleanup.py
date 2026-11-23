@@ -280,6 +280,10 @@ class TestTransientRetry:
                 "app.services.token_cleanup.purge_expired_idempotency_keys",
                 AsyncMock(return_value=0),
             ),
+            patch(
+                "app.services.token_cleanup.purge_account_exports",
+                AsyncMock(return_value=0),
+            ),
             patch("app.services.token_cleanup._INITIAL_DELAY_SECONDS", 0),
             patch("app.services.token_cleanup._INTERVAL_SECONDS", 9999),
             patch("app.services.token_cleanup._RETRY_BASE_DELAY_SECONDS", base_delay),

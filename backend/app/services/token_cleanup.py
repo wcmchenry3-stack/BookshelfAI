@@ -33,7 +33,12 @@ The same daily run also purges, in bounded batches:
   ``LIBRARY_EVENTS_RETENTION_DAYS`` (default 180), under its own advisory
   lock (app/services/library_events_retention.py, #684);
 - stored ``Idempotency-Key`` responses (``idempotency_keys``) older than 24
-  hours, which are never replayed (app/services/idempotency.py, #685).
+  hours, which are never replayed (app/services/idempotency.py, #685);
+- account exports (``account_exports`` and their files in Supabase Storage)
+  whose 7-day link expired, failed or unfinished ones older than 7 days
+  (file first, then row), and any export file older than 8 days that no row
+  points at
+  (app/services/account_export_purge.py, #694).
 
 Every step opens its session from ``JobSessionLocal``, so each transaction
 runs under ``STATEMENT_TIMEOUT_JOB_MS`` (default 60 s) rather than the 5 s
@@ -68,6 +73,9 @@ from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
 from app.auth.refresh_family import purge_refresh_tokens
 from app.core.database import JobSessionLocal
+from app.services import object_storage
+from app.services.account_export_purge import purge_expired as purge_account_exports
+from app.services.account_export_purge import sweep_orphans as sweep_export_objects
 from app.services.idempotency import purge_expired as purge_expired_idempotency_keys
 from app.services.library_events_retention import purge_old_library_events
 from app.services.trash import purge_trash
@@ -218,6 +226,18 @@ async def _purge_idempotency_keys() -> None:
         logger.info("token_cleanup: purged %d expired idempotency key(s)", purged)
 
 
+async def _purge_account_exports() -> None:
+    storage = object_storage.from_settings()
+    async with JobSessionLocal() as db:
+        purged = await purge_account_exports(db, storage)
+        swept = await sweep_export_objects(storage, db) if storage is not None else 0
+    logger.info(
+        "token_cleanup: purged %d account export(s), swept %d old export file(s)",
+        purged,
+        swept,
+    )
+
+
 async def cleanup_expired_tokens() -> None:
     """Long-running coroutine; meant to be wrapped in asyncio.create_task()."""
     await asyncio.sleep(_INITIAL_DELAY_SECONDS)
@@ -232,6 +252,7 @@ async def cleanup_expired_tokens() -> None:
         await _run_step(_purge_trash, "trash")
         await _run_step(_purge_library_events, "library events")
         await _run_step(_purge_idempotency_keys, "idempotency keys")
+        await _run_step(_purge_account_exports, "account exports")
         await _run_step(_purge_refresh_tokens)
 
         await asyncio.sleep(_INTERVAL_SECONDS)

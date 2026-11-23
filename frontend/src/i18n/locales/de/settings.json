@@ -26,5 +26,16 @@
   "aiConsentWithdraw": "Widerrufen",
   "aiConsentWithdrawHint": "Sendet keine Scan-Fotos mehr an Anthropic, bis du es wieder erlaubst",
   "aiConsentWithdrawn": "KI-Scan ist aus. Vor deinem nächsten Scan wirst du gefragt.",
-  "aiConsentWithdrawFailed": "Widerruf fehlgeschlagen. Prüfe deine Verbindung und versuche es erneut."
+  "aiConsentWithdrawFailed": "Widerruf fehlgeschlagen. Prüfe deine Verbindung und versuche es erneut.",
+  "exportData": "Meine Daten exportieren",
+  "exportDataHint": "Eine Kopie deiner Daten per E-Mail erhalten",
+  "exportConfirmTitle": "Daten exportieren?",
+  "exportConfirmBody": "Wir schicken dir per E-Mail einen Link zu einer Datei mit deiner Bibliothek und deinen Kontodaten. Der Link gilt 7 Tage.",
+  "exportConfirm": "Exportieren",
+  "exportCancel": "Abbrechen",
+  "exportQueued": "Wir schicken dir per E-Mail einen Link zu deinen Daten. Er gilt 7 Tage.",
+  "exportLimited_one": "Du kannst einmal am Tag exportieren. Versuche es in {{count}} Stunde erneut.",
+  "exportLimited_other": "Du kannst einmal am Tag exportieren. Versuche es in {{count}} Stunden erneut.",
+  "exportUnavailable": "Der Datenexport ist noch nicht verfügbar. Versuche es später erneut.",
+  "exportFailed": "Export fehlgeschlagen. Prüfe deine Verbindung und versuche es erneut."
 }

@@ -164,6 +164,16 @@ LIBRARY_EVENTS_RETENTION_DAYS=180      # 1..730, days the library audit log keep
 ```
 In dev, `CORS_ORIGINS` must include the Expo dev-server origin. The wildcard `*` is blocked by a validator in `app/core/config.py`.
 
+### Account export (optional)
+```bash
+SUPABASE_URL=                            # leave blank locally: "Export my data" answers 503 export_not_configured
+SUPABASE_SERVICE_ROLE_KEY=               # secret; only with a Supabase project of your own and a PRIVATE bucket
+EXPORT_BUCKET=account-exports            # the bucket's id
+RESEND_API_KEY=                          # secret; blank = no email, so the export stays off
+EMAIL_FROM=noreply@mail.buffingchi.com   # an address on a domain verified in Resend
+```
+All three of `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `RESEND_API_KEY` are needed to try the export end to end; it then sends a real email. A local Supabase stack (`supabase start`) works with `SUPABASE_URL=http://localhost:54321` (http is accepted only for localhost). Without them everything else runs as usual, and the tests never call either service.
+
 ### Client IP and origin lockdown
 ```bash
 TRUSTED_PROXY_MODE=                      # leave blank: defaults to none locally (cloudflare when ENVIRONMENT is staging/production)

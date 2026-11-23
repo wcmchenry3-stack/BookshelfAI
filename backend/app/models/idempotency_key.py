@@ -74,7 +74,7 @@ class IdempotencyKey(Base):
     # The response to replay; NULL while pending. 204s have no body.
     response_status: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Only ETag and Location (``idempotency.REPLAYED_HEADERS``).
+    # Only ETag, Location and Retry-After (``idempotency.REPLAYED_HEADERS``).
     response_headers: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Set from the app's clock (the 24 h window and the pending lease are
     # measured against it); the server default is a fallback.

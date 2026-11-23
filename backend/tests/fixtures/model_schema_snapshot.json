@@ -2300,5 +2300,188 @@
       "CheckConstraint:ck_idempotency_keys_state",
       "UniqueConstraint:uq_idempotency_keys_user_key"
     ]
+  },
+  "account_exports": {
+    "columns": [
+      {
+        "name": "id",
+        "type": "UUID",
+        "nullable": false,
+        "primary_key": true,
+        "index": null,
+        "unique": null,
+        "default": "callable:uuid.uuid4",
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "user_id",
+        "type": "UUID",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": [
+          "users.id ondelete=CASCADE"
+        ]
+      },
+      {
+        "name": "status",
+        "type": "VARCHAR(16)",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": "value:'pending'",
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "locale",
+        "type": "VARCHAR(16)",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "attempts",
+        "type": "SMALLINT",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": "value:0",
+        "server_default": "value:'0'",
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "claimed_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "completed_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "object_path",
+        "type": "VARCHAR(255)",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "size_bytes",
+        "type": "BIGINT",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "delivery_url",
+        "type": "TEXT",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "email_accepted_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "expires_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "error_code",
+        "type": "VARCHAR(64)",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": "sql:now()",
+        "onupdate": null,
+        "foreign_keys": []
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX ix_account_exports_expires_at ON account_exports (expires_at)",
+      "CREATE INDEX ix_account_exports_open ON account_exports (created_at) WHERE status IN ('pending', 'running', 'emailing')",
+      "CREATE INDEX ix_account_exports_user_created ON account_exports (user_id, created_at)"
+    ],
+    "constraints": [
+      "CheckConstraint:ck_account_exports_attempts",
+      "CheckConstraint:ck_account_exports_status"
+    ]
   }
 }

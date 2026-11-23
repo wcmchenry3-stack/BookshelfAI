@@ -272,7 +272,7 @@ def test_the_window_lease_and_batches_are_the_documented_ones():
     assert store.PURGE_BATCH_SIZE == 1_000
     assert store.PURGE_MAX_BATCHES == 200
     assert MAX_RESPONSE_BODY_BYTES == 65_536
-    assert store.REPLAYED_HEADERS == ("etag", "location")
+    assert store.REPLAYED_HEADERS == ("etag", "location", "retry-after")
 
 
 def test_the_clock_is_aware_utc(monkeypatch):

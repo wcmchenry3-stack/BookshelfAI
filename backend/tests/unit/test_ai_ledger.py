@@ -698,6 +698,9 @@ class TestCleanupTask:
                 "purge_expired_idempotency_keys",
                 AsyncMock(return_value=0),
             ),
+            patch.object(
+                token_cleanup, "purge_account_exports", AsyncMock(return_value=0)
+            ),
             patch.object(token_cleanup.asyncio, "sleep", sleeps),
             patch.multiple(token_cleanup, **patches),
             pytest.raises(_Stop),
