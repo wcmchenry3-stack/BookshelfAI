@@ -19,6 +19,7 @@ import {
 } from '../scanErrors';
 import {
   appendAttestationFields,
+  attestationActive,
   getAttestationFields,
   isAttestationRejection,
   onAttestationRejected,
@@ -199,19 +200,25 @@ async function runScan(
         // #1023: consent may have been withdrawn while the token, the photo
         // or a scan_in_progress wait was awaited: check again, without
         // asking, right before every post. No consent: the photo waits.
-        const consented = await deps.aiConsentRef.current.check();
-        if (signedOutSince() || signal.aborted) return null;
-        if (!consented) {
-          holdForAiConsent(deps, job);
-          return null;
-        }
+        // False also when signed out or aborted meanwhile (nothing to hold).
+        const consentStands = async () => {
+          const consented = await deps.aiConsentRef.current.check();
+          if (signedOutSince() || signal.aborted) return false;
+          if (!consented) holdForAiConsent(deps, job);
+          return consented;
+        };
+        if (!(await consentStands())) return null;
         // #870: App Attest / Play Integrity, only once consent stands, with a
         // fresh nonce for every post. At most 5 s; any failure sends the scan
         // without it (Turnstile still applies), so it never blocks a scan.
         // The Turnstile token is still fetched: the server falls back to it
         // whenever attestation is missing or fails verification.
-        const attestation = attest ? await getAttestationFields(signal) : null;
+        const attesting = attest && attestationActive();
+        const attestation = attesting ? await getAttestationFields(signal) : null;
         if (signedOutSince() || signal.aborted) return null;
+        // Consent may have been withdrawn during the (up to 5 s) attestation:
+        // check once more right before the post.
+        if (attesting && !(await consentStands())) return null;
         appendAttestationFields(body, attestation);
         sentAttestation = attestation;
         return api.post<ScanResponse>('/scan', body, {

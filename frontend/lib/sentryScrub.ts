@@ -58,6 +58,9 @@ const ALWAYS_KEYS: ReadonlySet<string> = new Set([
   'attestation-nonce',
   'attestation-assertion',
   'attestation-token',
+  'key_id',
+  'keyid',
+  'attestation-key-id',
 ]);
 // Transactions only (#715): URL query / fragment attributes are dropped wholesale.
 const QUERY_KEYS: ReadonlySet<string> = new Set([

@@ -17,6 +17,7 @@ import {
   resetInstallCheckForTests,
 } from '../../lib/freshInstall';
 import { DEFAULT_TAB_FETCH_TIMEOUT_MS } from '../../lib/defaultTab';
+import * as attestation from '../../lib/attestation/attestation';
 
 const mockPost = jest.fn();
 const mockGet = jest.fn();
@@ -362,6 +363,26 @@ describe('AuthProvider logout errors (#733 review)', () => {
     // The request gate is closed, so a token a failed delete left behind is
     // not attached to later requests.
     await expect(mockGateStoredSession.mock.calls.at(-1)?.[0]).resolves.toBe(false);
+  });
+
+  it('forgets the device attestation session on logout, so the next account starts clean (#870)', async () => {
+    const reset = jest.spyOn(attestation, 'resetAttestationState');
+    mockGetItem.mockResolvedValue('some-token');
+    const { getByTestId } = await renderCapturing();
+    await waitFor(() => expect(getByTestId('state').props.children).toBe('authed'));
+    expect(reset).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await ctx.logout();
+    });
+
+    expect(reset).toHaveBeenCalledTimes(1);
+    // Keys are per account and kept: logout deletes only the two tokens.
+    expect(mockDeleteItem.mock.calls.map((c) => c[0]).sort()).toEqual([
+      'bookshelf_access_token',
+      'bookshelf_refresh_token',
+    ]);
+    reset.mockRestore();
   });
 
   it('closes the request gate on a normal logout', async () => {

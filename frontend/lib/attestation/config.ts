@@ -26,8 +26,41 @@ export const ATTESTATION_FIELDS = {
 export const NONCE_PATH = '/attestation/nonce';
 export const REGISTER_PATH = '/attestation/register';
 
-/** SecureStore key of the registered App Attest key id (iOS). */
-export const APP_ATTEST_KEY_STORAGE_KEY = 'bookshelf_app_attest_key_id';
+/** SecureStore key prefix of the registered App Attest key id (iOS). */
+const APP_ATTEST_KEY_STORAGE_KEY ='bookshelf_app_attest_key_id';
+
+/** A registration outlives the scan that started it, but not by more than this. */
+export const REGISTRATION_TIMEOUT_MS = 15_000;
+
+/**
+ * The SecureStore key of one account's App Attest key id. The server keeps
+ * keys per user (`device_keys.user_id`), so each account on a device has its
+ * own, and a returning user keeps theirs.
+ */
+export function appAttestKeyStorageKey(userId: string): string {
+  return `${APP_ATTEST_KEY_STORAGE_KEY}.${userId}`;
+}
+
+const USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The user id (`sub`, a UUID, backend/app/auth/jwt.py) of an access token, or
+ * null. Not verified: it only picks which stored key to use; the server
+ * authenticates the request itself.
+ */
+export function userIdFromAccessToken(token: string | null | undefined): string | null {
+  const payload = token?.split('.')[1];
+  if (!payload) return null;
+  try {
+    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '='))) as {
+      sub?: unknown;
+    };
+    return typeof json.sub === 'string' && USER_ID_PATTERN.test(json.sub) ? json.sub : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The server's 403 when it was sent attestation data and rejected it. */
 export const ATTESTATION_REJECTED_DETAIL = 'Attestation verification failed';
