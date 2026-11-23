@@ -131,8 +131,10 @@ A valid assertion or integrity token grants immediate access and skips the Turns
 **Android — Play Integrity (stateless per request):**
 
 1. `POST /attestation/nonce` — same endpoint; nonce embeds the user ID and timestamp.
-2. Client requests a Play Integrity token from Google with the nonce as the request hash.
-3. `POST /scan` (platform=android + integrity_token + nonce) — server calls the Google `decodeIntegrityToken` API via `LiveAndroidIntegrityVerifier`, checks the nonce, `requestPackageName`, `MEETS_DEVICE_INTEGRITY` verdict and `PLAY_RECOGNIZED` app verdict.
+2. Client requests a **Standard** Play Integrity token from Google, passing the nonce verbatim as the `requestHash` (`@expo/app-integrity` has no Classic API). The nonce is about 150 characters, inside the Standard API's 500-character `requestHash` limit.
+3. `POST /scan` (platform=android + integrity_token + nonce) — the server first checks the nonce's HMAC signature, user binding and 5-minute expiry (`verify_nonce`), then calls the Google `decodeIntegrityToken` API via `LiveAndroidIntegrityVerifier` and requires `tokenPayloadExternal.requestDetails.requestHash` to equal the nonce exactly, plus `requestPackageName`, the `MEETS_DEVICE_INTEGRITY` device verdict and the `PLAY_RECOGNIZED` app verdict (#1050).
+4. Classic tokens are rejected: a verdict that carries only the Classic `requestDetails.nonce` field (no `requestHash`) fails, and `nonce` is never consulted. No client sends Classic tokens, and the server nonce contains a `.`, which the Classic API's base64url nonce does not allow.
+5. Nonces are stateless and **not single-use**: within its 5-minute TTL the same nonce (and the same integrity token) can be replayed for the same user. Expiry and the per-user rate limit and scan allowances bound the replay window.
 
 **Kill switches:**
 
