@@ -5,16 +5,18 @@ carry a 5-minute expiry.  They are stateless: no database write is needed to
 issue one, and verification is a pure HMAC check.
 
 Verifiers are injected via FastAPI dependencies so tests can swap in fakes.
-The default implementations call the real Apple / Google APIs; they require
-ATTESTATION_NONCE_SECRET (all), plus ATTESTATION_ANDROID_PACKAGE_NAME and
-ATTESTATION_GOOGLE_CREDENTIALS_JSON for Android.
+They require ATTESTATION_NONCE_SECRET (all), ATTESTATION_APPLE_APP_ID for iOS
+(the App Attest verifier lives in ``app.core.app_attest``, #1051), and
+ATTESTATION_ANDROID_PACKAGE_NAME plus ATTESTATION_GOOGLE_CREDENTIALS_JSON for
+Android.
 
 Apple App Attest two-step flow:
   1. POST /attestation/nonce → nonce
-  2. POST /attestation/register (key_id + attestation_object + nonce)
+  2. POST /attestation/register (key_id + attestation_b64 + nonce)
      → server verifies attestation cert chain, stores public key
-  3. POST /scan (key_id + assertion_b64 + nonce) per request
-     → server verifies assertion signature and counter, updates counter
+  3. POST /scan (key_id + assertion + nonce, after a fresh /nonce) per request
+     → server verifies assertion signature and counter, then stores the new
+       counter with a compare-and-set
 
 Android Play Integrity flow (no persistent key):
   1. POST /attestation/nonce → nonce
@@ -141,27 +143,17 @@ class AppleAttestVerifier(Protocol):
         public_key_cbor: bytes,
         nonce: str,
         stored_counter: int,
+        app_id: str,
     ) -> AssertionResult | None:
         """Verify an App Attest assertion for one /scan request.
 
         Returns AssertionResult (new counter) on success, None on any failure.
         The verifier hashes ``nonce`` as the client data and checks the
         signature against ``public_key_cbor``. Rejects if the assertion
-        counter is not strictly greater than ``stored_counter``.
+        counter is not strictly greater than ``stored_counter`` or the RP ID
+        hash is not SHA-256(``app_id``).
         """
         ...
-
-
-class StubAppleAttestVerifier:
-    """Always-reject stub — used when ATTESTATION_APPLE_APP_ID is not set."""
-
-    async def verify_attestation(self, *_args, **_kwargs) -> AttestationResult | None:
-        logger.warning("Apple App Attest not configured — attestation rejected")
-        return None
-
-    async def verify_assertion(self, *_args, **_kwargs) -> AssertionResult | None:
-        logger.warning("Apple App Attest not configured — assertion rejected")
-        return None
 
 
 # ---------------------------------------------------------------------------

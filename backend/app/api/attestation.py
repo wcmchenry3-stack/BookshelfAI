@@ -13,9 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
+from app.core.app_attest import apple_verifier
 from app.core.attestation import (
     AttestationResult,
-    StubAppleAttestVerifier,
     issue_nonce,
     verify_nonce,
 )
@@ -36,7 +36,7 @@ router = APIRouter(prefix="/attestation", tags=["attestation"])
 
 
 def get_apple_verifier():
-    return StubAppleAttestVerifier()
+    return apple_verifier()
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,9 @@ class NonceResponse(BaseModel):
 
 class RegisterRequest(BaseModel):
     key_id: str
-    attestation_b64: str  # base64url-encoded CBOR attestation object
+    # CBOR attestation object, standard base64 as DCAppAttestService returns
+    # it (base64url is accepted too).
+    attestation_b64: str
     nonce: str
 
 
@@ -91,7 +93,7 @@ async def register_device(
 ) -> RegisterResponse:
     """Register an iOS App Attest key for the authenticated user.
 
-    The client calls ``dcAppAttestService.attest(keyId, SHA256(nonce))`` and
+    The client calls ``DCAppAttestService.attestKey(keyId, SHA256(nonce))`` and
     sends the resulting attestation object here. On success the public key and
     initial counter are stored; subsequent /scan calls can use assertions
     instead of Turnstile tokens.
