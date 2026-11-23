@@ -1,15 +1,19 @@
 /**
  * Swipe to remove (#935). ReanimatedSwipeable is replaced by a stand-in that
  * renders its actions with a real Reanimated shared value as the translation
- * and keeps its props, so a test can drive the swipe through the callbacks
- * gesture-handler would call (open, close) and move the translation past the
- * full-swipe distance. The gesture itself needs a device (owner check).
+ * and keeps its props, so a test can call the callbacks gesture-handler would
+ * call (will open, will close) and move the live translation. The row's own
+ * observer pan (handed to the swipeable as `simultaneousWith`) is real and is
+ * driven with gesture-handler's jest utils: its release distance is what
+ * decides a full swipe. The gesture itself needs a device (owner check).
  */
 import React from 'react';
 import { I18nManager, Text } from 'react-native';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import * as Haptics from 'expo-haptics';
 import { useReducedMotion, type SharedValue } from 'react-native-reanimated';
+import type { PanGesture } from 'react-native-gesture-handler';
+import { createGestureController } from 'react-native-gesture-handler/jest-utils';
 
 import { SwipeToRemove as WebSwipeToRemove } from '../../components/library/SwipeToRemove.web';
 import {
@@ -26,7 +30,9 @@ interface MockRow {
   props: Record<string, unknown> & {
     enabled?: boolean;
     onSwipeableWillOpen?: (direction: string) => void;
+    onSwipeableWillClose?: (direction: string) => void;
     onSwipeableClose?: (direction: string) => void;
+    simultaneousWith?: unknown;
     renderLeftActions?: unknown;
     renderRightActions?: unknown;
     animationOptions?: unknown;
@@ -114,6 +120,47 @@ async function dragTo(row: MockRow, x: number) {
   });
 }
 
+/** Lets scheduleOnRN (asynchronous on Reanimated's web build) deliver. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+}
+
+const PAST = FULL_SWIPE_DISTANCE + 10;
+
+/** The row's observer pan, as the UI thread drives it. */
+function finger(row: MockRow) {
+  const observer = row.props.simultaneousWith as PanGesture;
+  const controller = createGestureController(observer);
+  return {
+    async down() {
+      await act(async () => controller.begin());
+      await settle();
+    },
+    /** Moves `travel` (signed) from the touch-down point and lets go. */
+    async release(travel: number) {
+      await act(async () => {
+        controller.activate({ translationX: travel / 2 });
+        controller.end({ translationX: travel });
+      });
+      await settle();
+    },
+  };
+}
+
+/** A whole swipe: touch-down, travel, let go. */
+async function swipe(row: MockRow, travel: number) {
+  const f = finger(row);
+  await f.down();
+  await f.release(travel);
+}
+
+async function willOpen(row: MockRow, direction = 'left') {
+  await act(async () => row.props.onSwipeableWillOpen?.(direction));
+  await settle();
+}
+
 beforeEach(() => {
   rows.length = 0;
   jest.clearAllMocks();
@@ -183,53 +230,114 @@ describe('SwipeToRemove (#935)', () => {
     const onRemove = jest.fn().mockResolvedValue(true);
     const impact = jest.spyOn(Haptics, 'impactAsync');
     await render(<Row onRemove={onRemove} />);
-    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
+    const f = finger(rows[0]);
+    await f.down();
+    await dragTo(rows[0], -PAST);
     expect(impact).toHaveBeenCalledTimes(1);
-    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    await f.release(-PAST);
+    await willOpen(rows[0]);
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(rows[0].close).not.toHaveBeenCalled();
   });
 
-  it('a fast flick released past the distance before the reaction ran still removes', async () => {
+  it('with Reduce Motion the row is already at the panel when told it opens: the release still removes', async () => {
+    (useReducedMotion as jest.Mock).mockReturnValue(true);
     const onRemove = jest.fn().mockResolvedValue(true);
-    const impact = jest.spyOn(Haptics, 'impactAsync');
     await render(<Row onRemove={onRemove} />);
+    await swipe(rows[0], -PAST);
+    // The spring target is applied at once: the live value is the panel width.
     await act(async () => {
-      // Cross the distance and let go in the same frame.
-      rows[0].translation.value = -(FULL_SWIPE_DISTANCE + 10);
-      rows[0].props.onSwipeableWillOpen?.('left');
-      expect(impact).not.toHaveBeenCalled();
+      rows[0].translation.value = -REMOVE_PANEL_WIDTH;
     });
+    await willOpen(rows[0]);
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it('a drag that crosses the distance and comes back under it in the same frame does not remove', async () => {
+  it('a release under the distance does not remove, even when the live value is past it', async () => {
+    const onRemove = jest.fn();
+    await render(<Row onRemove={onRemove} />);
+    await swipe(rows[0], -(FULL_SWIPE_DISTANCE - 10));
+    await act(async () => {
+      rows[0].translation.value = -PAST;
+    });
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it('a fast flick released past the distance before the haptic reaction ran still removes', async () => {
+    const onRemove = jest.fn().mockResolvedValue(true);
+    const impact = jest.spyOn(Haptics, 'impactAsync');
+    await render(<Row onRemove={onRemove} />);
+    // The live translation never moved: only the release says how far it went.
+    await swipe(rows[0], -PAST);
+    await willOpen(rows[0]);
+    expect(impact).not.toHaveBeenCalled();
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes whichever of the release and "will open" reaches JS first', async () => {
     const onRemove = jest.fn().mockResolvedValue(true);
     await render(<Row onRemove={onRemove} />);
-    // Past the distance long enough for the haptic reaction to arm…
-    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
+    const f = finger(rows[0]);
+    await f.down();
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+    await f.release(-PAST);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts the travel from an already open row', async () => {
+    const onRemove = jest.fn().mockResolvedValue(true);
+    await render(<Row onRemove={onRemove} />);
     await act(async () => {
-      // …then back under it and let go before the reaction can disarm.
       rows[0].translation.value = -REMOVE_PANEL_WIDTH;
-      rows[0].props.onSwipeableWillOpen?.('left');
     });
+    await settle();
+    // 88 open + 98 more = past 176.
+    await swipe(rows[0], -(FULL_SWIPE_DISTANCE - REMOVE_PANEL_WIDTH + 10));
+    await willOpen(rows[0]);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('a release past the distance that closes the row (a flick back) does not remove', async () => {
+    const onRemove = jest.fn();
+    await render(<Row onRemove={onRemove} />);
+    await swipe(rows[0], -PAST);
+    await act(async () => rows[0].props.onSwipeableWillClose?.('left'));
+    await settle();
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it('a drag that crosses the distance and comes back under it before letting go does not remove', async () => {
+    const onRemove = jest.fn().mockResolvedValue(true);
+    await render(<Row onRemove={onRemove} />);
+    const f = finger(rows[0]);
+    await f.down();
+    // Past the distance long enough for the haptic reaction to arm…
+    await dragTo(rows[0], -PAST);
+    // …then back under it and let go.
+    await f.release(-REMOVE_PANEL_WIDTH);
+    await willOpen(rows[0]);
     expect(onRemove).not.toHaveBeenCalled();
   });
 
   it('a short swipe only opens the row on the panel', async () => {
     const onRemove = jest.fn();
     await render(<Row onRemove={onRemove} />);
-    await dragTo(rows[0], -REMOVE_PANEL_WIDTH);
-    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    await swipe(rows[0], -REMOVE_PANEL_WIDTH);
+    await willOpen(rows[0]);
     expect(onRemove).not.toHaveBeenCalled();
   });
 
-  it('dragging back under the full-swipe distance before letting go does not remove', async () => {
+  it('a later "will open" with no swipe of its own does not reuse an old release', async () => {
     const onRemove = jest.fn();
     await render(<Row onRemove={onRemove} />);
-    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
-    await dragTo(rows[0], -REMOVE_PANEL_WIDTH);
-    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    await swipe(rows[0], -PAST);
+    // That swipe closed the row; the next touch starts afresh.
+    await act(async () => rows[0].props.onSwipeableWillClose?.('left'));
+    await finger(rows[0]).down();
+    await willOpen(rows[0]);
     expect(onRemove).not.toHaveBeenCalled();
   });
 
@@ -237,8 +345,8 @@ describe('SwipeToRemove (#935)', () => {
     let finish: (removed: boolean) => void = () => {};
     const onRemove = jest.fn(() => new Promise<boolean>((resolve) => (finish = resolve)));
     await render(<Row onRemove={onRemove} />);
-    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
-    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    await swipe(rows[0], -PAST);
+    await willOpen(rows[0]);
     expect(rows[0].close).not.toHaveBeenCalled();
     await act(async () => finish(false));
     expect(rows[0].close).toHaveBeenCalledTimes(1);
@@ -247,33 +355,54 @@ describe('SwipeToRemove (#935)', () => {
   it('springs the row back when the removal throws', async () => {
     const onRemove = jest.fn().mockRejectedValue(new Error('500'));
     await render(<Row onRemove={onRemove} />);
-    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
-    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    await swipe(rows[0], -PAST);
+    await willOpen(rows[0]);
     await waitFor(() => expect(rows[0].close).toHaveBeenCalledTimes(1));
   });
 
-  it('disables the gesture and the panel while offline and closes an open row', async () => {
-    const screen = await render(<Row onRemove={jest.fn()} />);
+  it('disables the gesture, its observer and the panel while offline and closes an open row', async () => {
+    const onRemove = jest.fn();
+    const screen = await render(<Row onRemove={onRemove} />);
     expect(rows[0].props.enabled).toBe(true);
-    await screen.rerender(<Row onRemove={jest.fn()} disabled />);
+    await screen.rerender(<Row onRemove={onRemove} disabled />);
     expect(rows[0].props.enabled).toBe(false);
     expect(rows[0].close).toHaveBeenCalled();
     expect(
       screen.getByTestId('swipe-remove-panel', { includeHiddenElements: true })
     ).toBeDisabled();
+    // The disabled observer records nothing.
+    await swipe(rows[0], -PAST);
+    await willOpen(rows[0]);
+    expect(onRemove).not.toHaveBeenCalled();
   });
 
   it('does not close the row when it is disabled by its own removal in flight', async () => {
     let finish: (removed: boolean) => void = () => {};
     const onRemove = jest.fn(() => new Promise<boolean>((resolve) => (finish = resolve)));
     const screen = await render(<Row onRemove={onRemove} />);
-    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
-    await act(async () => rows[0].props.onSwipeableWillOpen?.('left'));
+    await swipe(rows[0], -PAST);
+    await willOpen(rows[0]);
     // The screen marks the book as mutating, which disables the row.
     await screen.rerender(<Row onRemove={onRemove} disabled />);
     expect(rows[0].close).not.toHaveBeenCalled();
     await act(async () => finish(true));
     expect(rows[0].close).not.toHaveBeenCalled();
+  });
+
+  it('observes the swipe alongside it with the same 20px activation and no other condition', async () => {
+    await render(<Row onRemove={jest.fn()} />);
+    const observer = rows[0].props.simultaneousWith as {
+      type: string;
+      config: Record<string, unknown>;
+    };
+    expect(observer.type).toBe('PanGestureHandler');
+    expect(observer.config).toMatchObject({
+      activeOffsetXStart: -SWIPE_ACTIVATION_OFFSET,
+      activeOffsetXEnd: SWIPE_ACTIVATION_OFFSET,
+    });
+    for (const key of ['failOffsetXStart', 'activeOffsetYStart', 'failOffsetYStart', 'minDist']) {
+      expect(observer.config[key]).toBeUndefined();
+    }
   });
 
   it('takes the touch only after 20px sideways, so vertical scrolling wins', async () => {
@@ -296,11 +425,11 @@ describe('SwipeToRemove (#935)', () => {
       expect(rows[0].props.renderLeftActions).toBeDefined();
       expect(rows[0].props.renderRightActions).toBeUndefined();
       // A left swipe does nothing in RTL; a full right swipe removes.
-      await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
-      await act(async () => rows[0].props.onSwipeableWillOpen?.('right'));
+      await swipe(rows[0], -PAST);
+      await willOpen(rows[0], 'right');
       expect(onRemove).not.toHaveBeenCalled();
-      await dragTo(rows[0], FULL_SWIPE_DISTANCE + 10);
-      await act(async () => rows[0].props.onSwipeableWillOpen?.('right'));
+      await swipe(rows[0], PAST);
+      await willOpen(rows[0], 'right');
       expect(onRemove).toHaveBeenCalledTimes(1);
     } finally {
       restore.restore();

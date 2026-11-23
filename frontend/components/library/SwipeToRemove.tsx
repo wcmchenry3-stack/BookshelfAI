@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I18nManager, Pressable, StyleSheet, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable';
@@ -9,12 +10,14 @@ import {
   ReduceMotion,
   useAnimatedReaction,
   useReducedMotion,
+  useSharedValue,
   type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { AppText } from '../ui/AppText';
 import { useTheme } from '../../hooks/useTheme';
+import { createSwipeReleaseDecider } from './swipeRelease';
 import type { SwipeRowHandle, SwipeToRemoveProps } from './swipeToRemoveShared';
 
 /** Width of the revealed Remove panel (mockup: 88px). */
@@ -45,8 +48,8 @@ interface RemovePanelProps {
   translation: SharedValue<number>;
   /** -1 when the panel is on the right (LTR), 1 when on the left (RTL). */
   side: -1 | 1;
-  /** Gives the row the swipeable's translation, read when the swipe is let go. */
-  onTranslation: (translation: SharedValue<number>) => void;
+  /** Mirrors the swipeable's translation, so the observer pan knows where a swipe starts. */
+  liveX: SharedValue<number>;
   onArmedChange: (armed: boolean) => void;
   onPress: () => void;
   disabled: boolean;
@@ -64,7 +67,7 @@ interface RemovePanelProps {
 function RemovePanel({
   translation,
   side,
-  onTranslation,
+  liveX,
   onArmedChange,
   onPress,
   disabled,
@@ -72,7 +75,13 @@ function RemovePanel({
   text,
 }: RemovePanelProps) {
   const { theme } = useTheme();
-  useEffect(() => onTranslation(translation), [onTranslation, translation]);
+  useAnimatedReaction(
+    () => translation.value,
+    (x) => {
+      liveX.set(x);
+    },
+    [liveX]
+  );
   useAnimatedReaction(
     () => translation.value * side >= FULL_SWIPE_DISTANCE,
     (armed, previous) => {
@@ -123,8 +132,10 @@ export function SwipeToRemove({
   const { theme } = useTheme();
   const reduceMotion = useReducedMotion();
   const rowRef = useRef<SwipeableMethods>(null);
-  const translationRef = useRef<SharedValue<number> | null>(null);
   const removingRef = useRef(false);
+  const liveX = useSharedValue(0);
+  const startX = useSharedValue(0);
+  const [decider] = useState(() => createSwipeReleaseDecider(FULL_SWIPE_DISTANCE));
   const handle = useMemo<SwipeRowHandle>(() => ({ close: () => rowRef.current?.close() }), []);
   const side = I18nManager.isRTL ? 1 : -1;
 
@@ -144,23 +155,53 @@ export function SwipeToRemove({
     if (!removed) rowRef.current?.close();
   }, [onRemove]);
 
-  const onTranslation = useCallback((translation: SharedValue<number>) => {
-    translationRef.current = translation;
-  }, []);
-
   // Haptic tick only. The reaction runs a frame late, so it never decides removal.
   const onArmedChange = useCallback((armed: boolean) => {
     if (armed) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, []);
 
-  // Decided only from where the row is when the swipe is let go. The haptic
-  // reaction runs a frame later, so trusting it would both miss a same-frame
-  // flick and remove a book the user dragged back under the distance.
+  // A full swipe is decided from the release distance the observer pan below
+  // captures on the UI thread, never from the live translation: when
+  // `onSwipeableWillOpen` reaches JS the opening spring has already started
+  // (and with Reduce Motion it has already landed on the panel width). See
+  // `swipeRelease.ts` for how the two events are paired.
+  const onGestureBegin = useCallback(() => decider.begin(), [decider]);
+  const onGestureRelease = useCallback(
+    (distance: number) => {
+      if (decider.release(distance)) void remove();
+    },
+    [decider, remove]
+  );
   const onWillOpen = useCallback(() => {
     group?.onOpen(handle);
-    const travelled = (translationRef.current?.value ?? 0) * side;
-    if (travelled >= FULL_SWIPE_DISTANCE) void remove();
-  }, [group, handle, remove, side]);
+    if (decider.outcome('open')) void remove();
+  }, [decider, group, handle, remove]);
+  const onWillClose = useCallback(() => {
+    decider.outcome('close');
+  }, [decider]);
+
+  // Watches the same touches as the swipeable's own pan, alongside it
+  // (`simultaneousWith` below; gesture-handler makes that relation symmetric),
+  // with the same activation offset and no other conditions, so it neither
+  // blocks the swipe nor takes a touch the swipe would not. It only records.
+  const observerConfig = useMemo(
+    () => ({
+      enabled: !disabled,
+      activeOffsetX: [-SWIPE_ACTIVATION_OFFSET, SWIPE_ACTIVATION_OFFSET] as [number, number],
+      onBegin: () => {
+        'worklet';
+        // Touch-down: where the row rests (0, or the panel width when open).
+        startX.set(liveX.get());
+        scheduleOnRN(onGestureBegin);
+      },
+      onDeactivate: (event: { translationX: number }) => {
+        'worklet';
+        scheduleOnRN(onGestureRelease, (startX.get() + event.translationX) * side);
+      },
+    }),
+    [disabled, liveX, startX, side, onGestureBegin, onGestureRelease]
+  );
+  const observer = usePanGesture(observerConfig);
 
   const onClose = useCallback(() => group?.onClose(handle), [group, handle]);
 
@@ -175,7 +216,7 @@ export function SwipeToRemove({
       <RemovePanel
         translation={translation}
         side={side}
-        onTranslation={onTranslation}
+        liveX={liveX}
         onArmedChange={onArmedChange}
         onPress={() => void remove()}
         disabled={disabled}
@@ -183,7 +224,7 @@ export function SwipeToRemove({
         text={actionText}
       />
     ),
-    [side, onTranslation, onArmedChange, remove, disabled, label, actionText]
+    [side, liveX, onArmedChange, remove, disabled, label, actionText]
   );
   const sideProps =
     side === 1
@@ -191,20 +232,24 @@ export function SwipeToRemove({
       : { renderRightActions: renderActions, rightThreshold: OPEN_THRESHOLD };
 
   return (
-    <ReanimatedSwipeable
-      ref={rowRef}
-      enabled={!disabled}
-      dragOffsetFromLeft={SWIPE_ACTIVATION_OFFSET}
-      dragOffsetFromRight={-SWIPE_ACTIVATION_OFFSET}
-      animationOptions={reduceMotion ? REDUCED_MOTION_OPTIONS : SPRING_OPTIONS}
-      onSwipeableWillOpen={onWillOpen}
-      onSwipeableClose={onClose}
-      childrenContainerStyle={{ backgroundColor: theme.colors.background }}
-      testID="swipe-to-remove"
-      {...sideProps}
-    >
-      {children}
-    </ReanimatedSwipeable>
+    <GestureDetector gesture={observer} touchAction="pan-y">
+      <ReanimatedSwipeable
+        ref={rowRef}
+        simultaneousWith={observer}
+        enabled={!disabled}
+        dragOffsetFromLeft={SWIPE_ACTIVATION_OFFSET}
+        dragOffsetFromRight={-SWIPE_ACTIVATION_OFFSET}
+        animationOptions={reduceMotion ? REDUCED_MOTION_OPTIONS : SPRING_OPTIONS}
+        onSwipeableWillOpen={onWillOpen}
+        onSwipeableWillClose={onWillClose}
+        onSwipeableClose={onClose}
+        childrenContainerStyle={{ backgroundColor: theme.colors.background }}
+        testID="swipe-to-remove"
+        {...sideProps}
+      >
+        {children}
+      </ReanimatedSwipeable>
+    </GestureDetector>
   );
 }
 
