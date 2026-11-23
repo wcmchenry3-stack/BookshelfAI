@@ -24,7 +24,8 @@ from tests._idempotency_fake import FakeRow, install_fake_store
 
 ALICE = uuid.UUID("00000000-0000-0000-0000-00000000a685")
 BOB = uuid.UUID("00000000-0000-0000-0000-00000000b685")
-KEY = "6f1c2c1e-5d0e-4bb8-9d71-2a1d0f1e6851"
+# Built, not a literal: gitleaks reads a high-entropy `KEY = "..."` as a secret.
+KEY = str(uuid.uuid5(uuid.NAMESPACE_URL, "bookshelfai-test-idempotency-key"))
 
 
 @pytest.fixture
