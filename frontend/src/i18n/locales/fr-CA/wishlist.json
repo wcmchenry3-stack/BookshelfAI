@@ -24,5 +24,8 @@
   "rowHint": "Touchez pour voir les détails ou le retirer",
   "errorLoadWishlist": "Impossible de charger la liste.",
   "errorUpdateStatus": "Impossible de mettre à jour le statut.",
-  "errorRemoveBook": "Impossible de retirer le livre."
+  "errorRemoveBook": "Impossible de retirer le livre.",
+  "swipeHint": "Balayez un livre vers la gauche pour le retirer",
+  "a11yActionRemove": "Retirer",
+  "swipeRemoveA11y": "Retirer {{title}} de la liste de souhaits"
 }

@@ -328,7 +328,7 @@ Call the backend through the `api` instance in `lib/api.ts` (never bare `axios`,
 
 ### Native dependencies (#901)
 
-Installed with `npx expo install` (versions pinned by Expo SDK 58's `bundledNativeModules.json`); never hand-pick a version. Nothing imports expo-haptics, Reanimated or a gesture yet: later issues do.
+Installed with `npx expo install` (versions pinned by Expo SDK 58's `bundledNativeModules.json`); never hand-pick a version. The first app code to use expo-haptics, Reanimated and a gesture is the Wishlist swipe to remove (#935, below).
 
 Before #901, gesture-handler 3.4.0, Reanimated 4.7.1 and Worklets 0.13.1 were already installed and autolinked as peers of `expo-router` / `react-native-drawer-layout` (expo-modules-autolinking follows non-optional peers recursively). Listing them as direct dependencies pins them to SDK 58's bundled versions instead of whatever transitive resolution floats to, so this moves gesture-handler 3.4.0 to 3.3.0 and Worklets 0.13.1 to 0.13.0; Reanimated stays 4.7.1.
 
@@ -343,7 +343,22 @@ Before #901, gesture-handler 3.4.0, Reanimated 4.7.1 and Worklets 0.13.1 were al
 - **Babel:** `babel-preset-expo` already adds `react-native-worklets/plugin` when `react-native-worklets` is installed, so listing it in `babel.config.js` is redundant (`react-native-reanimated/plugin` just re-exports it in 4.7.1). `__tests__/unit/BabelWorklets.test.ts` checks that the app config transforms a `'worklet'` function and that the preset with `worklets: false, reanimated: false` does not, so the plugin comes from the preset.
 - **Web bundle:** `GestureRoot.web.tsx` is a plain `flex: 1` View, so the web entry bundle does not import gesture-handler (which pulls in Reanimated and Worklets, about +201 KB gzip, +20%). Web pays for gesture-handler only when a web feature imports it. The stand-in does not provide gesture-handler's root-view context, which its web handlers read, so the first web feature with a gesture must render the real `GestureHandlerRootView` in `GestureRoot.web.tsx`. Tests: `__tests__/unit/GestureRoot.test.tsx`.
 - **Native projects:** Android and iOS autolink all five (`expo-modules-autolinking`), so adding them changed nothing under `android/` and only `ios/Podfile.properties.json` under `ios/`. `Podfile.lock` came from the `Podfile lock` workflow (see `ios-ci.md` § Podfile.lock from the `Podfile lock` workflow), not from a Mac. That workflow's `pod install` also rewrites `project.pbxproj` and `PrivacyInfo.xcprivacy` (privacy-manifest aggregation, as in #994); those are deliberately not committed.
-- **Jest:** expo-image, expo-haptics and `GestureHandlerRootView` work under Jest without a mock (`__tests__/unit/NativeDeps.test.tsx`; its expo-haptics case also keeps knip from flagging the package until a real import lands, then delete it). Reanimated does not: see "Reanimated under Jest" in `testing.md`.
+- **Jest:** expo-image, expo-haptics and `GestureHandlerRootView` work under Jest without a mock (`__tests__/unit/NativeDeps.test.tsx`; its expo-haptics case was removed in #935 once the swipe imported expo-haptics). Reanimated and gesture-handler need the Jest setup #935 added: see "Reanimated and gesture-handler under Jest" in `testing.md`.
+
+### Swipe to remove on Wishlist rows (#935)
+
+On iOS and Android a Wishlist row swipes towards the start edge to reveal an 88px Remove panel (`danger` fill, `onDanger` icon and text). A short swipe (past half the panel) leaves the row open on the panel; a full swipe (past twice the panel, a haptic tick as it crosses) removes straight away. Removal is `useLibraryMutations.removeBook`, so the Trash banner and the error alert are the usual ones; once it settles the row closes, so a failure springs back.
+
+- **Where:** `LibraryRow` takes `onSwipeRemove` (plus `removeActionLabel`, `swipeRemoveLabel`, `swipeDisabled`, `swipeGroup`) and wraps itself in `components/library/SwipeToRemove.tsx` (gesture-handler's `ReanimatedSwipeable`). Only Wishlist passes it; My Books keeps its ⋯ menu and has no swipe.
+- **Platforms:** `SwipeToRemove.web.tsx` renders the row as is, so the web bundle never imports gesture-handler, Reanimated or Worklets (`GestureRoot.web.tsx` stays a plain View). Web removes through the detail sheet, and shows no hint.
+- **RTL:** with `I18nManager.isRTL` the panel is on the left (`renderLeftActions`) and the swipe goes right.
+- **One open row:** `useSingleOpenRow()` (`swipeToRemoveShared.ts`) gives the list a stable group; opening a row closes the open one, and the FlatList's `onScrollBeginDrag` closes it too.
+- **Offline:** `swipeDisabled={!isConnected}` turns the gesture off (`enabled={false}`) and closes an open row.
+- **Scroll conflicts:** RNGH 3.3's `ReanimatedSwipeable` has no `activeOffsetX` / `failOffsetY` props. It sets the pan's `activeOffsetX` from `dragOffsetFromLeft` / `dragOffsetFromRight`, which are ±20 (default ±10) so a vertical scroll or pull to refresh that drifts sideways stays a scroll. There is no `failOffsetY` equivalent; `simultaneousWith` / `requireToFail` / `block` take RNGH gestures only, and the list is RN's FlatList.
+- **Reduce Motion:** the spring always has `overshootClamping: true`; with Reanimated's `useReducedMotion()` on, `reduceMotion: ReduceMotion.Always` (no animation).
+- **Accessibility:** the panel is a real button labelled `wishlist:swipeRemoveA11y` ("Remove {{title}} from wishlist"). Screen readers do not swipe: on iOS and Android the row's body button has `accessibilityActions=[{ name: 'remove', label: t('a11yActionRemove') }]` and `onAccessibilityAction` (VoiceOver Actions rotor, TalkBack actions menu); activating the row still opens the detail sheet. The footer hint `wishlist:swipeHint` shows on native only and only while no screen reader runs (`hooks/useScreenReaderEnabled`, shared with `InAppBanner`).
+- **Performance:** rows stay memoised: the screen passes stable callbacks (`removeFromRow` via a ref, like `markBought`), a stable group and a primitive `swipeDisabled`. The drag runs in Reanimated shared values, so it re-renders nothing in JS. The FlatList keeps the #929 tuning (`LIBRARY_LIST_PROPS`).
+- **Tests:** `__tests__/unit/SwipeToRemove.test.tsx` (stand-in `ReanimatedSwipeable` driven through its callbacks and a real shared value), `__tests__/unit/WishlistSwipe.test.tsx` (screen: action, hint, offline, scroll, My Books). The gesture, VoiceOver and TalkBack need a device.
 
 ### Dependencies: retired `decode-uri-component` vendor (#779, removed in #886)
 

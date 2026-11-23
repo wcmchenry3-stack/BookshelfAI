@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, Platform, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -11,6 +11,7 @@ import { LIBRARY_LIST_PROPS, libraryRefreshControl } from '../../components/libr
 import { LibraryScreen } from '../../components/library/LibraryScreen';
 import { useLibraryAccent } from '../../components/library/useLibraryAccent';
 import { SCREEN_PADDING } from '../../components/library/libraryShared';
+import { useSingleOpenRow, type SwipeRowGroup } from '../../components/library/swipeToRemoveShared';
 import { WishlistEmptyIllustration } from '../../components/library/WishlistEmptyIllustration';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { OfflineNotice } from '../../components/OfflineNotice';
@@ -18,6 +19,7 @@ import { AppText } from '../../components/ui/AppText';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { SearchField } from '../../components/ui/SearchField';
 import { useLibraryMutations } from '../../hooks/useLibraryMutations';
+import { useScreenReaderEnabled } from '../../hooks/useScreenReaderEnabled';
 import { onLibraryChanged } from '../../lib/libraryChanged';
 import { api } from '../../lib/api';
 import { isServiceUnavailable } from '../../lib/apiErrorReporting';
@@ -27,14 +29,24 @@ interface WishlistRowProps {
   disabled: boolean;
   onOpen: (item: DetailBook) => void;
   onBought: (item: DetailBook) => void;
+  onRemove: (item: DetailBook) => Promise<void>;
+  /** Offline: no swipe (#935). */
+  swipeDisabled: boolean;
+  swipeGroup: SwipeRowGroup;
 }
 
-/** One Wishlist row: opens the detail sheet; the "Bought" chip moves it to purchased. */
+/**
+ * One Wishlist row: opens the detail sheet; the "Bought" chip moves it to
+ * purchased. On iOS and Android it swipes to Remove (#935).
+ */
 const WishlistRow = memo(function WishlistRow({
   item,
   disabled,
   onOpen,
   onBought,
+  onRemove,
+  swipeDisabled,
+  swipeGroup,
 }: WishlistRowProps) {
   const { t } = useTranslation('wishlist');
   return (
@@ -50,6 +62,11 @@ const WishlistRow = memo(function WishlistRow({
         author: item.book.author,
       })}
       accessibilityHint={t('rowHint')}
+      onSwipeRemove={() => onRemove(item)}
+      removeActionLabel={t('a11yActionRemove')}
+      swipeRemoveLabel={t('swipeRemoveA11y', { title: item.book.title })}
+      swipeDisabled={swipeDisabled}
+      swipeGroup={swipeGroup}
       trailing={
         <BoughtChip
           label={t('bought')}
@@ -72,6 +89,8 @@ export default function WishlistScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<DetailBook | null>(null);
   const [query, setQuery] = useState('');
+  const swipeGroup = useSingleOpenRow();
+  const screenReaderOn = useScreenReaderEnabled();
 
   const { isConnected, mutatingIds, advanceStatus, removeBook } = useLibraryMutations<DetailBook>({
     namespace: 'wishlist',
@@ -126,13 +145,16 @@ export default function WishlistScreen() {
   // A restore from the Trash (#683) can finish after this screen's focus reload.
   useEffect(() => onLibraryChanged(() => void fetchWishlistRef.current()), []);
 
-  // The latest advanceStatus, so the row callbacks below stay stable.
+  // The latest advanceStatus and removeBook, so the row callbacks below stay stable.
   const advanceRef = useRef(advanceStatus);
+  const removeRef = useRef(removeBook);
   useEffect(() => {
     advanceRef.current = advanceStatus;
+    removeRef.current = removeBook;
   });
   const openDetail = useCallback((item: DetailBook) => setSelected(item), []);
   const markBought = useCallback((item: DetailBook) => void advanceRef.current(item), []);
+  const removeFromRow = useCallback((item: DetailBook) => removeRef.current(item), []);
 
   if (loading) {
     return (
@@ -144,6 +166,8 @@ export default function WishlistScreen() {
 
   const visible = filterBooks(books, query);
   const isEmpty = books.length === 0;
+  // Web has no swipe, and a screen reader removes through the row's action.
+  const showSwipeHint = Platform.OS !== 'web' && !screenReaderOn && visible.length > 0;
 
   return (
     <LibraryScreen testID="wishlist-screen">
@@ -194,6 +218,21 @@ export default function WishlistScreen() {
           {...LIBRARY_LIST_PROPS}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.list}
+          testID="wishlist-list"
+          // One open row at a time: scrolling closes it (#935).
+          onScrollBeginDrag={swipeGroup.closeOpen}
+          ListFooterComponent={
+            showSwipeHint ? (
+              <AppText
+                variant="meta"
+                color="onSurfaceVariant"
+                style={styles.swipeHint}
+                testID="wishlist-swipe-hint"
+              >
+                {t('swipeHint')}
+              </AppText>
+            ) : undefined
+          }
           refreshControl={libraryRefreshControl(
             refreshing,
             setRefreshing,
@@ -217,6 +256,9 @@ export default function WishlistScreen() {
               disabled={!isConnected || mutatingIds.has(item.id)}
               onOpen={openDetail}
               onBought={markBought}
+              onRemove={removeFromRow}
+              swipeDisabled={!isConnected}
+              swipeGroup={swipeGroup}
             />
           )}
         />
@@ -237,5 +279,6 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: SCREEN_PADDING, paddingTop: 8, gap: 2 },
   search: { marginHorizontal: SCREEN_PADDING, marginTop: 12, marginBottom: 4 },
   list: { paddingBottom: 16 },
+  swipeHint: { textAlign: 'center', paddingHorizontal: SCREEN_PADDING, paddingTop: 16 },
   empty: { flex: 1, paddingHorizontal: SCREEN_PADDING + 16, paddingBottom: 40 },
 });

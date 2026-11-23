@@ -93,3 +93,39 @@ jest.mock('expo-image-manipulator', () =>
 jest.mock('./hooks/useAiConsent', () =>
   require('./__tests__/helpers/aiConsentMock').aiConsentModule()
 );
+
+// gesture-handler 3.3 under Jest (#935). With the Reanimated resolver (see
+// jest.config.js) Worklets loads its web build, whose `getUIRuntimeHolder`
+// throws; gesture-handler's native `installUIRuntimeBindings` calls it in a
+// setImmediate when gesture-handler loads, failing the suite after its tests
+// ran. Its jestSetup does not cover this module, so use gesture-handler's own
+// web variant (a no-op): there is no UI runtime under Jest.
+jest.mock('react-native-gesture-handler/src/handlers/gestures/installUIRuntimeBindings', () =>
+  jest.requireActual(
+    'react-native-gesture-handler/src/handlers/gestures/installUIRuntimeBindings.web'
+  )
+);
+jest.mock(
+  'react-native-gesture-handler/lib/module/handlers/gestures/installUIRuntimeBindings',
+  () =>
+    jest.requireActual(
+      'react-native-gesture-handler/lib/module/handlers/gestures/installUIRuntimeBindings.web'
+    )
+);
+
+// Screen tests render one screen, without the app root's `GestureRoot`
+// (`app/_layout.tsx`), so gesture-handler's dev check ("GestureDetector must be
+// used as a descendant of GestureHandlerRootView") would fail every screen with
+// a swipeable row (#935). Under Jest the root's context therefore defaults to
+// "inside a root", as every screen is in the app. Jest cannot model the case
+// the check guards on device (a native `<Modal>`'s separate view hierarchy)
+// anyway, because React context flows into Modal content under Jest.
+// `GestureRoot.test.tsx` covers the real root.
+jest.mock('react-native-gesture-handler/src/GestureHandlerRootViewContext', () => ({
+  __esModule: true,
+  default: jest.requireActual('react').createContext(true),
+}));
+jest.mock('react-native-gesture-handler/lib/module/GestureHandlerRootViewContext', () => ({
+  __esModule: true,
+  default: jest.requireActual('react').createContext(true),
+}));

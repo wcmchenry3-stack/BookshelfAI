@@ -23,5 +23,8 @@
   "rowHint": "탭하여 세부정보 보기 또는 제거",
   "errorLoadWishlist": "위시리스트를 불러올 수 없습니다.",
   "errorUpdateStatus": "상태를 업데이트할 수 없습니다.",
-  "errorRemoveBook": "책을 제거할 수 없습니다."
+  "errorRemoveBook": "책을 제거할 수 없습니다.",
+  "swipeHint": "책을 왼쪽으로 밀어서 제거하세요",
+  "a11yActionRemove": "제거",
+  "swipeRemoveA11y": "위시리스트에서 {{title}} 제거"
 }

@@ -1,5 +1,5 @@
 import { memo, type ReactNode } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { AppText } from '../ui/AppText';
@@ -8,6 +8,8 @@ import { UnverifiedBadge } from '../UnverifiedBadge';
 import { useTheme } from '../../hooks/useTheme';
 import { fontFor } from '../../theme/typography';
 import { StatusDot } from './StatusDot';
+import { SwipeToRemove } from './SwipeToRemove';
+import type { SwipeRowGroup } from './swipeToRemoveShared';
 import { ROW_DIVIDER_INSET, type LibraryBook } from './libraryShared';
 
 export interface LibraryRowProps {
@@ -31,8 +33,25 @@ export interface LibraryRowProps {
   metaTone?: 'default' | 'danger';
   /** Show the status dot and name in the meta line. Defaults to true. */
   showStatus?: boolean;
+  /**
+   * Wishlist (#935): removes the book. On iOS and Android the row can then be
+   * swiped to reveal Remove (`SwipeToRemove`), and its body button gets a
+   * `remove` screen-reader action. Web has neither: it removes through the
+   * detail sheet. Needs `onPress`, `removeActionLabel` and `swipeRemoveLabel`.
+   */
+  onSwipeRemove?: () => unknown;
+  /** Visible text of the swipe panel and name of the `remove` action, e.g. "Remove". */
+  removeActionLabel?: string;
+  /** Spoken label of the swipe panel's button, e.g. "Remove Dune from wishlist". */
+  swipeRemoveLabel?: string;
+  /** Turns the swipe off (offline). */
+  swipeDisabled?: boolean;
+  /** The list's one-open-row group. */
+  swipeGroup?: SwipeRowGroup;
   testID?: string;
 }
+
+const REMOVE_ACTION = 'remove';
 
 /** The row's minimum height; it grows with Dynamic Type. */
 export const ROW_MIN_HEIGHT = 96;
@@ -51,6 +70,11 @@ function LibraryRowBase({
   metaText,
   metaTone = 'default',
   showStatus = true,
+  onSwipeRemove,
+  removeActionLabel = '',
+  swipeRemoveLabel = '',
+  swipeDisabled = false,
+  swipeGroup,
   testID = 'book-row',
 }: LibraryRowProps) {
   const { t } = useTranslation('my-books');
@@ -89,7 +113,15 @@ function LibraryRowBase({
       } as const)
     : ({ pointerEvents: 'auto' } as const);
 
-  return (
+  // Screen readers cannot swipe: the body button carries the removal as a
+  // custom action instead (VoiceOver Actions rotor, TalkBack actions menu).
+  // Activating the row still opens it. Native only, like the swipe.
+  const removeAction = onSwipeRemove && Platform.OS !== 'web';
+  const onAccessibilityAction = (event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === REMOVE_ACTION) void onSwipeRemove?.();
+  };
+
+  const row = (
     <View style={styles.row} testID={testID}>
       {onPress ? (
         <Pressable
@@ -98,6 +130,10 @@ function LibraryRowBase({
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
           accessibilityHint={accessibilityHint}
+          accessibilityActions={
+            removeAction ? [{ name: REMOVE_ACTION, label: removeActionLabel }] : undefined
+          }
+          onAccessibilityAction={removeAction ? onAccessibilityAction : undefined}
           testID="book-row-body"
         />
       ) : null}
@@ -145,6 +181,19 @@ function LibraryRowBase({
         ) : null}
       </View>
     </View>
+  );
+
+  if (!onSwipeRemove) return row;
+  return (
+    <SwipeToRemove
+      onRemove={onSwipeRemove}
+      label={swipeRemoveLabel}
+      actionText={removeActionLabel}
+      disabled={swipeDisabled}
+      group={swipeGroup}
+    >
+      {row}
+    </SwipeToRemove>
   );
 }
 
