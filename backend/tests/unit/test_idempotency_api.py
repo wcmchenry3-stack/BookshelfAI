@@ -28,9 +28,14 @@ BOB = uuid.UUID("00000000-0000-0000-0000-00000000b685")
 KEY = str(uuid.uuid5(uuid.NAMESPACE_URL, "bookshelfai-test-idempotency-key"))
 
 
+_current: list = []  # the test's FakeStore, for the probe endpoints
+
+
 @pytest.fixture
 def fake_store(monkeypatch):
-    return install_fake_store(monkeypatch)
+    fake = install_fake_store(monkeypatch)
+    _current[:] = [fake]
+    return fake
 
 
 # ── A probe app with keyed endpoints ─────────────────────────────────────────
@@ -120,6 +125,47 @@ async def big(request: Request, current_user=Depends(_user), db=Depends(_db)):
     return {"blob": "x" * (idem.MAX_RESPONSE_BODY_BYTES + 1)}
 
 
+def _commit(request: Request) -> None:
+    """Stand-in for the endpoint's ``db.commit()``: the real one fires the
+    ``before_commit`` marker, which turns the claim committed."""
+    claim = getattr(request.state, "idempotency_claim", None)
+    if claim is not None:
+        _current[0].mark_committed(claim.record_id)
+
+
+@router.post("/commit-then-fail")
+@limiter.limit("5/minute")
+@idem.idempotent
+async def commit_then_fail(
+    request: Request, current_user=Depends(_user), db=Depends(_db)
+):
+    effects.append("written")
+    _commit(request)
+    raise RuntimeError("the read after the commit timed out")
+
+
+@router.post("/commit-then-503")
+@limiter.limit("5/minute")
+@idem.idempotent
+async def commit_then_503(
+    request: Request, current_user=Depends(_user), db=Depends(_db)
+):
+    effects.append("written")
+    _commit(request)
+    raise HTTPException(status_code=503, detail="db_timeout")
+
+
+@router.post("/commit-then-ok")
+@limiter.limit("5/minute")
+@idem.idempotent
+async def commit_then_ok(
+    request: Request, current_user=Depends(_user), db=Depends(_db)
+):
+    effects.append("written")
+    _commit(request)
+    return {"done": True}
+
+
 probe = FastAPI()
 probe.state.limiter = limiter
 probe.include_router(router)
@@ -192,14 +238,6 @@ def test_the_same_key_twice_is_one_key(client, fake_store):
         headers=[(b"idempotency-key", b"one"), (b"idempotency-key", b"one")],
     )
     assert resp.status_code == 201
-
-
-def test_the_kill_switch_ignores_the_header(client, fake_store, monkeypatch):
-    monkeypatch.setattr(settings, "idempotency_enabled", False)
-    for _ in range(2):
-        assert client.post("/things", json={}, headers=_keyed()).status_code == 201
-    assert client.post("/things", json={}, headers=_keyed("")).status_code == 201
-    assert len(effects) == 3 and fake_store.claims == 0
 
 
 # ── Replay ───────────────────────────────────────────────────────────────────
@@ -348,6 +386,41 @@ def test_a_store_failure_after_a_refusal_keeps_the_refusal(
     assert client.post("/refuse", headers=_keyed()).status_code == 412
 
 
+# ── A committed write never runs again ──────────────────────────────────────
+
+
+@pytest.mark.parametrize("path", ["/commit-then-fail", "/commit-then-503"])
+def test_a_failure_after_the_commit_keeps_the_key_and_never_reruns(
+    client, fake_store, path
+):
+    first = client.post(path, headers=_keyed())
+    assert first.status_code in (500, 503)
+    ((_, row),) = fake_store.rows.items()
+    assert row.state == "committed"  # not released
+    for _ in range(2):
+        again = client.post(path, headers=_keyed())
+        assert again.status_code == 409
+        assert again.json() == {"detail": "idempotency_outcome_unknown"}
+        assert "retry-after" not in again.headers
+    assert effects == ["written"]
+    assert fake_store.armed == set()  # the marker was disarmed on settle
+
+
+def test_a_committed_write_that_succeeds_is_stored_and_replayed(client, fake_store):
+    first = client.post("/commit-then-ok", headers=_keyed())
+    again = client.post("/commit-then-ok", headers=_keyed())
+    assert first.status_code == again.status_code == 200
+    assert again.headers[idem.REPLAYED_HEADER] == "true"
+    assert effects == ["written"]
+    assert fake_store.armed == set()
+
+
+def test_a_commit_before_the_claim_marks_nothing(client, fake_store):
+    """Without a key there is no claim, so the stand-in commit is a no-op."""
+    assert client.post("/commit-then-ok").status_code == 200
+    assert fake_store.rows == {}
+
+
 # ── Rate limit ───────────────────────────────────────────────────────────────
 
 
@@ -439,6 +512,18 @@ def test_the_hash_covers_method_path_query_if_match_and_body():
     assert base not in variants
     assert len(set(variants)) == len(variants)
     assert idem.request_hash(_request("POST", "/a"), b'{ "x" : 1 }') == base
+
+
+def test_a_body_nested_too_deeply_is_hashed_as_sent_not_a_500(client, fake_store):
+    deep = b"[" * 100_000 + b"]" * 100_000
+    assert idem._canonical_body(deep) == deep
+    # /refuse takes no body, so FastAPI never parses it: the hash does.
+    first = client.post("/refuse", content=deep, headers=_keyed())
+    again = client.post("/refuse", content=deep, headers=_keyed())
+    assert first.status_code == again.status_code == 412
+    assert again.headers[idem.REPLAYED_HEADER] == "true"
+    other = client.post("/refuse", content=deep[1:-1], headers=_keyed())
+    assert other.status_code == 422
 
 
 def test_a_body_that_is_not_json_is_hashed_as_sent():

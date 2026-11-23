@@ -7,9 +7,11 @@ retry. Within 24 hours a repeat of the same request (method, path,
 ``Idempotent-Replayed: true``, and the endpoint does not run again. The
 same key on a different request is ``422 idempotency_key_reused``; a repeat
 while the first is still running is ``409 idempotency_in_progress`` with
-``Retry-After: 1``; a malformed key is ``400 invalid_idempotency_key``.
-Keys are per user. A missing key keeps the old behaviour (logged at info,
-user id only); ``settings.idempotency_enabled`` off ignores the header.
+``Retry-After: 1``; a repeat after the first committed its write but stored
+no response (it failed after its commit, or its worker died) is ``409
+idempotency_outcome_unknown`` and never runs the write again; a malformed key
+is ``400 invalid_idempotency_key``. Keys are per user. A missing key keeps
+the old behaviour (logged at info, user id only).
 
 Two pieces, both needed on a keyed route:
 
@@ -20,7 +22,10 @@ Two pieces, both needed on a keyed route:
   endpoint is stored and replayed (Stripe's convention: the same request
   gets the same answer), after a rollback of anything the endpoint left
   uncommitted; a 5xx, a ``429`` or any other exception releases the key, so
-  a retry runs again.
+  a retry runs again, unless the endpoint had already committed: the
+  ``before_commit`` marker (``idempotency.arm_commit_marker``) turned the
+  row ``committed`` in the write's own transaction, and release leaves a
+  committed row alone.
 - :class:`IdempotencyRoute`, the router's route class: stores a successful
   response once FastAPI has serialised it (status, body, ``ETag``,
   ``Location``). Put it before ``VersionETagRoute`` in the bases, so the
@@ -46,7 +51,6 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api._routes import AfterResponseRoute
-from app.core.config import settings
 from app.models.idempotency_key import MAX_RESPONSE_BODY_BYTES
 from app.services import idempotency
 from app.services.idempotency import StoredResponse
@@ -62,6 +66,10 @@ KEY_REUSED: Final = "idempotency_key_reused"
 # 409: the first request with this key is still running.
 KEY_IN_PROGRESS: Final = "idempotency_in_progress"
 _IN_PROGRESS_RETRY_AFTER: Final = "1"
+# 409: the first request with this key committed its write but no response
+# was stored (it failed afterwards, or is just storing it). Never re-run:
+# the client should treat the write as applied and re-read.
+KEY_OUTCOME_UNKNOWN: Final = "idempotency_outcome_unknown"
 
 _KEY = re.compile(r"[\x21-\x7e]{1,255}")
 # Set on request.state by the decorator, read by the route class.
@@ -86,16 +94,19 @@ def parse_key(request: Request) -> str | None:
 
 def _canonical_body(body: bytes) -> bytes:
     """A JSON body re-serialised with sorted keys and no spaces, so the same
-    object sent with other formatting hashes the same; anything else as is."""
+    object sent with other formatting hashes the same; anything else as is.
+    A body nested too deeply to parse (``RecursionError``) is hashed as sent
+    too: still deterministic, so a retry of it matches, and never a 500. (A
+    route with a body model never gets here with one: FastAPI answers 400.)"""
     if not body:
         return b""
     try:
         parsed = json.loads(body)
-    except ValueError:
+        return json.dumps(
+            parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+    except (ValueError, RecursionError):
         return body
-    return json.dumps(
-        parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode()
 
 
 def request_hash(request: Request, body: bytes) -> str:
@@ -162,12 +173,17 @@ class _Claim:
         self.record_id = record_id
         self.user_id = user_id
         self.action = action
+        # From here on, the endpoint's own commit marks the row committed.
+        self.disarm = idempotency.arm_commit_marker(db, record_id)
 
     async def settle(self, response: Response | None, *, rollback: bool) -> None:
-        """Store ``response`` if it is replayable, else release the key.
+        """Store ``response`` if it is replayable, else release the key
+        (which deletes it only if nothing was committed: a committed row
+        stays, so a retry gets ``409 idempotency_outcome_unknown``).
         ``rollback`` first discards what a failed endpoint left uncommitted.
         Never raises: the client's response must not depend on this; a row
         left pending is free again after ``PENDING_LEASE``."""
+        self.disarm()
         stored = None
         if response is not None and _is_stored(response.status_code):
             stored = _stored_from(response)
@@ -213,9 +229,9 @@ def idempotent(
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         arguments = signature.bind_partial(*args, **kwargs).arguments
         request = arguments.get("request")
-        # Off, or called directly rather than over HTTP (no headers to
-        # honour): the endpoint as it was.
-        if not settings.idempotency_enabled or not isinstance(request, Request):
+        # Called directly rather than over HTTP (no headers to honour): the
+        # endpoint as it was.
+        if not isinstance(request, Request):
             return await func(*args, **kwargs)
         user_id = arguments["current_user"].id
         key = parse_key(request)
@@ -237,6 +253,13 @@ def idempotent(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=KEY_IN_PROGRESS,
                 headers={"Retry-After": _IN_PROGRESS_RETRY_AFTER},
+            ) from None
+        except idempotency.KeyOutcomeUnknownError:
+            logger.info(
+                "idempotency: outcome unknown on %s user_id=%s", action, user_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=KEY_OUTCOME_UNKNOWN
             ) from None
         if isinstance(claimed, StoredResponse):
             logger.info("idempotency: replayed %s user_id=%s", action, user_id)

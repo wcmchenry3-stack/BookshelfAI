@@ -145,6 +145,9 @@ class UnverifiedBookService:
         db.add(user_book)
         # The audit event commits with the entry (#684).
         await library_events.record_created(db, user_book)
-        await db.commit()
+        # Read back before the commit (#685), so nothing can fail after the
+        # write is applied.
+        await db.flush()
         await db.refresh(user_book, ["custom_book"])
+        await db.commit()
         return user_book

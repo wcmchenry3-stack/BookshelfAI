@@ -14,7 +14,8 @@ release never reads or writes it.
     request_hash      VARCHAR(64) NOT NULL, SHA-256 hex of method, path,
                       If-Match and the canonical JSON body
     state             VARCHAR(16) NOT NULL, CHECK ``ck_idempotency_keys_state``:
-                      pending, complete
+                      pending, committed (the write is durable, no response
+                      stored), complete
     response_status   SMALLINT, NULL while pending
     response_body     TEXT, the JSON body; NULL while pending and for a 204.
                       CHECK ``ck_idempotency_keys_body_size``: at most
@@ -93,7 +94,8 @@ def upgrade() -> None:
             ),
             sa.UniqueConstraint("user_id", "key", name="uq_idempotency_keys_user_key"),
             sa.CheckConstraint(
-                "state IN ('pending', 'complete')", name="ck_idempotency_keys_state"
+                "state IN ('pending', 'committed', 'complete')",
+                name="ck_idempotency_keys_state",
             ),
             sa.CheckConstraint(
                 "response_body IS NULL OR octet_length(response_body) <= "

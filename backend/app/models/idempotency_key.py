@@ -19,6 +19,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
 STATE_PENDING = "pending"
+# The endpoint's write committed; no response stored (yet).
+STATE_COMMITTED = "committed"
 STATE_COMPLETE = "complete"
 
 # The largest response body stored for a replay (#685), in bytes. Kept
@@ -31,9 +33,11 @@ class IdempotencyKey(Base):
     response to replay when the same request comes again.
 
     Written only by ``app.services.idempotency``. A row is ``pending`` while
-    the first request runs (no response yet) and ``complete`` once its
-    response is stored; a request that fails with a 5xx deletes its row, so
-    a retry runs again. Never replayed after 24 hours; the daily cleanup
+    the first request runs, ``committed`` from the commit of its write (in
+    that same transaction) and ``complete`` once its response is stored. A
+    request that fails before committing deletes its row, so a retry runs
+    again; a committed row is never deleted early, so a write never runs
+    twice. Never replayed after 24 hours; the daily cleanup
     deletes older rows (``purge_expired``). ``user_id`` is ``ON DELETE
     CASCADE``: the stored body is the user's data and goes with the account.
     """
@@ -44,7 +48,8 @@ class IdempotencyKey(Base):
         # cascade on account deletion (user_id leads).
         UniqueConstraint("user_id", "key", name="uq_idempotency_keys_user_key"),
         CheckConstraint(
-            "state IN ('pending', 'complete')", name="ck_idempotency_keys_state"
+            "state IN ('pending', 'committed', 'complete')",
+            name="ck_idempotency_keys_state",
         ),
         CheckConstraint(
             f"response_body IS NULL OR octet_length(response_body) <= "

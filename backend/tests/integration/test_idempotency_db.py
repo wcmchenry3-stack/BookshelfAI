@@ -24,6 +24,7 @@ import importlib.util
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
@@ -33,6 +34,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, func, inspect, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api import user_books as user_books_api
 from app.api._idempotency import HEADER, REPLAYED_HEADER
 from app.auth.jwt import create_access_token
 from app.core.config import settings
@@ -329,6 +331,104 @@ async def test_a_key_expires_after_24_hours(env, monkeypatch):
     assert REPLAYED_HEADER.lower() not in rerun.headers
     (row,) = await _keys(factory, uid)
     assert row.created_at == expired  # claimed afresh
+
+
+# ── A committed write never runs again ──────────────────────────────────────
+
+
+def _later(monkeypatch, delta):
+    at = datetime.now(UTC) + delta
+    monkeypatch.setattr(store, "utcnow", lambda: at)
+
+
+async def _assert_never_rerun(env, uid, headers, monkeypatch):
+    """Same-key retries, now and after the pending lease, are refused with
+    409 idempotency_outcome_unknown and write nothing."""
+    factory, client, _ = env
+    for delta in (timedelta(0), store.PENDING_LEASE + timedelta(minutes=1)):
+        _later(monkeypatch, delta)
+        again = await client.post("/wishlist/unverified", json=BOOK, headers=headers)
+        assert again.status_code == 409, again.text
+        assert again.json() == {"detail": "idempotency_outcome_unknown"}
+    assert await _count(factory, UserBook, uid) == 1
+    assert await _count(factory, LibraryEvent, uid) == 1
+    (row,) = await _keys(factory, uid)
+    assert row.state == "committed" and row.response_status is None
+
+
+async def test_a_failure_after_the_commit_keeps_the_key(env, monkeypatch):
+    """The entry is committed, then building the response fails (as a read
+    timing out would): 500, but the key is not released, so the app's retry
+    on that 5xx cannot add the book a second time."""
+    _, client, make_user = env
+    uid, auth = await make_user()
+    headers = {**auth, **_key()}
+
+    def broken(_entry):
+        raise RuntimeError("statement timeout after the commit")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            user_books_api, "UserBookRead", SimpleNamespace(model_validate=broken)
+        )
+        failed = await client.post("/wishlist/unverified", json=BOOK, headers=headers)
+    assert failed.status_code == 500
+    await _assert_never_rerun(env, uid, headers, monkeypatch)
+
+
+async def test_a_crash_between_the_commit_and_the_stored_response(env, monkeypatch):
+    """The worker dies after the write committed and before the response is
+    stored (simulated: storing fails). The row stays committed, and no retry
+    re-runs the write, before or after the pending lease."""
+    _, client, make_user = env
+    uid, auth = await make_user()
+    headers = {**auth, **_key()}
+
+    async def died(*_args, **_kwargs):
+        raise ConnectionResetError("worker gone")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(store, "complete", died)
+        first = await client.post("/wishlist/unverified", json=BOOK, headers=headers)
+    assert first.status_code == 201
+    await _assert_never_rerun(env, uid, headers, monkeypatch)
+
+
+async def test_a_taken_over_request_can_no_longer_commit_its_write(env, monkeypatch):
+    """A request still running past the lease loses its key to a retry; its
+    own commit then fails (KeyLostError) and its write is not applied."""
+    factory, _, make_user = env
+    uid, _ = await make_user()
+    async with factory() as old, factory() as new:
+        old_id = await store.claim(old, uid, "slow-key", "h" * 64)
+        store.arm_commit_marker(old, old_id)
+        _later(monkeypatch, store.PENDING_LEASE + timedelta(seconds=1))
+        new_id = await store.claim(new, uid, "slow-key", "h" * 64)
+        assert isinstance(new_id, int) and new_id != old_id
+        old.add(UserCustomBook(user_id=uid, title="Late", author="Writer"))
+        with pytest.raises(store.KeyLostError):
+            await old.commit()
+        await old.rollback()
+    assert await _count(factory, UserCustomBook, uid) == 0
+    (row,) = await _keys(factory, uid)
+    assert (row.id, row.state) == (new_id, "pending")
+
+
+async def test_the_commit_marks_the_row_in_the_same_transaction(env):
+    factory, _, make_user = env
+    uid, _ = await make_user()
+    async with factory() as db:
+        record_id = await store.claim(db, uid, "atomic-key", "h" * 64)
+        store.arm_commit_marker(db, record_id)
+        db.add(UserCustomBook(user_id=uid, title="Kept", author="Writer"))
+        await db.rollback()  # nothing committed: still pending
+        (row,) = await _keys(factory, uid)
+        assert row.state == "pending"
+        db.add(UserCustomBook(user_id=uid, title="Kept", author="Writer"))
+        await db.commit()
+    (row,) = await _keys(factory, uid)
+    assert row.state == "committed"
+    assert await _count(factory, UserCustomBook, uid) == 1
 
 
 # ── Concurrency ──────────────────────────────────────────────────────────────

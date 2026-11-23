@@ -102,16 +102,94 @@ async def test_a_pending_key_is_in_progress():
     [
         ("complete", store.KEY_TTL),  # expired: never replayed
         ("complete", store.KEY_TTL + timedelta(hours=3)),
-        ("pending", store.PENDING_LEASE),  # its request died
+        ("pending", store.PENDING_LEASE),  # its request most likely died
+        ("committed", store.KEY_TTL),  # committed, but out of the window
     ],
 )
 async def test_a_stale_row_is_deleted_and_the_key_claimed_afresh(state, age):
     stale = _row(state=state, request_hash="b" * 64, age=age)
-    db = _db(_inserted(None), _found(stale), MagicMock(), _inserted(43))
+    db = _db(_inserted(None), _found(stale), MagicMock(rowcount=1), _inserted(43))
     assert await store.claim(db, USER, "k", HASH) == 43
-    assert "DELETE FROM idempotency_keys WHERE idempotency_keys.id" in _sql(db, 2)
-    assert db.execute.await_args_list[2].args[0].compile().params == {"id_1": 9}
+    sql = _sql(db, 2)
+    assert sql.startswith("DELETE FROM idempotency_keys WHERE idempotency_keys.id")
+    # The DELETE re-checks staleness, so a row committed (or claimed afresh)
+    # since the read is never deleted.
+    assert "idempotency_keys.state =" in sql and "created_at <=" in sql
+    params = db.execute.await_args_list[2].args[0].compile().params
+    assert params == {
+        "id_1": 9,
+        "created_at_1": NOW - store.KEY_TTL,
+        "state_1": "pending",
+        "created_at_2": NOW - store.PENDING_LEASE,
+    }
     db.commit.assert_awaited_once()
+
+
+async def test_a_takeover_that_lost_the_race_reads_the_row_again():
+    """The stale pending row was committed by its request between the read
+    and the DELETE: the guarded DELETE matches nothing, the next insert
+    conflicts and the re-read finds it committed."""
+    stale = _row(state="pending", age=store.PENDING_LEASE)
+    now_committed = _row(state="committed", age=store.PENDING_LEASE)
+    db = _db(
+        _inserted(None),
+        _found(stale),
+        MagicMock(rowcount=0),
+        _inserted(None),
+        _found(now_committed),
+    )
+    with pytest.raises(store.KeyOutcomeUnknownError):
+        await store.claim(db, USER, "k", HASH)
+
+
+@pytest.mark.parametrize(
+    "age", [timedelta(seconds=1), store.PENDING_LEASE, timedelta(hours=23)]
+)
+async def test_a_committed_key_is_never_taken_over_or_rerun(age):
+    db = _db(_inserted(None), _found(_row(state="committed", age=age)))
+    with pytest.raises(store.KeyOutcomeUnknownError):
+        await store.claim(db, USER, "k", HASH)
+    assert db.execute.await_count == 2  # no DELETE
+    db.commit.assert_awaited_once()
+
+
+async def test_a_committed_key_on_another_request_is_still_reused():
+    db = _db(_inserted(None), _found(_row(state="committed", request_hash="b" * 64)))
+    with pytest.raises(store.KeyReusedError):
+        await store.claim(db, USER, "k", HASH)
+
+
+# ── The commit marker ────────────────────────────────────────────────────────
+
+
+def _session(rowcount):
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    db = AsyncSession()
+    db.sync_session.execute = MagicMock(return_value=MagicMock(rowcount=rowcount))
+    return db
+
+
+def test_the_marker_turns_the_claim_committed_in_the_commit():
+    db = _session(rowcount=1)
+    disarm = store.arm_commit_marker(db, 7)
+    db.sync_session.dispatch.before_commit(db.sync_session)
+    stmt = db.sync_session.execute.call_args.args[0]
+    assert str(stmt).startswith("UPDATE idempotency_keys SET state=")
+    params = stmt.compile().params
+    assert params["state"] == "committed" and params["id_1"] == 7
+    assert set(params["state_1"]) == {"pending", "committed"}
+    disarm()
+    disarm()  # idempotent
+    db.sync_session.dispatch.before_commit(db.sync_session)
+    assert db.sync_session.execute.call_count == 1
+
+
+def test_a_commit_whose_claim_was_taken_over_fails():
+    db = _session(rowcount=0)
+    store.arm_commit_marker(db, 7)
+    with pytest.raises(store.KeyLostError):
+        db.sync_session.dispatch.before_commit(db.sync_session)
 
 
 async def test_a_row_just_under_the_window_is_still_replayed():
@@ -140,7 +218,7 @@ async def test_complete_stores_the_response_on_the_pending_row():
     assert params["state"] == "complete"
     assert params["response_status"] == 200
     assert params["response_headers"] == {"etag": '"2"'}
-    assert params["state_1"] == "pending"
+    assert set(params["state_1"]) == {"pending", "committed"}
     db.commit.assert_awaited_once()
 
 
