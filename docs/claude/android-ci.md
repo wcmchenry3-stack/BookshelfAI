@@ -101,12 +101,13 @@ deletes `android/` and recreates it from the template, which is what happened
 on the SDK 58 upgrade (#714). Template changes can still overwrite files, so
 **review the diff and restore these hand edits after a prebuild**:
 
-| File                                        | Hand edit                                                          | Why                                                                                                                                                                                                                                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `android/settings.gradle`                   | JDK preflight block at the top of `pluginManagement`               | Fails fast on JDK 24+ (book_app#178). Prebuild drops it.                                                                                                                                                                                                                        |
-| `android/.gitignore`                        | `*.keystore` / `*.jks` lines                                       | Never commit a keystore (CLAUDE.md rule 17). Prebuild drops them.                                                                                                                                                                                                               |
-| `android/gradle.properties`                 | `android.enableMinifyInReleaseBuilds=false`                        | The SDK 58 template defaults to `true` (R8 on in release). Kept off until R8 is enabled on purpose (see below).                                                                                                                                                                 |
-| `android/gradle/wrapper/gradle-wrapper.jar` | Official jar for the Gradle version in `gradle-wrapper.properties` | The SDK 58 template ships the Gradle **9.3.1** jar while pinning the 9.4.1 distribution. We commit the 9.4.1 jar (sha256 `55243ef5…e1145c`, from `gradle wrapper --gradle-version 9.4.1`). It matches the gradle/actions checksum list and `@react-native/gradle-plugin`'s jar. |
+| File                                               | Hand edit                                                                    | Why                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `android/settings.gradle`                          | JDK preflight block at the top of `pluginManagement`                         | Fails fast on JDK 24+ (book_app#178). Prebuild drops it.                                                                                                                                                                                                                        |
+| `android/.gitignore`                               | `*.keystore` / `*.jks` lines                                                 | Never commit a keystore (CLAUDE.md rule 17). Prebuild drops them.                                                                                                                                                                                                               |
+| `android/gradle.properties`                        | `android.enableMinifyInReleaseBuilds=true`                                   | R8 is on in release since #890 (the SDK 58 template default, so prebuild keeps it). Keep rules live in `app/proguard-rules.pro`; see below.                                                                                                                                     |
+| `android/build.gradle`, `android/app/build.gradle` | Sentry Android Gradle plugin (classpath, `apply plugin`, `sentry { }` block) | Written by the `@sentry/react-native/expo` plugin from `app.json` (`experimental_android`); prebuild is idempotent here. The one hand edit is the `autoUploadProguardMapping` token guard (below).                                                                              |
+| `android/gradle/wrapper/gradle-wrapper.jar`        | Official jar for the Gradle version in `gradle-wrapper.properties`           | The SDK 58 template ships the Gradle **9.3.1** jar while pinning the 9.4.1 distribution. We commit the 9.4.1 jar (sha256 `55243ef5…e1145c`, from `gradle wrapper --gradle-version 9.4.1`). It matches the gradle/actions checksum list and `@react-native/gradle-plugin`'s jar. |
 
 The splash is not a hand edit: since #1010 the `expo-splash-screen` plugin in `app.json` (image `assets/splash-icon.png`, light and dark) makes prebuild write `drawable-*/splashscreen_logo.png`, `drawable-night-*`, `values*/colors.xml`, the `Theme.App.SplashScreen` style and the `SplashScreenManager` call in `MainActivity.kt`. Commit those; do not restore the older files over them.
 
@@ -138,12 +139,72 @@ The template's AGP 9 opt-outs in `gradle.properties` (`android.builtInKotlin=fal
 
 ### R8 / minify in release
 
-The SDK 58 template turns R8 on in release builds
-(`android.enableMinifyInReleaseBuilds=true`, with the
-`proguard-android-optimize.txt` preset). We keep it **off** for now, which
-keeps pre-SDK-58 release behaviour. Turning it on needs owner sign-off,
-keep rules checked against our native modules, and Sentry ProGuard mapping
-upload confirmed. That is tracked as a follow-up to #714.
+R8 is **on** in release builds since #890 (`android.enableMinifyInReleaseBuilds=true`,
+`proguard-android-optimize.txt` preset plus `app/proguard-rules.pro`).
+`android.enableShrinkResourcesInReleaseBuilds` is left unset, so resource
+shrinking stays **off** (the template default): shrinking can drop resources that
+React Native or Expo look up by name at runtime, and the size win is small next to
+R8 and the Hermes bundle. Turn it on in a separate change with its own device pass.
+
+**Keep rules.** Most libraries ship consumer rules inside their AAR, so
+`proguard-rules.pro` only adds what is missing:
+
+| Library                                                                                                                                                                                                                | Ships its own rules?                                           |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `expo`, `expo-modules-core` (module registry, `Module`/`Record` classes), `expo-image` (Glide), `expo-camera`, `react-native-screens`, `react-native-svg`, `react-native-reanimated`, `react-native-worklets`          | Yes (`consumerProguardFiles`)                                  |
+| React Native, Hermes, Fresco, OkHttp, `sentry-android`                                                                                                                                                                 | Yes (in their Maven AARs)                                      |
+| `react-native-webview`                                                                                                                                                                                                 | **No**. We keep `@JavascriptInterface` methods and the package |
+| `@sentry/react-native` Android module, gesture-handler, safe-area-context, async-storage, netinfo, expo-secure-store, expo-image-manipulator, expo-crypto, expo-file-system, expo-font, expo-haptics, expo-web-browser | No rules needed (no reflection beyond what Expo's rules keep)  |
+
+Added in `proguard-rules.pro` (#890): the WebView JavaScript interface rules
+(Turnstile runs in a WebView and the page calls the bridge by method name),
+`-keepattributes LineNumberTable,SourceFile` with `-renamesourcefileattribute`
+(readable frames), and `-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod`.
+Google sign-in uses `expo-auth-session` and `expo-web-browser` (JS plus a browser
+tab), so there is no native Google library to keep. `@expo/app-integrity` (#1054,
+not yet in `package.json`) is an Expo module covered by the `expo.modules.**` rules,
+and the Play Integrity client library ships consumer rules; re-check this section
+and the smoke test when #1054 lands.
+
+**Sentry mapping upload.** The Sentry Android Gradle plugin (6.22.0, pinned by
+`@sentry/react-native`) is enabled through `app.json`
+(`@sentry/react-native/expo` > `experimental_android`) and written into
+`android/build.gradle` and `android/app/build.gradle` by prebuild. It uploads the R8
+mapping for release builds. Org, project and token come only from `SENTRY_ORG`,
+`SENTRY_PROJECT` and `SENTRY_AUTH_TOKEN` (rule 21, `sentry.properties` has no
+values). `autoUploadProguardMapping` is
+`shouldSentryAutoUpload() && SENTRY_AUTH_TOKEN is non-empty` (hand edit in
+`app/build.gradle`), so a build without the token, such as `android-build-check` or a
+local build, skips the upload instead of failing. `SENTRY_DISABLE_AUTO_UPLOAD=true`
+also skips it. Native-symbol and source upload are off. Debug builds have no R8
+mapping, so the plugin does nothing there.
+
+**CI coverage.** `android-build-check` runs `assembleDebug` only, so no CI job
+compiles release with R8. R8 or keep-rule problems, and the Sentry plugin's release
+tasks, show up only in a real `./gradlew assembleRelease` (JDK 17, with
+`SENTRY_AUTH_TOKEN` set to test the upload). `android-build-check` does exercise
+the Sentry plugin's configuration under AGP 9.2.1.
+
+#### APK size (fill in from a real `assembleRelease`)
+
+| Build                              | `app-release.apk` (MB) | arm64-v8a split / AAB download size (MB) | Notes |
+| ---------------------------------- | ---------------------- | ---------------------------------------- | ----- |
+| Before (R8 off, pre-#890)          | _TBD_                  | _TBD_                                    |       |
+| After (R8 on, resource shrink off) | _TBD_                  | _TBD_                                    |       |
+
+#### Release device smoke test (before shipping any R8 build)
+
+Build with JDK 17 (`./gradlew assembleRelease`, or `bundleRelease` for Play), install
+on a real device, then check:
+
+- [ ] Cold start reaches the home screen without a crash (`adb logcat` has no `ClassNotFoundException`, `NoSuchMethodError`, `NoSuchFieldException`).
+- [ ] Google sign-in completes and the session survives an app restart (SecureStore).
+- [ ] Scan a book cover: camera opens, capture and image manipulation work, results show with images (expo-image).
+- [ ] Wishlist: add, remove, reopen the app, list persists.
+- [ ] Turnstile challenge renders in the WebView and the token reaches the app (JS interface).
+- [ ] Deep links (`bookshelf://...`) open the right screen from cold start and warm.
+- [ ] Forced Sentry test error (for example a temporary `Sentry.nativeCrash()` or `throw` in a debug-only trigger) shows **deobfuscated** frames with file and line numbers in Sentry. This needs the mapping uploaded: build with `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` set, then confirm the ProGuard mapping appears under the release's debug files.
+- [ ] Re-check the list above after adding any native module (including `@expo/app-integrity`, #1054).
 
 ## Signing
 

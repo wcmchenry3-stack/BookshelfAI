@@ -6,6 +6,8 @@ buildscript {
     mavenCentral()
   }
   dependencies {
+    // Hand edit kept in sync with app.json (@sentry/react-native/expo experimental_android).
+    classpath("io.sentry:sentry-android-gradle-plugin:6.22.0")
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
     def kotlinVersion = findProperty('android.kotlinVersion')
