@@ -76,7 +76,7 @@ describe('LibraryRow layout (#929)', () => {
       item.book.cover_url = cover;
       const { getByTestId, unmount } = await render(<LibraryRow item={item} />);
       const node = getByTestId('book-row-cover', HIDDEN);
-      if (cover) expect(node.props.resizeMode).toBe('cover');
+      if (cover) expect(node.props.contentFit).toBe('cover');
       const style = StyleSheet.flatten(node.props.style);
       expect(style.width! / style.height!).toBeCloseTo(2 / 3, 5);
       expect(style.alignSelf).not.toBe('stretch');
