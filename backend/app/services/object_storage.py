@@ -62,7 +62,7 @@ def _created_at(entry: dict) -> datetime | None:
     if not isinstance(raw, str):
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return datetime.fromisoformat(raw)
     except ValueError:
         return None
 
