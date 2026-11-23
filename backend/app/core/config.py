@@ -373,13 +373,13 @@ class Settings(EmailSettings, BaseSettings):
     # worst case at the default, ~65-125 MB at the maximum of 5,000.
     # Env-overridable (TRASH_MAX_ENTRIES_PER_USER).
     trash_max_entries_per_user: int = Field(default=1000, ge=100, le=5000)
-    # How long the library audit log keeps an event (#684): the daily
-    # cleanup deletes library_events rows older than this many days
+    # How long the library audit log keeps an event (#684): the daily cleanup
+    # deletes library_events rows older than this many days
     # (app/services/library_events_retention.py). Env-overridable
-    # (LIBRARY_EVENTS_RETENTION_DAYS) so it can change without a release; a
-    # change needs a restart, and lowering it deletes the older events at
-    # the next daily run.
+    # (LIBRARY_EVENTS_RETENTION_DAYS) so it can change without a release; a change
+    # needs a restart, and lowering it deletes the older events at the next run.
     library_events_retention_days: int = Field(default=180, ge=1, le=730)
+    idempotency_enabled: bool = True  # Idempotency-Key kill switch (#685)
     # Allowlist of Host header values accepted when settings.is_hardened is True
     # (staging and production). Override via TRUSTED_HOSTS env var: '["api.example.com"]'
     trusted_hosts: list[str] = ["*"]

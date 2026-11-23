@@ -2178,5 +2178,127 @@
     "constraints": [
       "CheckConstraint:ck_library_events_event_type"
     ]
+  },
+  "idempotency_keys": {
+    "columns": [
+      {
+        "name": "id",
+        "type": "BIGINT",
+        "nullable": false,
+        "primary_key": true,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "user_id",
+        "type": "UUID",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": [
+          "users.id ondelete=CASCADE"
+        ]
+      },
+      {
+        "name": "key",
+        "type": "VARCHAR(255)",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "request_hash",
+        "type": "VARCHAR(64)",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "state",
+        "type": "VARCHAR(16)",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "response_status",
+        "type": "SMALLINT",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "response_body",
+        "type": "TEXT",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "response_headers",
+        "type": "JSONB",
+        "nullable": true,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": null,
+        "onupdate": null,
+        "foreign_keys": []
+      },
+      {
+        "name": "created_at",
+        "type": "TIMESTAMP WITH TIME ZONE",
+        "nullable": false,
+        "primary_key": false,
+        "index": null,
+        "unique": null,
+        "default": null,
+        "server_default": "sql:now()",
+        "onupdate": null,
+        "foreign_keys": []
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX ix_idempotency_keys_created_at ON idempotency_keys (created_at)"
+    ],
+    "constraints": [
+      "CheckConstraint:ck_idempotency_keys_body_size",
+      "CheckConstraint:ck_idempotency_keys_state",
+      "UniqueConstraint:uq_idempotency_keys_user_key"
+    ]
   }
 }

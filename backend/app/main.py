@@ -382,14 +382,16 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    # If-Match: library entry writes (#685); without it here a browser's
-    # preflight would refuse every PATCH / DELETE the web app sends.
+    # If-Match and Idempotency-Key: library and account writes (#685);
+    # without them here a browser's preflight would refuse every write the
+    # web app sends.
     allow_headers=[
         "Authorization",
         "Content-Type",
         "Accept",
         "X-Request-ID",
         "If-Match",
+        "Idempotency-Key",
     ],
     # Lets web clients read the scan 429s' Retry-After (daily_scan_limit,
     # scan_in_progress, enhanced_throttled) instead of falling back to

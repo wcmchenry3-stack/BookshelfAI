@@ -31,7 +31,9 @@ The same daily run also purges, in bounded batches:
   never run it at once (app/services/trash.py, #683);
 - the library audit log (``library_events``): events older than
   ``LIBRARY_EVENTS_RETENTION_DAYS`` (default 180), under its own advisory
-  lock (app/services/library_events_retention.py, #684).
+  lock (app/services/library_events_retention.py, #684);
+- stored ``Idempotency-Key`` responses (``idempotency_keys``) older than 24
+  hours, which are never replayed (app/services/idempotency.py, #685).
 
 Every step opens its session from ``JobSessionLocal``, so each transaction
 runs under ``STATEMENT_TIMEOUT_JOB_MS`` (default 60 s) rather than the 5 s
@@ -66,6 +68,7 @@ from app.ai.quota import purge_old_quota, purge_old_zero_results, utc_today
 from app.ai.scan_records import purge_old_scan_records
 from app.auth.refresh_family import purge_refresh_tokens
 from app.core.database import JobSessionLocal
+from app.services.idempotency import purge_expired as purge_expired_idempotency_keys
 from app.services.library_events_retention import purge_old_library_events
 from app.services.trash import purge_trash
 
@@ -209,6 +212,12 @@ async def _purge_library_events() -> None:
         logger.info("token_cleanup: purged %d old library_events row(s)", purged)
 
 
+async def _purge_idempotency_keys() -> None:
+    async with JobSessionLocal() as db:
+        purged = await purge_expired_idempotency_keys(db)
+        logger.info("token_cleanup: purged %d expired idempotency key(s)", purged)
+
+
 async def cleanup_expired_tokens() -> None:
     """Long-running coroutine; meant to be wrapped in asyncio.create_task()."""
     await asyncio.sleep(_INITIAL_DELAY_SECONDS)
@@ -222,6 +231,7 @@ async def cleanup_expired_tokens() -> None:
         await _run_step(_purge_scan_records, "scan records")
         await _run_step(_purge_trash, "trash")
         await _run_step(_purge_library_events, "library events")
+        await _run_step(_purge_idempotency_keys, "idempotency keys")
         await _run_step(_purge_refresh_tokens)
 
         await asyncio.sleep(_INTERVAL_SECONDS)

@@ -31,14 +31,15 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, Final
+from typing import Final
 
 from fastapi import HTTPException, Request, Response, status
-from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
+
+from app.api._routes import AfterResponseRoute
 
 logger = logging.getLogger(__name__)
 
@@ -135,20 +136,14 @@ def add_version_etag(response: Response) -> None:
         response.headers["ETag"] = etag(version)
 
 
-class VersionETagRoute(APIRoute):
+class VersionETagRoute(AfterResponseRoute):
     """A route whose single-entry responses carry the entry's ``ETag``
     (#685), so every endpoint that returns one entry (adds, ``PATCH``,
     restore) sends it without setting it by hand."""
 
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        handler = super().get_route_handler()
-
-        async def route_handler(request: Request) -> Response:
-            response = await handler(request)
-            add_version_etag(response)
-            return response
-
-        return route_handler
+    async def after_response(self, request: Request, response: Response) -> None:
+        add_version_etag(response)
+        await super().after_response(request, response)
 
 
 @asynccontextmanager

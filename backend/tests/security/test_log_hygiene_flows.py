@@ -42,6 +42,7 @@ from app.models.user_book import UserBook
 from app.schemas.book import EnrichedBook
 from app.services.book_identifier import BookCandidate
 from tests import _log_hygiene as lh
+from tests._idempotency_fake import install_fake_store
 from tests.unit._quota_fake import FakeQuotaStore
 from tests.unit._scan_records_fake import FakeScanRecords
 
@@ -469,6 +470,67 @@ class TestLibraryFlows:
             deleted = client.delete(path, headers=auth)
             assert deleted.status_code == 204, deleted.text
         _clean(cap, tokens=[tokens["access_token"], tokens["refresh_token"]])
+
+    def test_idempotency_keys_and_stored_bodies_stay_out_of_logs(self, db, monkeypatch):
+        """#685: a keyed add and edit, their replays, a reused key, a
+        malformed key and a missing one log the user id only: never a key,
+        the stored body (here, private notes) or a token."""
+        install_fake_store(monkeypatch)
+        client = TestClient(app)
+        db.book = Book(
+            id=uuid.uuid4(),
+            open_library_work_id=WORK,
+            title="Dune",
+            author="Frank Herbert",
+            language="en",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        notes = "Private: lent to my sister, idempotency leak probe"
+        add_key, edit_key = "idem-key-685-add-4b1e", "idem-key-685-edit-9c2f"
+        wishlist = {
+            "open_library_work_id": WORK,
+            "title": "Dune",
+            "author": "Frank Herbert",
+            "editions": [],
+        }
+        with lh.capture() as cap:
+            tokens = _sign_in(client).json()
+            auth = {"Authorization": f"Bearer {tokens['access_token']}"}
+            with patch(
+                "app.services.wishlist.WishlistService._find_or_create_edition",
+                AsyncMock(return_value=None),
+            ):
+                for _ in range(2):
+                    added = client.post(
+                        "/wishlist",
+                        headers={**auth, "Idempotency-Key": add_key},
+                        json=wishlist,
+                    )
+                    assert added.status_code == 201, added.text
+            assert added.headers["Idempotent-Replayed"] == "true"
+            path = f"/user-books/{added.json()['id']}"
+            edit = {**auth, "Idempotency-Key": edit_key}
+            for _ in range(2):
+                patched = client.patch(path, json={"notes": notes}, headers=edit)
+                assert patched.status_code == 200, patched.text
+            assert patched.headers["Idempotent-Replayed"] == "true"
+            reused = client.patch(path, json={"notes": "other"}, headers=edit)
+            assert reused.status_code == 422
+            bad = client.patch(path, json={}, headers={**auth, "Idempotency-Key": ""})
+            assert bad.status_code == 400
+            assert client.patch(path, json={"rating": 3}, headers=auth).is_success
+        logs = "\n".join(cap.log_texts)
+        assert "idempotency: replayed" in logs
+        # The stored body (the replayed notes) is never logged. (Sentry's own
+        # request-body capture of the PATCH is not this flow's doing.)
+        assert notes not in logs
+        assert '"notes"' not in logs
+        # The key is in no log and, as a scrubbed header, in no Sentry event.
+        _clean(
+            cap,
+            tokens=[tokens["access_token"], tokens["refresh_token"], add_key, edit_key],
+        )
 
     def test_server_error_reaches_sentry_without_pii(self, db):
         client = TestClient(app, raise_server_exceptions=False)

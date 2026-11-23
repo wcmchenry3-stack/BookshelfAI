@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api._idempotency import IdempotencyRoute, idempotent
 from app.auth.dependencies import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
@@ -20,11 +21,13 @@ from app.schemas.auth import AiConsentRead, UserPreferences, UserPreferencesUpda
 from app.services import ai_consent
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/users", tags=["users"])
+# Every write here honours Idempotency-Key (#685).
+router = APIRouter(prefix="/users", tags=["users"], route_class=IdempotencyRoute)
 
 
 @router.patch("/me/preferences", response_model=UserPreferences)
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def update_preferences(
     request: Request,
     body: UserPreferencesUpdate,
@@ -53,6 +56,7 @@ async def _locked_consent(db: AsyncSession, user: User) -> None:
 
 @router.post("/me/ai-consent", response_model=AiConsentRead)
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def grant_ai_consent(
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -71,6 +75,7 @@ async def grant_ai_consent(
 
 @router.delete("/me/ai-consent", response_model=AiConsentRead)
 @limiter.limit(settings.rate_limit_writes)
+@idempotent
 async def withdraw_ai_consent(
     request: Request,
     current_user: User = Depends(get_current_user),
