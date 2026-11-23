@@ -17,6 +17,13 @@ import {
   SCAN_RETRY_DELAYS_MS,
   type ScanUiState,
 } from '../scanErrors';
+import {
+  appendAttestationFields,
+  getAttestationFields,
+  isAttestationRejection,
+  onAttestationRejected,
+  type AttestationFields,
+} from '../attestation/attestation';
 import { deleteScanImage } from '../scanJobStorage';
 import {
   isAwaitingRetry,
@@ -172,7 +179,11 @@ async function runScan(
       if (signedOutSince()) return;
       results = response.data ?? [];
     } else {
+      // #870: the attestation the last post carried, and whether to attest.
+      let sentAttestation: AttestationFields | null = null;
+      let attest = true;
       const postScan = async () => {
+        sentAttestation = null;
         const turnstileToken = await deps.getTurnstileTokenRef.current(signal);
         // Signed out while the token was being fetched: nothing is sent,
         // and the token is never used for the next account.
@@ -194,6 +205,15 @@ async function runScan(
           holdForAiConsent(deps, job);
           return null;
         }
+        // #870: App Attest / Play Integrity, only once consent stands, with a
+        // fresh nonce for every post. At most 5 s; any failure sends the scan
+        // without it (Turnstile still applies), so it never blocks a scan.
+        // The Turnstile token is still fetched: the server falls back to it
+        // whenever attestation is missing or fails verification.
+        const attestation = attest ? await getAttestationFields(signal) : null;
+        if (signedOutSince() || signal.aborted) return null;
+        appendAttestationFields(body, attestation);
+        sentAttestation = attestation;
         return api.post<ScanResponse>('/scan', body, {
           signal,
           timeout: SCAN_UPLOAD_TIMEOUT_MS,
@@ -224,6 +244,15 @@ async function runScan(
           done = true;
         } catch (postErr) {
           if (signedOutSince()) return;
+          // #870: the server refused the attestation (ATTESTATION_REQUIRED
+          // on). Send once more without it, so Turnstile decides; this does
+          // not use a scan_in_progress retry.
+          if (attest && sentAttestation && isAttestationRejection(postErr)) {
+            await onAttestationRejected(sentAttestation);
+            attest = false;
+            attempt--;
+            continue;
+          }
           const state = classifyScanError(postErr);
           if (state.kind !== 'in_progress' || attempt >= MAX_IN_PROGRESS_RETRIES) {
             throw postErr;
