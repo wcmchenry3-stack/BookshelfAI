@@ -97,24 +97,44 @@ def test_column_order_matches_the_snapshot():
         ], name
 
 
-def _dump(data: dict) -> str:
-    """``data`` as JSON with one column, index or constraint per line."""
+def render_snapshot(order_from: Path = SNAPSHOT) -> str:
+    """The snapshot file's text: every mapped table, in the checked-in layout
+    (``json.dumps`` with ``indent=2`` and a trailing newline).
 
-    def block(key: str, rows: list) -> str:
-        inner = ",\n".join(f"   {json.dumps(r)}" for r in rows)
-        return f'  "{key}": [\n{inner}\n  ]' if rows else f'  "{key}": []'
+    Tables keep the position they have in ``order_from``; tables it does not
+    list yet are appended in name order. So a ``--write`` diff shows only the
+    real schema change, not a reshuffle of the file (#1047).
+    """
+    data = schema()
+    try:
+        previous = list(json.loads(order_from.read_text()))
+    except (OSError, ValueError):
+        previous = []
+    order = [name for name in previous if name in data]
+    order += sorted(name for name in data if name not in order)
+    return json.dumps({name: data[name] for name in order}, indent=2) + "\n"
 
-    tables = [
-        f" {json.dumps(name)}: {{\n"
-        + ",\n".join(block(k, t[k]) for k in ("columns", "indexes", "constraints"))
-        + "\n }"
-        for name, t in data.items()
-    ]
-    return "{\n" + ",\n".join(tables) + "\n}\n"
+
+def write_snapshot(path: Path = SNAPSHOT) -> None:
+    """The ``--write`` path: regenerate the snapshot from ``Base.metadata``."""
+    path.write_text(render_snapshot(order_from=SNAPSHOT))
+
+
+def test_write_path_covers_every_mapped_table():
+    """``--write`` must pin every table on ``Base.metadata``, not a subset."""
+    written = json.loads(render_snapshot())
+    assert sorted(written) == sorted(Base.metadata.tables)
+
+
+def test_write_output_is_byte_identical_to_the_checked_in_snapshot(tmp_path):
+    """Regenerating on an unchanged tree produces no diff (#1047)."""
+    out = tmp_path / "model_schema_snapshot.json"
+    write_snapshot(out)
+    assert out.read_text() == SNAPSHOT.read_text()
 
 
 if __name__ == "__main__":
     if sys.argv[1:] != ["--write"]:
         sys.exit("usage: python -m tests.unit.test_model_schema_snapshot --write")
-    SNAPSHOT.write_text(_dump(schema()))
+    write_snapshot()
     print(f"wrote {SNAPSHOT}")
