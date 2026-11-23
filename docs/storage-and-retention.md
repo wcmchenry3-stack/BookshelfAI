@@ -2,7 +2,7 @@
 
 The one reference for how much the app keeps, where, and for how long: on the phone (queued and failed photos, job metadata, logs) and in the database (every table, its purge, expected growth). Written for #576. It is an investigation: the numbers marked *estimate* come from reading the code and schemas, not from measuring a device or the production database. Follow-up work is listed under [Gaps and follow-ups](#gaps-and-follow-ups); none of it is built yet.
 
-Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`](data-model.md) (schemas and per-table volume notes), [`backups.md`](backups.md), [`security.md`](security.md#logging).
+Related: [`DATA-INVENTORY.md`](DATA-INVENTORY.md) (every table in one place: personal data, Phase 2 path, bytes; it reuses the numbers below), [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`](data-model.md) (schemas and per-table volume notes), [`backups.md`](backups.md), [`security.md`](security.md#logging).
 
 ## Summary: the standard
 
@@ -318,4 +318,4 @@ Sizes: S under half a day, M about a day, L several days.
 
 ## Keeping this page right
 
-`backend/tests/unit/test_storage_retention_doc.py` fails when a table in `app/models` is not named in the retention table above, and when a documented retention constant no longer matches the code. A story that adds a table adds its row here and, if it grows with usage, its purge to `token_cleanup.py`.
+`backend/tests/unit/test_storage_retention_doc.py` fails when a table in `app/models` is not named in the retention table above, and when a documented retention constant no longer matches the code. A story that adds a table adds its row here, a row in [`DATA-INVENTORY.md`](DATA-INVENTORY.md) (its own test, `test_data_inventory_doc.py`) and, if it grows with usage, its purge to `token_cleanup.py`.

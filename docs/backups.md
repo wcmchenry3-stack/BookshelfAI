@@ -1,8 +1,9 @@
 # Database backups and restore drill
 
 Independent of Supabase's own backups: a nightly, client-side-encrypted
-`pg_dump` of the production database is stored in Cloudflare R2. A manual,
-approval-gated workflow proves the backups can actually be restored.
+`pg_dump` of the production database is stored in Cloudflare R2. A monthly,
+approval-gated workflow proves the backups can actually be restored. What the
+backup contains, table by table, is in [`DATA-INVENTORY.md`](DATA-INVENTORY.md).
 
 | Item | Value |
 | --- | --- |
@@ -11,6 +12,7 @@ approval-gated workflow proves the backups can actually be restored.
 | How often | Nightly at 07:17 UTC, plus manual `workflow_dispatch` |
 | Encryption | [age](https://github.com/FiloSottile/age), encrypted to a public recipient key in CI; the private key is never in the backup job |
 | Retention | 30 days, enforced by an R2 lifecycle rule (owner setup below) |
+| Restore drill | Monthly (09:23 UTC on the 1st) plus manual `workflow_dispatch`; each run needs owner approval ([Restore drill](#restore-drill)) |
 | Workflows | `.github/workflows/db-backup.yml`, `.github/workflows/db-restore-drill.yml` |
 
 The plaintext dump only exists inside a pipe (`pg_dump | age > file`); only the
@@ -216,12 +218,28 @@ The DB Restore Drill runs steps 1-3 against every restored backup.
 
 ## Restore drill
 
-Run **DB Restore Drill** (Actions > DB Restore Drill > Run workflow) at least
-**quarterly**, and after any change to the backup workflow, Postgres major
-version or key. A reviewer must approve the `backup-restore` environment. The
-job starts a throwaway Postgres container (`docker run postgres:<PG_MAJOR>`,
-removed in the cleanup step), downloads the newest backup with the read-only
-token, decrypts it, restores it, and checks the result.
+**DB Restore Drill** runs on a schedule, **monthly** (cron `23 9 1 * *`, 09:23
+UTC on the 1st, after the nightly backup). Also run it by hand (Actions > DB
+Restore Drill > Run workflow) after any change to the backup workflow, Postgres
+major version or key. The job starts a throwaway Postgres container
+(`docker run postgres:<PG_MAJOR>`, removed in the cleanup step), downloads the
+newest backup with the read-only token, decrypts it, restores it, and checks the
+result.
+
+**A scheduled run waits for owner approval.** The job is in the
+`backup-restore` environment, which has required reviewers and prevents
+self-review, so each month the run sits at "Waiting for review" until the owner
+approves it (Actions > the run > Review deployments). The gate stays: it
+protects the age private key and the read-only R2 token. GitHub cancels a
+deployment that has waited 30 days, so approve within a month or that month's
+drill does not happen.
+
+**Alerting.** If a scheduled drill fails, is cancelled or is never approved,
+the `notify-failure` job (`issues: write`, no secrets, no checkout) opens a
+GitHub issue titled "DB restore drill did not pass" with the run link, or
+comments on the open one. Manual runs do not open an issue: the person who
+started one sees the result. This is on top of the GitHub notification in Owner
+setup, step 7.
 
 Optional input `expected_revision`: if set, the drill fails unless the restored
 `alembic_version` equals it.
@@ -269,6 +287,34 @@ lookalike such as `schema "network_x"` or an unquoted
 form cannot be told apart from a failure on application objects; the check
 fails closed). The allowlist lives in the `benign` variable of the "Decrypt and
 restore" step; keep this list and that variable in sync.
+
+## Drill evidence
+
+Each passing drill is recorded here (newest first): a dated proof that a backup
+restored. The repository is public, so the workflow prints **pass/fail per check
+and no row counts or sizes**. #1011 asked for a row-count comparison; it is
+recorded as pass/fail only, on purpose. The `users`, `books`, `editions` and
+`user_books` checks confirm each table was restored (and `users` non-empty), and
+a `pg_restore` that failed to load a table's rows reports a `COPY failed` error,
+which always fails the drill. Counts in the public log are ruled out by the
+workflow's header. If the owner wants real counts, compare them on a trusted
+machine with `psql` (see [Manual restore](#manual-restore)) and write only
+"matched" here.
+
+Checks the drill reports ([Restore drill](#restore-drill)): backup freshness;
+`alembic_version` present and non-empty; `users`, `books`, `editions` and
+`user_books` present; `users` non-empty; expected revision (when given);
+`pg_restore` errors (tolerated and unexpected counts); app role grants
+re-applied.
+
+<!-- TODO(#1011): owner steps. The orchestrator triggers the drill and the
+owner approves the `backup-restore` deployment. Then fill in the row below
+(date, run link, duration, backup date, pass or fail per check) and delete this
+comment and the TODO markers. -->
+
+| Date (UTC) | Run | Duration | Backup restored | Result (per check) |
+|---|---|---|---|---|
+| TODO | TODO: link to the Actions run | TODO: job duration | TODO: date in the backup key | TODO: pass or fail for each check above; row counts compared: pass or fail only |
 
 ## Cost
 
