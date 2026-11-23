@@ -258,14 +258,27 @@ describe('scrubSentryEvent', () => {
     });
 
     // Time at ~40k vs ~10k chars: linear gives a ratio near 4, quadratic near 16.
+    // A single call takes only tens of microseconds at 10k, which is too short to
+    // time reliably on a shared runner. So each sample repeats the call until at
+    // least MIN_SAMPLE_MS has passed and reports the mean per call. The median of
+    // SAMPLES such samples is returned, which absorbs scheduling spikes.
+    const MIN_SAMPLE_MS = 20;
+    const SAMPLES = 5;
     const time = (s: string) => {
-      let best = Infinity;
-      for (let i = 0; i < 3; i++) {
+      const perCall: number[] = [];
+      for (let r = 0; r < SAMPLES; r++) {
+        let calls = 0;
         const t = performance.now();
-        redactString(s);
-        best = Math.min(best, performance.now() - t);
+        let elapsed = 0;
+        do {
+          redactString(s);
+          calls++;
+          elapsed = performance.now() - t;
+        } while (elapsed < MIN_SAMPLE_MS);
+        perCall.push(elapsed / calls);
       }
-      return best;
+      perCall.sort((a, b) => a - b);
+      return perCall[Math.floor(SAMPLES / 2)];
     };
     const cases: [string, (n: number) => string][] = [
       ['eyJ', (n) => 'eyJ'.repeat(Math.ceil(n / 3))],
@@ -281,7 +294,9 @@ describe('scrubSentryEvent', () => {
       const small = time(make(10000));
       const big = time(make(40000));
       expect(big).toBeLessThan(1000);
-      expect(big / Math.max(small, 1)).toBeLessThan(8);
+      // No `Math.max(small, 1)` floor: per-call times are sub-millisecond, so a
+      // floor of 1 ms would turn the ratio into `big / 1` and hide a quadratic.
+      expect(big / small).toBeLessThan(8);
     });
 
     it('redacts JWTs in the scanned forms and leaves look-alikes', () => {
