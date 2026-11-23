@@ -62,7 +62,7 @@ export async function executeScan(
   try {
     // No photo leaves the device before AI consent stands (#1023).
     if (job.type === 'image' && !(await mayUpload(deps, job, options))) return;
-    await runScan(deps, job, controller.signal);
+    await runScan(deps, job, controller.signal, options);
   } finally {
     deps.abortersRef.current.delete(controller);
     deps.inFlightRef.current.delete(job.id);
@@ -135,7 +135,12 @@ async function buildScanFormData(
   return formData;
 }
 
-async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
+async function runScan(
+  deps: ScanExecDeps,
+  job: ScanJob,
+  signal: AbortSignal,
+  { interactive = false }: ExecuteScanOptions = {}
+) {
   const { updateJob, showBanner, bumpUsage, setScanNotice, setReviewingJobId, t } = deps;
   const generation = deps.generationRef.current;
   const signedOutSince = () => deps.generationRef.current !== generation;
@@ -179,8 +184,15 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
           if (signal.aborted) return null;
           throw readErr;
         }
-        // Signed out or aborted during the read: still nothing is sent.
+        // #1023: consent may have been withdrawn while the token, the photo
+        // or a scan_in_progress wait was awaited: check again, without
+        // asking, right before every post. No consent: the photo waits.
+        const consented = await deps.aiConsentRef.current.check();
         if (signedOutSince() || signal.aborted) return null;
+        if (!consented) {
+          holdForAiConsent(deps, job);
+          return null;
+        }
         return api.post<ScanResponse>('/scan', body, {
           signal,
           timeout: SCAN_UPLOAD_TIMEOUT_MS,
@@ -376,11 +388,12 @@ async function runScan(deps: ScanExecDeps, job: ScanJob, signal: AbortSignal) {
     if (shouldBumpUsageOnError(job, err, uiState)) bumpUsage();
 
     // #1023: consent withdrawn elsewhere (or never recorded) and the server
-    // enforces it: ask again instead of an error; the photo waits.
+    // enforces it: the photo waits, and a send the user started asks again
+    // instead of an error. The drain never asks (no prompt at launch).
     if (uiState.kind === 'ai_consent_required') {
       deps.aiConsentRef.current.markRequired();
       holdForAiConsent(deps, job);
-      void deps.aiConsentRef.current.ensure();
+      if (interactive) void deps.aiConsentRef.current.ensure();
       return;
     }
 

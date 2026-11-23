@@ -57,6 +57,9 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
   // Bumped on sign-out: an answer for the previous account is dropped.
   const generationRef = useRef(0);
   const loadingRef = useRef<Promise<AiConsentStatus> | null>(null);
+  // Bumped whenever this app changes the state (grant, withdraw, a server
+  // refusal): a read that was in flight meanwhile is older, so it is dropped.
+  const versionRef = useRef(0);
   // The open prompt's answer; every caller while it is open shares it.
   const pendingRef = useRef<{ promise: Promise<boolean>; resolve: (ok: boolean) => void } | null>(
     null
@@ -100,10 +103,12 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
   const load = useCallback((): Promise<AiConsentStatus> => {
     if (loadingRef.current) return loadingRef.current;
     const generation = generationRef.current;
+    const version = versionRef.current;
     const loading = (async () => {
       const state = await loadAiConsent();
       if (generationRef.current !== generation) return 'unknown' as const;
-      return state ? apply(state) : statusRef.current;
+      if (!state || versionRef.current !== version) return statusRef.current;
+      return apply(state);
     })();
     loadingRef.current = loading;
     void loading.finally(() => {
@@ -120,7 +125,10 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
 
   const ensureConsent = useCallback(
     async ({ allowUnknown = false }: { allowUnknown?: boolean } = {}) => {
+      const generation = generationRef.current;
       if (statusRef.current === 'unknown') await load();
+      // Signed out while the state was read: never ask for the next account.
+      if (generationRef.current !== generation) return false;
       if (statusRef.current === 'given') return true;
       if (statusRef.current === 'unknown' && allowUnknown) return true;
       if (pendingRef.current) return pendingRef.current.promise;
@@ -146,6 +154,7 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
     try {
       const state = await grantAiConsent();
       if (generationRef.current !== generation) return;
+      versionRef.current += 1;
       if (apply(state) === 'given') {
         Sentry.addBreadcrumb({ category: 'ai-consent', message: 'given', level: 'info' });
         closePrompt(true);
@@ -169,6 +178,7 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
   }, [closePrompt]);
 
   const markRequired = useCallback(() => {
+    versionRef.current += 1;
     statusRef.current = 'none';
     setStatusState('none');
     setGivenAt(null);
@@ -178,7 +188,10 @@ export function AiConsentProvider({ children }: { children: React.ReactNode }) {
     const generation = generationRef.current;
     try {
       const state = await withdrawAiConsent();
-      if (generationRef.current === generation) apply(state);
+      if (generationRef.current === generation) {
+        versionRef.current += 1;
+        apply(state);
+      }
       return !state.given;
     } catch {
       Sentry.addBreadcrumb({

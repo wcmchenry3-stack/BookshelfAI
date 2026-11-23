@@ -174,6 +174,59 @@ describe('the upload gate', () => {
   });
 });
 
+describe('consent re-checked right before every POST (round 1 #1)', () => {
+  it('withdrawn while the Turnstile token is awaited: no POST, the photo waits', async () => {
+    const gate = makeGate(true);
+    const deps = makeDeps(gate, {
+      getTurnstileTokenRef: {
+        current: async () => {
+          gate.check.mockResolvedValue(false); // withdrawn meanwhile
+          return 'tok';
+        },
+      },
+    });
+    await executeScan(deps, makeJob(), { interactive: true });
+    expect(post).not.toHaveBeenCalled();
+    expect(gate.check).toHaveBeenCalledTimes(1);
+    expect(deps.updateJob).toHaveBeenLastCalledWith('job-1', HELD);
+  });
+
+  it('withdrawn during a scan_in_progress retry wait: no second POST, the photo waits', async () => {
+    jest.useFakeTimers();
+    try {
+      const gate = makeGate(true);
+      post.mockImplementationOnce(async () => {
+        gate.check.mockResolvedValue(false); // withdrawn while waiting to retry
+        throw {
+          response: {
+            status: 429,
+            data: { detail: 'scan_in_progress' },
+            headers: { 'retry-after': '2' },
+          },
+        };
+      });
+      const deps = makeDeps(gate);
+      const sent = executeScan(deps, makeJob({ status: 'queued' }));
+      await jest.advanceTimersByTimeAsync(5_000);
+      await sent;
+      expect(post).toHaveBeenCalledTimes(1);
+      // Once by the gate, then before each of the two posts.
+      expect(gate.check).toHaveBeenCalledTimes(3);
+      expect(deps.updateJob).toHaveBeenLastCalledWith('job-1', HELD);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a send with consent checks before every post and posts', async () => {
+    const gate = makeGate(true);
+    const deps = makeDeps(gate);
+    await executeScan(deps, makeJob(), { interactive: true });
+    expect(gate.check).toHaveBeenCalledTimes(1);
+    expect(gate.check.mock.invocationCallOrder[0]).toBeLessThan(post.mock.invocationCallOrder[0]);
+  });
+});
+
 describe('403 ai_consent_required from the server', () => {
   it('is its own state, not counted, not reported centrally', () => {
     expect(classifyScanError(REQUIRED)).toEqual({ kind: 'ai_consent_required' });
@@ -183,13 +236,25 @@ describe('403 ai_consent_required from the server', () => {
     expect(isReportedCentrally(REQUIRED)).toBe(false);
   });
 
-  it('asks again instead of an error, and the photo waits', async () => {
+  it("a user's own send asks again instead of an error, and the photo waits", async () => {
+    const gate = makeGate(true);
+    post.mockRejectedValue(REQUIRED);
+    const deps = makeDeps(gate);
+    await executeScan(deps, makeJob(), { interactive: true });
+    expect(gate.markRequired).toHaveBeenCalledTimes(1);
+    // Once by the upload gate, once more to ask again after the refusal.
+    expect(gate.ensure).toHaveBeenCalledTimes(2);
+    expect(deps.updateJob).toHaveBeenLastCalledWith('job-1', HELD);
+    expect(deps.showBanner).not.toHaveBeenCalled();
+  });
+
+  it('the drain only holds the photo: no prompt (round 1 #5)', async () => {
     const gate = makeGate(true);
     post.mockRejectedValue(REQUIRED);
     const deps = makeDeps(gate);
     await executeScan(deps, makeJob({ status: 'queued' }));
     expect(gate.markRequired).toHaveBeenCalledTimes(1);
-    expect(gate.ensure).toHaveBeenCalledTimes(1);
+    expect(gate.ensure).not.toHaveBeenCalled();
     expect(deps.updateJob).toHaveBeenLastCalledWith('job-1', HELD);
     expect(deps.updateJob).not.toHaveBeenCalledWith(
       'job-1',

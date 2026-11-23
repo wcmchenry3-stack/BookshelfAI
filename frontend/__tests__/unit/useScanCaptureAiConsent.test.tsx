@@ -1,5 +1,6 @@
-// useScanCapture asks for AI consent before a photo is taken or picked
-// (#1023). useAiConsent is the shared Jest mock (helpers/aiConsentMock.ts).
+// useScanCapture asks for AI consent before a native photo is taken (#1023);
+// the web picker opens at once and its upload asks. useAiConsent is the
+// shared Jest mock (helpers/aiConsentMock.ts).
 import { act, renderHook } from '@testing-library/react-native';
 
 import { useScanCapture } from '../../hooks/useScanCapture';
@@ -72,6 +73,43 @@ describe('native shutter', () => {
   });
 });
 
+describe('native shutter, double tap (round 1 #3)', () => {
+  it('a second tap while consent is being asked takes no second photo', async () => {
+    let answer!: (ok: boolean) => void;
+    jest
+      .spyOn(aiConsentMock, 'ensureConsent')
+      .mockReturnValue(new Promise<boolean>((r) => (answer = r)));
+    const { result, takePictureAsync } = await setup();
+    let first!: Promise<void>;
+    await act(async () => {
+      first = result.current.requestCapture();
+    });
+    await act(async () => {
+      await result.current.requestCapture();
+    });
+    await act(async () => {
+      answer(true);
+      await first;
+    });
+    expect(aiConsentMock.ensureConsent).toHaveBeenCalledTimes(1);
+    expect(takePictureAsync).toHaveBeenCalledTimes(1);
+    expect(startScan).toHaveBeenCalledTimes(1);
+  });
+
+  it('the shutter works again after Not now', async () => {
+    aiConsentMock.answer = false;
+    const { result, takePictureAsync } = await setup();
+    await act(async () => {
+      await result.current.requestCapture();
+    });
+    aiConsentMock.answer = true;
+    await act(async () => {
+      await result.current.requestCapture();
+    });
+    expect(takePictureAsync).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('web picker', () => {
   it('known consent opens the picker in the same tap', async () => {
     const ensure = jest.spyOn(aiConsentMock, 'ensureConsent');
@@ -81,22 +119,16 @@ describe('web picker', () => {
     expect(ensure).not.toHaveBeenCalled();
   });
 
-  it('asks first when consent is not known; Not now opens nothing', async () => {
+  it('without consent the picker still opens in the same tap, synchronously (round 1 #4)', async () => {
+    // Browsers only open a picker from the tap itself; the upload asks later
+    // (startScan's interactive send, ScanAiConsentFlow.test.tsx).
     aiConsentMock.status = 'none';
     aiConsentMock.answer = false;
+    const ensure = jest.spyOn(aiConsentMock, 'ensureConsent');
     const { result, click } = await setup();
-    await act(async () => {
-      result.current.requestWebPick();
-    });
-    expect(click).not.toHaveBeenCalled();
-  });
-
-  it('asks first when consent is not known; Continue opens the picker', async () => {
-    aiConsentMock.status = 'none';
-    const { result, click } = await setup();
-    await act(async () => {
-      result.current.requestWebPick();
-    });
+    result.current.requestWebPick();
     expect(click).toHaveBeenCalledTimes(1);
+    expect(ensure).not.toHaveBeenCalled();
+    expect(startScan).not.toHaveBeenCalled();
   });
 });

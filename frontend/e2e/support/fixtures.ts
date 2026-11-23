@@ -107,6 +107,16 @@ class Backend {
     });
   }
 
+  /** Withdraws the test user's AI scan consent (#1023), so the app asks again
+   * whatever an earlier run (or test) answered. Never grants it: giving
+   * consent is part of the flow under test. */
+  async withdrawAiConsent(): Promise<void> {
+    const res = await this.request.delete(`${API_URL}/users/me/ai-consent`, {
+      headers: await this.headers(),
+    });
+    expect(res.ok(), 'DELETE /users/me/ai-consent').toBe(true);
+  }
+
   /** Clears every saved scan record (the e2e database only), so the same
    * photo is read by the provider again instead of being answered from the
    * record of an earlier run. */

@@ -70,10 +70,10 @@ export type ScanNotice =
   | { kind: 'still_processing' }
   | { kind: 'paused' };
 
-/** `error` values a refused (re-queued) job carries. */
 /** A queued photo's `error` while it waits for AI consent (#1023). */
 export const AI_CONSENT_ERROR = 'ai_consent';
 
+/** `error` values a refused (re-queued) job carries. */
 export const REFUSAL_ERRORS: readonly string[] = [
   'daily_limit',
   'requests_daily_limit',

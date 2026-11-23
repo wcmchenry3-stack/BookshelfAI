@@ -380,6 +380,42 @@ describe('AiConsentProvider', () => {
     expect(consent.status).toBe('unknown');
   });
 
+  it('signed out while the state is read: resolves false and never asks (round 1 #2)', async () => {
+    const read = deferred<{ data: unknown }>();
+    mockGet.mockReturnValue(read.promise);
+    const view = await render(tree(true));
+    let answer!: Promise<boolean>;
+    await act(async () => {
+      answer = consent.ensureConsent();
+    });
+    await view.rerender(tree(false));
+    await act(async () => {
+      read.resolve({ data: NONE });
+    });
+    await expect(answer).resolves.toBe(false);
+    expect(screen.queryByTestId('ai-consent-prompt')).toBeNull();
+  });
+
+  it('a read that started before a withdrawal cannot bring the consent back (round 1 #6)', async () => {
+    const read = deferred<{ data: unknown }>();
+    mockGet.mockReturnValue(read.promise);
+    await render(tree());
+    let check!: Promise<boolean>;
+    await act(async () => {
+      check = consent.checkConsent();
+    });
+    await act(async () => {
+      await consent.withdraw();
+    });
+    expect(consent.status).toBe('none');
+    // The older read answers with the state from before the withdrawal.
+    await act(async () => {
+      read.resolve({ data: GIVEN });
+    });
+    await expect(check).resolves.toBe(false);
+    expect(consent.status).toBe('none');
+  });
+
   it('the prompt is accessible: a header, a policy link, labelled buttons', async () => {
     await render(tree());
     await act(async () => {
