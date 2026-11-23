@@ -76,8 +76,14 @@ def parse_if_match(value: str | None) -> IfMatch:
     if stripped == "*":
         return ANY_VERSION
     versions: set[int] = set()
-    for part in stripped.split(","):
-        match = _ENTITY_TAG.fullmatch(part.strip())
+    # RFC 9110 list syntax allows empty elements ("3", ,"4" or a trailing comma).
+    parts = [part.strip() for part in stripped.split(",")]
+    if not any(parts):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=IF_MATCH_INVALID
+        )
+    for part in filter(None, parts):
+        match = _ENTITY_TAG.fullmatch(part)
         if match is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=IF_MATCH_INVALID

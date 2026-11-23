@@ -213,6 +213,32 @@ def test_migration_0032_resumes_after_a_half_applied_upgrade():
         _alembic("upgrade", head)
 
 
+def test_migration_0032_downgrade_resumes_after_a_half_applied_downgrade():
+    """One table already lost the column (an earlier downgrade attempt), the
+    revision still 0032: the re-run drops only what is left."""
+    head = _head()
+    if head is None:
+        pytest.skip("database not migrated with alembic (create_all only)")
+    try:
+        _alembic("downgrade", "0032")
+
+        def _half_downgraded(connection):
+            connection.execute(
+                sa.text("ALTER TABLE user_custom_books DROP COLUMN version")
+            )
+            connection.commit()
+
+        _in_sync_connection(_half_downgraded)
+        assert _in_sync_connection(_state)["revision"] == "0032"
+
+        _alembic("downgrade", "0031")
+        state = _in_sync_connection(_state)
+        assert state["revision"] == "0031"
+        assert not any("version" in state["columns"][t] for t in TABLES)
+    finally:
+        _alembic("upgrade", head)
+
+
 # ── HTTP ─────────────────────────────────────────────────────────────────────
 
 

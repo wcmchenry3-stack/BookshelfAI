@@ -59,5 +59,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table in reversed(_TABLES):
+    # Same guard and lock timeout as upgrade: a re-run after a partial
+    # downgrade skips what is gone, and a long transaction fails it fast.
+    inspector = sa.inspect(op.get_bind())
+    present = [
+        table
+        for table in reversed(_TABLES)
+        if _COLUMN in {c["name"] for c in inspector.get_columns(table)}
+    ]
+    op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+    for table in present:
         op.drop_column(table, _COLUMN)

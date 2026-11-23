@@ -39,6 +39,9 @@ USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000685")
         ('  "12"  ', {12}),
         ('"1", W/"4" ,"7"', {1, 4, 7}),
         ('"999999999"', {999_999_999}),
+        # RFC 9110 lists may hold empty elements (a proxy's trailing comma).
+        ('"1",', {1}),
+        ('"3", ,"4"', {3, 4}),
     ],
 )
 def test_entity_tags_are_parsed(header, versions):
@@ -67,7 +70,8 @@ def test_absent_and_star():
         '"3.0"',
         '""',
         '"1234567890"',  # beyond the 32-bit column
-        '"1",',
+        ",",
+        " , ,",
         '"1" "2"',
         '*, "1"',
     ],
