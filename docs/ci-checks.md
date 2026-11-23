@@ -170,7 +170,7 @@ None of these is defined under `.github/workflows/`, so their configuration is "
 | `sync-main-to-dev.yml` | push to `main` | Opens a PR syncing `main` back into `dev` (org workflow pinned to a commit SHA) |
 | `sync-native-versions.yml` | release published | Bumps the iOS and Android build numbers after a release-please release |
 | `db-backup.yml` | daily 07:17 UTC, manual | Encrypted `pg_dump` of the production database to R2 (`backup` job), and a read-only size alert (`size-check` job) that fails at 70% of `DB_SIZE_LIMIT_GB` (default 8) |
-| `db-restore-drill.yml` | manual | Restores the latest backup into a throwaway Postgres and runs sanity checks |
+| `db-restore-drill.yml` | monthly schedule + manual; owner approval; opens an issue on failure | Restores the latest backup into a throwaway Postgres and runs sanity checks |
 | `perf-ai.yml` | nightly 03:17 UTC, manual | Locust load run of `POST /scan` against a fake provider |
 | `ai-eval.yml` | manual | Labelled scan evaluation against a real, paid model |
 | `zap-scan.yml` | Sundays 06:00 UTC, manual | Org `called-zap-scheduled.yml` against the `SITE_URL` secret |

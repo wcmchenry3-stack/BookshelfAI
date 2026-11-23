@@ -1,9 +1,14 @@
 name: DB Restore Drill
 
-# Manual restore drill: downloads the latest encrypted backup, decrypts it,
+# Monthly (and manual) restore drill: downloads the latest encrypted backup, decrypts it,
 # restores into a throwaway Postgres container and runs sanity checks.
 # Gated by the `backup-restore` environment (required reviewers, deployment
 # branches restricted). See docs/backups.md.
+#
+# A scheduled run still waits for a reviewer to approve the `backup-restore`
+# environment; the gate stays. If the run fails, is cancelled or the approval
+# is never given, the `notify-failure` job opens (or comments on) one GitHub
+# issue so the miss is not silent.
 #
 # This repository is public, so job summaries and logs are world-readable.
 # The drill therefore reports pass/fail per check only: no row counts and no
@@ -11,6 +16,11 @@ name: DB Restore Drill
 # error class only; the full stderr stays on the runner and is never uploaded.
 
 on:
+  schedule:
+    # 09:23 UTC on the 1st of every month, after the 07:17 nightly backup
+    # (db-backup.yml) so the newest backup is fresh. Scheduled runs use the
+    # default branch (dev), which `backup-restore` allows.
+    - cron: "23 9 1 * *"
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -327,3 +337,34 @@ jobs:
         run: |
           docker rm -f drillpg >/dev/null 2>&1 || true
           rm -f "${IDENTITY_FILE:-}" "${ENC_FILE:-}" "${DUMP_FILE:-}" "${ERR_FILE:-}"
+
+  # Alert on a failed scheduled drill. Needs no secrets and no checkout: only
+  # `issues: write` on the GITHUB_TOKEN. The issue carries the run link and no
+  # data (the repository is public).
+  notify-failure:
+    needs: drill
+    if: ${{ always() && github.event_name == 'schedule' && needs.drill.result != 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DRILL_RESULT: ${{ needs.drill.result }}
+        run: |
+          set -euo pipefail
+          title="DB restore drill did not pass"
+          body="The scheduled DB Restore Drill ended with result \`${DRILL_RESULT}\`: ${RUN_URL}
+
+          A result of \`cancelled\` can mean nobody approved the \`backup-restore\` environment in time. See docs/backups.md (Restore drill, Drill evidence) for what to check and how to re-run it."
+          existing=$(gh issue list --state open --search "\"${title}\" in:title" \
+            --json number,title --jq "[.[] | select(.title == \"${title}\")][0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
