@@ -18,9 +18,11 @@ Apple App Attest two-step flow:
 
 Android Play Integrity flow (no persistent key):
   1. POST /attestation/nonce → nonce
-  2. Client requests Play Integrity token from Google with that nonce
+  2. Client requests a Standard Play Integrity token from Google, passing the
+     nonce verbatim as the ``requestHash``
   3. POST /scan (platform=android + integrity_token + nonce) per request
-     → server decodes token via Google API, checks nonce + verdicts
+     → server decodes token via Google API, checks
+       ``requestDetails.requestHash == nonce`` + package name + verdicts
 """
 
 import base64
@@ -177,8 +179,9 @@ class AndroidIntegrityVerifier(Protocol):
     ) -> bool:
         """Decode a Play Integrity token via Google's API.
 
-        Returns True only when the token is valid, the nonce matches, and
-        both MEETS_DEVICE_INTEGRITY and PLAY_RECOGNIZED are present.
+        Returns True only when the token is valid, its Standard
+        ``requestDetails.requestHash`` equals the nonce, and both
+        MEETS_DEVICE_INTEGRITY and PLAY_RECOGNIZED are present.
         """
         ...
 
@@ -231,7 +234,7 @@ class LiveAndroidIntegrityVerifier:
             return False
 
         req = outer.get("requestDetails", {})
-        if req.get("nonce") != nonce:
+        if not _request_hash_matches(req, nonce):
             return False
         if req.get("requestPackageName") != package_name:
             return False
@@ -244,6 +247,24 @@ class LiveAndroidIntegrityVerifier:
 
         app_verdict = outer.get("appIntegrity", {}).get("appRecognitionVerdict", "")
         return app_verdict == self._REQUIRED_APP_VERDICT
+
+
+def _request_hash_matches(request_details: object, nonce: str) -> bool:
+    """Return True when a Standard verdict's ``requestHash`` equals ``nonce``.
+
+    The app uses the Play Integrity **Standard** request (``@expo/app-integrity``
+    has no Classic API) and passes the server nonce verbatim as the
+    ``requestHash``, so the decoded verdict carries it in
+    ``requestDetails.requestHash``. The Classic ``requestDetails.nonce`` field
+    is ignored on purpose: no client sends Classic tokens, and accepting them
+    would only widen what the server trusts (#1050).
+    """
+    if not isinstance(request_details, dict):
+        return False
+    request_hash = request_details.get("requestHash")
+    if not isinstance(request_hash, str) or not request_hash:
+        return False
+    return hmac.compare_digest(request_hash.encode(), nonce.encode())
 
 
 async def _google_access_token(service_account_json: str) -> str:

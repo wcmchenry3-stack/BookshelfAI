@@ -603,7 +603,7 @@ when it is built with a site key (see [`security.md` → Turnstile on
 **Setup order:**
 
 1. **Apple**: enable App Attest in the Xcode target's Signing & Capabilities, set `ATTESTATION_APPLE_APP_ID` on both API services. Replace `StubAppleAttestVerifier` in `backend/app/api/_bot_check.py` with the real verifier once cert-chain verification is implemented.
-2. **Android**: enrol the app in the Play Integrity API (Google Play Console → Release → App integrity), create a Google service account with `playintegrity.apks.verify`, download the JSON, set `ATTESTATION_ANDROID_PACKAGE_NAME` and `ATTESTATION_GOOGLE_CREDENTIALS_JSON`.
+2. **Android**: enrol the app in the Play Integrity API (Google Play Console → Release → App integrity), create a Google service account with `playintegrity.apks.verify`, download the JSON, set `ATTESTATION_ANDROID_PACKAGE_NAME` and `ATTESTATION_GOOGLE_CREDENTIALS_JSON`. The app uses the Play Integrity **Standard** request and the server verifies `requestDetails.requestHash` against the nonce (#1050); Classic tokens (`requestDetails.nonce` only) are rejected.
 3. **Nonce secret**: generate with `openssl rand -hex 32` and set `ATTESTATION_NONCE_SECRET` on both services.
 4. **Test on dev** with `ATTESTATION_REQUIRED=false` first. Confirm `/attestation/nonce` returns a nonce, `/attestation/register` succeeds, and `/scan` passes without returning 403.
 5. **Enable** `ATTESTATION_REQUIRED=true` once end-to-end is verified. Keep `ATTESTATION_REQUIRED=false` until both platforms are tested; Turnstile remains the fallback.

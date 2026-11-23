@@ -164,7 +164,8 @@ def _scrub_breadcrumb(crumb: dict, _hint: dict | None = None) -> dict:
 
 
 def _scrub_event(event: dict, _hint: dict | None = None) -> dict:
-    """before_send / before_send_transaction: query strings never leave."""
+    """before_send / before_send_transaction: query strings, request bodies
+    and cookies never leave."""
     for span in event.get("spans") or []:
         if isinstance(span.get("data"), dict):
             _strip_query(span["data"])
@@ -177,8 +178,14 @@ def _scrub_event(event: dict, _hint: dict | None = None) -> dict:
         _scrub_breadcrumb(crumb)
     _strip_client_ip(event)
     request = event.get("request")
-    if isinstance(request, dict) and request.get("query_string"):
-        request["query_string"] = _FILTERED
+    if isinstance(request, dict):
+        if request.get("query_string"):
+            request["query_string"] = _FILTERED
+        # Defence in depth behind max_request_body_size="never": a body holds
+        # user-entered text (private notes, titles, search text) and cookies
+        # hold the session; neither is ever sent, on events or transactions.
+        request.pop("data", None)
+        request.pop("cookies", None)
     return event
 
 
@@ -189,6 +196,9 @@ def sentry_privacy_options() -> dict:
     """
     return {
         "include_local_variables": False,
+        # Request bodies hold user-entered text (private notes, titles, search
+        # text); the integration never captures them (#1053).
+        "max_request_body_size": "never",
         "event_scrubber": build_event_scrubber(),
         "before_send": _scrub_event,
         "before_send_transaction": _scrub_event,
