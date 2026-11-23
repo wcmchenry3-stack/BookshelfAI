@@ -1,5 +1,7 @@
 import * as Crypto from 'expo-crypto';
 
+import { toApiError } from './apiError';
+
 /**
  * Idempotency-Key on library and account writes (#685). `lib/api.ts` adds a
  * fresh key to every write the server honours one on (one call of
@@ -13,6 +15,13 @@ export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 
 /** 409 detail while the first request with the key is still running. */
 const IDEMPOTENCY_IN_PROGRESS = 'idempotency_in_progress';
+/**
+ * 409 detail when the first request with the key committed its write but
+ * the server stored no response (it failed right after the commit, or the
+ * server stopped). The write was applied: never retry it, show no error,
+ * re-read the data instead.
+ */
+const IDEMPOTENCY_OUTCOME_UNKNOWN = 'idempotency_outcome_unknown';
 
 const KEYED_METHODS: readonly string[] = ['post', 'patch', 'put', 'delete'];
 
@@ -52,4 +61,14 @@ export function idempotencyKeyOf(headers: unknown): string | undefined {
 /** A `409 idempotency_in_progress`: the first attempt is still running; wait and retry. */
 export function isIdempotencyInProgress(status: number | undefined, code: string | undefined) {
   return status === 409 && code === IDEMPOTENCY_IN_PROGRESS;
+}
+
+/**
+ * True for `409 idempotency_outcome_unknown`: the write already happened.
+ * Callers treat it as applied (refresh what they show, no error banner) and
+ * `lib/api.ts` never retries it.
+ */
+export function isIdempotencyOutcomeUnknown(err: unknown): boolean {
+  const { status, code } = toApiError(err);
+  return status === 409 && code === IDEMPOTENCY_OUTCOME_UNKNOWN;
 }

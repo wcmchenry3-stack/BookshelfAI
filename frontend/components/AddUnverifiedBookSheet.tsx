@@ -6,6 +6,8 @@ import { useTheme } from '../hooks/useTheme';
 import SheetModal from './SheetModal';
 import { Button } from './ui/Button';
 import { api } from '../lib/api';
+import { isIdempotencyOutcomeUnknown } from '../lib/idempotency';
+import { notifyLibraryChanged } from '../lib/libraryChanged';
 import {
   UNVERIFIED_LIMITS,
   unverifiedFailure,
@@ -105,6 +107,13 @@ export function AddUnverifiedBookSheet({
       // onSaved is this render's callback, bound to the draft being saved.
       onSaved(data);
     } catch (err) {
+      if (isIdempotencyOutcomeUnknown(err)) {
+        // #685: the book was saved, only the response was lost. Close the
+        // form and let the lists reload; no error.
+        notifyLibraryChanged();
+        if (draftKeyRef.current === startedFor) onDismiss();
+        return;
+      }
       // Show the failure only on the form it belongs to.
       if (draftKeyRef.current === startedFor) {
         setFormError(t(FAILURE_KEYS[unverifiedFailure(err)]));

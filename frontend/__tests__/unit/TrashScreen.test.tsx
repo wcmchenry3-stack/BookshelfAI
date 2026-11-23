@@ -300,6 +300,20 @@ describe('TrashScreen', () => {
     });
   });
 
+  it('a restore applied without its response reloads with no banner (#685)', async () => {
+    mockRestore.mockRejectedValue(apiError(409, 'idempotency_outcome_unknown'));
+    const { findByText, getByLabelText, queryByText } = await render(<TrashScreen />);
+    await findByText('Dune');
+    mockListTrash.mockResolvedValue([FOUNDATION]);
+    await act(async () => {
+      await fireEvent.press(getByLabelText('Restore Dune'));
+    });
+    await waitFor(() => expect(mockListTrash).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(queryByText('Dune')).toBeNull());
+    expect(mockRestore).toHaveBeenCalledTimes(1);
+    expect(mockShowBanner).not.toHaveBeenCalled();
+  });
+
   it('a 5xx shows the generic error', async () => {
     mockRestore.mockRejectedValue(apiError(500));
     const { findByText, getByLabelText } = await render(<TrashScreen />);

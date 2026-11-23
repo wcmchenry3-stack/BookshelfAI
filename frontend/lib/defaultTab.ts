@@ -8,6 +8,7 @@
  * (offline, an error, too slow) means Scan.
  */
 import { api } from './api';
+import { isIdempotencyOutcomeUnknown } from './idempotency';
 
 /** The screens a user can open on; the same values as the backend's `DEFAULT_TABS`. */
 export const DEFAULT_TABS = ['scan', 'wishlist', 'my-books'] as const;
@@ -81,6 +82,12 @@ export async function loadDefaultTab(
 
 /** Saves the user's choice; resolves to what the server stored. Rejects on failure. */
 export async function saveDefaultTab(tab: DefaultTab): Promise<DefaultTab> {
-  const { data } = await api.patch('/users/me/preferences', { default_tab: tab });
-  return defaultTabFromMe(data);
+  try {
+    const { data } = await api.patch('/users/me/preferences', { default_tab: tab });
+    return defaultTabFromMe(data);
+  } catch (err) {
+    // #685: this exact write was applied, only its response was lost.
+    if (isIdempotencyOutcomeUnknown(err)) return tab;
+    throw err;
+  }
 }

@@ -9,6 +9,7 @@
  * classified in lib/scanErrors.ts).
  */
 import { api } from './api';
+import { isIdempotencyOutcomeUnknown } from './idempotency';
 
 /**
  * The hosted privacy policy, linked from the consent prompt. The URL recorded
@@ -55,14 +56,34 @@ function stateOrThrow(data: unknown): AiConsentState {
   return state;
 }
 
+/**
+ * The write was applied but its response was lost (`409
+ * idempotency_outcome_unknown`, #685): read the state back instead of
+ * failing. Rethrows anything else, or when the read fails too.
+ */
+async function stateAfterUnknownOutcome(err: unknown): Promise<AiConsentState> {
+  if (!isIdempotencyOutcomeUnknown(err)) throw err;
+  const state = await loadAiConsent();
+  if (!state) throw err;
+  return state;
+}
+
 /** Records consent on the server; resolves to the stored state. Rejects on failure. */
 export async function grantAiConsent(): Promise<AiConsentState> {
-  const { data } = await api.post(PATH);
-  return stateOrThrow(data);
+  try {
+    const { data } = await api.post(PATH);
+    return stateOrThrow(data);
+  } catch (err) {
+    return stateAfterUnknownOutcome(err);
+  }
 }
 
 /** Withdraws consent on the server; resolves to the stored state. Rejects on failure. */
 export async function withdrawAiConsent(): Promise<AiConsentState> {
-  const { data } = await api.delete(PATH);
-  return stateOrThrow(data);
+  try {
+    const { data } = await api.delete(PATH);
+    return stateOrThrow(data);
+  } catch (err) {
+    return stateAfterUnknownOutcome(err);
+  }
 }

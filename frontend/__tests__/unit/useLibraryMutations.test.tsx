@@ -353,3 +353,38 @@ describe('entry versions (#685)', () => {
     expect(libraryChanged).not.toHaveBeenCalled();
   });
 });
+
+describe('a write applied without its response (#685)', () => {
+  const outcomeUnknown = () => ({
+    response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } },
+  });
+  let reloads: jest.Mock;
+  let unsubscribe: () => void;
+
+  beforeEach(() => {
+    reloads = jest.fn();
+    unsubscribe = onLibraryChanged(reloads);
+  });
+  afterEach(() => unsubscribe());
+
+  it.each(['advanceStatus', 'removeBook'] as const)(
+    '%s: reloads the lists, shows no error and does not retry',
+    async (action) => {
+      mockPatch.mockRejectedValue(outcomeUnknown());
+      mockDelete.mockRejectedValue(outcomeUnknown());
+      const { hook, onAdvanced, onRemoved } = setup();
+      const { result } = await hook;
+
+      await act(async () => {
+        await result.current[action](ITEM);
+      });
+
+      expect(reloads).toHaveBeenCalledTimes(1);
+      expect(Alert.alert).not.toHaveBeenCalled();
+      expect(mockShowBanner).not.toHaveBeenCalled();
+      expect(onAdvanced).not.toHaveBeenCalled();
+      expect(onRemoved).not.toHaveBeenCalled();
+      expect(mockPatch.mock.calls.length + mockDelete.mock.calls.length).toBe(1);
+    }
+  );
+});

@@ -6,6 +6,7 @@ import { useBanner } from './useBanner';
 import { useOnlineOnly } from './useOnlineOnly';
 import { api } from '../lib/api';
 import { ifMatch, isVersionConflict } from '../lib/entryVersion';
+import { isIdempotencyOutcomeUnknown } from '../lib/idempotency';
 import { notifyLibraryChanged } from '../lib/libraryChanged';
 import { openTrash } from '../lib/trash';
 
@@ -74,8 +75,13 @@ export function useLibraryMutations<T extends MutableBook>({
     setMutatingIds(new Set(mutatingRef.current));
   }
 
-  /** Handles a 412; returns false for any other failure. */
+  /** Handles a 412, or a write applied without a response; false for any other failure. */
   function handledConflict(err: unknown, item: T): boolean {
+    if (isIdempotencyOutcomeUnknown(err)) {
+      // #685: the write was applied; reload the lists instead of an error.
+      notifyLibraryChanged();
+      return true;
+    }
     if (!isVersionConflict(err)) return false;
     showBanner({ message: t('changedOnAnotherDevice', { ns: 'my-books' }), type: 'info' });
     notifyLibraryChanged();

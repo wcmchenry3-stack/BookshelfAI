@@ -12,6 +12,8 @@ import type { EnrichedBook } from '../components/BookCandidatePicker';
 import type { PendingUnverifiedDraft } from '../contexts/ScanJobContext';
 import { api } from '../lib/api';
 import { apiErrorTags, isReportedCentrally, sanitizeApiError } from '../lib/apiErrorReporting';
+import { isIdempotencyOutcomeUnknown } from '../lib/idempotency';
+import { notifyLibraryChanged } from '../lib/libraryChanged';
 import { catalogRefusal, isAlreadyOwnedError } from '../lib/ownership';
 import { Sentry } from '../lib/sentry';
 import type { ScanExecDeps } from '../lib/scan/types';
@@ -188,6 +190,13 @@ export function useScanReview({
       if (signedOutSince()) return;
       // A 409 with an ownership code means the book is already in the
       // library (#587): nothing to retry and not a failure.
+      // #685: an add applied without its response (409
+      // idempotency_outcome_unknown) is added, not failed: no retry, and
+      // the lists reload below.
+      const appliedUnseen = outcomes.some(
+        (o) => o.status === 'rejected' && isIdempotencyOutcomeUnknown(o.reason)
+      );
+      if (appliedUnseen) notifyLibraryChanged();
       const alreadyOwned = (o: PromiseSettledResult<unknown>) =>
         o.status === 'rejected' && isAlreadyOwnedError(o.reason);
       const owned = books.filter((_, i) => alreadyOwned(outcomes[i]));
@@ -199,13 +208,12 @@ export function useScanReview({
       const notInCatalog = books.filter((_, i) => refusals[i] === 'book_not_in_catalog');
       const staleResult = books.filter((_, i) => refusals[i] === 'catalog_token_invalid');
       const refused = notInCatalog.length + staleResult.length;
-      const failed = books.filter(
-        (_, i) => outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i])
-      );
+      const applied = (o: PromiseSettledResult<unknown>) =>
+        o.status === 'fulfilled' || isIdempotencyOutcomeUnknown(o.reason);
+      const failed = books.filter((_, i) => !applied(outcomes[i]) && !alreadyOwned(outcomes[i]));
       // Failures a retry might fix.
       const retryable = books.filter(
-        (_, i) =>
-          outcomes[i].status === 'rejected' && !alreadyOwned(outcomes[i]) && refusals[i] === null
+        (_, i) => !applied(outcomes[i]) && !alreadyOwned(outcomes[i]) && refusals[i] === null
       );
       const newlyAdded = books.length - failed.length - owned.length;
 

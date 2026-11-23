@@ -19,6 +19,7 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   idempotencyKeyOf,
   isIdempotencyInProgress,
+  isIdempotencyOutcomeUnknown,
   isKeyedWrite,
 } from '../../lib/idempotency';
 
@@ -310,8 +311,12 @@ describe('Idempotency-Key (#685)', () => {
     expect(calls[1].key).toBe(calls[0].key);
   });
 
-  it('does not retry any other 409 or a 422 key reuse', async () => {
-    for (const data of [{ detail: 'owned_same_edition' }, { detail: 'idempotency_key_reused' }]) {
+  it('does not retry any other 409, a 422 key reuse or an unknown outcome', async () => {
+    for (const data of [
+      { detail: 'owned_same_edition' },
+      { detail: 'idempotency_key_reused' },
+      { detail: 'idempotency_outcome_unknown' },
+    ]) {
       const calls = script([{ status: data.detail.startsWith('owned') ? 409 : 422, data }]);
       await expect(api.post('/wishlist', {})).rejects.toBeTruthy();
       expect(calls).toHaveLength(1);
@@ -342,6 +347,10 @@ describe('Idempotency-Key (#685)', () => {
     expect(idempotencyKeyOf({ get: () => 'b' })).toBe('b');
     expect(isIdempotencyInProgress(409, 'idempotency_in_progress')).toBe(true);
     expect(isIdempotencyInProgress(409, 'other')).toBe(false);
+    const unknown = { response: { status: 409, data: { detail: 'idempotency_outcome_unknown' } } };
+    expect(isIdempotencyOutcomeUnknown(unknown)).toBe(true);
+    expect(isIdempotencyOutcomeUnknown({ response: { status: 409, data: {} } })).toBe(false);
+    expect(isIdempotencyOutcomeUnknown(new Error('x'))).toBe(false);
   });
 });
 
