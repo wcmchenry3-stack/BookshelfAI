@@ -101,6 +101,8 @@ PODS:
     - RNScreens
   - ExpoSecureStore (58.0.3):
     - ExpoModulesCore
+  - ExpoSplashScreen (58.0.14):
+    - ExpoModulesCore
   - ExpoStatusBar (58.0.5):
     - ExpoModulesCore
   - ExpoSystemUI (58.0.7):
@@ -2360,6 +2362,7 @@ DEPENDENCIES:
   - ExpoModulesWorkletsAdapter (from `../node_modules/expo-modules-core`)
   - ExpoRouter (from `../node_modules/expo-router/ios`)
   - ExpoSecureStore (from `../node_modules/expo-secure-store/ios`)
+  - ExpoSplashScreen (from `../node_modules/expo-splash-screen/ios`)
   - ExpoStatusBar (from `../node_modules/expo-status-bar/ios`)
   - ExpoSystemUI (from `../node_modules/expo-system-ui/ios`)
   - ExpoWebBrowser (from `../node_modules/expo-web-browser/ios`)
@@ -2509,6 +2512,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-router/ios"
   ExpoSecureStore:
     :path: "../node_modules/expo-secure-store/ios"
+  ExpoSplashScreen:
+    :path: "../node_modules/expo-splash-screen/ios"
   ExpoStatusBar:
     :path: "../node_modules/expo-status-bar/ios"
   ExpoSystemUI:
@@ -2732,6 +2737,7 @@ SPEC CHECKSUMS:
   ExpoModulesWorkletsAdapter: 33dd492e9c87db147c46e157c36d0761a48577c8
   ExpoRouter: 01c92a99308a0ebb09fe41fddb2ecb180e78b52b
   ExpoSecureStore: 76bccb307911bd866852e6161dda9b1e8e281b99
+  ExpoSplashScreen: 5df81b55f086d8acc7a24008537514f5379aa6f9
   ExpoStatusBar: 38eff05a54229c9a388cb56cef29117b8dc77eb1
   ExpoSystemUI: bfbae2409cccd81019ac00a8f57a8724f0534cfd
   ExpoWebBrowser: f70b404ac8e3a522e0757cb2b64b175e01cc47c5
