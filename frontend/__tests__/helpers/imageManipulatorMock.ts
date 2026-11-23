@@ -14,9 +14,17 @@ export interface ManipulatorCalls {
   resize: { width?: number; height?: number }[];
   save: { format?: string; compress?: number }[];
   released: number;
+  /** ImageRef.release() calls (each render's image, #668 review). */
+  imagesReleased: number;
 }
 
-const freshCalls = (): ManipulatorCalls => ({ manipulate: [], resize: [], save: [], released: 0 });
+const freshCalls = (): ManipulatorCalls => ({
+  manipulate: [],
+  resize: [],
+  save: [],
+  released: 0,
+  imagesReleased: 0,
+});
 
 export const imageManipulatorMock = {
   /** The size a render reports (before any resize). */
@@ -62,6 +70,9 @@ export function imageManipulatorModule() {
                 state.calls.save.push({ ...opts });
                 if (state.failure) throw state.failure;
                 return { uri: `file:///cache/shrunk-${state.seq++}.jpg`, width, height };
+              },
+              release() {
+                state.calls.imagesReleased += 1;
               },
             };
           },

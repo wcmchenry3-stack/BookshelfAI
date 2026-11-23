@@ -42,6 +42,7 @@ describe('shrinkScanPhoto (#668)', () => {
     ]);
     expect(imageManipulatorMock.calls.save).toEqual([{ format: 'jpeg', compress: 0.8 }]);
     expect(imageManipulatorMock.calls.released).toBe(1);
+    expect(imageManipulatorMock.calls.imagesReleased).toBe(1);
   });
 
   it('does not upscale or resize a photo already within the edge', async () => {
@@ -50,11 +51,13 @@ describe('shrinkScanPhoto (#668)', () => {
     expect(imageManipulatorMock.calls.resize).toEqual([]);
   });
 
-  it('resizes the long edge when the platform ignored the load bounds (web), landscape', async () => {
+  it('resizes the long edge when a render comes back over the edge, landscape', async () => {
     imageManipulatorMock.size = { width: 4000, height: 3000 };
     const out = await shrinkScanPhoto('blob:big');
     expect(imageManipulatorMock.calls.resize).toEqual([{ width: 1568 }]);
     expect(out).toEqual(expect.objectContaining({ width: 1568, height: 1176 }));
+    // Both renders are released (on web each holds a blob URL).
+    expect(imageManipulatorMock.calls.imagesReleased).toBe(2);
   });
 
   it('resizes by height for a portrait photo', async () => {
@@ -68,6 +71,7 @@ describe('shrinkScanPhoto (#668)', () => {
     imageManipulatorMock.failure = new Error('disk full');
     await expect(shrinkScanPhoto('file:///tmp/p.jpg')).rejects.toThrow('disk full');
     expect(imageManipulatorMock.calls.released).toBe(1);
+    expect(imageManipulatorMock.calls.imagesReleased).toBe(1);
   });
 });
 

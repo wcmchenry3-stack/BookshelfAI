@@ -22,25 +22,32 @@ export const SCAN_PHOTO_JPEG_QUALITY = 0.8;
  * `removeTempFile`). The pixels are rotated upright (EXIF orientation applied
  * on load) and the output carries no EXIF.
  *
- * On native the load itself is bounded (downsampled while decoding, so a
- * 48 MP photo is never held at full size). The web implementation ignores the
- * load bounds, so the render is checked and resized when still too large.
+ * The load itself is bounded (downsampled while decoding, so a 48 MP photo is
+ * never held at full size). The render is still checked and resized if it
+ * comes back larger, as a guard against a loader that ignores the bounds.
+ * Every rendered image is released: on web each one holds a blob URL until
+ * then.
  */
 export async function shrinkScanPhoto(uri: string): Promise<{ uri: string }> {
   const max = SCAN_PHOTO_MAX_LONG_EDGE_PX;
   const context = ImageManipulator.manipulate(uri, { maxWidth: max, maxHeight: max });
+  const images: { release(): void }[] = [];
   try {
     let image = await context.renderAsync();
+    images.push(image);
     if (Math.max(image.width, image.height) > max) {
       context.resize(image.width >= image.height ? { width: max } : { height: max });
       image = await context.renderAsync();
+      images.push(image);
     }
     return await image.saveAsync({ format: SaveFormat.JPEG, compress: SCAN_PHOTO_JPEG_QUALITY });
   } finally {
-    try {
-      context.release();
-    } catch {
-      // Best effort: the garbage collector frees it otherwise.
+    for (const rendered of [...images, context]) {
+      try {
+        rendered.release();
+      } catch {
+        // Best effort: the garbage collector frees it otherwise.
+      }
     }
   }
 }
