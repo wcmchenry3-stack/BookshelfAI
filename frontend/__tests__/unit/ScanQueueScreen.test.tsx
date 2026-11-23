@@ -169,6 +169,15 @@ describe('scan queue screen (#605)', () => {
     expect(queryByText('No photos are waiting.')).toBeNull();
   });
 
+  it('a photo the server refused as too large says so and offers Delete only (#668)', async () => {
+    const { getByText, queryAllByLabelText, getAllByLabelText } = await renderScreen([
+      job('big', { error: 'image_too_large', failedAt: NOW - 1000 }),
+    ]);
+    expect(getByText('Too large to scan. Delete it and take a new photo.')).toBeTruthy();
+    expect(queryAllByLabelText(/^Retry scan from /)).toHaveLength(0);
+    expect(getAllByLabelText(/^Delete scan from /)).toHaveLength(1);
+  });
+
   it('Retry restarts the photo at attempt 1 and sends it', async () => {
     mockPost.mockRejectedValue({ response: { status: 503, data: { detail: 'scan_unavailable' } } });
     const { getByLabelText, getByTestId } = await renderScreen([

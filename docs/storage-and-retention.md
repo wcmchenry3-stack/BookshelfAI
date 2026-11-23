@@ -9,8 +9,8 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 - **Every table that grows with usage has a retention rule and a purge** run by the daily cleanup task (`backend/app/services/token_cleanup.py` `cleanup_expired_tokens`), in bounded batches (5,000 rows, at most 20 batches per table per run). A new usage-driven table adds its purge there and a row in the [retention table](#table-by-table-retention) in the same PR; `backend/tests/unit/test_storage_retention_doc.py` fails if a model table is missing from this page.
 - **Only three kinds of table may grow without a purge**: user-owned library data (`users`, `user_books`, `user_custom_books`, each capped or tied to a person; their live rows are kept, and rows in the trash are purged 30 days after deletion, #683), the shared catalog (`books`, `editions`, written only from signed provider data) and configuration (`ai_settings`, `ai_inflight`: bounded by user count or fixed keys). Today there is no account deletion, so a departed user's rows are never removed (gap G1).
 - **Raw per-call data lives 30 days, aggregates up to 400 days, per-user scan answers 30 days at most, counters 90 days, the library audit log (`library_events`, #684) 180 days.** Aggregates carry no user ID.
-- **On the phone, the photo is the only thing that is big.** A scan photo is kept until it is scanned and dismissed, or 7 days after it failed. The pending queue is capped at 50 photos, failed photos at 20 (and 7 days), refused photos at 7 days, and completed photos the user has not reviewed at 10 (G3, #669); a capture is also refused when the phone has under 100 MB free (G5, #670). A 50 MB byte cap on `scan-queue/` is defined but disabled until scan photos are resized at capture (#668, decision #1037); until then the bounds are the count caps plus the free-space floor. Everything else on the device is small and bounded.
-- **Today the app stores the camera's full-size JPEG** (quality 0.7). The server shrinks every photo to 1,568 px on the long edge anyway. Recommendation: shrink once at capture to the same size (G2), which cuts the queue from about 125 MB to about 15 MB (estimates).
+- **On the phone, the photo is the only thing that is big.** A scan photo is kept until it is scanned and dismissed, or 7 days after it failed. The pending queue is capped at 50 photos, failed photos at 20 (and 7 days), refused photos at 7 days, and completed photos the user has not reviewed at 10 (G3, #669); a capture is also refused when the phone has under 100 MB free (G5, #670). A 50 MB byte cap on `scan-queue/` is enforced now that scan photos are resized at capture (G2, #668). Everything else on the device is small and bounded.
+- **The app shrinks each photo at capture (G2, done by #668).** Before the app 'stored the camera's full-size JPEG' (quality 0.7); the server shrinks every photo to 1,568 px on the long edge anyway, so the app now does the same once at capture, JPEG quality 0.8, at about 300 to 600 KB per photo (estimate, device measurement pending). That cuts the queue from about 125 MB to about 15 to 30 MB at 50 photos.
 - **Plan limits are recorded** in [`RENDER.md`](RENDER.md#database-size-and-limits) (#673): production is Supabase Pro with an 8 GB disk that does not auto-expand while the spend cap is on, and 12 MB was measured on 2026-11-22 (pre-launch). A nightly job alerts at 70% of the limit. The dominant table is `scan_records` (about 450 KB per daily-active user at steady state, estimate).
 
 ---
@@ -32,7 +32,7 @@ Related: [`scan-limits.md`](scan-limits.md) (every scan limit), [`data-model.md`
 
 Notes on the photo size:
 
-- JPEG size depends on the sensor resolution and the scene, and `expo-camera`'s `quality` is the only knob the app turns. These figures are rules of thumb for a busy bookshelf at 0.7 and **need a device measurement** (story G2 includes taking one).
+- JPEG size depends on the sensor resolution and the scene, and `expo-camera`'s `quality` is the only knob the app turns. These figures are rules of thumb for a busy bookshelf at 0.7 and **need a device measurement** (the G2 PR leaves it as an owner QA item; the app now saves JPEG 0.8 at a 1,568 px long edge).
 - The server accepts at most 5 MB per image (`backend/app/services/scan/uploads.py` `MAX_IMAGE_BYTES`, `413` above it) and the app has no handling for that code (`frontend/lib/scanErrors.ts` has no 413 case, so it becomes the `generic` state). A 48 to 50 MP capture at 0.7 may exceed 5 MB and fail on every retry. This is the strongest argument for resizing on the phone.
 - The document directory is included in iOS device and iCloud backups. Failed and queued photos therefore also count against the user's backup.
 
@@ -46,7 +46,7 @@ Notes on the photo size:
 | `MAX_UNREVIEWED_JOBS` | 10 | `frontend/lib/scanJob.ts` `MAX_UNREVIEWED_JOBS`, `jobsToPurge` | `complete` jobs that still hold their photo; the oldest beyond 10, by completion time (`completedAt`, set when the job becomes complete; `createdAt` for jobs without it), is dismissed and its photo deleted. The review that is open is never chosen (#669) |
 | `QUEUED_SCAN_MAX_AGE_MS` | 7 days | `frontend/lib/scanJob.ts` `QUEUED_SCAN_MAX_AGE_MS`, `isQueuedScanStale` | age of a `queued` job, counted from `queuedAt` (set whenever a job enters `queued`, including a retry of a failed job; `createdAt` for jobs without it), e.g. one refused by a limit; older ones are removed with their photo (#669). `pending` jobs are not removed |
 | `LOW_FREE_SPACE_BYTES` | 100 MB | `frontend/lib/scanJob.ts`; checked by `checkCaptureStorage` in `frontend/lib/scanJobStorage.ts` (`Paths.availableDiskSpace` of `expo-file-system`, no new native module) | a capture is refused below this much free space (#670) |
-| `MAX_QUEUE_BYTES` | 50 MB | `frontend/lib/scanJob.ts`; checked by `checkCaptureStorage` (sums the file sizes in `scan-queue/`) | **Defined but not enforced** (`ENFORCE_QUEUE_BYTE_CAP = false` in `frontend/lib/scanJob.ts`) until #668 (resize at capture) turns it on, owner decision #1037: full-size photos (2.5 to 10 MB) would reach 50 MB after a handful. When on, a capture is refused once `scan-queue/` holds this much; the check runs before the photo is taken, so the folder can pass 50 MB by one photo (#670). While off, the file sizes are not summed at all. Both checks are skipped on web, where jobs are in memory and there are no file sizes, and a failed disk read lets the capture go ahead |
+| `MAX_QUEUE_BYTES` | 50 MB | `frontend/lib/scanJob.ts`; checked by `checkCaptureStorage` (sums the file sizes in `scan-queue/`) | **Enforced** (`ENFORCE_QUEUE_BYTE_CAP = true` in `frontend/lib/scanJob.ts`, turned on by #668, owner decision #1037, now that photos are about 300 to 600 KB; at full size 2.5 to 10 MB they would have reached 50 MB after a handful). A capture is refused once `scan-queue/` holds this much; the check runs before the photo is taken, so the folder can pass 50 MB by one photo (#670). Both checks are skipped on web, where jobs are in memory and there are no file sizes, and a failed disk read lets the capture go ahead |
 | `SCAN_RETRY_DELAYS_MS` | 30 s, 10 min, 1 h, 4 h | `frontend/lib/scanErrors.ts` `SCAN_RETRY_DELAYS_MS` | waits before attempts 2 to 5 of a photo after `503 scan_unavailable` (#604) |
 | `MAX_SCAN_ATTEMPTS` | 5 | `frontend/lib/scanErrors.ts` `MAX_SCAN_ATTEMPTS` | attempts per photo; after the 5th the job is `failed` (attempt counted in `runScan` of `frontend/lib/scan/executeScan.ts`, failed in `handleUnavailable` of `frontend/lib/scan/scanOutcomes.ts`). Total wait on the schedule: 5 h 10 min 30 s |
 | `MAX_SCAN_RETRY_DELAY_MS` | 4 h | `frontend/lib/scanErrors.ts` `MAX_SCAN_RETRY_DELAY_MS` | no retry is scheduled further ahead than this; also applied to saved times on launch (load effect of `frontend/contexts/ScanJobContext.tsx`) |
@@ -116,7 +116,7 @@ Trade-offs:
 | Photo cannot be saved (disk full, copy fails) | the generic "Something went wrong. Please try again." with Retry; Sentry gets stage `file_copy` | `scanFailedMessage` (`frontend/hooks/useScanCapture.ts`, the `file_copy` stage in `handleCapture`) |
 | Server `413` (over 5 MB) | the generic failure | `scanFailedTitle`, `scanFailedMessage` (no specific copy) |
 | Free storage low (under 100 MB) | red banner for 5 s; the capture is refused before the photo is taken | `storageLow` (`frontend/hooks/useScanCapture.ts`) |
-| Scan photos already use 50 MB (only once the byte cap is enforced, after #668) | red banner for 5 s; the capture is refused | `queueStorageFull` (same) |
+| Scan photos already use 50 MB (the byte cap is enforced since #668) | red banner for 5 s; the capture is refused | `queueStorageFull` (same) |
 
 ### Logs and caches on the device
 
@@ -136,10 +136,10 @@ Trade-offs:
 | Waiting photos (50 cap) | 5 x 2.5 = 12 MB | 125 MB (500 MB on 48 MP) | 50 x 0.4 = 20 MB |
 | Failed photos | 0 | about 350 MB (20 a day for 7 days) | cap 20 photos = 8 MB |
 | Completed, not yet reviewed | 0 to a few | uncapped until the next app launch (each scan done without opening its results) | cap 10 photos = 4 MB (oldest unreviewed is dismissed first) |
-| Camera originals in cache | one per capture until the OS clears it | same as the photos | 0 (deleted at capture) |
+| Camera originals in cache | 0 since #668 (deleted at capture) | 0 | 0 (deleted at capture) |
 | Job list (AsyncStorage) | under 10 KB | about 0.1 MB | same |
 | Tokens, log buffer, covers | under 1 MB combined | a few MB of covers | same |
-| **Budget to adopt** | | | **at most 80 photos (50 waiting + 20 failed + 10 completed but unreviewed) and, once photos are resized at capture (#668), at most 50 MB in total; today the count caps and the 100 MB free-space floor are what bounds it (the 50 MB cap is disabled, decision #1037)** |
+| **Budget to adopt** | | | **at most 80 photos (50 waiting + 20 failed + 10 completed but unreviewed) and, once photos are resized at capture (#668), at most 50 MB in total (enforced since #668, decision #1037)** |
 
 ---
 
@@ -255,10 +255,10 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 | # | Gap | Where |
 |---|---|---|
 | G1 | No account deletion; `users`, `user_books`, `user_custom_books`, `ai_*` per-user rows and `refresh_tokens` of a departed user stay forever | `backend/app/api/` |
-| G2 | Photos are stored full size; the server cap (5 MB) can be exceeded on high-resolution phones | `frontend/hooks/useScanCapture.ts` `handleCapture` |
+| G2 | ~~Photos are stored full size; the server cap (5 MB) can be exceeded on high-resolution phones~~ Fixed by #668: `handleCapture` (and the web picker) resize to a 1,568 px long edge at JPEG 0.8 with `expo-image-manipulator` (`shrinkScanPhoto` in `frontend/lib/scanPhoto.ts`, the one place the sizes live, mirroring the server's `max_image_long_edge_px`) before saving to `scan-queue/`; the camera original and the temporary resized copy are deleted in a `finally`, so a failure leaves no orphan; a `413` is its own `image_too_large` state in `scanErrors.ts` (not retried, delete only, copy `scan:imageTooLarge` in all 13 locales). The before/after device measurement is an owner QA item | `frontend/hooks/useScanCapture.ts` `handleCapture`, `frontend/lib/scanPhoto.ts` |
 | G3 | ~~Failed jobs have no count cap; refused (`queued`) jobs have no age cap; completed-but-unreviewed jobs keep their photo, uncapped, until the next launch~~ Fixed by #669: 20 failed, 7-day `queued`, 10 unreviewed | `frontend/lib/scanJob.ts` `jobsToPurge` |
-| G4 | The camera original in the cache is never deleted (open, with G2); ~~queued photos are not deleted on sign-out~~ fixed by #723 (checked again in #669) | `frontend/hooks/useScanCapture.ts` `handleCapture`, `AuthContext` |
-| G5 | ~~No free-space check and no storage-full message~~ Fixed by #670: 100 MB free-space check with a specific message; the 50 MB queue check is built but disabled until #668 (decision #1037) | `frontend/lib/scanJobStorage.ts` `checkCaptureStorage` |
+| G4 | ~~The camera original in the cache is never deleted~~ fixed by #668 (deleted at capture, success or failure); ~~queued photos are not deleted on sign-out~~ fixed by #723 (checked again in #669) | `frontend/hooks/useScanCapture.ts` `handleCapture`, `AuthContext` |
+| G5 | ~~No free-space check and no storage-full message~~ Fixed by #670: 100 MB free-space check with a specific message; the 50 MB queue check is enforced since #668 (decision #1037) | `frontend/lib/scanJobStorage.ts` `checkCaptureStorage` |
 | G6 | ~~Session log lines are unbounded in length~~ Fixed by #671/#758: 1,000-character lines, 100 KB attachment, bounded serialisation, redact-then-cut; known redaction limits are listed under "Logs and caches on the device" | `SessionLogger.ts` |
 | G7 | ~~`refresh_tokens` purge is one unbatched `DELETE`~~ Fixed by #690: batched like the others (5,000 per batch, 20 batches per run; the cap is covered by an integration test, #672); doc text added | `app/auth/refresh_family.py:purge_refresh_tokens` |
 | G8 | ~~`scan_records` dominates the database and `docs/backups.md` sizes backups on the dump size; neither production size nor plan limit is recorded~~ Done by #673: plan and limit in `RENDER.md`, size measured, growth table re-run, 70% alert, backup cost checked | `docs/RENDER.md`, `docs/backups.md`, `scripts/db/` |
@@ -268,7 +268,7 @@ Retention the repo controls: none. It controls only what is logged (the rules ab
 
 Sizes: S under half a day, M about a day, L several days.
 
-**1. Shrink scan photos at capture (G2) - M**
+**1. Shrink scan photos at capture (G2) - M** (done, #668)
 - Why: the queue holds full-size JPEGs (about 2.5 MB; 5 to 10 MB on 48 MP phones) although the server uses 1,568 px, and uploads over 5 MB are refused with an unhandled `413`.
 - AC: a capture is resized to a 1,568 px long edge at JPEG 0.8 before it is saved to `scan-queue/`; the camera original is deleted in the same step; the size constants live in one place with a comment pointing to `max_image_long_edge_px`; a device measurement of before and after sizes goes in the PR; the Podfile.lock / Android prebuild rules of `CLAUDE.md` are followed; a 413 gets its own state and copy in `scanErrors.ts` (all 13 locales); jest tests cover the resize call and the deletion.
 

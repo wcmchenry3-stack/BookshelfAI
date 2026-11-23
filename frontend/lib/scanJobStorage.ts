@@ -119,7 +119,7 @@ export type CaptureStorageCheck = 'ok' | 'low_space' | 'queue_full';
 
 /**
  * Whether a new photo may be saved (#670, G5): the phone needs LOW_FREE_SPACE_BYTES
- * free and `scan-queue/` must hold less than MAX_QUEUE_BYTES (only while ENFORCE_QUEUE_BYTE_CAP is on). Native only: web
+ * free and `scan-queue/` must hold less than MAX_QUEUE_BYTES (ENFORCE_QUEUE_BYTE_CAP, on since #668). Native only: web
  * keeps jobs in memory and has no file sizes, so it always returns 'ok'. A
  * failed read also returns 'ok' so a broken API never blocks scanning.
  */
@@ -130,7 +130,8 @@ export function checkCaptureStorage({
   try {
     const free = Paths.availableDiskSpace;
     if (typeof free === 'number' && free < LOW_FREE_SPACE_BYTES) return 'low_space';
-    // The 50 MB cap is off until #668 (resize at capture): skip the disk walk.
+    // Callers may pass enforceByteCap: false to skip the disk walk (the
+    // default is ENFORCE_QUEUE_BYTE_CAP, on since #668).
     if (!enforceByteCap) return 'ok';
     const dir = new Directory(Paths.document, SCAN_QUEUE_DIR);
     if (!dir.exists) return 'ok';

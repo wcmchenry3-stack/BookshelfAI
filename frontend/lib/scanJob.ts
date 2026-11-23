@@ -22,11 +22,12 @@ export const LOW_FREE_SPACE_BYTES = 100 * 1024 * 1024;
 /** A capture is refused when `scan-queue/` already holds this much (#670, G5). */
 export const MAX_QUEUE_BYTES = 50 * 1024 * 1024;
 /**
- * Whether MAX_QUEUE_BYTES is enforced. Off until scan photos are resized at
- * capture (#668, owner decision #1037). Full-size photos (2.5–10 MB) would hit
- * 50 MB after a handful.
+ * Whether MAX_QUEUE_BYTES is enforced. On since scan photos are resized at
+ * capture (#668, owner decision #1037; lib/scanPhoto.ts): about 300-600 KB
+ * each, so the 80-photo budget fits in 50 MB. It was off while photos stayed
+ * full size (2.5–10 MB, 50 MB after a handful).
  */
-export const ENFORCE_QUEUE_BYTE_CAP = false;
+export const ENFORCE_QUEUE_BYTE_CAP = true;
 
 export type ScanJobType = 'image' | 'text';
 type ScanJobStatus = 'pending' | 'searching' | 'complete' | 'failed' | 'queued';

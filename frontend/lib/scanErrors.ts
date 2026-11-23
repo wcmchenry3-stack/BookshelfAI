@@ -27,6 +27,13 @@
  *                                 TURNSTILE_REQUIRED=true. Retried on the same
  *                                 schedule and caps; every attempt fetches a
  *                                 fresh token.)
+ *   413 (any detail)           -> image_too_large (#668: the photo is over the
+ *                                 server's 5 MB limit ("Image must be 5MB or
+ *                                 smaller"), its pixel cap
+ *                                 (image_too_large_pixels), or the request-body
+ *                                 cap ("Request body too large"). Refused
+ *                                 before any scan is taken. Never retried: the
+ *                                 same photo fails the same way.)
  *   anything else              -> generic
  *
  * There is no monthly limit (#582): the server no longer sends 402
@@ -58,6 +65,8 @@ export type ScanUiState =
     }
   /** #1023: the server enforces AI consent and this account has none. */
   | { kind: 'ai_consent_required' }
+  /** #668: the photo is too large for the server (413). Not retried. */
+  | { kind: 'image_too_large' }
   | { kind: 'generic' };
 
 /** Why the server refused an enhanced scan (#533). */
@@ -69,6 +78,9 @@ export type ScanNotice =
   | { kind: 'requests_daily_limit'; resetsAt: number }
   | { kind: 'still_processing' }
   | { kind: 'paused' };
+
+/** A failed photo's `error` when the server refused it as too large (413, #668). */
+export const IMAGE_TOO_LARGE_ERROR = 'image_too_large';
 
 /** A queued photo's `error` while it waits for AI consent (#1023). */
 export const AI_CONSENT_ERROR = 'ai_consent';
@@ -208,6 +220,7 @@ export function classifyScanError(err: unknown): ScanUiState {
   const { status } = response;
   const detail = typeof response.data?.detail === 'string' ? response.data.detail : undefined;
 
+  if (status === 413) return { kind: 'image_too_large' };
   if (status === 403 && detail === 'ai_consent_required') return { kind: 'ai_consent_required' };
   if (status === 403 && detail === 'enhanced_requires_premium') {
     return { kind: 'enhanced_refused', reason: 'premium_required' };

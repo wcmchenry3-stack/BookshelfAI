@@ -119,5 +119,7 @@
   "aiConsentContinue": "Doorgaan",
   "aiConsentNotNow": "Niet nu",
   "aiConsentSaveFailed": "Je keuze kon niet worden opgeslagen. Controleer je verbinding en probeer het opnieuw.",
-  "queueStateConsent": "Wacht op je AI-toestemming"
+  "queueStateConsent": "Wacht op je AI-toestemming",
+  "imageTooLarge": "Deze foto is te groot om te scannen. Maak een nieuwe foto en probeer het opnieuw.",
+  "queueFailedTooLarge": "Te groot om te scannen. Verwijder de foto en maak een nieuwe."
 }

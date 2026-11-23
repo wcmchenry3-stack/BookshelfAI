@@ -119,5 +119,7 @@
   "aiConsentContinue": "जारी रखें",
   "aiConsentNotNow": "अभी नहीं",
   "aiConsentSaveFailed": "आपकी पसंद सहेजी नहीं जा सकी। अपना कनेक्शन जाँचें और फिर से कोशिश करें।",
-  "queueStateConsent": "AI सहमति का इंतज़ार"
+  "queueStateConsent": "AI सहमति का इंतज़ार",
+  "imageTooLarge": "यह फ़ोटो स्कैन करने के लिए बहुत बड़ी है। नई फ़ोटो लें और फिर कोशिश करें।",
+  "queueFailedTooLarge": "स्कैन करने के लिए बहुत बड़ी। इसे हटाएँ और नई फ़ोटो लें।"
 }

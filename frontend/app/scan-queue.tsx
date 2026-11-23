@@ -16,7 +16,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useScanJobs } from '../hooks/useScanJobs';
 import { useTheme } from '../hooks/useTheme';
 import { leaveScanQueue } from '../lib/scanQueueNav';
-import { AI_CONSENT_ERROR, formatLocalDateTime, formatLocalTime } from '../lib/scanErrors';
+import {
+  AI_CONSENT_ERROR,
+  formatLocalDateTime,
+  formatLocalTime,
+  IMAGE_TOO_LARGE_ERROR,
+} from '../lib/scanErrors';
 import { failedTimeOf, isPendingUpload, type ScanJob } from '../lib/scanJob';
 import { fontFor } from '../theme/typography';
 
@@ -79,7 +84,11 @@ export default function ScanQueueScreen() {
   function renderItem({ item: job, section }: { item: ScanJob; section: QueueSection }) {
     const isFailed = section.key === 'failed';
     const when = isFailed ? formatLocalDateTime(failedTimeOf(job), i18n.language) : '';
-    const state = isFailed ? t('queueFailedAt', { time: when }) : stateOf(job);
+    // #668: a photo the server refused as too large can never be sent: no Retry.
+    const tooLarge = isFailed && job.error === IMAGE_TOO_LARGE_ERROR;
+    const state = isFailed
+      ? t(tooLarge ? 'queueFailedTooLarge' : 'queueFailedAt', { time: when })
+      : stateOf(job);
     const what = job.imageUri ? t('queuePhotoA11y') : (job.query ?? '');
     return (
       <View
@@ -107,16 +116,18 @@ export default function ScanQueueScreen() {
         </View>
         {isFailed ? (
           <View testID={`queue-actions-${job.id}`} style={styles.actions}>
-            <Pressable
-              onPress={() => void restartScanSchedule(job.id)}
-              style={[styles.button, { backgroundColor: theme.colors.primary }]}
-              accessibilityRole="button"
-              accessibilityLabel={t('queueRetryA11y', { time: when })}
-            >
-              <Text style={[styles.buttonText, { color: theme.colors.onPrimary }]}>
-                {t('queueRetry')}
-              </Text>
-            </Pressable>
+            {tooLarge ? null : (
+              <Pressable
+                onPress={() => void restartScanSchedule(job.id)}
+                style={[styles.button, { backgroundColor: theme.colors.primary }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('queueRetryA11y', { time: when })}
+              >
+                <Text style={[styles.buttonText, { color: theme.colors.onPrimary }]}>
+                  {t('queueRetry')}
+                </Text>
+              </Pressable>
+            )}
             <Pressable
               onPress={() => confirmDelete(job)}
               style={[styles.button, { borderColor: theme.colors.outlineField, borderWidth: 1 }]}

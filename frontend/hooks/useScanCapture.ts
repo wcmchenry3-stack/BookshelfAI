@@ -5,6 +5,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { useTranslation } from 'react-i18next';
 
 import { Sentry } from '../lib/sentry';
+import { removeTempFile, shrinkScanPhoto } from '../lib/scanPhoto';
 import { checkCaptureStorage } from '../lib/scanJobStorage';
 import { useAiConsent } from './useAiConsent';
 import { useBanner } from './useBanner';
@@ -51,6 +52,22 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
     } catch {
       uri = file.name;
     }
+    // #668: shrink like a native capture. Web is secondary: if the browser
+    // can't resize it, the original goes up and a 413 is handled on send.
+    if (uri.startsWith('blob:')) {
+      try {
+        const shrunk = await shrinkScanPhoto(uri);
+        URL.revokeObjectURL(uri);
+        uri = shrunk.uri;
+      } catch (error) {
+        Sentry.addBreadcrumb({
+          category: 'scan',
+          message: 'Web photo resize failed, sending the original',
+          level: 'warning',
+          data: { error: String(error) },
+        });
+      }
+    }
     startScan('image', uri);
   }
 
@@ -81,7 +98,11 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
     });
     // Track which pipeline stage is executing so the catch block can tag the
     // failure precisely. Each silent failure previously looked identical in Sentry.
-    let stage: 'take_picture' | 'dir_create' | 'file_copy' | 'start_scan' = 'take_picture';
+    let stage: 'take_picture' | 'resize' | 'dir_create' | 'file_copy' | 'start_scan' =
+      'take_picture';
+    // Temporary files (the camera original and the resized copy) are deleted
+    // in `finally`, whether the capture succeeds or fails (#668).
+    const tempUris: string[] = [];
     try {
       // Wrap takePictureAsync in a 10s timeout — without this, a hung native
       // promise makes the whole flow silently stall with no Sentry signal.
@@ -94,6 +115,7 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
           setTimeout(() => reject(new Error('takePictureAsync timeout after 10s')), 10000)
         ),
       ]);
+      if (photo?.uri) tempUris.push(photo.uri);
       if (!photo?.uri) {
         Sentry.addBreadcrumb({
           category: 'scan',
@@ -102,6 +124,12 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
         });
         return;
       }
+
+      // #668: shrink to the size the server uses (1568 px long edge, JPEG
+      // 0.8) before anything is saved to scan-queue/.
+      stage = 'resize';
+      const shrunk = await shrinkScanPhoto(photo.uri);
+      tempUris.push(shrunk.uri);
 
       // Heal corruption from the pre-#174 bug: if an earlier version of the app
       // wrote a File (not a Directory) at the scan-queue path, delete it so the
@@ -133,7 +161,7 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
       // the same millisecond (double-tap race).
       const seq = captureSeq.current++;
       const destFile = new File(destDir, `${Date.now()}-${seq}.jpg`);
-      const sourceFile = new File(photo.uri);
+      const sourceFile = new File(shrunk.uri);
       sourceFile.copy(destFile);
 
       stage = 'start_scan';
@@ -157,6 +185,7 @@ export function useScanCapture({ startScan, isQueueFull, queueFullMessage, facin
         actions: [{ label: t('retryNow'), onPress: () => handleCapture() }],
       });
     } finally {
+      tempUris.forEach(removeTempFile);
       setCapturing(false);
     }
   }
