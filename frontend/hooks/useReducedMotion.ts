@@ -24,6 +24,7 @@ function start() {
     // A late query result must not overwrite a newer change event.
     .then((on) => !sawEvent && set(on))
     .catch(() => {});
+  // Intentionally never removed: this singleton listener lives for the whole process.
   AccessibilityInfo.addEventListener('reduceMotionChanged', (on) => {
     sawEvent = true;
     set(on);

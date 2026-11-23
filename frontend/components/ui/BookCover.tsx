@@ -209,6 +209,9 @@ const CoverImage = memo(function CoverImage({
       recyclingKey={uri}
       onError={onError}
       accessible={false}
+      // expo-image web renders alt={accessibilityLabel}; '' keeps the <img> decorative (axe image-alt).
+      // The frame View carries the real label. Native: `accessible` alone decides focusability.
+      accessibilityLabel=""
       testID={testID}
     />
   );

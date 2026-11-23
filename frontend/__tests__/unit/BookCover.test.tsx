@@ -85,6 +85,7 @@ describe('#902 BookCover', () => {
     expect(COVER_FADE_MS).toBe(150);
     expect(props.recyclingKey).toBe(URL);
     expect(props.accessible).toBe(false);
+    expect(props.accessibilityLabel).toBe('');
   });
 
   it('sets the fade to 0 when Reduce Motion is on (#1063)', async () => {
