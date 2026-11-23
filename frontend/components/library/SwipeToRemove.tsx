@@ -123,7 +123,6 @@ export function SwipeToRemove({
   const { theme } = useTheme();
   const reduceMotion = useReducedMotion();
   const rowRef = useRef<SwipeableMethods>(null);
-  const armedRef = useRef(false);
   const translationRef = useRef<SharedValue<number> | null>(null);
   const removingRef = useRef(false);
   const handle = useMemo<SwipeRowHandle>(() => ({ close: () => rowRef.current?.close() }), []);
@@ -149,20 +148,18 @@ export function SwipeToRemove({
     translationRef.current = translation;
   }, []);
 
+  // Haptic tick only. The reaction runs a frame late, so it never decides removal.
   const onArmedChange = useCallback((armed: boolean) => {
-    armedRef.current = armed;
     if (armed) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, []);
 
-  // Decided when the swipe is let go, from where the row is then: the reaction
-  // that arms it runs a frame later, so a fast flick that crosses the distance
-  // and lifts in the same frame would otherwise only open the row.
+  // Decided only from where the row is when the swipe is let go. The haptic
+  // reaction runs a frame later, so trusting it would both miss a same-frame
+  // flick and remove a book the user dragged back under the distance.
   const onWillOpen = useCallback(() => {
     group?.onOpen(handle);
     const travelled = (translationRef.current?.value ?? 0) * side;
-    const full = armedRef.current || travelled >= FULL_SWIPE_DISTANCE;
-    armedRef.current = false;
-    if (full) void remove();
+    if (travelled >= FULL_SWIPE_DISTANCE) void remove();
   }, [group, handle, remove, side]);
 
   const onClose = useCallback(() => group?.onClose(handle), [group, handle]);

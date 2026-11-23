@@ -203,6 +203,19 @@ describe('SwipeToRemove (#935)', () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
+  it('a drag that crosses the distance and comes back under it in the same frame does not remove', async () => {
+    const onRemove = jest.fn().mockResolvedValue(true);
+    await render(<Row onRemove={onRemove} />);
+    // Past the distance long enough for the haptic reaction to arm…
+    await dragTo(rows[0], -(FULL_SWIPE_DISTANCE + 10));
+    await act(async () => {
+      // …then back under it and let go before the reaction can disarm.
+      rows[0].translation.value = -REMOVE_PANEL_WIDTH;
+      rows[0].props.onSwipeableWillOpen?.('left');
+    });
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
   it('a short swipe only opens the row on the panel', async () => {
     const onRemove = jest.fn();
     await render(<Row onRemove={onRemove} />);
