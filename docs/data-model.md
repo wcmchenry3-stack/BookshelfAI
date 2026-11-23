@@ -193,7 +193,7 @@ erDiagram
     uuid user_id FK "cascade on delete"
     varchar key "unique with user_id"
     varchar request_hash "SHA-256 hex"
-    varchar state "pending or complete"
+    varchar state "pending, committed or complete"
     smallint response_status "nullable"
     text response_body "nullable, at most 64 KB"
     jsonb response_headers "ETag, Location"
@@ -405,7 +405,7 @@ The `Idempotency-Key` store (#685, migration 0033): one row per key a user sent 
 | `user_id` | UUID FK → `users.id`, not null, `ON DELETE CASCADE` | keys are per user; the stored body is the user's data and goes with the account |
 | `key` | varchar(255), not null | the client's key, 1 to 255 visible ASCII characters (validated before any write) |
 | `request_hash` | varchar(64), not null | SHA-256 hex of the method, the path, the query, `If-Match` and the canonical JSON body; another request with the key is `422 idempotency_key_reused` |
-| `state` | varchar(16), not null, check `ck_idempotency_keys_state` | `pending` while the first request runs (a duplicate gets `409 idempotency_in_progress`), `complete` once its response is stored |
+| `state` | varchar(16), not null, check `ck_idempotency_keys_state` | `pending` while the first request runs (a duplicate gets `409 idempotency_in_progress`); `committed` from the commit of its write, set in that same transaction, with no response stored yet (a duplicate gets `409 idempotency_outcome_unknown`); `complete` once its response is stored |
 | `response_status` | smallint, nullable | NULL while pending |
 | `response_body` | text, nullable, check `ck_idempotency_keys_body_size` (at most 65,536 bytes) | the JSON body as sent; NULL while pending and for a `204`. A larger response is not stored (`MAX_RESPONSE_BODY_BYTES`) |
 | `response_headers` | JSONB, nullable | `etag` and `location` only (`REPLAYED_HEADERS`) |
@@ -413,7 +413,7 @@ The `Idempotency-Key` store (#685, migration 0033): one row per key a user sent 
 
 Constraint `uq_idempotency_keys_user_key (user_id, key)`: the claim's `ON CONFLICT DO NOTHING` target, the lookup and the scan for the cascade. Index `ix_idempotency_keys_created_at (created_at)` for the purge. RLS on, no policies (#677). `bookshelf_app` has `SELECT`, `INSERT`, `UPDATE` (pending to complete) and `DELETE` (release and purge), granted explicitly by the migration too.
 
-**Lifecycle.** The claim inserts a `pending` row and commits before the endpoint runs; a successful response or a `4xx` refusal is stored on it (`complete`); a `5xx`, a `429` or an exception deletes it, so a retry runs again. A `complete` row older than 24 h (`KEY_TTL`) or a `pending` one older than 2 minutes (`PENDING_LEASE`: its process died) counts as absent: the next claim of the key deletes it and inserts afresh.
+**Lifecycle.** The claim inserts a `pending` row and commits before the endpoint runs. A `before_commit` listener on the request's session (`idempotency.arm_commit_marker`) turns it `committed` inside the endpoint's own transaction, so the mark and the write are durable together; a successful response or a `4xx` refusal is then stored on it (`complete`). A `5xx`, a `429` or an exception deletes the row only while it is `pending` (nothing was written), so a retry runs again; a `committed` row is never deleted early, so the write never runs twice. A row older than 24 h (`KEY_TTL`), or a `pending` one older than 2 minutes (`PENDING_LEASE`), counts as absent: the next claim deletes it (the `DELETE` re-checks both conditions, so a row committed meanwhile survives) and inserts afresh. If the old request was in fact still running, its commit then fails (`KeyLostError`), so its write is not applied.
 
 **Retention.** Never replayed after 24 h; the daily cleanup (`token_cleanup.py:_purge_idempotency_keys`, `idempotency.purge_expired`) deletes rows older than that in batches of 1,000 (one commit each, at most 200 per run), so a row lasts at most about 48 h.
 
