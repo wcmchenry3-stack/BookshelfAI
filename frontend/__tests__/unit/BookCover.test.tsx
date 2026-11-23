@@ -1,8 +1,10 @@
-import { Image, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { fireEvent, render } from '@testing-library/react-native';
 
 import {
   BookCover,
+  COVER_FADE_MS,
   COVER_SIZES,
   FALLBACK_MIN_FONT,
   fallbackTitleStyle,
@@ -25,13 +27,16 @@ const mockUseTheme = jest.fn(() => ({
 }));
 jest.mock('../../hooks/useTheme', () => ({ useTheme: () => mockUseTheme() }));
 
+let mockReduceMotion = false;
+jest.mock('../../hooks/useReducedMotion', () => ({ useReducedMotion: () => mockReduceMotion }));
+
 // Image renders as a View with the same props, and every render is recorded
 // (calls[i][0] is the props), so CoverImage's renders and onError are visible.
-jest.mock('react-native', () => {
+jest.mock('expo-image', () => {
   const rn = jest.requireActual('react-native');
   const ReactLib = require('react');
   const Image = jest.fn((props: Record<string, unknown>) => ReactLib.createElement(rn.View, props));
-  return Object.create(rn, { Image: { value: Image } });
+  return { Image };
 });
 
 const SIZES: BookCoverSize[] = ['xs', 'sm', 'md', 'lg'];
@@ -40,6 +45,7 @@ const URL = 'https://example.com/c.jpg';
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockReduceMotion = false;
 });
 
 describe('#902 BookCover', () => {
@@ -62,12 +68,29 @@ describe('#902 BookCover', () => {
     });
   });
 
-  it('draws the image with resizeMode cover when there is a url', async () => {
+  it('draws the image with contentFit cover when there is a url', async () => {
     const { getByTestId, queryByText } = await render(
       <BookCover title="Dune" coverUrl={URL} size="sm" testID="c" />
     );
-    expect(getByTestId('c').props.resizeMode).toBe('cover');
+    expect(getByTestId('c').props.contentFit).toBe('cover');
     expect(queryByText('Dune', H)).toBeNull();
+  });
+
+  it('passes the expo-image cache, fade and recycling props (#1063)', async () => {
+    await render(<BookCover title="Dune" coverUrl={URL} size="sm" testID="c" />);
+    const props = (Image as unknown as jest.Mock).mock.calls[0][0];
+    expect(props.source).toEqual({ uri: URL });
+    expect(props.cachePolicy).toBe('memory-disk');
+    expect(props.transition).toBe(COVER_FADE_MS);
+    expect(COVER_FADE_MS).toBe(150);
+    expect(props.recyclingKey).toBe(URL);
+    expect(props.accessible).toBe(false);
+  });
+
+  it('sets the fade to 0 when Reduce Motion is on (#1063)', async () => {
+    mockReduceMotion = true;
+    await render(<BookCover title="Dune" coverUrl={URL} size="sm" testID="c" />);
+    expect((Image as unknown as jest.Mock).mock.calls.at(-1)[0].transition).toBe(0);
   });
 
   it('draws the typographic fallback with the title when cover_url is null', async () => {
@@ -75,7 +98,7 @@ describe('#902 BookCover', () => {
       <BookCover title="Dune" coverUrl={null} size="md" testID="c" />
     );
     expect(getByText('Dune', H)).toBeTruthy();
-    expect(getByTestId('c').props.resizeMode).toBeUndefined();
+    expect(getByTestId('c').props.contentFit).toBeUndefined();
   });
 
   it('switches to the fallback after the image fails to load', async () => {

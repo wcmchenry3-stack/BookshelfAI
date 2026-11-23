@@ -1,7 +1,9 @@
 import React, { memo, useCallback, useState } from 'react';
-import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { Image } from 'expo-image';
 
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useTheme } from '../../hooks/useTheme';
 import { tokens } from '../../theme/tokens';
 import { longestUnitEm } from '../../theme/coverTextWidths';
@@ -101,8 +103,7 @@ export interface BookCoverProps {
 /**
  * A book cover in a fixed 2:3 frame. Draws `coverUrl`, or a typographic cover
  * made from the title when there is no URL or the image fails to load.
- * The image element is isolated in `CoverImage` so it can be swapped for
- * `expo-image` later (#901).
+ * The bitmap is drawn by `CoverImage` (expo-image: cached, fades in).
  */
 function BookCoverBase({
   title,
@@ -178,7 +179,10 @@ function BookCoverBase({
   );
 }
 
-/** The one place that draws the cover bitmap; swap for `expo-image` in #901. */
+/** Fade-in length for a cover bitmap, in ms (#1063). */
+export const COVER_FADE_MS = 150;
+
+/** The one place that draws the cover bitmap (expo-image, #1063). */
 const CoverImage = memo(function CoverImage({
   uri,
   width,
@@ -194,11 +198,15 @@ const CoverImage = memo(function CoverImage({
   testID?: string;
   onError: () => void;
 }) {
+  const reduceMotion = useReducedMotion();
   return (
     <Image
       source={{ uri }}
       style={{ width, height, borderRadius: radius }}
-      resizeMode="cover"
+      contentFit="cover"
+      cachePolicy="memory-disk"
+      transition={reduceMotion ? 0 : COVER_FADE_MS}
+      recyclingKey={uri}
       onError={onError}
       accessible={false}
       testID={testID}
